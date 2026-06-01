@@ -13,6 +13,7 @@
  */
 
 import { TerrainManager } from './Terrain';
+import { PhysicsEngine, type Projectile } from './PhysicsEngine';
 import {
   WEAPON_REGISTRY,
   type WeaponId,
@@ -27,14 +28,6 @@ export interface GameConfig {
   windForce: number;
   /** Base velocity multiplier for power (0-100). Tunable feel. */
   baseShotSpeed: number;
-}
-
-export interface ActiveProjectile {
-  position: Vector2;
-  velocity: Vector2;
-  radius: number;
-  weaponId: WeaponId;
-  ownerId: string;
 }
 
 export interface TankRef {
@@ -56,9 +49,9 @@ export class GameEngine {
   public readonly height: number;
 
   private readonly terrain: TerrainManager;
+  private readonly physicsEngine: PhysicsEngine;
   private readonly config: GameConfig;
 
-  private projectiles: ActiveProjectile[] = [];
   private tanks: TankRef[] = [];
 
   private windForce: number;
@@ -73,7 +66,7 @@ export class GameEngine {
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
   public onAllProjectilesSettled?: () => void;
-  public onPhysicsStep?: (projectiles: ReadonlyArray<ActiveProjectile>) => void;
+  public onPhysicsStep?: (projectiles: ReadonlyArray<Projectile>) => void;
 
   constructor(
     width: number,
@@ -85,6 +78,19 @@ export class GameEngine {
 
     this.terrain = new TerrainManager(this.width, this.height);
     this.terrain.generate();
+
+    this.physicsEngine = new PhysicsEngine();
+
+    // Forward hit events from PhysicsEngine
+    this.physicsEngine.onProjectileHit = (hit) => {
+      this.onProjectileHit?.({
+        x: hit.x,
+        y: hit.y,
+        weaponId: hit.weaponId,
+        ownerId: 'unknown', // TODO: track owner when launching
+        blastRadius: WEAPON_REGISTRY[hit.weaponId]?.blastRadius ?? 28,
+      });
+    };
 
     this.config = {
       gravity: 220,
@@ -102,8 +108,8 @@ export class GameEngine {
     return this.terrain;
   }
 
-  public getActiveProjectiles(): ReadonlyArray<ActiveProjectile> {
-    return this.projectiles;
+  public getActiveProjectiles(): ReadonlyArray<Projectile> {
+    return this.physicsEngine.getProjectiles();
   }
 
   public setWindForce(force: number): void {
@@ -125,7 +131,7 @@ export class GameEngine {
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
-    ownerId: string,
+    /* ownerId: string */ // TODO: track owner for damage attribution later
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
@@ -133,20 +139,14 @@ export class GameEngine {
       return;
     }
 
-    const angleRad = (command.angle * Math.PI) / 180;
-    const speed = (command.power / 100) * this.config.baseShotSpeed;
-
-    const vx = Math.cos(angleRad) * speed;
-    // Negative because canvas Y grows downward
-    const vy = -Math.sin(angleRad) * speed;
-
-    this.projectiles.push({
-      position: { x: from.x, y: from.y },
-      velocity: { x: vx, y: vy },
-      radius: 2.5,
-      weaponId: command.weaponId,
-      ownerId,
-    });
+    // Délégation complète au PhysicsEngine (nouveau système)
+    this.physicsEngine.launchProjectile(
+      from.x,
+      from.y,
+      command.angle,
+      command.power,
+      command.weaponId,
+    );
   }
 
   /**
@@ -199,7 +199,7 @@ export class GameEngine {
 
     // Rendering is driven by the owner (GameCanvas calls render)
     // We still notify for possible interpolation/debug
-    this.onPhysicsStep?.(this.projectiles);
+    this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
 
     this.rafId = requestAnimationFrame(this.loop);
   };
@@ -208,80 +208,14 @@ export class GameEngine {
     const gravity = this.config.gravity;
     const wind = this.windForce;
 
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
+    // Délégation complète au nouveau PhysicsEngine
+    this.physicsEngine.updateProjectiles(dt, gravity, wind, this.terrain);
 
-      // Apply accelerations (wind horizontal, gravity vertical)
-      p.velocity.x += wind * dt;
-      p.velocity.y += gravity * dt;
+    // Notification pour le layer React (interpolation, debug, etc.)
+    this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
 
-      // Integrate position
-      p.position.x += p.velocity.x * dt;
-      p.position.y += p.velocity.y * dt;
-
-      // === Terrain Collision ===
-      const terrainY = this.terrain.getHeightAt(p.position.x);
-
-      if (p.position.y >= terrainY - 1) {
-        this.handleProjectileHit(i, p);
-        continue;
-      }
-
-      // === Tank Collision (simple circle vs point for v1) ===
-      for (const tank of this.tanks) {
-        const dx = p.position.x - tank.position.x;
-        const dy = p.position.y - tank.position.y;
-        const distSq = dx * dx + dy * dy;
-        const hitRadius = tank.radius + p.radius + 1;
-
-        if (distSq <= hitRadius * hitRadius) {
-          this.handleProjectileHit(i, p);
-          break;
-        }
-      }
-
-      // Optional: world bounds cleanup
-      if (
-        p.position.x < -50 ||
-        p.position.x > this.width + 50 ||
-        p.position.y > this.height + 200
-      ) {
-        this.projectiles.splice(i, 1);
-      }
-    }
-
-    // Notify when last projectile has settled
-    if (this.projectiles.length === 0) {
-      // Only fire the callback once per volley
-      // (caller is responsible for clearing flag if needed)
-    }
-  }
-
-  private handleProjectileHit(
-    index: number,
-    p: ActiveProjectile,
-    // hitTankId is reserved for future damage/score logic
-  ): void {
-    const weapon = WEAPON_REGISTRY[p.weaponId];
-    const blastRadius = weapon?.blastRadius ?? 25;
-
-    // Mutate terrain (core destructible feature)
-    this.terrain.destroyTerrain(p.position.x, p.position.y, blastRadius);
-
-    const hitEvent: HitEvent = {
-      x: p.position.x,
-      y: p.position.y,
-      weaponId: p.weaponId,
-      ownerId: p.ownerId,
-      blastRadius,
-    };
-
-    this.onProjectileHit?.(hitEvent);
-
-    // Remove the projectile
-    this.projectiles.splice(index, 1);
-
-    if (this.projectiles.length === 0) {
+    // Détection de fin de volée
+    if (this.physicsEngine.count === 0) {
       this.onAllProjectilesSettled?.();
     }
   }
@@ -296,19 +230,8 @@ export class GameEngine {
     // Terrain (délégué au TerrainManager qui utilise la palette VGA)
     this.terrain.draw(ctx);
 
-    // Projectiles
-    for (const p of this.projectiles) {
-      const weapon = WEAPON_REGISTRY[p.weaponId];
-      ctx.fillStyle = weapon?.color ?? '#FFFFFF';
-
-      ctx.beginPath();
-      ctx.arc(p.position.x, p.position.y, p.radius + 1, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Small tracer / motion hint
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(p.position.x - 1, p.position.y - 1, 2, 2);
-    }
+    // Projectiles (délégué au PhysicsEngine)
+    this.physicsEngine.draw(ctx);
 
     // Tanks (simple colored rectangles for now)
     for (const tank of this.tanks) {
@@ -324,6 +247,6 @@ export class GameEngine {
 
   // Utility
   public clearProjectiles(): void {
-    this.projectiles = [];
+    this.physicsEngine.clear();
   }
 }
