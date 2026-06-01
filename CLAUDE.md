@@ -23,3 +23,8 @@
 ## Error Prevention
 
 - Never modify HTML5 canvas properties directly inside a React render cycle; always pass updates through refs or dedicated game engine methods.
+
+## Commit style
+
+- Always sign your comments by you name, and your EXACT model name for each commit.
+- Use IMPERATIVE mood for commit messages.

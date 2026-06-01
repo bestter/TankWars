@@ -8,18 +8,21 @@
 import type { Player } from '../../types/player';
 import type { TankManager } from '../entities/TankManager';
 import type { PhysicsEngine } from './PhysicsEngine';
-import type { FireCommand } from '../../types/game';
+import type { FireCommand, Color } from '../../types/game';
 import type { AIEngine } from '../entities/ai/AIEngine';
 import type { TerrainManager } from './Terrain';
 import type { GameState } from '../../types/game';
+import { type WeaponId, ALL_WEAPON_IDS } from '../../types/weapon';
 
 export interface CurrentTurnInfo {
   playerName: string;
   playerId: string;
   isHuman: boolean;
+  playerColor: Color;
   angle: number;
   power: number;
-  currentWeapon: string;
+  currentWeapon: WeaponId;
+  inventory: Partial<Record<WeaponId, number>>;
   round: number;
   isInputLocked: boolean;
 }
@@ -27,7 +30,7 @@ export interface CurrentTurnInfo {
 export class TurnManager {
   private tankManager: TankManager;
   private terrainManager: TerrainManager;
-  private fireCallback: (from: { x: number; y: number }, command: FireCommand) => void;
+  private fireCallback: (from: { x: number; y: number }, command: FireCommand, ownerId?: string) => void;
   private aiEngine?: AIEngine;
 
   private currentPlayerIndex = 0;
@@ -48,7 +51,7 @@ export class TurnManager {
   constructor(
     tankManager: TankManager,
     terrainManager: TerrainManager,
-    fireCallback: (from: { x: number; y: number }, command: FireCommand) => void,
+    fireCallback: (from: { x: number; y: number }, command: FireCommand, ownerId?: string) => void,
     aiEngine?: AIEngine,
   ) {
     this.tankManager = tankManager;
@@ -87,6 +90,19 @@ export class TurnManager {
     this.listenersAttached = false;
   }
 
+  /** Pause input/AI for SUMMARY/SHOP phase (called from React layer) */
+  public pauseForInterRound(): void {
+    this.isInputLocked = true;
+    this.removeInputListeners();
+    // AI handling will see locked state and skip
+  }
+
+  /** Resume after returning from SHOP to COMBAT */
+  public resumeForCombat(): void {
+    this.isInputLocked = false;
+    this.setupInputListeners();
+  }
+
   private handleKeyDown = (event: KeyboardEvent): void => {
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return;
@@ -119,6 +135,19 @@ export class TurnManager {
       case ' ':
       case 'Spacebar':
         this.fire();
+        event.preventDefault();
+        break;
+
+      // Weapon cycling for human player (A = prev, E = next)
+      case 'a':
+      case 'A':
+        this.cycleWeapon(-1);
+        event.preventDefault();
+        break;
+
+      case 'e':
+      case 'E':
+        this.cycleWeapon(1);
         event.preventDefault();
         break;
     }
@@ -165,14 +194,55 @@ export class TurnManager {
       weaponId: tank.currentWeapon,
     };
 
-    this.fireCallback(tank.position, command);
+    this.fireCallback(tank.position, command, player.id);
 
     // Verrouille les inputs jusqu'à la fin de la résolution
     this.isInputLocked = true;
     this.notifyHudUpdate();
   }
 
-  /** Passe au joueur suivant (saute les tanks morts) */
+  /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles) */
+  public selectWeapon(weaponId: WeaponId): boolean {
+    const player = this.getCurrentPlayer();
+    if (!player || !player.isHuman || this.isInputLocked) return false;
+
+    const ammo = player.inventory[weaponId] ?? 0;
+    if (ammo <= 0) return false;
+    if (player.tank.currentWeapon === weaponId) return false;
+
+    player.tank.currentWeapon = weaponId;
+    this.notifyHudUpdate();
+    return true;
+  }
+
+  /** Cycle l'arme active (delta = +1 ou -1). Filtre sur les armes avec munitions > 0. */
+  public cycleWeapon(delta: 1 | -1): boolean {
+    const player = this.getCurrentPlayer();
+    if (!player || !player.isHuman || this.isInputLocked) return false;
+
+    const available = ALL_WEAPON_IDS.filter((id) => (player.inventory[id] ?? 0) > 0);
+    if (available.length === 0) return false;
+
+    const current = player.tank.currentWeapon;
+    let idx = available.indexOf(current);
+    if (idx === -1) idx = 0;
+
+    const nextIdx = (idx + delta + available.length) % available.length;
+    const nextWeapon = available[nextIdx];
+    if (nextWeapon === current) return false;
+
+    player.tank.currentWeapon = nextWeapon;
+    this.notifyHudUpdate();
+    return true;
+  }
+
+  /** Passe au joueur suivant (saute les tanks morts).
+   *
+   * - Saute automatiquement les joueurs dont tank.isDead === true.
+   * - Quand l'index repasse à 0, on incrémente currentRound (manche suivante).
+   * - La décision d'aller en SUMMARY (fin de partie) est prise côté React
+   *   UNIQUEMENT quand il reste 0 ou 1 joueur vivant.
+   */
   public nextTurn(): void {
     const players = this.tankManager.getPlayers();
     if (players.length === 0) return;
@@ -224,9 +294,11 @@ export class TurnManager {
       playerName: player.name,
       playerId: player.id,
       isHuman: player.isHuman,
+      playerColor: player.tank.color,
       angle: Math.round(player.tank.angle),
       power: Math.round(player.tank.power),
       currentWeapon: player.tank.currentWeapon,
+      inventory: { ...player.inventory },
       round: this.currentRound,
       isInputLocked: this.isInputLocked,
     };
@@ -321,10 +393,23 @@ export class TurnManager {
         weaponId: player.tank.currentWeapon,
       };
 
-      this.fireCallback(player.tank.position, command);
+      this.fireCallback(player.tank.position, command, player.id);
 
       // If everything goes well, the normal onAllProjectilesSettled → nextTurn() will happen.
       // The resolution timeout acts as a safety net.
+
+      // Extra safety net for settlement detection edge cases (e.g. unusual trajectories after terrain destruction):
+      // After a successful AI shot, if we are still the current locked player after a few seconds,
+      // force the turn to advance so the human gets their turns reliably.
+      setTimeout(() => {
+        const stillCurrent = this.getCurrentPlayer();
+        if (stillCurrent?.id === player.id && this.isInputLocked) {
+          console.warn(`[TurnManager] Settlement did not advance turn for AI ${player.name} — forcing nextTurn as safety net`);
+          this.isInputLocked = false;
+          this.clearResolutionTimeout();
+          this.nextTurn();
+        }
+      }, 4500);
     } catch (error) {
       console.error('[TurnManager] AI turn failed:', error);
       this.clearResolutionTimeout();
@@ -361,7 +446,7 @@ export class TurnManager {
             power: player.tank.power,
             weaponId: player.tank.currentWeapon,
           };
-          this.fireCallback(player.tank.position, command);
+          this.fireCallback(player.tank.position, command, player.id);
         } else {
           // No fallback → just skip the turn (forfeit)
           console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);

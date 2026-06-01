@@ -54,6 +54,7 @@ export type GamePhase =
   | 'SHOP'       // Purchase weapons/ammo between rounds
   | 'COMBAT'     // Active player's turn: aim, power, weapon select, fire
   | 'RESOLUTION' // Projectiles in flight, explosions, chain reactions, damage application, terrain destruction
+  | 'SUMMARY'    // End-of-round (fin de manche) score + earnings screen (before shop)
   | 'GAME_OVER'; // Match finished, winner declared
 
 /** Intent produced by human input or AI strategy for a shot. Passed to engine. */

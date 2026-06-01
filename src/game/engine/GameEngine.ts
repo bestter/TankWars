@@ -21,7 +21,7 @@ import {
   type WeaponId,
 } from '../../types/weapon';
 import type { Player } from '../../types/player';
-import type { Vector2, FireCommand } from '../../types/game';
+import type { Vector2, FireCommand, RoundResult } from '../../types/game';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
 import type { AIEngine } from '../entities/ai/AIEngine';
 
@@ -76,6 +76,14 @@ export class GameEngine {
     size: number;
   }> = [];
 
+  // === Round-end (fin de manche) accumulators for money/kill rewards (React-owned phase uses these via award fn) ===
+  private roundDamageDealt: Record<string, number> = {};
+  private roundKills: Record<string, number> = {};
+  private roundTerrainDestroyed = 0;
+  private currentFirerId: string | null = null;
+  /** Snapshot of alive player IDs just before the last shot (for per-shot kill attribution via diff) */
+  private aliveAtLastShot: Set<string> = new Set();
+
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
   public onAllProjectilesSettled?: () => void;
@@ -105,8 +113,8 @@ export class GameEngine {
     this.turnManager = new TurnManager(
       this.tankManager,
       this.terrain,
-      (from, command) => {
-        this.fireProjectile(from, command);
+      (from, command, ownerId) => {
+        this.fireProjectile(from, command, ownerId ?? 'unknown');
       },
     );
 
@@ -118,14 +126,31 @@ export class GameEngine {
       this.onTurnHudUpdate?.(info);
     };
 
-    // Forward hit events from PhysicsEngine
+    // Forward hit events from PhysicsEngine (owner now threaded for round rewards)
     this.physicsEngine.onProjectileHit = (hit) => {
+      const firer = this.currentFirerId ?? 'unknown';
+      const weapon = WEAPON_REGISTRY[hit.weaponId];
+
+      // Accumulate for end-of-round earnings (damage + kill attribution via alive diff)
+      if (firer !== 'unknown') {
+        this.roundDamageDealt[firer] = (this.roundDamageDealt[firer] ?? 0) + (weapon?.damage ?? 0);
+
+        // Attribute any players who died due to *this* impact (splash + direct, works for chains)
+        const nowAlive = new Set(this.tankManager.getAlivePlayers().map((p) => p.id));
+        for (const id of this.aliveAtLastShot) {
+          if (!nowAlive.has(id)) {
+            this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
+          }
+        }
+        this.aliveAtLastShot = nowAlive;
+      }
+
       this.onProjectileHit?.({
         x: hit.x,
         y: hit.y,
         weaponId: hit.weaponId,
-        ownerId: 'unknown', // TODO: track owner when launching
-        blastRadius: WEAPON_REGISTRY[hit.weaponId]?.blastRadius ?? 28,
+        ownerId: firer,
+        blastRadius: weapon?.blastRadius ?? 28,
       });
     };
 
@@ -181,11 +206,12 @@ export class GameEngine {
   /**
    * Fire a projectile. Called by human input or by AI strategy.
    * Angle in degrees (0 = right, positive = CCW / upward).
+   * ownerId is used for round-end kill/damage attribution (see awardEndOfRoundEarnings).
    */
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
-    _ownerId: string = 'unknown' // TODO: track owner for damage attribution later
+    ownerId: string = 'unknown',
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
@@ -193,13 +219,21 @@ export class GameEngine {
       return;
     }
 
-    // Délégation complète au PhysicsEngine (nouveau système)
+    this.currentFirerId = ownerId;
+
+    // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
+    this.aliveAtLastShot = new Set(
+      this.tankManager.getAlivePlayers().map((p) => p.id),
+    );
+
+    // Délégation complète au PhysicsEngine (nouveau système) — now with owner for attribution
     this.physicsEngine.launchProjectile(
       from.x,
       from.y,
       command.angle,
       command.power,
       command.weaponId,
+      ownerId,
     );
   }
 
@@ -217,6 +251,79 @@ export class GameEngine {
 
     this.fireProjectile(self.tank.position, decision, self.id);
     return true;
+  }
+
+  // === Round-end (fin de manche) rewards & celebration (called by React when phase → SUMMARY) ===
+
+  /**
+   * Awards money at end of a manche per spec:
+   * - 500$ base to every surviving tank
+   * - +300$ per enemy destroyed (tracked via ownerId threading + alive-diff during the round)
+   * Mutates the live Player.money (shared refs) and returns RoundResult for UI.
+   * Resets accumulators for the next round.
+   */
+  public awardEndOfRoundEarnings(): RoundResult {
+    const players = this.tankManager.getPlayers();
+    const survivors = players.filter((p) => !p.tank.isDead).map((p) => p.id);
+
+    const result: RoundResult = {
+      damageDealt: { ...this.roundDamageDealt },
+      terrainDestroyed: this.roundTerrainDestroyed,
+      survivors,
+    };
+
+    // Apply earnings (base + kill bonus) only to survivors
+    for (const p of players) {
+      if (p.tank.isDead) continue;
+      const kills = this.roundKills[p.id] ?? 0;
+      const earnings = 500 + kills * 300;
+      p.money = (p.money ?? 0) + earnings;
+    }
+
+    // Reset for next round
+    this.roundDamageDealt = {};
+    this.roundKills = {};
+    this.roundTerrainDestroyed = 0;
+    this.currentFirerId = null;
+    this.aliveAtLastShot.clear();
+
+    return result;
+  }
+
+  /** Lightweight celebration reuse for SUMMARY (does NOT set gameOver or winner). Keeps existing final-win paths untouched. */
+  public triggerRoundCelebration(): void {
+    if (this.gameOver) return;
+    const survivors = this.tankManager.getAlivePlayers();
+    const cx = survivors.length > 0 ? survivors[0].tank.position.x : this.width / 2;
+    this.startFireworks(cx, 60);
+    // Fanfare sting will play (reuses private audio logic)
+  }
+
+  /** Prepare a brand new round (preserve money/inventory, reset health/terrain/turn state). Called after SHOP. */
+  public startNextRound(): void {
+    this.stopVictoryMusic();
+    this.physicsEngine.clear();
+    this.fireworks = [];
+    // Note: do NOT touch gameOver/winner here (only full reset does)
+
+    // Fresh terrain
+    this.terrain.generate();
+
+    // Reset live tank combat state but KEEP money + inventory + currentWeapon
+    const players = [...this.tankManager.getPlayers()];
+    this.tankManager.spawnTanks(players, this.terrain); // this resets health/pos/shield/isDead/angle but not money
+
+    // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
+    this.turnManager.reset(); // this sets internal round=1; caller in React can treat displayRound separately
+    this.turnManager.startFirstTurn();
+    this.turnManager.setupInputListeners();
+
+    // Clear any round accumulators
+    this.roundDamageDealt = {};
+    this.roundKills = {};
+    this.roundTerrainDestroyed = 0;
+    this.currentFirerId = null;
+    this.aliveAtLastShot.clear();
   }
 
   // === Game Loop ===
@@ -522,6 +629,13 @@ export class GameEngine {
 
     // Regenerate terrain
     this.terrain.generate();
+
+    // Clear round accumulators / celebration state
+    this.roundDamageDealt = {};
+    this.roundKills = {};
+    this.roundTerrainDestroyed = 0;
+    this.currentFirerId = null;
+    this.aliveAtLastShot.clear();
 
     // Note: Players should be re-set via setPlayers() after calling this
   }

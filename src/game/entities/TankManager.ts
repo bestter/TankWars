@@ -109,13 +109,18 @@ export class TankManager {
   /**
    * Applique des dégâts d'explosion avec atténuation linéaire selon la distance.
    * Les dégâts sont d'abord absorbés par le bouclier, puis par la vie.
+   * @param killerId - Optional shooter id (for round-end kill attribution; splash counts for the explosion's firer)
+   * @returns Number of *new* kills caused by *this* explosion (for attribution to the killer)
    */
   public applyExplosionDamage(
     explosionX: number,
     explosionY: number,
     radius: number,
     maxDamage: number,
-  ): void {
+    killerId?: string,
+  ): number {
+    let killsThisExplosion = 0;
+
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
@@ -132,6 +137,8 @@ export class TankManager {
 
       if (damage <= 0) continue;
 
+      const healthBefore = tank.health;
+
       // Bouclier en priorité
       let remainingDamage = damage;
 
@@ -145,10 +152,15 @@ export class TankManager {
         tank.health = Math.max(0, tank.health - remainingDamage);
       }
 
-      if (tank.health <= 0) {
+      if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
+        if (killerId) {
+          killsThisExplosion++;
+        }
       }
     }
+
+    return killsThisExplosion;
   }
 
   /**

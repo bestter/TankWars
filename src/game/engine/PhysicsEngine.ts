@@ -22,6 +22,8 @@ export interface Projectile {
   vx: number;
   vy: number;
   weaponId: WeaponId;
+  /** Who fired this (player id) for kill/damage attribution at round end */
+  ownerId?: string;
 }
 
 export interface ProjectileHitEvent {
@@ -47,6 +49,7 @@ export class PhysicsEngine {
     angle: number,
     power: number,
     weaponId: WeaponId,
+    ownerId?: string,
   ): void {
     const rad = (angle * Math.PI) / 180;
 
@@ -63,6 +66,7 @@ export class PhysicsEngine {
       vx,
       vy,
       weaponId,
+      ownerId,
     });
   }
 
@@ -129,7 +133,7 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage);
+      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId);
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }

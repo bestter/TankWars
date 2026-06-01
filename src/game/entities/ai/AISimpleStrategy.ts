@@ -42,13 +42,15 @@ export class AISimpleStrategy implements AIEngine {
 
     let angle: number;
 
+    // Safer trajectories (higher arc, more power) to reduce risk of self-damage
+    // while remaining simple/stupid as per Phase 1 requirements.
     if (isTargetToTheRight) {
-      angle = 30 + Math.random() * 30; // 30° → 60°
+      angle = 45 + Math.random() * 30; // 45° → 75° (more upward)
     } else {
-      angle = 120 + Math.random() * 30; // 120° → 150°
+      angle = 105 + Math.random() * 45; // 105° → 150° (more upward from the right side)
     }
 
-    const power = 35 + Math.random() * 40; // 35 → 75
+    const power = 60 + Math.random() * 30; // 60 → 90 (stronger shots for better range)
 
     return {
       angle: Math.round(angle * 10) / 10,
@@ -61,8 +63,8 @@ export class AISimpleStrategy implements AIEngine {
    * SimpleStrategy just fires a completely random safe shot.
    */
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 20 + Math.random() * 140; // anywhere between 20° and 160°
-    const power = 40 + Math.random() * 35;  // 40-75
+    const angle = 40 + Math.random() * 100; // 40° → 140°
+    const power = 55 + Math.random() * 30;  // 55-85 (safer)
     return {
       angle: Math.round(angle),
       power: Math.round(power),

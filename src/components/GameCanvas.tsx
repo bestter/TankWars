@@ -17,6 +17,12 @@ import type { CurrentTurnInfo } from '../game/engine/TurnManager';
 import { VGA_PALETTE, type FireCommand } from '../types/game';
 import { AISimpleStrategy } from '../game/entities/ai/AISimpleStrategy';
 import type { Player } from '../types/player';
+import { GameHUD } from './GameHUD';
+import { RoundSummary } from './RoundSummary';
+import { WeaponShop } from './WeaponShop';
+import type { WeaponId } from '../types/weapon';
+import { WEAPON_REGISTRY } from '../types/weapon';
+import type { GamePhase, RoundResult } from '../types/game';
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
@@ -28,8 +34,20 @@ export function GameCanvas() {
 
   const [wind, setWind] = useState(12);
   const [turnInfo, setTurnInfo] = useState<CurrentTurnInfo | null>(null);
-  const [winner, setWinner] = useState<import('../types/player').Player | null>(null);
+  const [winner, setWinner] = useState<Player | null>(null);
   const [showNewGameButton, setShowNewGameButton] = useState(false);
+
+  // React-owned high-level phase + round summary (per architecture: React owns phase/money/turns)
+  const [gamePhase, setGamePhase] = useState<GamePhase>('COMBAT');
+  const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
+  const [displayRound, setDisplayRound] = useState(1);
+
+  // === SHOP (boutique) state - sequential per living player ===
+  const [shopPlayers, setShopPlayers] = useState<Player[]>([]);
+  const [currentShopIndex, setCurrentShopIndex] = useState(0);
+
+  // Snapshot of players for safe UI rendering (avoids reading refs during render)
+  const [uiPlayers, setUiPlayers] = useState<Player[]>([]);
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -108,6 +126,7 @@ export function GameCanvas() {
 
     // Initialize players (this also calls setupInputListeners + starts first turn)
     engine.setPlayers(players);
+    setUiPlayers(players);
 
     // Inject the simple AI strategy
     engine.setAIEngine(new AISimpleStrategy());
@@ -128,15 +147,49 @@ export function GameCanvas() {
       setTurnInfo(info);
     };
 
-    // Game Over handling
+    // Game Over handling (takes precedence over SUMMARY)
     engine.onGameOver = (winningPlayer) => {
       setWinner(winningPlayer);
       setShowNewGameButton(false);
+      setGamePhase('GAME_OVER');
 
       // Show "New game ?" button after 7 seconds
       setTimeout(() => {
         setShowNewGameButton(true);
       }, 7000);
+    };
+
+    // === Round progression + end-of-match detection ===
+    // TurnManager already:
+    //   - increments currentRound when index wraps to 0
+    //   - skips dead players in nextTurn / startFirstTurn
+    //
+    // We only go to SUMMARY (earnings screen) when the match is over (0 or 1 survivor).
+    // While >1 players are alive, we simply continue in COMBAT across multiple rounds.
+    const tm = engine.getTurnManager();
+    tm.onTurnChange = (_player, round) => {
+      // Always keep turnInfo fresh
+      // (the engine already calls notifyHudUpdate which sets via onTurnHudUpdate)
+
+      if (round > displayRound) {
+        const aliveCount = engine.getTankManager().getAlivePlayers().length;
+
+        // Always reflect the current round number in the UI
+        setDisplayRound(round);
+
+        // Only trigger end-of-match summary when the game is effectively over
+        if (aliveCount <= 1 && gamePhase !== 'GAME_OVER') {
+          const res = engine.awardEndOfRoundEarnings();
+          setRoundResult(res);
+
+          // Celebration (reuses fireworks + fanfare without interfering with final GAME_OVER)
+          engine.triggerRoundCelebration();
+
+          tm.pauseForInterRound();
+          setGamePhase('SUMMARY');
+        }
+        // else: more than 1 player still alive → stay in COMBAT, keep shooting
+      }
     };
 
     engineRef.current = engine;
@@ -187,11 +240,11 @@ export function GameCanvas() {
       weaponId: 'MISSILE',
     };
 
-    engine.fireProjectile(from, command, 'player-demo');
+    engine.fireProjectile(from, command, 'player-demo'); // demo owner for attribution
   };
 
   // Helper to fire a specific weapon (for future UI)
-  const fireWeapon = (weaponId: import('../types/weapon').WeaponId) => {
+  const fireWeapon = (weaponId: WeaponId) => {
     const engine = engineRef.current;
     if (!engine) return;
 
@@ -202,6 +255,164 @@ export function GameCanvas() {
       weaponId,
     };
     engine.fireProjectile(from, command, 'player-demo');
+  };
+
+  // Weapon selection from HUD (clicks). Delegates to TurnManager (decoupled)
+  const handleWeaponSelect = (weaponId: WeaponId): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const tm = engine.getTurnManager();
+    tm.selectWeapon(weaponId);
+  };
+
+  // SUMMARY → SHOP transition (full sequential shop per spec)
+  const handleGoToShop = (): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    engine.getTurnManager().pauseForInterRound();
+
+    // Snapshot only living players for the shop phase (order preserved)
+    const living = engine.getTankManager().getAlivePlayers();
+    setShopPlayers(living);
+    setUiPlayers(living);
+    setCurrentShopIndex(0);
+    setGamePhase('SHOP');
+
+    // If the very first player in shop is an AI, process it immediately
+    if (living.length > 0 && !living[0].isHuman) {
+      // Small delay so the UI has time to render the SHOP phase if needed
+      setTimeout(() => processNextShopperIfAI(), 50);
+    }
+  };
+
+  // (handleStartNextRound removed — finishShopPhase now handles the transition cleanly)
+
+  // === Boutique handlers (mutation on the live Player objects, consistent with previous money awards) ===
+
+  /** Achat / vente d'une arme pour le joueur courant de la boutique */
+  /* eslint-disable react-hooks/immutability */
+  const handleShopBuySell = (weaponId: WeaponId, delta: 1 | -1): void => {
+    if (shopPlayers.length === 0) return;
+
+    // We get the live object from the engine snapshot (same reference the engine mutates)
+    const enginePlayers = engineRef.current?.getTankManager().getPlayers() ?? [];
+    const currentPlayer = enginePlayers.find((p) => p.id === shopPlayers[currentShopIndex]?.id) || shopPlayers[currentShopIndex];
+
+    if (!currentPlayer || !currentPlayer.isHuman) return;
+
+    const def = WEAPON_REGISTRY[weaponId];
+    if (!def) return;
+
+    const currentStock = currentPlayer.inventory?.[weaponId] ?? 0;
+
+    if (delta > 0) {
+      // Achat
+      if ((currentPlayer.money ?? 0) >= def.price) {
+        currentPlayer.money = (currentPlayer.money ?? 0) - def.price;
+        currentPlayer.inventory = {
+          ...currentPlayer.inventory,
+          [weaponId]: currentStock + 1,
+        };
+      }
+    } else {
+      // Vente (remboursement plein)
+      if (currentStock > 0) {
+        currentPlayer.money = (currentPlayer.money ?? 0) + def.price;
+        currentPlayer.inventory = {
+          ...currentPlayer.inventory,
+          [weaponId]: currentStock - 1,
+        };
+      }
+    }
+
+    // Force React re-render of the shop UI (we mutated the shared engine object)
+    setShopPlayers((prev) => [...prev]);
+  };
+
+  /** Le joueur humain courant a cliqué "Prêt" */
+  /* eslint-disable react-hooks/immutability */
+  const handleShopReady = (): void => {
+    advanceToNextShopper();
+  };
+
+  /** Logique d'achat automatique simple pour les IA (Phase 1 - stupide mais fonctionnel) */
+  const autoBuyForAI = (aiPlayer: Player): void => {
+    if (!aiPlayer || aiPlayer.isHuman) return;
+
+    // (affordable weapons computed inside the spending loop)
+
+    // Stratégie très simple : l'IA dépense jusqu'à 70% de son argent
+    // en achetant d'abord des armes plus chères (NUKE, CLUSTER) puis du basique
+    const preferredOrder: WeaponId[] = ['NUKE', 'CLUSTER', 'DRILLER', 'GRENADE', 'MISSILE'];
+
+    let spent = 0;
+    const budget = Math.floor((aiPlayer.money ?? 0) * 0.7);
+
+    for (const wid of preferredOrder) {
+      const def = WEAPON_REGISTRY[wid];
+      if (!def) continue;
+
+      while (
+        (aiPlayer.money ?? 0) >= def.price &&
+        spent + def.price <= budget &&
+        (aiPlayer.money ?? 0) > 80 // garde un peu d'argent
+      ) {
+        const currentStock = aiPlayer.inventory?.[wid] ?? 0;
+        aiPlayer.money = (aiPlayer.money ?? 0) - def.price;
+        aiPlayer.inventory = { ...aiPlayer.inventory, [wid]: currentStock + 1 };
+        spent += def.price;
+      }
+    }
+  };
+
+  /** Avance dans la séquence boutique (appelé par humain "Prêt" ou après traitement IA) */
+  const advanceToNextShopper = (): void => {
+    const nextIndex = currentShopIndex + 1;
+
+    if (nextIndex >= shopPlayers.length) {
+      // Tous les joueurs ont fait leurs achats → fin de la boutique
+      finishShopPhase();
+    } else {
+      setCurrentShopIndex(nextIndex);
+
+      // Si le suivant est une IA, on la traite immédiatement
+      const nextPlayer = shopPlayers[nextIndex];
+      if (nextPlayer && !nextPlayer.isHuman) {
+        setTimeout(() => processNextShopperIfAI(), 80);
+      }
+    }
+  };
+
+  /** Traite le shopper courant s'il s'agit d'une IA (achats auto + avance) */
+  const processNextShopperIfAI = (): void => {
+    if (shopPlayers.length === 0) return;
+    const current = shopPlayers[currentShopIndex];
+    if (!current || current.isHuman) return;
+
+    // IA achète automatiquement
+    autoBuyForAI(current);
+
+    // Passe au suivant
+    advanceToNextShopper();
+  };
+
+  /** Termine complètement la phase boutique et lance la nouvelle manche */
+  const finishShopPhase = (): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    // Réinitialise terrain + tanks (ancrage) + tours → COMBAT
+    engine.startNextRound();
+
+    // Refresh UI snapshot with the newly positioned living players
+    const freshLiving = engine.getTankManager().getAlivePlayers();
+    setUiPlayers(freshLiving);
+
+    setRoundResult(null);
+    setShopPlayers([]);
+    setCurrentShopIndex(0);
+    setGamePhase('COMBAT');
   };
 
   // Restart a brand new game
@@ -263,40 +474,16 @@ export function GameCanvas() {
     setWinner(null);
     setShowNewGameButton(false);
     setTurnInfo(null);
+    setGamePhase('COMBAT');
+    setRoundResult(null);
+    setDisplayRound(1);
+    setUiPlayers(newPlayers);
+    setShopPlayers([]);
+    setCurrentShopIndex(0);
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-      {/* === HUD : Angle et Puissance (comme dans les jeux originaux) === */}
-      <div style={{
-        backgroundColor: '#111111',
-        border: `2px solid ${VGA_PALETTE.GRAY}`,
-        padding: '6px 20px',
-        fontFamily: 'monospace',
-        color: VGA_PALETTE.WHITE,
-        minWidth: '420px',
-        textAlign: 'center',
-        fontSize: '14px',
-        marginBottom: '4px'
-      }}>
-        {turnInfo ? (
-          <>
-            <strong style={{ color: turnInfo.isHuman ? '#FF5555' : '#55FF55' }}>
-              {turnInfo.playerName}
-            </strong>
-            {'  |  '}
-            Angle: <strong style={{ color: VGA_PALETTE.CYAN }}>{turnInfo.angle}°</strong>
-            {'  |  '}
-            Power: <strong style={{ color: VGA_PALETTE.YELLOW }}>{turnInfo.power}</strong>
-            {turnInfo.isInputLocked && (
-              <span style={{ color: VGA_PALETTE.RED, marginLeft: 12 }}>[RESOLUTION...]</span>
-            )}
-          </>
-        ) : (
-          <span>Waiting for game start...</span>
-        )}
-      </div>
-
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ color: VGA_PALETTE.GRAY, fontSize: 13 }}>
           Wind: <strong style={{ color: VGA_PALETTE.CYAN }}>{wind}</strong>
@@ -333,6 +520,82 @@ export function GameCanvas() {
             background: '#000000',
           }}
         />
+
+        {/* Retro VGA HUD overlay (superposed on canvas) — only during active combat */}
+        {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
+          <GameHUD
+            turnInfo={turnInfo}
+            wind={wind}
+            onWeaponSelect={handleWeaponSelect}
+          />
+        )}
+
+        {/* Round Summary overlay (fin de manche) — keeps canvas + fireworks visible underneath */}
+        {gamePhase === 'SUMMARY' && (
+          <RoundSummary
+            round={displayRound}
+            players={uiPlayers}
+            result={roundResult}
+            onGoToShop={handleGoToShop}
+          />
+        )}
+
+        {/* Weapon Shop overlay — full sequential boutique (humans one-by-one + AI auto) */}
+        {gamePhase === 'SHOP' && shopPlayers.length > 0 && (
+          <>
+            {shopPlayers[currentShopIndex]?.isHuman ? (
+              <WeaponShop
+                player={shopPlayers[currentShopIndex]}
+                shopIndex={currentShopIndex}
+                totalShoppers={shopPlayers.length}
+                onBuySell={handleShopBuySell}
+                onReady={handleShopReady}
+              />
+            ) : (
+              // Pendant qu'une IA achète automatiquement (très rapide)
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '40%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 25,
+                  fontFamily: 'monospace',
+                  color: VGA_PALETTE.CYAN,
+                  background: 'rgba(0,0,0,0.8)',
+                  padding: '12px 24px',
+                  border: `2px solid ${VGA_PALETTE.CYAN}`,
+                  textAlign: 'center',
+                }}
+              >
+                L'IA <strong style={{ color: shopPlayers[currentShopIndex]?.tank.color }}>
+                  {shopPlayers[currentShopIndex]?.name}
+                </strong> fait ses achats...
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Phase indicator minimal pour SUMMARY seulement (le SHOP a maintenant son propre UI) */}
+        {gamePhase === 'SUMMARY' && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 6,
+              right: 6,
+              zIndex: 30,
+              fontSize: 9,
+              fontFamily: 'monospace',
+              color: VGA_PALETTE.CYAN,
+              background: 'rgba(0,0,0,0.6)',
+              padding: '1px 4px',
+              border: `1px solid ${VGA_PALETTE.CYAN}`,
+              pointerEvents: 'none',
+            }}
+          >
+            PHASE: {gamePhase}
+          </div>
+        )}
 
         {/* === GAME OVER OVERLAY === */}
         {winner && (
@@ -386,8 +649,8 @@ export function GameCanvas() {
       )}
 
       <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
-        <strong>Controls:</strong> ← → Adjust angle • ↑ ↓ Adjust power • SPACE to fire<br />
-        The AI will play automatically after your turn (with thinking delay)
+        <strong>Controls:</strong> ← → Adjust angle • ↑ ↓ Adjust power • SPACE to fire • A/E switch weapon<br />
+        Multiple combat rounds until only one (or zero) survivor remains
       </div>
     </div>
   );
