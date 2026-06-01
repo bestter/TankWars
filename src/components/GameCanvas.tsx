@@ -47,11 +47,26 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   // React-owned high-level phase + round summary (per architecture: React owns phase/money/turns)
   const [gamePhase, setGamePhase] = useState<GamePhase>('COMBAT');
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
-  const [displayRound, setDisplayRound] = useState(1);
+
+  // Logical manche number for SUMMARY title "FIN DE MANCHE N" (persistent across chained rounds)
+  const [currentManche, setCurrentManche] = useState(1);
+
+  // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
+  const gamePhaseRef = useRef<GamePhase>('COMBAT');
+
+  // Ref for round tracking (read inside onTurnChange callback which is registered once at mount;
+  // engine's internal round resets on each startNextRound, we use this to detect wraps within session)
+  const lastSeenEngineRoundRef = useRef(0);
 
   // === SHOP (boutique) state - sequential per living player ===
   const [shopPlayers, setShopPlayers] = useState<Player[]>([]);
   const [currentShopIndex, setCurrentShopIndex] = useState(0);
+
+  // Refs to avoid stale closures in the setTimeout-based AI shopping chain (process/advance).
+  // The shopping sequence uses async setTimeout recursion; direct state reads in those callbacks
+  // would see values from the render when the first timeout was scheduled.
+  const shopPlayersRef = useRef<Player[]>([]);
+  const currentShopIndexRef = useRef(0);
 
   // Snapshot of players for safe UI rendering (avoids reading refs during render)
   const [uiPlayers, setUiPlayers] = useState<Player[]>([]);
@@ -149,14 +164,17 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     engine.setWindForce(wind);
 
-    // Wire callbacks
+    // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
+    // while idle, causing massive spam during SHOP / between turns / SUMMARY).
     engine.onProjectileHit = (hit) => {
       console.log('[GameEngine] Hit:', hit.weaponId, 'at', hit.x.toFixed(1), hit.y.toFixed(1));
     };
 
-    engine.onAllProjectilesSettled = () => {
-      console.log('[GameEngine] All projectiles settled');
-    };
+    // Note: GameEngine.onAllProjectilesSettled is intentionally left unassigned here.
+    // The real "projectiles just settled" event for turn advancement is wired internally
+    // via connectToPhysics() → PhysicsEngine.onAllProjectilesSettled (transition-based only).
+    // The previous unconditional assignment was causing huge console spam (120 logs/sec)
+    // whenever count===0 (normal during SHOP AI purchases, SUMMARY, idle, etc.).
 
     // Listen to turn/HUD updates for real-time display
     engine.onTurnHudUpdate = (info: CurrentTurnInfo) => {
@@ -168,6 +186,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       setWinner(winningPlayer);
       setShowNewGameButton(false);
       setGamePhase('GAME_OVER');
+      gamePhaseRef.current = 'GAME_OVER';
 
       // Show "New game ?" button after 7 seconds
       setTimeout(() => {
@@ -175,40 +194,71 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       }, 7000);
     };
 
-    // === Round progression + end-of-match detection ===
-    // TurnManager already:
-    //   - increments currentRound when index wraps to 0
-    //   - skips dead players in nextTurn / startFirstTurn
-    //
-    // We only go to SUMMARY (earnings screen) when the match is over (0 or 1 survivor).
-    // While >1 players are alive, we simply continue in COMBAT across multiple rounds.
+    // Draw (partie nulle) - 0 survivors
+    engine.onDraw = () => {
+      setWinner(null);
+      setShowNewGameButton(false);
+      setGamePhase('GAME_OVER');
+      gamePhaseRef.current = 'GAME_OVER';
+
+      setTimeout(() => {
+        setShowNewGameButton(true);
+      }, 7000);
+    };
+
+    // === Round progression + end-of-manche chaining ===
+    // TurnManager increments currentRound on wrap (full player cycle = end of a "manche").
+    // We trigger the inter-round SUMMARY (for chaining) only when >=2 players are still alive.
+    // If the round wraps with 0 or 1 survivor, we treat it as match end (draw or win)
+    // instead of starting a pointless new "manche".
     const tm = engine.getTurnManager();
     tm.onTurnChange = (_player, round) => {
       // Always keep turnInfo fresh
       // (the engine already calls notifyHudUpdate which sets via onTurnHudUpdate)
 
-      if (round > displayRound) {
-        const aliveCount = engine.getTankManager().getAlivePlayers().length;
+      if (round > lastSeenEngineRoundRef.current) {
+        lastSeenEngineRoundRef.current = round;
 
-        // Always reflect the current round number in the UI
-        setDisplayRound(round);
+        // Trigger SUMMARY (fin de manche) after each full cycle to support "Jouer la manche suivante".
+        // Uses ref to avoid stale gamePhase from mount-time closure.
+        // (We intentionally ignore alive count here: chaining works for survivors even if >1 alive;
+        // when <=1 the GAME_OVER path from engine will take precedence.)
+        if (round >= 2 && gamePhaseRef.current !== 'GAME_OVER') {
+          const aliveCount = engine.getTankManager().getAlivePlayers().length;
 
-        // Only trigger end-of-match summary when the game is effectively over
-        if (aliveCount <= 1 && gamePhase !== 'GAME_OVER') {
-          const res = engine.awardEndOfRoundEarnings();
-          setRoundResult(res);
+          if (aliveCount >= 2) {
+            // Normal inter-round chaining: award earnings, show SUMMARY so players can shop
+            // and continue the match on new terrain with preserved money/inventory.
+            const res = engine.awardEndOfRoundEarnings();
+            setRoundResult(res);
 
-          // Celebration (reuses fireworks + fanfare without interfering with final GAME_OVER)
-          engine.triggerRoundCelebration();
+            engine.triggerRoundCelebration();
 
-          tm.pauseForInterRound();
-          setGamePhase('SUMMARY');
+            tm.pauseForInterRound();
+            setGamePhase('SUMMARY');
+            gamePhaseRef.current = 'SUMMARY';
+          } else {
+            // The round wrapped but the match is already over (0 or 1 survivor).
+            // This can happen if everyone died on the last shot of the cycle.
+            // Award what we can, show final SUMMARY (UI will say "Aucun survivant" if 0).
+            // Do not start a new chaining cycle.
+            const res = engine.awardEndOfRoundEarnings();
+            setRoundResult(res);
+            tm.pauseForInterRound();
+            setGamePhase('SUMMARY');
+            gamePhaseRef.current = 'SUMMARY';
+          }
         }
-        // else: more than 1 player still alive → stay in COMBAT, keep shooting
+        // else: round==1 after startNextRound (new session) → stay in COMBAT
       }
     };
 
     engineRef.current = engine;
+
+    // Initialize tracking refs (first onTurnChange for round=1 happens inside setPlayers before listener assign,
+    // but subsequent wraps and post-startNextRound calls will use these)
+    lastSeenEngineRoundRef.current = 1;
+    gamePhaseRef.current = 'COMBAT';
 
     // Start the internal physics loop
     engine.start();
@@ -238,6 +288,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     const engine = engineRef.current;
     engine?.setWindForce(wind);
   }, [wind]);
+
+  // Sync gamePhaseRef to avoid stale values inside onTurnChange / engine callbacks (registered once in mount effect)
+  useEffect(() => {
+    gamePhaseRef.current = gamePhase;
+  }, [gamePhase]);
 
   // === INPUT: Click to fire test shot ===
   const handleCanvasClick = (/* event: React.MouseEvent<HTMLCanvasElement> */): void => {
@@ -291,14 +346,50 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // Snapshot only living players for the shop phase (order preserved)
     const living = engine.getTankManager().getAlivePlayers();
     setShopPlayers(living);
+    shopPlayersRef.current = living;
     setUiPlayers(living);
     setCurrentShopIndex(0);
+    currentShopIndexRef.current = 0;
     setGamePhase('SHOP');
+    gamePhaseRef.current = 'SHOP';
+
+    // Guard: if no one left to shop (pure draw), don't enter broken shop state
+    if (living.length === 0) {
+      setGamePhase('GAME_OVER');
+      gamePhaseRef.current = 'GAME_OVER';
+      setTimeout(() => setShowNewGameButton(true), 1000);
+      return;
+    }
 
     // If the very first player in shop is an AI, process it immediately
-    if (living.length > 0 && !living[0].isHuman) {
+    if (!living[0].isHuman) {
       // Small delay so the UI has time to render the SHOP phase if needed
       setTimeout(() => processNextShopperIfAI(), 50);
+    }
+  };
+
+  /**
+   * Handler for the big "Jouer la manche suivante" button in SUMMARY.
+   * Reuses the existing SHOP flow: this preserves money/inventory (earnings from award already applied),
+   * lets players buy, then finishShopPhase calls startNextRound (new terrain via TerrainManager,
+   * spawnTanks for survivors only with health reset + random reposition minDist 100px) + COMBAT.
+   */
+  const handleNextRound = (): void => {
+    handleGoToShop();
+  };
+
+  /**
+   * Handler for the discreet "New Game (Revenir au menu)" button.
+   * Fully clears match history (reset engine), resets scores/money (by discarding state),
+   * switches parent App to MENU phase (shows welcome/config screen).
+   */
+  const handleNewGameFromSummary = (): void => {
+    const engine = engineRef.current;
+    if (engine) {
+      engine.resetGame();
+    }
+    if (onReturnToMenu) {
+      onReturnToMenu();
     }
   };
 
@@ -313,7 +404,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     // We get the live object from the engine snapshot (same reference the engine mutates)
     const enginePlayers = engineRef.current?.getTankManager().getPlayers() ?? [];
-    const currentPlayer = enginePlayers.find((p) => p.id === shopPlayers[currentShopIndex]?.id) || shopPlayers[currentShopIndex];
+    const idx = currentShopIndexRef.current;
+    const currentPlayer = enginePlayers.find((p) => p.id === shopPlayersRef.current[idx]?.id) || shopPlayersRef.current[idx];
 
     if (!currentPlayer || !currentPlayer.isHuman) return;
 
@@ -384,16 +476,18 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
   /** Avance dans la séquence boutique (appelé par humain "Prêt" ou après traitement IA) */
   const advanceToNextShopper = (): void => {
-    const nextIndex = currentShopIndex + 1;
+    const currentLen = shopPlayersRef.current.length;
+    const nextIndex = currentShopIndexRef.current + 1;
 
-    if (nextIndex >= shopPlayers.length) {
+    if (nextIndex >= currentLen) {
       // Tous les joueurs ont fait leurs achats → fin de la boutique
       finishShopPhase();
     } else {
       setCurrentShopIndex(nextIndex);
+      currentShopIndexRef.current = nextIndex;
 
-      // Si le suivant est une IA, on la traite immédiatement
-      const nextPlayer = shopPlayers[nextIndex];
+      // Si le suivant est une IA, on la traite immédiatement (using fresh ref data)
+      const nextPlayer = shopPlayersRef.current[nextIndex];
       if (nextPlayer && !nextPlayer.isHuman) {
         setTimeout(() => processNextShopperIfAI(), 80);
       }
@@ -402,8 +496,10 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
   /** Traite le shopper courant s'il s'agit d'une IA (achats auto + avance) */
   const processNextShopperIfAI = (): void => {
-    if (shopPlayers.length === 0) return;
-    const current = shopPlayers[currentShopIndex];
+    const currentLen = shopPlayersRef.current.length;
+    if (currentLen === 0) return;
+    const idx = currentShopIndexRef.current;
+    const current = shopPlayersRef.current[idx];
     if (!current || current.isHuman) return;
 
     // IA achète automatiquement
@@ -427,8 +523,18 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     setRoundResult(null);
     setShopPlayers([]);
+    shopPlayersRef.current = [];
     setCurrentShopIndex(0);
+    currentShopIndexRef.current = 0;
+
+    // Reset engine-round tracking ref for the new combat session (so round=1 after reset does not re-trigger SUMMARY)
+    lastSeenEngineRoundRef.current = 0;
+
+    // Advance logical manche for next SUMMARY title ("FIN DE MANCHE N")
+    setCurrentManche((prev) => prev + 1);
+
     setGamePhase('COMBAT');
+    gamePhaseRef.current = 'COMBAT';
   };
 
   // Restart a brand new game
@@ -486,16 +592,20 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     engine.setPlayers(newPlayers);
     engine.setAIEngine(new AISimpleStrategy());
 
-    // Reset local UI state
+    // Reset local UI state + round tracking refs (for clean new match)
     setWinner(null);
     setShowNewGameButton(false);
     setTurnInfo(null);
     setGamePhase('COMBAT');
+    gamePhaseRef.current = 'COMBAT';
     setRoundResult(null);
-    setDisplayRound(1);
+    lastSeenEngineRoundRef.current = 0;
+    setCurrentManche(1);
     setUiPlayers(newPlayers);
     setShopPlayers([]);
+    shopPlayersRef.current = [];
     setCurrentShopIndex(0);
+    currentShopIndexRef.current = 0;
   };
 
   return (
@@ -560,10 +670,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         {/* Round Summary overlay (fin de manche) — keeps canvas + fireworks visible underneath */}
         {gamePhase === 'SUMMARY' && (
           <RoundSummary
-            round={displayRound}
+            round={currentManche}
             players={uiPlayers}
             result={roundResult}
-            onGoToShop={handleGoToShop}
+            onNextRound={handleNextRound}
+            onNewGame={handleNewGameFromSummary}
           />
         )}
 
@@ -597,6 +708,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         )}
 
         {/* === GAME OVER OVERLAY === */}
+        {/* For draws (winner === null via onDraw), we rely on SUMMARY showing "Aucun survivant"
+            or the delayed New Game button. No big colored text to avoid null access. */}
         {winner && (
           <div
             style={{

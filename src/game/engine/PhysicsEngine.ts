@@ -128,6 +128,10 @@ export class PhysicsEngine {
     const blastRadius = weapon?.blastRadius ?? 28;
     const maxDamage = weapon?.damage ?? 35;
 
+    console.log(
+      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? 'unknown'}`
+    );
+
     // 1. Détruire le terrain
     terrainManager.destroyTerrain(p.x, p.y, blastRadius);
 

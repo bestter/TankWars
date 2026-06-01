@@ -4,6 +4,10 @@
  * Retro VGA-style centered overlay shown when GamePhase === 'SUMMARY' (fin de manche).
  * Displays earnings, survivors, and cumulative money (the "score").
  *
+ * Updated for manche chaining:
+ * - Big primary button "Jouer la manche suivante" → preserves players/scores/money/inventory, new terrain, reset health, reposition.
+ * - Small discreet "New Game (Revenir au menu)" → full reset + MENU phase.
+ *
  * - Thick VGA borders, monospace, high-contrast palette (Cyan/Magenta/Green/Yellow).
  * - Reuses the live canvas + fireworks underneath (per spec: do not clear animation/music).
  * - Purely presentational; all logic (awards, phase) lives in GameEngine + GameCanvas (decoupled).
@@ -18,10 +22,13 @@ export interface RoundSummaryProps {
   /** Live players from engine (money has already been mutated by awardEndOfRoundEarnings) */
   players: ReadonlyArray<Player>;
   result: RoundResult | null;
-  onGoToShop: () => void;
+  /** Gros bouton principal : enchaîne la manche en conservant scores/argent/inventaire (passe par SHOP) */
+  onNextRound: () => void;
+  /** Bouton discret : reset complet + retour MENU (nouvelle partie) */
+  onNewGame: () => void;
 }
 
-export function RoundSummary({ round, players, result, onGoToShop }: RoundSummaryProps) {
+export function RoundSummary({ round, players, result, onNextRound, onNewGame }: RoundSummaryProps) {
   const alivePlayers = players.filter((p) => !p.tank.isDead);
   const sorted = [...alivePlayers].sort((a, b) => (b.money ?? 0) - (a.money ?? 0));
 
@@ -112,12 +119,34 @@ export function RoundSummary({ round, players, result, onGoToShop }: RoundSummar
         Terrain détruit : ~{result?.terrainDestroyed ?? 0} unités
       </div>
 
-      {/* Big action button (VGA retro style, identical language to New Game button) */}
+      {/* Gros bouton principal pour enchaîner les manches (conserve progression: scores, argent, inventaire) */}
       <button
-        onClick={onGoToShop}
+        onClick={onNextRound}
         className="retro-btn"
+        style={{
+          fontSize: '15px',
+          padding: '11px 28px',
+          minWidth: 260,
+        }}
       >
-        Aller à la Boutique →
+        Jouer la manche suivante
+      </button>
+
+      {/* Bouton discret et petit : New Game complet (reset + retour menu) */}
+      <button
+        onClick={onNewGame}
+        style={{
+          marginTop: 10,
+          fontSize: '10px',
+          padding: '3px 10px',
+          backgroundColor: 'transparent',
+          border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
+          color: VGA_PALETTE.GRAY,
+          cursor: 'pointer',
+          letterSpacing: 0.5,
+        }}
+      >
+        New Game (Revenir au menu)
       </button>
 
       <div style={{ fontSize: '12px', color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}>

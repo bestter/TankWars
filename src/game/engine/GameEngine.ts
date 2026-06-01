@@ -61,6 +61,10 @@ export class GameEngine {
 
   private isRunning = false;
 
+  // For transition-based "projectiles just settled" detection (avoids calling onAllProjectilesSettled
+  // every single frame while idle, which was causing log spam during SHOP/SUMMARY/idle periods).
+  private previousProjectileCount = 0;
+
   // Game over state
   private gameOver = false;
   private winner: import('../../types/player').Player | null = null;
@@ -84,6 +88,9 @@ export class GameEngine {
   /** Snapshot of alive player IDs just before the last shot (for per-shot kill attribution via diff) */
   private aliveAtLastShot: Set<string> = new Set();
 
+  // Debug: accumulate death reasons to produce a clear summary at game end (especially for "partie nulle")
+  private deathReasons: Record<string, Array<{ cause: string; info?: string; round?: number }>> = {};
+
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
   public onAllProjectilesSettled?: () => void;
@@ -94,6 +101,9 @@ export class GameEngine {
 
   /** Called when only one player remains alive */
   public onGameOver?: (winner: import('../../types/player').Player) => void;
+
+  /** Called when all players are dead (draw / partie nulle) */
+  public onDraw?: () => void;
 
   constructor(
     width: number,
@@ -108,6 +118,11 @@ export class GameEngine {
 
     this.physicsEngine = new PhysicsEngine();
     this.tankManager = new TankManager();
+
+    // Wire debug death recorder so we can produce a rich summary at game end
+    this.tankManager.onPlayerDied = (playerId, cause, details) => {
+      this.recordDeath(playerId, cause, details);
+    };
 
     // Crée le TurnManager avec un callback de tir
     this.turnManager = new TurnManager(
@@ -221,6 +236,10 @@ export class GameEngine {
 
     this.currentFirerId = ownerId;
 
+    console.log(
+      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) angle=${command.angle} power=${command.power}`
+    );
+
     // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
     this.aliveAtLastShot = new Set(
       this.tankManager.getAlivePlayers().map((p) => p.id),
@@ -324,6 +343,9 @@ export class GameEngine {
     this.roundTerrainDestroyed = 0;
     this.currentFirerId = null;
     this.aliveAtLastShot.clear();
+
+    // Reset projectile settlement tracker (physics.clear() was just called)
+    this.previousProjectileCount = 0;
   }
 
   // === Game Loop ===
@@ -381,19 +403,59 @@ export class GameEngine {
     // Notification pour le layer React (interpolation, debug, etc.)
     this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
 
-    // Détection de fin de volée
-    if (this.physicsEngine.count === 0) {
+    // Détection de fin de volée (transition only: previous > 0 → current === 0).
+    // This prevents spamming the callback (and any attached handlers) 120 times per second
+    // during idle periods (SHOP, SUMMARY, between turns, etc.).
+    const currentCount = this.physicsEngine.count;
+    if (this.previousProjectileCount > 0 && currentCount === 0) {
       this.onAllProjectilesSettled?.();
+      // Also explicitly notify the PhysicsEngine's settlement callback (the one wired to TurnManager
+      // for turn advancement). This gives a second reliable path in case the internal checkSettlement
+      // in updateProjectiles had any edge-case miss (clear during startNextRound, etc.).
+      this.physicsEngine.onAllProjectilesSettled?.();
     }
+    this.previousProjectileCount = currentCount;
 
     // === Game Over Check ===
     if (!this.gameOver) {
-      const winner = this.tankManager.getWinner();
-      if (winner) {
+      const alivePlayers = this.tankManager.getAlivePlayers();
+      const aliveCount = alivePlayers.length;
+
+      if (aliveCount === 1) {
+        const winner = this.tankManager.getWinner();
+        if (winner) {
+          const losers = this.tankManager.getPlayers().filter(p => p.id !== winner.id).map(p => p.name);
+          this.gameOver = true;
+          this.winner = winner;
+          this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
+          console.log(`[GAME OVER] WINNER: ${winner.name} | LOSERS: ${losers.join(', ') || 'none'}`);
+          this.onGameOver?.(winner);
+        }
+      } else if (aliveCount === 0) {
+        // Draw / "partie nulle"
+        const allPlayers = this.tankManager.getPlayers().map(p => p.name);
         this.gameOver = true;
-        this.winner = winner;
-        this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
-        this.onGameOver?.(winner);
+        this.winner = null;
+
+        // === Résumé clair des causes de mort ===
+        console.log(`[GAME OVER] DRAW (partie nulle) - all players dead: ${allPlayers.join(', ')}`);
+        console.log('=== RÉSUMÉ DES CAUSES DE MORT ===');
+        const playerList = this.tankManager.getPlayers();
+        for (const p of playerList) {
+          const reasons = this.deathReasons[p.id] || [];
+          if (reasons.length === 0) {
+            console.log(`  - ${p.name}: aucune mort enregistrée (peut-être tué avant le tracking ou spawn)`);
+            continue;
+          }
+          console.log(`  - ${p.name}:`);
+          for (const r of reasons) {
+            const roundInfo = r.round ? ` (round ~${r.round})` : '';
+            console.log(`      • ${r.cause}${roundInfo}: ${r.info ?? ''}`);
+          }
+        }
+        console.log('==================================');
+
+        this.onDraw?.();
       }
     }
   }
@@ -433,6 +495,7 @@ export class GameEngine {
   // Utility
   public clearProjectiles(): void {
     this.physicsEngine.clear();
+    this.previousProjectileCount = 0;
   }
 
   /** Starts a fireworks celebration above the winner */
@@ -620,6 +683,18 @@ export class GameEngine {
     return this.winner;
   }
 
+  /** Record why a player died (used for end-of-game summary, especially for "partie nulle") */
+  public recordDeath(playerId: string, cause: string, info?: string): void {
+    if (!this.deathReasons[playerId]) {
+      this.deathReasons[playerId] = [];
+    }
+    this.deathReasons[playerId].push({
+      cause,
+      info,
+      round: (this.turnManager as any)?.currentRound ?? undefined, // safe access for debug
+    });
+  }
+
   /** Fully resets the game for a new match */
   public resetGame(): void {
     this.stopVictoryMusic();
@@ -638,6 +713,12 @@ export class GameEngine {
     this.roundTerrainDestroyed = 0;
     this.currentFirerId = null;
     this.aliveAtLastShot.clear();
+
+    // Reset projectile settlement tracker
+    this.previousProjectileCount = 0;
+
+    // Clear death reasons for new match
+    this.deathReasons = {};
 
     // Note: Players should be re-set via setPlayers() after calling this
   }

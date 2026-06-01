@@ -12,6 +12,9 @@ import { VGA_PALETTE } from '../../types/game';
 export class TankManager {
   private players: Player[] = [];
 
+  /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
+  public onPlayerDied?: (playerId: string, cause: 'explosion' | 'burial', details: string) => void;
+
   /** Remplace et prépare la liste des joueurs pour le combat */
   public setPlayers(players: Player[]): void {
     this.players = players;
@@ -34,11 +37,14 @@ export class TankManager {
   /**
    * Place les tanks avec positions X aléatoires (distance minimale garantie).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
+   * Seuls les joueurs vivants (!isDead) sont repositionnés et réinitialisés (health=100, isDead=false).
+   * Les joueurs morts conservent leur état isDead pour permettre l'enchaînement de manches.
    */
   public spawnTanks(players: Player[], terrain: TerrainManager): void {
     this.players = players;
 
-    const count = players.length;
+    const activePlayers = players.filter((p) => !p.tank.isDead);
+    const count = activePlayers.length;
     if (count < 2 || count > 4) {
       console.warn('TankManager: recommended player count is between 2 and 4');
     }
@@ -48,10 +54,10 @@ export class TankManager {
     const maxX = terrain.width - margin;
     const minDist = 100;
 
-    // Génération de positions X aléatoires avec distance minimale garantie
+    // Génération de positions X aléatoires (uniquement pour les survivants)
     const xs = this.generateRandomPositions(count, minX, maxX, minDist);
 
-    players.forEach((player, index) => {
+    activePlayers.forEach((player, index) => {
       const tank = player.tank;
 
       // Position X aléatoire (triée pour cohérence gauche-droite)
@@ -62,7 +68,7 @@ export class TankManager {
 
       tank.position = { x, y: groundY };
 
-      // Réinitialisation de l'état de combat
+      // Réinitialisation de l'état de combat (uniquement pour vivants)
       tank.health = tank.maxHealth;
       tank.shield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
       tank.maxShield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
@@ -71,6 +77,8 @@ export class TankManager {
       // Angle de départ par défaut (sensé pour le côté du terrain)
       tank.angle = x < terrain.width / 2 ? 45 : 135;
     });
+
+    // Les joueurs morts (isDead=true) conservent leur flag et ne sont pas repositionnés
   }
 
   /**
@@ -147,6 +155,10 @@ export class TankManager {
    * Vérifie si des tanks sont enterrés sous le plancher.
    * Si la position Y du tank est supérieure à la hauteur du terrain à sa position X,
    * le tank est considéré comme battu (enterré).
+   *
+   * Ajout d'une petite tolérance (5px) pour éviter les morts instantanées dues à des
+   * cratères mineurs ou des ajustements de terrain après le premier tir de chaque joueur.
+   * Cela permet des parties plus longues avant une "partie nulle" accidentelle.
    */
   public checkTankBurial(terrain: TerrainManager): void {
     for (const player of this.players) {
@@ -155,9 +167,16 @@ export class TankManager {
 
       const groundY = terrain.getHeightAt(tank.position.x);
 
-      // Si le tank est en dessous du plancher → il est battu
-      if (tank.position.y > groundY) {
+      // Tolérance pour éviter les enterrements trop agressifs sur les premiers tirs
+      // (cratères du premier cycle + ajustements de position).
+      const burialThreshold = groundY + 5;
+      if (tank.position.y > burialThreshold) {
         tank.isDead = true;
+        const details = `y=${tank.position.y.toFixed(1)} > ground=${groundY.toFixed(1)} (threshold +5)`;
+        console.log(
+          `[DEATH] player=${player.name} (id=${player.id}) cause=burial pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) groundY=${groundY.toFixed(1)}`
+        );
+        this.onPlayerDied?.(player.id, 'burial', details);
       }
     }
   }
@@ -210,6 +229,11 @@ export class TankManager {
 
       if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
+        const details = `explosion by ${killerId ?? 'unknown'} (damage=${damage.toFixed(1)})`;
+        console.log(
+          `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? 'unknown'}`
+        );
+        this.onPlayerDied?.(player.id, 'explosion', details);
         if (killerId) {
           killsThisExplosion++;
         }

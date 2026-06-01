@@ -44,6 +44,20 @@ export class TurnManager {
   private resolutionTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private readonly AI_RESOLUTION_TIMEOUT_MS = 10000; // 10 seconds safety net
 
+  // Safety net for "settlement did not advance the turn after AI shot" (4.5s after firing)
+  private settlementSafetyTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  // General recovery watchdog: if the turn stays locked for too long with no activity,
+  // force advance. This prevents hard "RESOLVING forever" when settlement events are missed
+  // (physics edge cases, rapid chaining, etc.).
+  private turnLockSafetyTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private readonly TURN_LOCK_SAFETY_MS = 3200; // ~3.2s recovery for human→AI handoff or general lockups
+
+  // Used to abort async AI turns that were started in combat but whose promises
+  // resolve after we have paused for SUMMARY / SHOP. Prevents "ghost" AI shots
+  // and watchdog triggers during the shop phase.
+  private aiTurnGeneration = 0;
+
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
   public onTurnChange?: (player: Player, round: number) => void;
@@ -90,10 +104,20 @@ export class TurnManager {
     this.listenersAttached = false;
   }
 
-  /** Pause input/AI for SUMMARY/SHOP phase (called from React layer) */
+  /** Pause input/AI for SUMMARY/SHOP phase (called from React layer).
+   *  Also clears any pending AI safety timers so they don't fire during pause or interfere with the next manche.
+   */
   public pauseForInterRound(): void {
     this.isInputLocked = true;
+    this.isProcessingAI = false;
+    this.clearResolutionTimeout();
+    this.clearSettlementSafetyTimeout();
+    this.clearTurnLockSafetyTimeout();
     this.removeInputListeners();
+
+    // Invalidate any in-flight async AI turns so they abort before firing
+    // or arming watchdogs during SUMMARY/SHOP.
+    this.aiTurnGeneration++;
     // AI handling will see locked state and skip
   }
 
@@ -199,6 +223,10 @@ export class TurnManager {
     // Verrouille les inputs jusqu'à la fin de la résolution
     this.isInputLocked = true;
     this.notifyHudUpdate();
+
+    // Arm recovery watchdog in case the settlement event is missed for any reason
+    // (prevents permanent "RESOLVING..." after human shots, especially vs AI)
+    this.armTurnLockSafetyWatchdog();
   }
 
   /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles) */
@@ -267,6 +295,8 @@ export class TurnManager {
     // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
     this.isInputLocked = false;
     this.clearResolutionTimeout(); // Clear any pending AI resolution timeout
+    this.clearSettlementSafetyTimeout();
+    this.clearTurnLockSafetyTimeout();
 
     const newPlayer = this.getCurrentPlayer();
 
@@ -340,11 +370,16 @@ export class TurnManager {
   /** Réinitialise complètement le gestionnaire de tours */
   public reset(): void {
     this.clearResolutionTimeout();
+    this.clearSettlementSafetyTimeout();
+    this.clearTurnLockSafetyTimeout();
     this.currentPlayerIndex = 0;
     this.currentRound = 1;
     this.isInputLocked = false;
     this.isProcessingAI = false;
     this.removeInputListeners();
+
+    // Invalidate any pending async AI activity
+    this.aiTurnGeneration++;
   }
 
   /**
@@ -363,6 +398,13 @@ export class TurnManager {
     this.isInputLocked = true;
     this.notifyHudUpdate();
 
+    // Capture generation so we can detect if the turn was aborted (e.g. round ended
+    // and we went to SUMMARY/SHOP while this async function was awaiting).
+    const turnGeneration = this.aiTurnGeneration;
+
+    // Arm general recovery watchdog (in addition to AI-specific ones)
+    this.armTurnLockSafetyWatchdog();
+
     // Start safety timeout for auto-resolution
     this.startResolutionTimeout(player);
 
@@ -380,12 +422,24 @@ export class TurnManager {
         this.terrainManager,
       );
 
+      // Abort if the game moved on (SUMMARY/SHOP) while we were awaiting the strategy.
+      if (this.aiTurnGeneration !== turnGeneration) {
+        this.isProcessingAI = false;
+        return;
+      }
+
       player.tank.angle = Math.max(0, Math.min(180, decision.angle));
       player.tank.power = Math.max(0, Math.min(100, decision.power));
       this.notifyHudUpdate();
 
       // Artificial thinking delay
       await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      // Abort before firing if we have been paused for inter-round in the meantime.
+      if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked) {
+        this.isProcessingAI = false;
+        return;
+      }
 
       const command: FireCommand = {
         angle: player.tank.angle,
@@ -401,18 +455,30 @@ export class TurnManager {
       // Extra safety net for settlement detection edge cases (e.g. unusual trajectories after terrain destruction):
       // After a successful AI shot, if we are still the current locked player after a few seconds,
       // force the turn to advance so the human gets their turns reliably.
-      setTimeout(() => {
+      // Store the ID so we can cancel it cleanly on pause/reset (prevents stale forces during SUMMARY/SHOP).
+      // Also guard with generation so a stale safety timer from an aborted turn doesn't fire.
+      if (this.aiTurnGeneration !== turnGeneration) {
+        this.isProcessingAI = false;
+        return;
+      }
+
+      this.clearSettlementSafetyTimeout();
+      const safetyGeneration = this.aiTurnGeneration;
+      this.settlementSafetyTimeoutId = setTimeout(() => {
+        if (this.aiTurnGeneration !== safetyGeneration) return;
         const stillCurrent = this.getCurrentPlayer();
         if (stillCurrent?.id === player.id && this.isInputLocked) {
           console.warn(`[TurnManager] Settlement did not advance turn for AI ${player.name} — forcing nextTurn as safety net`);
           this.isInputLocked = false;
           this.clearResolutionTimeout();
+          this.clearSettlementSafetyTimeout();
           this.nextTurn();
         }
       }, 4500);
     } catch (error) {
       console.error('[TurnManager] AI turn failed:', error);
       this.clearResolutionTimeout();
+      this.clearSettlementSafetyTimeout();
       setTimeout(() => this.nextTurn(), 1000);
     } finally {
       this.isProcessingAI = false;
@@ -451,6 +517,7 @@ export class TurnManager {
           // No fallback → just skip the turn (forfeit)
           console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
           this.isInputLocked = false;
+          this.clearSettlementSafetyTimeout();
           this.nextTurn();
         }
       }
@@ -463,5 +530,67 @@ export class TurnManager {
       clearTimeout(this.resolutionTimeoutId);
       this.resolutionTimeoutId = null;
     }
+    // Also clear the settlement safety one when clearing resolution timers (common call sites)
+    this.clearSettlementSafetyTimeout();
+  }
+
+  /** Clears the post-AI-shot settlement safety timer (prevents stale forces during SUMMARY/SHOP pauses) */
+  private clearSettlementSafetyTimeout(): void {
+    if (this.settlementSafetyTimeoutId) {
+      clearTimeout(this.settlementSafetyTimeoutId);
+      this.settlementSafetyTimeoutId = null;
+    }
+  }
+
+  /** Clears the general turn-lock recovery watchdog */
+  private clearTurnLockSafetyTimeout(): void {
+    if (this.turnLockSafetyTimeoutId) {
+      clearTimeout(this.turnLockSafetyTimeoutId);
+      this.turnLockSafetyTimeoutId = null;
+    }
+  }
+
+  /**
+   * Arms (or re-arms) a recovery timer that will force the turn to advance
+   * if the lock stays on for too long. This protects against missed settlement
+   * notifications (physics edge cases, rapid round transitions, etc.).
+   * The timer is automatically cleared on successful nextTurn / unlock.
+   */
+  private armTurnLockSafetyWatchdog(): void {
+    this.clearTurnLockSafetyTimeout();
+
+    const currentPlayerAtArm = this.getCurrentPlayer();
+    if (!currentPlayerAtArm) return;
+
+    const generationAtArm = this.aiTurnGeneration;
+
+    this.turnLockSafetyTimeoutId = setTimeout(() => {
+      // If the turn generation changed since we armed (e.g. we paused for SUMMARY/SHOP),
+      // this watchdog is stale → just clean up, do not force.
+      if (this.aiTurnGeneration !== generationAtArm) {
+        this.clearTurnLockSafetyTimeout();
+        return;
+      }
+
+      // Only act if we are *still* on the same player and still locked
+      const stillCurrent = this.getCurrentPlayer();
+      if (
+        stillCurrent?.id === currentPlayerAtArm.id &&
+        this.isInputLocked
+      ) {
+        console.warn(
+          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent.name} — forcing nextTurn (missed settlement?)`
+        );
+        this.isInputLocked = false;
+        this.clearResolutionTimeout();
+        this.clearSettlementSafetyTimeout();
+        this.clearTurnLockSafetyTimeout();
+        this.aiTurnGeneration++; // invalidate any other stale AI timers associated with this turn
+        this.nextTurn();
+      } else {
+        // Stale timer, just clean up
+        this.clearTurnLockSafetyTimeout();
+      }
+    }, this.TURN_LOCK_SAFETY_MS);
   }
 }
