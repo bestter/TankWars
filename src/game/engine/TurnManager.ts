@@ -51,7 +51,7 @@ export class TurnManager {
   // force advance. This prevents hard "RESOLVING forever" when settlement events are missed
   // (physics edge cases, rapid chaining, etc.).
   private turnLockSafetyTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  private readonly TURN_LOCK_SAFETY_MS = 3200; // ~3.2s recovery for human→AI handoff or general lockups
+  private readonly TURN_LOCK_SAFETY_MS = 12000; // ~12s recovery for human→AI handoff or general lockups
 
   // Used to abort async AI turns that were started in combat but whose promises
   // resolve after we have paused for SUMMARY / SHOP. Prevents "ghost" AI shots

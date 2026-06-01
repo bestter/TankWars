@@ -37,14 +37,12 @@ export class TankManager {
   /**
    * Place les tanks avec positions X aléatoires (distance minimale garantie).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
-   * Seuls les joueurs vivants (!isDead) sont repositionnés et réinitialisés (health=100, isDead=false).
-   * Les joueurs morts conservent leur état isDead pour permettre l'enchaînement de manches.
+   * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
   public spawnTanks(players: Player[], terrain: TerrainManager): void {
     this.players = players;
 
-    const activePlayers = players.filter((p) => !p.tank.isDead);
-    const count = activePlayers.length;
+    const count = players.length;
     if (count < 2 || count > 4) {
       console.warn('TankManager: recommended player count is between 2 and 4');
     }
@@ -54,10 +52,10 @@ export class TankManager {
     const maxX = terrain.width - margin;
     const minDist = 100;
 
-    // Génération de positions X aléatoires (uniquement pour les survivants)
+    // Génération de positions X aléatoires pour tous les joueurs
     const xs = this.generateRandomPositions(count, minX, maxX, minDist);
 
-    activePlayers.forEach((player, index) => {
+    players.forEach((player, index) => {
       const tank = player.tank;
 
       // Position X aléatoire (triée pour cohérence gauche-droite)
@@ -68,7 +66,7 @@ export class TankManager {
 
       tank.position = { x, y: groundY };
 
-      // Réinitialisation de l'état de combat (uniquement pour vivants)
+      // Réinitialisation complète de l'état de combat pour le début de manche
       tank.health = tank.maxHealth;
       tank.shield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
       tank.maxShield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
@@ -77,8 +75,6 @@ export class TankManager {
       // Angle de départ par défaut (sensé pour le côté du terrain)
       tank.angle = x < terrain.width / 2 ? 45 : 135;
     });
-
-    // Les joueurs morts (isDead=true) conservent leur flag et ne sont pas repositionnés
   }
 
   /**
