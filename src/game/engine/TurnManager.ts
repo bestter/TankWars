@@ -74,6 +74,11 @@ export class TurnManager {
     this.aiEngine = aiEngine;
   }
 
+  /** Gets the current round number */
+  public getCurrentRound(): number {
+    return this.currentRound;
+  }
+
   /** Permet de changer la stratégie IA à chaud */
   public setAIEngine(aiEngine: AIEngine): void {
     this.aiEngine = aiEngine;

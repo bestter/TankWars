@@ -691,7 +691,7 @@ export class GameEngine {
     this.deathReasons[playerId].push({
       cause,
       info,
-      round: (this.turnManager as any)?.currentRound ?? undefined, // safe access for debug
+      round: this.turnManager.getCurrentRound(),
     });
   }
 
