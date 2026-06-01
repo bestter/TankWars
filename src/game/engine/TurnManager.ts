@@ -9,6 +9,9 @@ import type { Player } from '../../types/player';
 import type { TankManager } from '../entities/TankManager';
 import type { PhysicsEngine } from './PhysicsEngine';
 import type { FireCommand } from '../../types/game';
+import type { AIEngine } from '../entities/ai/AIEngine';
+import type { TerrainManager } from './Terrain';
+import type { GameState } from '../../types/game';
 
 export interface CurrentTurnInfo {
   playerName: string;
@@ -23,13 +26,16 @@ export interface CurrentTurnInfo {
 
 export class TurnManager {
   private tankManager: TankManager;
+  private terrainManager: TerrainManager;
   private fireCallback: (from: { x: number; y: number }, command: FireCommand) => void;
+  private aiEngine?: AIEngine;
 
   private currentPlayerIndex = 0;
   private currentRound = 1;
   private isInputLocked = false;
 
   private listenersAttached = false;
+  private isProcessingAI = false;
 
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
@@ -37,10 +43,19 @@ export class TurnManager {
 
   constructor(
     tankManager: TankManager,
+    terrainManager: TerrainManager,
     fireCallback: (from: { x: number; y: number }, command: FireCommand) => void,
+    aiEngine?: AIEngine,
   ) {
     this.tankManager = tankManager;
+    this.terrainManager = terrainManager;
     this.fireCallback = fireCallback;
+    this.aiEngine = aiEngine;
+  }
+
+  /** Permet de changer la stratégie IA à chaud */
+  public setAIEngine(aiEngine: AIEngine): void {
+    this.aiEngine = aiEngine;
   }
 
   /** Connecte le TurnManager au système de physique pour détecter la fin des projectiles */
@@ -175,7 +190,7 @@ export class TurnManager {
       attempts < maxAttempts
     );
 
-    // Déverrouille les entrées pour le nouveau joueur
+    // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
     this.isInputLocked = false;
 
     const newPlayer = this.getCurrentPlayer();
@@ -183,6 +198,9 @@ export class TurnManager {
     if (newPlayer) {
       this.onTurnChange?.(newPlayer, this.currentRound);
       this.notifyHudUpdate();
+
+      // Si c'est une IA, on lance son tour de manière asynchrone (sans bloquer le rendu)
+      this.handleAITurnIfNeeded(newPlayer);
     }
   }
 
@@ -236,6 +254,9 @@ export class TurnManager {
     if (firstPlayer) {
       this.onTurnChange?.(firstPlayer, this.currentRound);
       this.notifyHudUpdate();
+
+      // Si c'est une IA, on lance son tour de manière asynchrone
+      this.handleAITurnIfNeeded(firstPlayer);
     }
   }
 
@@ -244,6 +265,67 @@ export class TurnManager {
     this.currentPlayerIndex = 0;
     this.currentRound = 1;
     this.isInputLocked = false;
+    this.isProcessingAI = false;
     this.removeInputListeners();
+  }
+
+  /**
+   * Gère le tour d'une IA de façon asynchrone.
+   * Ne bloque pas le rendu du Canvas grâce à l'utilisation de setTimeout + Promise.
+   */
+  private async handleAITurnIfNeeded(player: Player): Promise<void> {
+    if (player.isHuman || this.isProcessingAI) return;
+    if (!this.aiEngine) {
+      // Pas de moteur IA configuré → on passe le tour automatiquement
+      console.warn(`[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`);
+      setTimeout(() => this.nextTurn(), 800);
+      return;
+    }
+
+    this.isProcessingAI = true;
+    this.isInputLocked = true;
+    this.notifyHudUpdate();
+
+    try {
+      // Construire un GameState minimal pour l'IA
+      const gameState: GameState = {
+        phase: 'COMBAT',
+        players: [...this.tankManager.getPlayers()], // copy to mutable array
+        currentPlayerIndex: this.currentPlayerIndex,
+        turn: this.currentRound,
+      };
+
+      // Appel de la stratégie IA
+      const decision = await this.aiEngine.executeTurn(
+        player.tank.id,
+        gameState,
+        this.terrainManager,
+      );
+
+      // Applique les valeurs sur le tank (visible dans le HUD)
+      player.tank.angle = Math.max(0, Math.min(180, decision.angle));
+      player.tank.power = Math.max(0, Math.min(100, decision.power));
+      this.notifyHudUpdate();
+
+      // Délai artificiel pour simuler la "réflexion" de l'IA (1.5s)
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      // Déclenche le tir automatiquement
+      const command: FireCommand = {
+        angle: player.tank.angle,
+        power: player.tank.power,
+        weaponId: player.tank.currentWeapon,
+      };
+
+      this.fireCallback(player.tank.position, command);
+
+      // Les inputs restent verrouillés jusqu'à la fin de la résolution (géré par PhysicsEngine)
+    } catch (error) {
+      console.error('[TurnManager] AI turn failed:', error);
+      // En cas d'erreur, on passe quand même au tour suivant après un délai
+      setTimeout(() => this.nextTurn(), 1000);
+    } finally {
+      this.isProcessingAI = false;
+    }
   }
 }

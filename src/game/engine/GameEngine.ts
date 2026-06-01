@@ -23,6 +23,7 @@ import {
 import type { Player } from '../../types/player';
 import type { Vector2, FireCommand } from '../../types/game';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
+import type { AIEngine } from '../entities/ai/AIEngine';
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -93,6 +94,7 @@ export class GameEngine {
     // Crée le TurnManager avec un callback de tir
     this.turnManager = new TurnManager(
       this.tankManager,
+      this.terrain,
       (from, command) => {
         this.fireProjectile(from, command);
       },
@@ -139,6 +141,11 @@ export class GameEngine {
 
   public getTurnManager(): TurnManager {
     return this.turnManager;
+  }
+
+  /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy) */
+  public setAIEngine(aiEngine: AIEngine): void {
+    this.turnManager.setAIEngine(aiEngine);
   }
 
   /** Initialise les joueurs et place leurs tanks sur le terrain */
