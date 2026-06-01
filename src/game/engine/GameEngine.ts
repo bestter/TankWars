@@ -14,10 +14,12 @@
 
 import { TerrainManager } from './Terrain';
 import { PhysicsEngine, type Projectile } from './PhysicsEngine';
+import { TankManager } from '../entities/TankManager';
 import {
   WEAPON_REGISTRY,
   type WeaponId,
 } from '../../types/weapon';
+import type { Player } from '../../types/player';
 import type { Vector2, FireCommand } from '../../types/game';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
 
@@ -50,6 +52,7 @@ export class GameEngine {
 
   private readonly terrain: TerrainManager;
   private readonly physicsEngine: PhysicsEngine;
+  private readonly tankManager: TankManager;
   private readonly config: GameConfig;
 
   private tanks: TankRef[] = [];
@@ -80,6 +83,7 @@ export class GameEngine {
     this.terrain.generate();
 
     this.physicsEngine = new PhysicsEngine();
+    this.tankManager = new TankManager();
 
     // Forward hit events from PhysicsEngine
     this.physicsEngine.onProjectileHit = (hit) => {
@@ -108,6 +112,25 @@ export class GameEngine {
     return this.terrain;
   }
 
+  public getTankManager(): TankManager {
+    return this.tankManager;
+  }
+
+  /** Initialise les joueurs et place leurs tanks sur le terrain */
+  public setPlayers(players: Player[]): void {
+    this.tankManager.spawnTanks(players, this.terrain);
+
+    // Synchronise aussi les tanks pour le système de collision (legacy)
+    const tankRefs = players
+      .filter((p) => !p.tank.isDead)
+      .map((p) => ({
+        id: p.tank.id,
+        position: { ...p.tank.position },
+        radius: 14,
+      }));
+    this.setTanks(tankRefs);
+  }
+
   public getActiveProjectiles(): ReadonlyArray<Projectile> {
     return this.physicsEngine.getProjectiles();
   }
@@ -131,7 +154,7 @@ export class GameEngine {
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
-    /* ownerId: string */ // TODO: track owner for damage attribution later
+    /* _ownerId: string */ // TODO: track owner for damage attribution later
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
@@ -208,8 +231,8 @@ export class GameEngine {
     const gravity = this.config.gravity;
     const wind = this.windForce;
 
-    // Délégation complète au nouveau PhysicsEngine
-    this.physicsEngine.updateProjectiles(dt, gravity, wind, this.terrain);
+    // Délégation complète au nouveau PhysicsEngine + TankManager
+    this.physicsEngine.updateProjectiles(dt, gravity, wind, this.terrain, this.tankManager);
 
     // Notification pour le layer React (interpolation, debug, etc.)
     this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
@@ -232,6 +255,9 @@ export class GameEngine {
 
     // Projectiles (délégué au PhysicsEngine)
     this.physicsEngine.draw(ctx);
+
+    // Tanks (avec canon, jauge de vie et couleurs VGA)
+    this.tankManager.draw(ctx);
 
     // Tanks (simple colored rectangles for now)
     for (const tank of this.tanks) {

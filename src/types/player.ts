@@ -26,6 +26,11 @@ export interface Tank {
   power: Power;
   health: number;
   maxHealth: number;
+  /** Shield (absorbs damage before health). */
+  shield: number;
+  maxShield: number;
+  /** True when the tank is destroyed. */
+  isDead: boolean;
   /** Must be a value from VGA_PALETTE (enforced at construction). */
   color: Color;
   /** Weapon that will be used on next FireCommand. */

@@ -14,6 +14,7 @@
 import { WEAPON_REGISTRY, type WeaponId } from '../../types/weapon';
 import type { TerrainManager } from './Terrain';
 import { VGA_PALETTE } from '../../types/game';
+import type { TankManager } from '../entities/TankManager';
 
 export interface Projectile {
   x: number;
@@ -74,6 +75,7 @@ export class PhysicsEngine {
     gravity: number,
     wind: number,
     terrainManager: TerrainManager,
+    tankManager?: TankManager,
   ): void {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
@@ -98,33 +100,45 @@ export class PhysicsEngine {
 
       // Collision avec le terrain
       if (terrainManager.checkCollision(p.x, p.y)) {
-        this.handleImpact(i, p, terrainManager);
+        this.handleImpact(i, p, terrainManager, tankManager);
       }
     }
   }
 
   /**
-   * Gère l'impact d'un projectile (destruction terrain + suppression).
+   * Gère l'impact d'un projectile :
+   * - Destruction du terrain
+   * - Application des dégâts aux tanks (si TankManager fourni)
+   * - Mise à jour des positions des tanks (chute)
+   * - Suppression du projectile
    */
   private handleImpact(
     index: number,
     p: Projectile,
     terrainManager: TerrainManager,
+    tankManager?: TankManager,
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
+    const maxDamage = weapon?.damage ?? 35;
 
-    // Détruire le terrain
+    // 1. Détruire le terrain
     terrainManager.destroyTerrain(p.x, p.y, blastRadius);
 
-    // Notifier l'extérieur (GameEngine, UI, sons, etc.)
+    // 2. Appliquer les dégâts aux tanks (nouveau système)
+    if (tankManager) {
+      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage);
+      tankManager.updateTankPositions(terrainManager);
+    }
+
+    // 3. Notifier l'extérieur
     this.onProjectileHit?.({
       x: p.x,
       y: p.y,
       weaponId: p.weaponId,
     });
 
-    // Retirer le projectile de la simulation
+    // 4. Retirer le projectile
     this.projectiles.splice(index, 1);
   }
 
