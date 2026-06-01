@@ -103,6 +103,8 @@ export class PhysicsEngine {
         this.handleImpact(i, p, terrainManager, tankManager);
       }
     }
+
+    this.checkSettlement();
   }
 
   /**
@@ -172,11 +174,33 @@ export class PhysicsEngine {
 
   /** Supprime tous les projectiles en vol */
   public clear(): void {
+    const hadProjectiles = this.projectiles.length > 0;
     this.projectiles = [];
+    this.previousCount = 0;
+
+    if (hadProjectiles) {
+      this.onAllProjectilesSettled?.();
+    }
   }
 
   /** Nombre de projectiles actuellement en simulation */
   public get count(): number {
     return this.projectiles.length;
+  }
+
+  // === Settlement notification (one-shot when last projectile disappears) ===
+  public onAllProjectilesSettled?: () => void;
+
+  private previousCount = 0;
+
+  /** Internal method called after each update to detect settlement */
+  public checkSettlement(): void {
+    const currentCount = this.projectiles.length;
+
+    if (this.previousCount > 0 && currentCount === 0) {
+      this.onAllProjectilesSettled?.();
+    }
+
+    this.previousCount = currentCount;
   }
 }

@@ -15,6 +15,7 @@
 import { TerrainManager } from './Terrain';
 import { PhysicsEngine, type Projectile } from './PhysicsEngine';
 import { TankManager } from '../entities/TankManager';
+import { TurnManager } from './TurnManager';
 import {
   WEAPON_REGISTRY,
   type WeaponId,
@@ -53,6 +54,7 @@ export class GameEngine {
   private readonly terrain: TerrainManager;
   private readonly physicsEngine: PhysicsEngine;
   private readonly tankManager: TankManager;
+  private readonly turnManager: TurnManager;
   private readonly config: GameConfig;
 
   private tanks: TankRef[] = [];
@@ -71,6 +73,9 @@ export class GameEngine {
   public onAllProjectilesSettled?: () => void;
   public onPhysicsStep?: (projectiles: ReadonlyArray<Projectile>) => void;
 
+  /** Callback pour le HUD React (angle, puissance, joueur actif, etc.) */
+  public onTurnHudUpdate?: (info: import('./TurnManager').CurrentTurnInfo) => void;
+
   constructor(
     width: number,
     height: number,
@@ -84,6 +89,22 @@ export class GameEngine {
 
     this.physicsEngine = new PhysicsEngine();
     this.tankManager = new TankManager();
+
+    // Crée le TurnManager avec un callback de tir
+    this.turnManager = new TurnManager(
+      this.tankManager,
+      (from, command) => {
+        this.fireProjectile(from, command);
+      },
+    );
+
+    // Connecte le TurnManager au système de physique (fin de volée → nextTurn)
+    this.turnManager.connectToPhysics(this.physicsEngine);
+
+    // Transmet les mises à jour HUD du TurnManager vers l'extérieur (React)
+    this.turnManager.onHudUpdate = (info) => {
+      this.onTurnHudUpdate?.(info);
+    };
 
     // Forward hit events from PhysicsEngine
     this.physicsEngine.onProjectileHit = (hit) => {
@@ -116,6 +137,10 @@ export class GameEngine {
     return this.tankManager;
   }
 
+  public getTurnManager(): TurnManager {
+    return this.turnManager;
+  }
+
   /** Initialise les joueurs et place leurs tanks sur le terrain */
   public setPlayers(players: Player[]): void {
     this.tankManager.spawnTanks(players, this.terrain);
@@ -129,6 +154,10 @@ export class GameEngine {
         radius: 14,
       }));
     this.setTanks(tankRefs);
+
+    // Initialise le système de tours
+    this.turnManager.startFirstTurn();
+    this.turnManager.setupInputListeners();
   }
 
   public getActiveProjectiles(): ReadonlyArray<Projectile> {
@@ -154,7 +183,7 @@ export class GameEngine {
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
-    /* _ownerId: string */ // TODO: track owner for damage attribution later
+    /* _ownerId: string = 'unknown' */ // TODO: track owner for damage attribution later
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
