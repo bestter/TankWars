@@ -32,7 +32,7 @@ export class TankManager {
   }
 
   /**
-   * Place les tanks de manière équitable sur le terrain.
+   * Place les tanks avec positions X aléatoires (distance minimale garantie).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
    */
   public spawnTanks(players: Player[], terrain: TerrainManager): void {
@@ -44,14 +44,18 @@ export class TankManager {
     }
 
     const margin = terrain.width * 0.13;
-    const usableWidth = terrain.width - margin * 2;
-    const step = count > 1 ? usableWidth / (count - 1) : 0;
+    const minX = margin;
+    const maxX = terrain.width - margin;
+    const minDist = 100;
+
+    // Génération de positions X aléatoires avec distance minimale garantie
+    const xs = this.generateRandomPositions(count, minX, maxX, minDist);
 
     players.forEach((player, index) => {
       const tank = player.tank;
 
-      // Répartition horizontale équitable
-      const x = margin + step * index;
+      // Position X aléatoire (triée pour cohérence gauche-droite)
+      const x = xs[index];
 
       // Ancrage vertical exact sur le terrain
       const groundY = terrain.getHeightAt(x);
@@ -64,9 +68,61 @@ export class TankManager {
       tank.maxShield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
       tank.isDead = false;
 
-      // Angle de départ par défaut (légèrement vers le haut)
-      tank.angle = index < count / 2 ? -35 : 35;
+      // Angle de départ par défaut (sensé pour le côté du terrain)
+      tank.angle = x < terrain.width / 2 ? 45 : 135;
     });
+  }
+
+  /**
+   * Génère N positions X aléatoires dans [minX, maxX] avec |xi-xj| >= minDist pour tout i!=j.
+   * Retourne les positions triées. Utilise rejection sampling (N petit: 2-4).
+   */
+  private generateRandomPositions(
+    count: number,
+    minX: number,
+    maxX: number,
+    minDist: number,
+  ): number[] {
+    if (count <= 0) return [];
+    if (count === 1) return [minX + (maxX - minX) / 2];
+
+    const range = maxX - minX;
+    const minSpan = (count - 1) * minDist;
+
+    // Si la plage est trop petite pour garantir minDist → fallback équitable
+    if (minSpan > range) {
+      const step = range / (count - 1);
+      return Array.from({ length: count }, (_, i) => minX + step * i);
+    }
+
+    const maxAttempts = 500;
+    const perPosAttempts = 80;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const positions: number[] = [];
+
+      for (let i = 0; i < count; i++) {
+        let placed = false;
+        for (let t = 0; t < perPosAttempts; t++) {
+          const candidate = minX + Math.random() * range;
+          if (positions.every((p) => Math.abs(p - candidate) >= minDist)) {
+            positions.push(candidate);
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) break;
+      }
+
+      if (positions.length === count) {
+        positions.sort((a, b) => a - b);
+        return positions;
+      }
+    }
+
+    // Fallback: répartition équitable (garantie de ne jamais bloquer)
+    const step = range / (count - 1);
+    return Array.from({ length: count }, (_, i) => minX + step * i);
   }
 
   /**
@@ -165,8 +221,9 @@ export class TankManager {
 
   /**
    * Rendu rétro des tanks (style VGA 16 couleurs).
+   * Affiche optionnellement les noms des joueurs (masqués pendant le vol des projectiles).
    */
-  public draw(ctx: CanvasRenderingContext2D): void {
+  public draw(ctx: CanvasRenderingContext2D, showPlayerNames: boolean = true): void {
     const tankWidth = 14;
     const tankHeight = 8;
 
@@ -249,6 +306,16 @@ export class TankManager {
       ctx.strokeStyle = VGA_PALETTE.WHITE;
       ctx.lineWidth = 0.5;
       ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+      // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
+      // Positionné au-dessus de la jauge de vie. Masqué dynamiquement pendant les tirs.
+      if (showPlayerNames) {
+        ctx.font = '12px monospace';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        const nameY = y - tankHeight - 24;
+        ctx.fillText(player.name, x, nameY);
+      }
     }
   }
 }

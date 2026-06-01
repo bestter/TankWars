@@ -412,7 +412,9 @@ export class GameEngine {
     this.physicsEngine.draw(ctx);
 
     // Tanks (avec canon, jauge de vie et couleurs VGA)
-    this.tankManager.draw(ctx);
+    // Noms masqués dynamiquement si un projectile est en vol (phase de tir/résolution)
+    const showPlayerNames = !this.physicsEngine.hasActiveProjectiles();
+    this.tankManager.draw(ctx, showPlayerNames);
 
     // Feux d'artifice si la partie est terminée
     if (this.gameOver) {

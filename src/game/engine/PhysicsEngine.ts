@@ -193,6 +193,11 @@ export class PhysicsEngine {
     return this.projectiles.length;
   }
 
+  /** Indique s'il y a au moins un projectile en vol (utilisé pour masquer les noms pendant les tirs) */
+  public hasActiveProjectiles(): boolean {
+    return this.projectiles.length > 0;
+  }
+
   // === Settlement notification (one-shot when last projectile disappears) ===
   public onAllProjectilesSettled?: () => void;
 

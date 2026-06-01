@@ -19,6 +19,7 @@
 
 - AI controllers must implement a unified interface (`src/game/entities/ai/AIEngine.ts`).
 - Phase 1 must strictly be a simple/stupid random trajectory injector to allow testing without blocking the architecture.
+- Phase 2 will have much smarter AI.
 
 ## Error Prevention
 
