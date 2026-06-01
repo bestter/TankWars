@@ -1,4 +1,4 @@
-# TankWars Project Guide
+# Bestter's TankWars Project Guide
 
 ## Build & Development Commands
 

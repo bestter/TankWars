@@ -1,5 +1,5 @@
 /**
- * TankWars - GameCanvas React Component (src/components/GameCanvas.tsx)
+ * Bestter's TankWars - GameCanvas React Component (src/components/GameCanvas.tsx)
  *
  * This component is ONLY responsible for:
  * - Owning the <canvas> DOM element (via ref)

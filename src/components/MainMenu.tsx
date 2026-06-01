@@ -1,5 +1,5 @@
 /**
- * TankWars - MainMenu React Component (src/components/MainMenu.tsx)
+ * Bestter's TankWars - MainMenu React Component (src/components/MainMenu.tsx)
  *
  * Écran d'accueil rétro DOS/VGA :
  * - Fond noir + bordure double ligne style ancien terminal

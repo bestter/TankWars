@@ -1,4 +1,4 @@
-# TANKWARS
+# Bestter's TankWars
 
 > A browser-based artillery tank battle game with fully destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
 

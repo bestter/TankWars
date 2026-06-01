@@ -6,7 +6,7 @@ import type { GamePhase } from './types/game'
 import type { Player } from './types/player'
 
 /**
- * TankWars - Root App (src/App.tsx)
+ * Bestter's TankWars - Root App (src/App.tsx)
  *
  * Gère le gamePhase haut niveau (React-owned) :
  * - 'MENU' → affiche MainMenu (pas de Canvas → économies ressources)
