@@ -40,23 +40,32 @@ export class TurnManager {
   private listenersAttached = false;
   private isProcessingAI = false;
 
-  // Auto-resolution safety net
-  private resolutionTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  private readonly AI_RESOLUTION_TIMEOUT_MS = 10000; // 10 seconds safety net
+  // 1. General recovery watchdog (12s): forces turn to advance if turn stays locked
+  private turnLockAccumulatedTime = 0;
+  private readonly TURN_LOCK_SAFETY_LIMIT = 12; // 12 seconds in game time
+  private isTurnLockWatchdogArmed = false;
 
-  // Safety net for "settlement did not advance the turn after AI shot" (4.5s after firing)
-  private settlementSafetyTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  // 2. AI resolution safety net (10s): fallback if AI takes too long to decide
+  private resolutionAccumulatedTime = 0;
+  private readonly RESOLUTION_SAFETY_LIMIT = 10; // 10 seconds in game time
+  private isResolutionSafetyArmed = false;
+  private resolutionPlayer: Player | null = null;
 
-  // General recovery watchdog: if the turn stays locked for too long with no activity,
-  // force advance. This prevents hard "RESOLVING forever" when settlement events are missed
-  // (physics edge cases, rapid chaining, etc.).
-  private turnLockSafetyTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  private readonly TURN_LOCK_SAFETY_MS = 12000; // ~12s recovery for human→AI handoff or general lockups
+  // 3. AI shot settlement safety net (4.5s): forces nextTurn if physics settlement doesn't notify
+  private settlementAccumulatedTime = 0;
+  private readonly SETTLEMENT_SAFETY_LIMIT = 4.5; // 4.5 seconds in game time
+  private isSettlementSafetyArmed = false;
+  private settlementPlayerId: string | null = null;
+  private settlementGeneration = 0;
 
   // Used to abort async AI turns that were started in combat but whose promises
   // resolve after we have paused for SUMMARY / SHOP. Prevents "ghost" AI shots
   // and watchdog triggers during the shop phase.
   private aiTurnGeneration = 0;
+
+  // Settlement timeout (120ms physics delay for tank falling and damage logic)
+  // Driven by real-time setTimeout because it is a very short rendering transition delay
+  private physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
@@ -84,12 +93,93 @@ export class TurnManager {
     this.aiEngine = aiEngine;
   }
 
+  /**
+   * Met à jour les timers de sécurité basés sur le temps de simulation physique (dt).
+   * Cela évite que les watchdogs ne se déclenchent lorsque l'onglet est en veille
+   * ou que requestAnimationFrame est suspendu.
+   */
+  public update(dt: number): void {
+    // 1. Watchdog général du verrouillage du tour
+    if (this.isTurnLockWatchdogArmed && this.isInputLocked) {
+      this.turnLockAccumulatedTime += dt;
+      if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
+        const stillCurrent = this.getCurrentPlayer();
+        console.warn(
+          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? 'unknown'} — forcing nextTurn (missed settlement?)`
+        );
+        this.isInputLocked = false;
+        this.clearResolutionTimeout();
+        this.clearSettlementSafetyTimeout();
+        this.clearTurnLockSafetyTimeout();
+        this.aiTurnGeneration++;
+        this.nextTurn();
+      }
+    }
+
+    // 2. Sécurité de résolution de l'IA (si l'IA prend trop de temps à décider)
+    if (this.isResolutionSafetyArmed && this.isInputLocked && this.resolutionPlayer) {
+      this.resolutionAccumulatedTime += dt;
+      if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
+        const player = this.resolutionPlayer;
+        console.warn(`[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`);
+
+        let fallback: { angle: number; power: number } | null = null;
+
+        if (this.aiEngine?.getResolutionFallback) {
+          fallback = this.aiEngine.getResolutionFallback();
+        }
+
+        if (fallback) {
+          player.tank.angle = Math.max(0, Math.min(180, fallback.angle));
+          player.tank.power = Math.max(0, Math.min(100, fallback.power));
+          this.notifyHudUpdate();
+
+          const command: FireCommand = {
+            angle: player.tank.angle,
+            power: player.tank.power,
+            weaponId: player.tank.currentWeapon,
+          };
+          this.fireCallback(player.tank.position, command, player.id);
+        } else {
+          console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
+          this.isInputLocked = false;
+          this.clearResolutionTimeout();
+          this.clearSettlementSafetyTimeout();
+          this.clearTurnLockSafetyTimeout();
+          this.nextTurn();
+        }
+      }
+    }
+
+    // 3. Sécurité de stabilisation du tir de l'IA
+    if (this.isSettlementSafetyArmed && this.isInputLocked && this.settlementPlayerId) {
+      this.settlementAccumulatedTime += dt;
+      if (this.settlementAccumulatedTime >= this.SETTLEMENT_SAFETY_LIMIT) {
+        if (this.aiTurnGeneration === this.settlementGeneration) {
+          const stillCurrent = this.getCurrentPlayer();
+          if (stillCurrent?.id === this.settlementPlayerId && this.isInputLocked) {
+            console.warn(`[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing nextTurn as safety net`);
+            this.isInputLocked = false;
+            this.clearResolutionTimeout();
+            this.clearSettlementSafetyTimeout();
+            this.clearTurnLockSafetyTimeout();
+            this.nextTurn();
+          }
+        } else {
+          this.clearSettlementSafetyTimeout();
+        }
+      }
+    }
+  }
+
   /** Connecte le TurnManager au système de physique pour détecter la fin des projectiles */
   public connectToPhysics(physicsEngine: PhysicsEngine): void {
     physicsEngine.onAllProjectilesSettled = () => {
       // On attend un petit délai pour que les dégâts et la chute des tanks soient appliqués
-      setTimeout(() => {
+      this.clearPhysicsSettlementTimeout();
+      this.physicsSettlementTimeoutId = setTimeout(() => {
         this.nextTurn();
+        this.physicsSettlementTimeoutId = null;
       }, 120);
     };
   }
@@ -115,6 +205,7 @@ export class TurnManager {
   public pauseForInterRound(): void {
     this.isInputLocked = true;
     this.isProcessingAI = false;
+    this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
@@ -299,6 +390,8 @@ export class TurnManager {
 
     // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
     this.isInputLocked = false;
+    this.isProcessingAI = false; // Reset processing flag so next turn is never skipped due to race conditions
+    this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout(); // Clear any pending AI resolution timeout
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
@@ -374,6 +467,7 @@ export class TurnManager {
 
   /** Réinitialise complètement le gestionnaire de tours */
   public reset(): void {
+    this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
@@ -468,18 +562,9 @@ export class TurnManager {
       }
 
       this.clearSettlementSafetyTimeout();
-      const safetyGeneration = this.aiTurnGeneration;
-      this.settlementSafetyTimeoutId = setTimeout(() => {
-        if (this.aiTurnGeneration !== safetyGeneration) return;
-        const stillCurrent = this.getCurrentPlayer();
-        if (stillCurrent?.id === player.id && this.isInputLocked) {
-          console.warn(`[TurnManager] Settlement did not advance turn for AI ${player.name} — forcing nextTurn as safety net`);
-          this.isInputLocked = false;
-          this.clearResolutionTimeout();
-          this.clearSettlementSafetyTimeout();
-          this.nextTurn();
-        }
-      }, 4500);
+      this.settlementPlayerId = player.id;
+      this.settlementGeneration = this.aiTurnGeneration;
+      this.isSettlementSafetyArmed = true;
     } catch (error) {
       console.error('[TurnManager] AI turn failed:', error);
       this.clearResolutionTimeout();
@@ -490,76 +575,43 @@ export class TurnManager {
     }
   }
 
-  /** Starts a safety timeout that will force resolution if the AI turn gets stuck */
+  /** Starts a safety timer that will force resolution if the AI turn gets stuck */
   private startResolutionTimeout(player: Player): void {
     this.clearResolutionTimeout();
+    this.resolutionPlayer = player;
+    this.isResolutionSafetyArmed = true;
+  }
 
-    this.resolutionTimeoutId = setTimeout(() => {
-      // Double-check we're still on this AI player and still locked
-      const current = this.getCurrentPlayer();
-      if (current?.id === player.id && this.isInputLocked) {
-        console.warn(`[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`);
-
-        let fallback: { angle: number; power: number } | null = null;
-
-        if (this.aiEngine?.getResolutionFallback) {
-          fallback = this.aiEngine.getResolutionFallback();
-        }
-
-        if (fallback) {
-          // AI provided a fallback shot
-          player.tank.angle = Math.max(0, Math.min(180, fallback.angle));
-          player.tank.power = Math.max(0, Math.min(100, fallback.power));
-          this.notifyHudUpdate();
-
-          const command: FireCommand = {
-            angle: player.tank.angle,
-            power: player.tank.power,
-            weaponId: player.tank.currentWeapon,
-          };
-          this.fireCallback(player.tank.position, command, player.id);
-        } else {
-          // No fallback → just skip the turn (forfeit)
-          console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
-          this.isInputLocked = false;
-          this.clearSettlementSafetyTimeout();
-          this.nextTurn();
-        }
-      }
-      this.resolutionTimeoutId = null;
-    }, this.AI_RESOLUTION_TIMEOUT_MS);
+  private clearPhysicsSettlementTimeout(): void {
+    if (this.physicsSettlementTimeoutId) {
+      clearTimeout(this.physicsSettlementTimeoutId);
+      this.physicsSettlementTimeoutId = null;
+    }
   }
 
   private clearResolutionTimeout(): void {
-    if (this.resolutionTimeoutId) {
-      clearTimeout(this.resolutionTimeoutId);
-      this.resolutionTimeoutId = null;
-    }
-    // Also clear the settlement safety one when clearing resolution timers (common call sites)
+    this.isResolutionSafetyArmed = false;
+    this.resolutionAccumulatedTime = 0;
+    this.resolutionPlayer = null;
     this.clearSettlementSafetyTimeout();
   }
 
-  /** Clears the post-AI-shot settlement safety timer (prevents stale forces during SUMMARY/SHOP pauses) */
+  /** Clears the post-AI-shot settlement safety timer */
   private clearSettlementSafetyTimeout(): void {
-    if (this.settlementSafetyTimeoutId) {
-      clearTimeout(this.settlementSafetyTimeoutId);
-      this.settlementSafetyTimeoutId = null;
-    }
+    this.isSettlementSafetyArmed = false;
+    this.settlementAccumulatedTime = 0;
+    this.settlementPlayerId = null;
   }
 
   /** Clears the general turn-lock recovery watchdog */
   private clearTurnLockSafetyTimeout(): void {
-    if (this.turnLockSafetyTimeoutId) {
-      clearTimeout(this.turnLockSafetyTimeoutId);
-      this.turnLockSafetyTimeoutId = null;
-    }
+    this.isTurnLockWatchdogArmed = false;
+    this.turnLockAccumulatedTime = 0;
   }
 
   /**
    * Arms (or re-arms) a recovery timer that will force the turn to advance
-   * if the lock stays on for too long. This protects against missed settlement
-   * notifications (physics edge cases, rapid round transitions, etc.).
-   * The timer is automatically cleared on successful nextTurn / unlock.
+   * if the lock stays on for too long. Driven by physical delta updates (dt).
    */
   private armTurnLockSafetyWatchdog(): void {
     this.clearTurnLockSafetyTimeout();
@@ -567,35 +619,7 @@ export class TurnManager {
     const currentPlayerAtArm = this.getCurrentPlayer();
     if (!currentPlayerAtArm) return;
 
-    const generationAtArm = this.aiTurnGeneration;
-
-    this.turnLockSafetyTimeoutId = setTimeout(() => {
-      // If the turn generation changed since we armed (e.g. we paused for SUMMARY/SHOP),
-      // this watchdog is stale → just clean up, do not force.
-      if (this.aiTurnGeneration !== generationAtArm) {
-        this.clearTurnLockSafetyTimeout();
-        return;
-      }
-
-      // Only act if we are *still* on the same player and still locked
-      const stillCurrent = this.getCurrentPlayer();
-      if (
-        stillCurrent?.id === currentPlayerAtArm.id &&
-        this.isInputLocked
-      ) {
-        console.warn(
-          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent.name} — forcing nextTurn (missed settlement?)`
-        );
-        this.isInputLocked = false;
-        this.clearResolutionTimeout();
-        this.clearSettlementSafetyTimeout();
-        this.clearTurnLockSafetyTimeout();
-        this.aiTurnGeneration++; // invalidate any other stale AI timers associated with this turn
-        this.nextTurn();
-      } else {
-        // Stale timer, just clean up
-        this.clearTurnLockSafetyTimeout();
-      }
-    }, this.TURN_LOCK_SAFETY_MS);
+    this.turnLockAccumulatedTime = 0;
+    this.isTurnLockWatchdogArmed = true;
   }
 }

@@ -129,48 +129,33 @@ export class TankManager {
     return Array.from({ length: count }, (_, i) => minX + step * i);
   }
 
-  /**
-   * Met à jour la position verticale des tanks après une explosion.
-   * Les tanks tombent si le sol sous eux a été détruit.
-   */
   public updateTankPositions(terrain: TerrainManager): void {
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
 
       const groundY = terrain.getHeightAt(tank.position.x);
-
-      if (tank.position.y < groundY) {
-        // Le sol s'est effondré → le tank tombe jusqu'au nouveau niveau
-        tank.position.y = groundY;
-      }
+      // Snaps tank to the terrain surface (prevents getting stuck or falling behind under micro-smoothing/adjustments)
+      tank.position.y = groundY;
     }
   }
 
   /**
-   * Vérifie si des tanks sont enterrés sous le plancher.
-   * Si la position Y du tank est supérieure à la hauteur du terrain à sa position X,
-   * le tank est considéré comme battu (enterré).
-   *
-   * Ajout d'une petite tolérance (5px) pour éviter les morts instantanées dues à des
-   * cratères mineurs ou des ajustements de terrain après le premier tir de chaque joueur.
-   * Cela permet des parties plus longues avant une "partie nulle" accidentelle.
+   * Vérifie si des tanks sont enterrés sous le plancher ou tombés hors écran.
+   * Si la position Y du tank dépasse le bas de l'écran de combat, le tank est considéré
+   * comme battu/effondré.
    */
   public checkTankBurial(terrain: TerrainManager): void {
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      const groundY = terrain.getHeightAt(tank.position.x);
-
-      // Tolérance pour éviter les enterrements trop agressifs sur les premiers tirs
-      // (cratères du premier cycle + ajustements de position).
-      const burialThreshold = groundY + 5;
-      if (tank.position.y > burialThreshold) {
+      // Si le tank tombe en dessous du terrain jouable (fond de l'écran), il est éliminé
+      if (tank.position.y >= terrain.height - 10) {
         tank.isDead = true;
-        const details = `y=${tank.position.y.toFixed(1)} > ground=${groundY.toFixed(1)} (threshold +5)`;
+        const details = `y=${tank.position.y.toFixed(1)} >= height=${terrain.height} (fallen off screen)`;
         console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=burial pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) groundY=${groundY.toFixed(1)}`
+          `[DEATH] player=${player.name} (id=${player.id}) cause=burial/out-of-bounds pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
         );
         this.onPlayerDied?.(player.id, 'burial', details);
       }

@@ -68,6 +68,8 @@ export class PhysicsEngine {
       weaponId,
       ownerId,
     });
+
+    this.previousCount = this.projectiles.length;
   }
 
   /**

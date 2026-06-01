@@ -236,8 +236,17 @@ export class GameEngine {
 
     this.currentFirerId = ownerId;
 
+    // Calculate barrel tip position so the projectile starts at the end of the barrel
+    // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
+    const tankHeight = 8;
+    const barrelLength = 18;
+    const angleRad = (command.angle * Math.PI) / 180;
+    const barrelStartY = from.y - tankHeight + 1;
+    const launchX = from.x + Math.cos(angleRad) * barrelLength;
+    const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
+
     console.log(
-      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) angle=${command.angle} power=${command.power}`
+      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) launch=(${launchX.toFixed(1)},${launchY.toFixed(1)}) angle=${command.angle} power=${command.power}`
     );
 
     // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
@@ -247,8 +256,8 @@ export class GameEngine {
 
     // Délégation complète au PhysicsEngine (nouveau système) — now with owner for attribution
     this.physicsEngine.launchProjectile(
-      from.x,
-      from.y,
+      launchX,
+      launchY,
       command.angle,
       command.power,
       command.weaponId,
@@ -397,6 +406,9 @@ export class GameEngine {
     // Vérifie si des tanks sont enterrés (règle : si Y_tank > hauteur_planche → battu)
     this.tankManager.checkTankBurial(this.terrain);
 
+    // Met à jour les timers de sécurité du TurnManager
+    this.turnManager.update(dt);
+
     // Mise à jour des feux d'artifice (si partie terminée)
     this.updateFireworks();
 
@@ -409,10 +421,6 @@ export class GameEngine {
     const currentCount = this.physicsEngine.count;
     if (this.previousProjectileCount > 0 && currentCount === 0) {
       this.onAllProjectilesSettled?.();
-      // Also explicitly notify the PhysicsEngine's settlement callback (the one wired to TurnManager
-      // for turn advancement). This gives a second reliable path in case the internal checkSettlement
-      // in updateProjectiles had any edge-case miss (clear during startNextRound, etc.).
-      this.physicsEngine.onAllProjectilesSettled?.();
     }
     this.previousProjectileCount = currentCount;
 

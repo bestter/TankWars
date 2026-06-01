@@ -277,6 +277,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     return () => {
       engine.stop();
+      engine.getTurnManager().removeInputListeners();
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
