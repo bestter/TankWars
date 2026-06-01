@@ -18,4 +18,16 @@ export interface AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number }>;
+
+  /**
+   * Auto-resolution fallback.
+   * Called when the AI turn gets stuck (e.g. projectile never settled, timeout, etc.).
+   *
+   * The AI can decide how it wants to "bail out":
+   * - Return a valid { angle, power } → it will fire one last time.
+   * - Return null → the turn is simply skipped (forfeit / pass).
+   *
+   * This method must be synchronous and fast.
+   */
+  getResolutionFallback?(): { angle: number; power: number } | null;
 }

@@ -17,7 +17,6 @@ export class AISimpleStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number }> {
     const currentPlayer = gameState.players.find((p) => p.tank.id === tankId);
     if (!currentPlayer) {
-      // Fallback
       return { angle: 45, power: 50 };
     }
 
@@ -44,18 +43,28 @@ export class AISimpleStrategy implements AIEngine {
     let angle: number;
 
     if (isTargetToTheRight) {
-      // Shoot towards the right (angles 0-90 are generally rightward)
       angle = 30 + Math.random() * 30; // 30° → 60°
     } else {
-      // Shoot towards the left
       angle = 120 + Math.random() * 30; // 120° → 150°
     }
 
-    // Random power in a safe middle range
     const power = 35 + Math.random() * 40; // 35 → 75
 
     return {
       angle: Math.round(angle * 10) / 10,
+      power: Math.round(power),
+    };
+  }
+
+  /**
+   * Fallback when the AI turn gets stuck.
+   * SimpleStrategy just fires a completely random safe shot.
+   */
+  getResolutionFallback(): { angle: number; power: number } | null {
+    const angle = 20 + Math.random() * 140; // anywhere between 20° and 160°
+    const power = 40 + Math.random() * 35;  // 40-75
+    return {
+      angle: Math.round(angle),
       power: Math.round(power),
     };
   }

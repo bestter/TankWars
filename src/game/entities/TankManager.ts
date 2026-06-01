@@ -25,6 +25,12 @@ export class TankManager {
     return this.players.filter((p) => !p.tank.isDead);
   }
 
+  /** Returns the winner if only one player is still alive, otherwise null */
+  public getWinner(): Player | null {
+    const alive = this.getAlivePlayers();
+    return alive.length === 1 ? alive[0] : null;
+  }
+
   /**
    * Place les tanks de manière équitable sur le terrain.
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
@@ -74,10 +80,28 @@ export class TankManager {
 
       const groundY = terrain.getHeightAt(tank.position.x);
 
-      // Si le sol s'est effondré sous le tank
       if (tank.position.y < groundY) {
-        // Tomber / glisser jusqu'au nouveau niveau du sol
+        // Le sol s'est effondré → le tank tombe jusqu'au nouveau niveau
         tank.position.y = groundY;
+      }
+    }
+  }
+
+  /**
+   * Vérifie si des tanks sont enterrés sous le plancher.
+   * Si la position Y du tank est supérieure à la hauteur du terrain à sa position X,
+   * le tank est considéré comme battu (enterré).
+   */
+  public checkTankBurial(terrain: TerrainManager): void {
+    for (const player of this.players) {
+      const tank = player.tank;
+      if (tank.isDead) continue;
+
+      const groundY = terrain.getHeightAt(tank.position.x);
+
+      // Si le tank est en dessous du plancher → il est battu
+      if (tank.position.y > groundY) {
+        tank.isDead = true;
       }
     }
   }
@@ -150,34 +174,54 @@ export class TankManager {
       ctx.lineWidth = 1;
       ctx.strokeRect(x - tankWidth / 2, y - tankHeight, tankWidth, tankHeight);
 
-      // === Tourelle / Canon ===
+      // === Tourelle (petit cercle sur le tank) ===
+      const turretRadius = 5;
+      ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+      ctx.beginPath();
+      ctx.arc(x, y - tankHeight + 1, turretRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y - tankHeight + 1, turretRadius - 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // === Canon (barrel) qui pivote selon l'angle ===
       const angleRad = (tank.angle * Math.PI) / 180;
-      const barrelLength = 11;
-      const barrelThickness = 2;
+      const barrelLength = 18;       // Plus long pour bien voir l'angle
+      const barrelThickness = 3;
+
+      // Le canon part du centre de la tourelle
+      const barrelStartY = y - tankHeight + 1;
 
       const barrelEndX = x + Math.cos(angleRad) * barrelLength;
-      const barrelEndY = y - tankHeight / 2 + Math.sin(angleRad) * barrelLength * -1; // Y inversé
+      const barrelEndY = barrelStartY + Math.sin(angleRad) * barrelLength * -1; // inversion Y
 
+      // Ombre du canon
       ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.lineWidth = barrelThickness + 1;
+      ctx.lineWidth = barrelThickness + 2;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(x, y - tankHeight / 2);
+      ctx.moveTo(x, barrelStartY);
       ctx.lineTo(barrelEndX, barrelEndY);
       ctx.stroke();
 
-      // Canon plus clair
+      // Canon principal (couleur du joueur)
       ctx.strokeStyle = color;
       ctx.lineWidth = barrelThickness;
       ctx.beginPath();
-      ctx.moveTo(x, y - tankHeight / 2);
+      ctx.moveTo(x, barrelStartY);
       ctx.lineTo(barrelEndX, barrelEndY);
       ctx.stroke();
+
+      // Petit embout blanc au bout du canon (rétro style)
+      ctx.fillStyle = VGA_PALETTE.WHITE;
+      ctx.fillRect(barrelEndX - 1, barrelEndY - 1, 2, 2);
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
       const barHeight = 3;
       const barX = x - barWidth / 2;
-      const barY = y - tankHeight - 7;
+      const barY = y - tankHeight - 9;
 
       const healthRatio = Math.max(0, tank.health / tank.maxHealth);
 

@@ -37,6 +37,10 @@ export class TurnManager {
   private listenersAttached = false;
   private isProcessingAI = false;
 
+  // Auto-resolution safety net
+  private resolutionTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private readonly AI_RESOLUTION_TIMEOUT_MS = 10000; // 10 seconds safety net
+
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
   public onTurnChange?: (player: Player, round: number) => void;
@@ -192,6 +196,7 @@ export class TurnManager {
 
     // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
     this.isInputLocked = false;
+    this.clearResolutionTimeout(); // Clear any pending AI resolution timeout
 
     const newPlayer = this.getCurrentPlayer();
 
@@ -262,6 +267,7 @@ export class TurnManager {
 
   /** Réinitialise complètement le gestionnaire de tours */
   public reset(): void {
+    this.clearResolutionTimeout();
     this.currentPlayerIndex = 0;
     this.currentRound = 1;
     this.isInputLocked = false;
@@ -276,7 +282,6 @@ export class TurnManager {
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
     if (player.isHuman || this.isProcessingAI) return;
     if (!this.aiEngine) {
-      // Pas de moteur IA configuré → on passe le tour automatiquement
       console.warn(`[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`);
       setTimeout(() => this.nextTurn(), 800);
       return;
@@ -286,31 +291,30 @@ export class TurnManager {
     this.isInputLocked = true;
     this.notifyHudUpdate();
 
+    // Start safety timeout for auto-resolution
+    this.startResolutionTimeout(player);
+
     try {
-      // Construire un GameState minimal pour l'IA
       const gameState: GameState = {
         phase: 'COMBAT',
-        players: [...this.tankManager.getPlayers()], // copy to mutable array
+        players: [...this.tankManager.getPlayers()],
         currentPlayerIndex: this.currentPlayerIndex,
         turn: this.currentRound,
       };
 
-      // Appel de la stratégie IA
       const decision = await this.aiEngine.executeTurn(
         player.tank.id,
         gameState,
         this.terrainManager,
       );
 
-      // Applique les valeurs sur le tank (visible dans le HUD)
       player.tank.angle = Math.max(0, Math.min(180, decision.angle));
       player.tank.power = Math.max(0, Math.min(100, decision.power));
       this.notifyHudUpdate();
 
-      // Délai artificiel pour simuler la "réflexion" de l'IA (1.5s)
+      // Artificial thinking delay
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      // Déclenche le tir automatiquement
       const command: FireCommand = {
         angle: player.tank.angle,
         power: player.tank.power,
@@ -319,13 +323,60 @@ export class TurnManager {
 
       this.fireCallback(player.tank.position, command);
 
-      // Les inputs restent verrouillés jusqu'à la fin de la résolution (géré par PhysicsEngine)
+      // If everything goes well, the normal onAllProjectilesSettled → nextTurn() will happen.
+      // The resolution timeout acts as a safety net.
     } catch (error) {
       console.error('[TurnManager] AI turn failed:', error);
-      // En cas d'erreur, on passe quand même au tour suivant après un délai
+      this.clearResolutionTimeout();
       setTimeout(() => this.nextTurn(), 1000);
     } finally {
       this.isProcessingAI = false;
+    }
+  }
+
+  /** Starts a safety timeout that will force resolution if the AI turn gets stuck */
+  private startResolutionTimeout(player: Player): void {
+    this.clearResolutionTimeout();
+
+    this.resolutionTimeoutId = setTimeout(() => {
+      // Double-check we're still on this AI player and still locked
+      const current = this.getCurrentPlayer();
+      if (current?.id === player.id && this.isInputLocked) {
+        console.warn(`[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`);
+
+        let fallback: { angle: number; power: number } | null = null;
+
+        if (this.aiEngine?.getResolutionFallback) {
+          fallback = this.aiEngine.getResolutionFallback();
+        }
+
+        if (fallback) {
+          // AI provided a fallback shot
+          player.tank.angle = Math.max(0, Math.min(180, fallback.angle));
+          player.tank.power = Math.max(0, Math.min(100, fallback.power));
+          this.notifyHudUpdate();
+
+          const command: FireCommand = {
+            angle: player.tank.angle,
+            power: player.tank.power,
+            weaponId: player.tank.currentWeapon,
+          };
+          this.fireCallback(player.tank.position, command);
+        } else {
+          // No fallback → just skip the turn (forfeit)
+          console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
+          this.isInputLocked = false;
+          this.nextTurn();
+        }
+      }
+      this.resolutionTimeoutId = null;
+    }, this.AI_RESOLUTION_TIMEOUT_MS);
+  }
+
+  private clearResolutionTimeout(): void {
+    if (this.resolutionTimeoutId) {
+      clearTimeout(this.resolutionTimeoutId);
+      this.resolutionTimeoutId = null;
     }
   }
 }

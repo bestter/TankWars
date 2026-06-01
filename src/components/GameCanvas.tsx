@@ -13,7 +13,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../game/engine/GameEngine';
+import type { CurrentTurnInfo } from '../game/engine/TurnManager';
 import { VGA_PALETTE, type FireCommand } from '../types/game';
+import { AISimpleStrategy } from '../game/entities/ai/AISimpleStrategy';
+import type { Player } from '../types/player';
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
@@ -23,7 +26,10 @@ export function GameCanvas() {
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const [wind, setWind] = useState(12); // demo wind value
+  const [wind, setWind] = useState(12);
+  const [turnInfo, setTurnInfo] = useState<CurrentTurnInfo | null>(null);
+  const [winner, setWinner] = useState<import('../types/player').Player | null>(null);
+  const [showNewGameButton, setShowNewGameButton] = useState(false);
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -50,21 +56,65 @@ export function GameCanvas() {
 
     ctxRef.current = ctx;
 
-    // === GAME ENGINE (the heart of the high-frequency loop) ===
+    // === GAME ENGINE ===
     const engine = new GameEngine(CANVAS_WIDTH, CANVAS_HEIGHT, {
       gravity: 260,
       baseShotSpeed: 420,
     });
 
-    // Seed some demo tanks for collision testing
-    engine.setTanks([
-      { id: 'tank-1', position: { x: 180, y: 320 }, radius: 14 },
-      { id: 'tank-2', position: { x: 620, y: 295 }, radius: 14 },
-    ]);
+    // === Create real players (1 Human + 1 AI) ===
+    const players: Player[] = [
+      {
+        id: 'player-1',
+        name: 'You',
+        isHuman: true,
+        tank: {
+          id: 'tank-1',
+          position: { x: 180, y: 320 },
+          angle: 45,
+          power: 50,
+          health: 100,
+          maxHealth: 100,
+          shield: 40,
+          maxShield: 40,
+          isDead: false,
+          color: '#FF5555',
+          currentWeapon: 'MISSILE',
+        },
+        money: 200,
+        inventory: { MISSILE: 5, GRENADE: 2 },
+      },
+      {
+        id: 'player-2',
+        name: 'AI Bot',
+        isHuman: false,
+        tank: {
+          id: 'tank-2',
+          position: { x: 620, y: 295 },
+          angle: 135,
+          power: 50,
+          health: 100,
+          maxHealth: 100,
+          shield: 40,
+          maxShield: 40,
+          isDead: false,
+          color: '#55FF55',
+          currentWeapon: 'MISSILE',
+        },
+        money: 200,
+        inventory: { MISSILE: 5, GRENADE: 2 },
+      },
+    ];
+
+    // Initialize players (this also calls setupInputListeners + starts first turn)
+    engine.setPlayers(players);
+
+    // Inject the simple AI strategy
+    engine.setAIEngine(new AISimpleStrategy());
 
     engine.setWindForce(wind);
 
-    // Wire callbacks (React can react to game events without owning physics)
+    // Wire callbacks
     engine.onProjectileHit = (hit) => {
       console.log('[GameEngine] Hit:', hit.weaponId, 'at', hit.x.toFixed(1), hit.y.toFixed(1));
     };
@@ -73,16 +123,42 @@ export function GameCanvas() {
       console.log('[GameEngine] All projectiles settled');
     };
 
+    // Listen to turn/HUD updates for real-time display
+    engine.onTurnHudUpdate = (info: CurrentTurnInfo) => {
+      setTurnInfo(info);
+    };
+
+    // Game Over handling
+    engine.onGameOver = (winningPlayer) => {
+      setWinner(winningPlayer);
+      setShowNewGameButton(false);
+
+      // Show "New game ?" button after 7 seconds
+      setTimeout(() => {
+        setShowNewGameButton(true);
+      }, 7000);
+    };
+
     engineRef.current = engine;
 
-    // Start the internal requestAnimationFrame loop
+    // Start the internal physics loop
     engine.start();
 
-    // Initial draw
-    renderFrame();
+    // === CONTINUOUS RENDERING LOOP ===
+    let rafId: number;
+    const renderLoop = () => {
+      if (ctx) {
+        // 1. Clear the canvas every frame
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      }
+      renderFrame(); // This calls engine.render(ctx) which draws terrain, tanks, projectiles
+      rafId = requestAnimationFrame(renderLoop);
+    };
+    renderLoop();
 
     return () => {
       engine.stop();
+      if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
     };
@@ -128,8 +204,99 @@ export function GameCanvas() {
     engine.fireProjectile(from, command, 'player-demo');
   };
 
+  // Restart a brand new game
+  const handleNewGame = () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    // Reset engine state
+    engine.resetGame();
+
+    // Recreate fresh players
+    const newPlayers: Player[] = [
+      {
+        id: 'player-1',
+        name: 'You',
+        isHuman: true,
+        tank: {
+          id: 'tank-1',
+          position: { x: 180, y: 320 },
+          angle: 45,
+          power: 50,
+          health: 100,
+          maxHealth: 100,
+          shield: 40,
+          maxShield: 40,
+          isDead: false,
+          color: '#FF5555',
+          currentWeapon: 'MISSILE',
+        },
+        money: 200,
+        inventory: { MISSILE: 5, GRENADE: 2 },
+      },
+      {
+        id: 'player-2',
+        name: 'AI Bot',
+        isHuman: false,
+        tank: {
+          id: 'tank-2',
+          position: { x: 620, y: 295 },
+          angle: 135,
+          power: 50,
+          health: 100,
+          maxHealth: 100,
+          shield: 40,
+          maxShield: 40,
+          isDead: false,
+          color: '#55FF55',
+          currentWeapon: 'MISSILE',
+        },
+        money: 200,
+        inventory: { MISSILE: 5, GRENADE: 2 },
+      },
+    ];
+
+    engine.setPlayers(newPlayers);
+    engine.setAIEngine(new AISimpleStrategy());
+
+    // Reset local UI state
+    setWinner(null);
+    setShowNewGameButton(false);
+    setTurnInfo(null);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+      {/* === HUD : Angle et Puissance (comme dans les jeux originaux) === */}
+      <div style={{
+        backgroundColor: '#111111',
+        border: `2px solid ${VGA_PALETTE.GRAY}`,
+        padding: '6px 20px',
+        fontFamily: 'monospace',
+        color: VGA_PALETTE.WHITE,
+        minWidth: '420px',
+        textAlign: 'center',
+        fontSize: '14px',
+        marginBottom: '4px'
+      }}>
+        {turnInfo ? (
+          <>
+            <strong style={{ color: turnInfo.isHuman ? '#FF5555' : '#55FF55' }}>
+              {turnInfo.playerName}
+            </strong>
+            {'  |  '}
+            Angle: <strong style={{ color: VGA_PALETTE.CYAN }}>{turnInfo.angle}°</strong>
+            {'  |  '}
+            Power: <strong style={{ color: VGA_PALETTE.YELLOW }}>{turnInfo.power}</strong>
+            {turnInfo.isInputLocked && (
+              <span style={{ color: VGA_PALETTE.RED, marginLeft: 12 }}>[RESOLUTION...]</span>
+            )}
+          </>
+        ) : (
+          <span>Waiting for game start...</span>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ color: VGA_PALETTE.GRAY, fontSize: 13 }}>
           Wind: <strong style={{ color: VGA_PALETTE.CYAN }}>{wind}</strong>
@@ -155,20 +322,72 @@ export function GameCanvas() {
         </button>
       </div>
 
-      <canvas
-        ref={canvasRef}
-        onClick={handleCanvasClick}
-        style={{
-          border: `3px solid ${VGA_PALETTE.GRAY}`,
-          imageRendering: 'pixelated',
-          cursor: 'crosshair',
-          background: '#000000',
-        }}
-      />
+      <div style={{ position: 'relative' }}>
+        <canvas
+          ref={canvasRef}
+          onClick={handleCanvasClick}
+          style={{
+            border: `3px solid ${VGA_PALETTE.GRAY}`,
+            imageRendering: 'pixelated',
+            cursor: winner ? 'default' : 'crosshair',
+            background: '#000000',
+          }}
+        />
+
+        {/* === GAME OVER OVERLAY === */}
+        {winner && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              textAlign: 'center',
+              pointerEvents: 'none',
+              zIndex: 10,
+            }}
+          >
+            <div
+              style={{
+                fontSize: '72px',
+                fontWeight: 'bold',
+                color: winner.tank.color,
+                textShadow: '0 0 20px #000, 0 0 40px #000',
+                fontFamily: 'monospace',
+                marginBottom: '12px',
+              }}
+            >
+              {winner.name} WINS!
+            </div>
+            <div style={{ fontSize: '24px', color: '#AAAAAA' }}>
+              Game Over
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* New Game Button - appears after delay */}
+      {showNewGameButton && (
+        <button
+          onClick={handleNewGame}
+          style={{
+            marginTop: '16px',
+            padding: '12px 32px',
+            fontSize: '20px',
+            backgroundColor: '#222',
+            color: VGA_PALETTE.WHITE,
+            border: `3px solid ${VGA_PALETTE.CYAN}`,
+            cursor: 'pointer',
+            fontFamily: 'monospace',
+          }}
+        >
+          New Game ?
+        </button>
+      )}
 
       <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
-        Click canvas to fire a random-angle test shot from left • Use buttons for different weapons<br />
-        Projectiles respect gravity + wind and create real craters on impact
+        <strong>Controls:</strong> ← → Adjust angle • ↑ ↓ Adjust power • SPACE to fire<br />
+        The AI will play automatically after your turn (with thinking delay)
       </div>
     </div>
   );

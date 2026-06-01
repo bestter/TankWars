@@ -131,6 +131,7 @@ export class PhysicsEngine {
     if (tankManager) {
       tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage);
       tankManager.updateTankPositions(terrainManager);
+      tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }
 
     // 3. Notifier l'extérieur
