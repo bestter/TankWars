@@ -27,3 +27,8 @@
 
 - Provide dry, concise, and production-ready code.
 - No introductory fluff. Focus on file paths, explicit types, and clean architectural patterns.
+
+## Commit style
+
+- Always sign your comments by you name, and your EXACT model name for each commit.
+- Use IMPERATIVE mood for commit messages.
