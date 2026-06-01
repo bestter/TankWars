@@ -553,21 +553,7 @@ export function GameCanvas() {
               />
             ) : (
               // Pendant qu'une IA achète automatiquement (très rapide)
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '40%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  zIndex: 25,
-                  fontFamily: 'monospace',
-                  color: VGA_PALETTE.CYAN,
-                  background: 'rgba(0,0,0,0.8)',
-                  padding: '12px 24px',
-                  border: `2px solid ${VGA_PALETTE.CYAN}`,
-                  textAlign: 'center',
-                }}
-              >
+              <div className="retro-ai-overlay">
                 L'IA <strong style={{ color: shopPlayers[currentShopIndex]?.tank.color }}>
                   {shopPlayers[currentShopIndex]?.name}
                 </strong> fait ses achats...
@@ -578,21 +564,7 @@ export function GameCanvas() {
 
         {/* Phase indicator minimal pour SUMMARY seulement (le SHOP a maintenant son propre UI) */}
         {gamePhase === 'SUMMARY' && (
-          <div
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 6,
-              zIndex: 30,
-              fontSize: 9,
-              fontFamily: 'monospace',
-              color: VGA_PALETTE.CYAN,
-              background: 'rgba(0,0,0,0.6)',
-              padding: '1px 4px',
-              border: `1px solid ${VGA_PALETTE.CYAN}`,
-              pointerEvents: 'none',
-            }}
-          >
+          <div className="retro-badge">
             PHASE: {gamePhase}
           </div>
         )}
@@ -633,16 +605,7 @@ export function GameCanvas() {
       {showNewGameButton && (
         <button
           onClick={handleNewGame}
-          style={{
-            marginTop: '16px',
-            padding: '12px 32px',
-            fontSize: '20px',
-            backgroundColor: '#222',
-            color: VGA_PALETTE.WHITE,
-            border: `3px solid ${VGA_PALETTE.CYAN}`,
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-          }}
+          className="retro-newgame-btn"
         >
           New Game ?
         </button>

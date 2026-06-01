@@ -16,7 +16,7 @@ function App() {
       }}>
         <h1 style={{ margin: 0, fontSize: '28px' }}>TANKWARS</h1>
         <p style={{ margin: '4px 0 0', color: '#AAAAAA', fontSize: '13px' }}>
-          Destructible terrain prototype — click to explode
+          Destructible terrain prototype: click to explode
         </p>
       </header>
 
@@ -28,7 +28,7 @@ function App() {
         textAlign: 'center', 
         marginTop: '16px', 
         color: '#555555', 
-        fontSize: '11px' 
+        fontSize: '12px' 
       }}>
         Terrain: heightmap + circular crater destruction • VGA palette rendering
       </footer>

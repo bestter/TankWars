@@ -50,27 +50,18 @@ export function WeaponShop({
 
   return (
     <div
+      className="retro-modal"
       style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        zIndex: 25,
-        pointerEvents: 'auto',
-        backgroundColor: 'rgba(0, 0, 0, 0.94)',
         border: `4px solid ${VGA_PALETTE.MAGENTA}`,
-        boxShadow: '0 0 0 2px #000, 0 0 0 6px #222',
-        fontFamily: 'monospace',
-        color: VGA_PALETTE.WHITE,
         width: 'min(520px, 92%)',
         padding: '16px 20px 20px',
-        textAlign: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.94)',
       }}
     >
       {/* Header */}
       <div style={{ marginBottom: 8 }}>
         <span style={{ color: VGA_PALETTE.CYAN, fontSize: '13px' }}>
-          BOUTIQUE — MANCHE {shopIndex + 1} / {totalShoppers}
+          BOUTIQUE: MANCHE {shopIndex + 1} / {totalShoppers}
         </span>
       </div>
 
@@ -93,7 +84,7 @@ export function WeaponShop({
         </span>
       </div>
 
-      <div style={{ fontSize: '10px', color: VGA_PALETTE.GRAY, marginBottom: 10 }}>
+      <div style={{ fontSize: '12px', color: VGA_PALETTE.GRAY, marginBottom: 10 }}>
         Utilisez + pour acheter, − pour vendre (remboursement intégral)
       </div>
 
@@ -124,7 +115,7 @@ export function WeaponShop({
                   <span style={{ color: def.color, fontWeight: 'bold' }}>{def.name}</span>
                   <span style={{ color: VGA_PALETTE.YELLOW }}>{def.price}$</span>
                 </div>
-                <div style={{ fontSize: '9px', color: VGA_PALETTE.GRAY, lineHeight: 1.2 }}>
+                <div style={{ fontSize: '12px', color: VGA_PALETTE.GRAY, lineHeight: 1.2 }}>
                   {WEAPON_DESCRIPTIONS[wid] ?? 'Arme tactique'}
                 </div>
               </div>
@@ -140,16 +131,12 @@ export function WeaponShop({
                 <button
                   onClick={() => onBuySell(wid, 1)}
                   disabled={!canAfford}
+                  className="retro-inc-btn"
                   style={{
-                    fontFamily: 'monospace',
-                    fontSize: '12px',
-                    width: 26,
-                    height: 20,
                     background: canAfford ? '#003300' : '#222',
                     color: canAfford ? VGA_PALETTE.GREEN : '#555',
-                    border: `1px solid ${canAfford ? VGA_PALETTE.GREEN : VGA_PALETTE.DARK_GRAY}`,
+                    borderColor: canAfford ? VGA_PALETTE.GREEN : VGA_PALETTE.DARK_GRAY,
                     cursor: canAfford ? 'pointer' : 'not-allowed',
-                    padding: 0,
                   }}
                   title="Acheter 1"
                 >
@@ -158,16 +145,12 @@ export function WeaponShop({
                 <button
                   onClick={() => onBuySell(wid, -1)}
                   disabled={!canSell}
+                  className="retro-inc-btn"
                   style={{
-                    fontFamily: 'monospace',
-                    fontSize: '12px',
-                    width: 26,
-                    height: 20,
                     background: canSell ? '#330000' : '#222',
                     color: canSell ? VGA_PALETTE.RED : '#555',
-                    border: `1px solid ${canSell ? VGA_PALETTE.RED : VGA_PALETTE.DARK_GRAY}`,
+                    borderColor: canSell ? VGA_PALETTE.RED : VGA_PALETTE.DARK_GRAY,
                     cursor: canSell ? 'pointer' : 'not-allowed',
-                    padding: 0,
                   }}
                   title="Vendre 1"
                 >
@@ -182,22 +165,13 @@ export function WeaponShop({
       {/* Ready button */}
       <button
         onClick={onReady}
-        style={{
-          padding: '10px 36px',
-          fontSize: '15px',
-          backgroundColor: '#222',
-          color: VGA_PALETTE.WHITE,
-          border: `3px solid ${VGA_PALETTE.CYAN}`,
-          cursor: 'pointer',
-          fontFamily: 'monospace',
-          fontWeight: 'bold',
-          letterSpacing: 0.5,
-        }}
+        className="retro-btn"
+        style={{ padding: '10px 36px' }}
       >
         PRÊT → Joueur suivant
       </button>
 
-      <div style={{ fontSize: '9px', color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}>
+      <div style={{ fontSize: '12px', color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}>
         Les IA achètent automatiquement
       </div>
     </div>

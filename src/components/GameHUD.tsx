@@ -49,24 +49,11 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
 
   return (
     <div
+      className="retro-hud"
       style={{
-        position: 'absolute',
-        top: 4,
-        left: 4,
-        right: 4,
-        zIndex: 5,
-        backgroundColor: 'rgba(0, 0, 0, 0.82)',
         border: `3px solid ${VGA_PALETTE.CYAN}`,
-        fontFamily: 'monospace',
-        fontSize: '10px',
+        fontSize: '12px',
         lineHeight: '1.1',
-        color: VGA_PALETTE.WHITE,
-        padding: '3px 8px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        pointerEvents: 'none', // most areas non-interactive
-        boxShadow: '0 0 0 1px #000 inset',
       }}
     >
       {/* === PLAYER === */}
@@ -90,7 +77,7 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
             </span>
           </>
         ) : (
-          <span style={{ color: VGA_PALETTE.GRAY }}>—</span>
+          <span style={{ color: VGA_PALETTE.GRAY }}>-</span>
         )}
       </div>
 
@@ -160,19 +147,13 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
                   onWeaponSelect(wid);
                 }
               }}
+              className="retro-weapon-btn"
               style={{
-                fontFamily: 'monospace',
-                fontSize: '9px',
-                padding: '1px 5px',
-                border: `2px solid ${borderCol}`,
                 backgroundColor: bg,
                 color: textCol,
+                borderColor: borderCol,
                 cursor: selectable ? 'pointer' : 'default',
-                minWidth: 42,
-                textAlign: 'center',
-                lineHeight: '1',
                 opacity: hasAmmo ? 1 : 0.55,
-                outline: 'none',
               }}
               title={def.name}
             >
@@ -187,7 +168,7 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
             style={{
               marginLeft: 6,
               color: VGA_PALETTE.RED,
-              fontSize: '9px',
+              fontSize: '12px',
               pointerEvents: 'none',
             }}
           >
@@ -199,7 +180,7 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
             style={{
               marginLeft: 6,
               color: VGA_PALETTE.CYAN,
-              fontSize: '9px',
+              fontSize: '12px',
               pointerEvents: 'none',
             }}
           >
@@ -210,7 +191,7 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
 
       {/* Current weapon name (small) */}
       {turnInfo && (
-        <div style={{ color: VGA_PALETTE.GRAY, fontSize: '9px', pointerEvents: 'none', minWidth: 52 }}>
+        <div style={{ color: VGA_PALETTE.GRAY, fontSize: '12px', pointerEvents: 'none', minWidth: 52 }}>
           {WEAPON_REGISTRY[currentWeapon!]?.name ?? currentWeapon}
         </div>
       )}
