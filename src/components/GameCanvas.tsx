@@ -24,10 +24,17 @@ import type { WeaponId } from '../types/weapon';
 import { WEAPON_REGISTRY } from '../types/weapon';
 import type { GamePhase, RoundResult } from '../types/game';
 
+export interface GameCanvasProps {
+  /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
+  initialPlayers?: Player[];
+  /** Permet de retourner à l'écran titre (démontage engine + ressources). */
+  onReturnToMenu?: () => void;
+}
+
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
 
-export function GameCanvas() {
+export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -48,6 +55,9 @@ export function GameCanvas() {
 
   // Snapshot of players for safe UI rendering (avoids reading refs during render)
   const [uiPlayers, setUiPlayers] = useState<Player[]>([]);
+
+  // Snapshot des joueurs initiaux au montage (évite de mettre initialPlayers dans les deps du useEffect one-shot)
+  const initialPlayersRef = useRef(initialPlayers);
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -80,8 +90,9 @@ export function GameCanvas() {
       baseShotSpeed: 420,
     });
 
-    // === Create real players (1 Human + 1 AI) ===
-    const players: Player[] = [
+    // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
+    // Note: positions sont des placeholders. setPlayers → TankManager.spawnTanks les recalcule sur le terrain généré.
+    const demoPlayers: Player[] = [
       {
         id: 'player-1',
         name: 'You',
@@ -124,11 +135,16 @@ export function GameCanvas() {
       },
     ];
 
+    const snapshotPlayers = initialPlayersRef.current;
+    const players: Player[] = snapshotPlayers && snapshotPlayers.length >= 2
+      ? snapshotPlayers.map((p) => ({ ...p })) // clone shallow (objets Player mutés par l'engine ensuite)
+      : demoPlayers;
+
     // Initialize players (this also calls setupInputListeners + starts first turn)
     engine.setPlayers(players);
     setUiPlayers(players);
 
-    // Inject the simple AI strategy
+    // Inject the simple AI strategy (requis pour tout joueur !isHuman, qu'il vienne du menu ou de la démo)
     engine.setAIEngine(new AISimpleStrategy());
 
     engine.setWindForce(wind);
@@ -507,6 +523,17 @@ export function GameCanvas() {
         <button onClick={() => fireWeapon('NUKE')} style={{ fontSize: 12 }}>
           Fire Nuke
         </button>
+
+        {/* Retour menu principal (démontage canvas/engine pour économiser ressources) */}
+        {onReturnToMenu && (
+          <button
+            onClick={onReturnToMenu}
+            style={{ fontSize: 11, padding: '3px 9px', marginLeft: 4 }}
+            title="Retour à l'écran d'accueil et configuration des joueurs"
+          >
+            MENU
+          </button>
+        )}
       </div>
 
       <div style={{ position: 'relative' }}>
