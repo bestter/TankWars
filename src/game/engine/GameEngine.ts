@@ -12,7 +12,7 @@
  * - AI decisions are injected via the AIStrategy interface (see src/game/entities/ai/).
  */
 
-import { Terrain } from './Terrain';
+import { TerrainManager } from './Terrain';
 import {
   WEAPON_REGISTRY,
   type WeaponId,
@@ -55,7 +55,7 @@ export class GameEngine {
   public readonly width: number;
   public readonly height: number;
 
-  private readonly terrain: Terrain;
+  private readonly terrain: TerrainManager;
   private readonly config: GameConfig;
 
   private projectiles: ActiveProjectile[] = [];
@@ -83,8 +83,8 @@ export class GameEngine {
     this.width = Math.floor(width);
     this.height = Math.floor(height);
 
-    this.terrain = new Terrain(this.width, this.height);
-    this.terrain.generate(424242);
+    this.terrain = new TerrainManager(this.width, this.height);
+    this.terrain.generate();
 
     this.config = {
       gravity: 220,
@@ -98,7 +98,7 @@ export class GameEngine {
 
   // === Public API ===
 
-  public getTerrain(): Terrain {
+  public getTerrain(): TerrainManager {
     return this.terrain;
   }
 
@@ -293,30 +293,8 @@ export class GameEngine {
     ctx.fillStyle = '#0000AA';
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // Terrain
-    const terrain = this.terrain;
-    ctx.fillStyle = '#AA5500';
-    ctx.beginPath();
-    ctx.moveTo(0, this.height);
-
-    for (let x = 0; x < terrain.width; x += 1) {
-      ctx.lineTo(x, terrain.getHeightAt(x));
-    }
-    ctx.lineTo(this.width, this.height);
-    ctx.closePath();
-    ctx.fill();
-
-    // Grass line
-    ctx.strokeStyle = '#55FF55';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    for (let x = 0; x < terrain.width; x += 1) {
-      const y = terrain.getHeightAt(x);
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    ctx.lineWidth = 1;
+    // Terrain (délégué au TerrainManager qui utilise la palette VGA)
+    this.terrain.draw(ctx);
 
     // Projectiles
     for (const p of this.projectiles) {

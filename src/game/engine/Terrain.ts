@@ -1,142 +1,181 @@
 /**
- * TankWars - Destructible Terrain Engine (src/game/engine/Terrain.ts)
+ * TankWars - TerrainManager
  *
- * Uses a high-density 1D heightmap for performance and simplicity.
- * This approach is explicitly allowed by project guidelines ("high-density heightmaps").
- *
- * - Generation: Layered sine waves + light random noise for rolling hills.
- * - Destruction: Circular crater carving by raising surface heights.
- * - Fully decoupled from React and from the rendering loop.
+ * Module de gestion du terrain destructible (heightmap).
+ * Respecte strictement les règles du projet :
+ * - TypeScript strict, zéro any
+ * - Palette VGA 16 couleurs (via VGA_PALETTE)
+ * - Algorithme de terrain custom via heightmap (pas de moteur physique externe)
  *
  * Coordinate system:
- *   - (0,0) = top-left of canvas
- *   - Y increases downward (standard Canvas2D)
- *   - heights[x] = y coordinate of the terrain surface at column x
- *   - Everything with y >= heights[x] is solid ground.
+ *   - (0,0) = top-left
+ *   - Y augmente vers le bas (standard Canvas 2D)
+ *   - heights[x] = position Y de la surface du terrain à la colonne x
+ *   - Tout point avec y >= heights[x] est considéré comme solide
  */
 
-export class Terrain {
+import { VGA_PALETTE } from '../../types/game';
+
+export class TerrainManager {
   public readonly width: number;
   public readonly height: number;
 
-  /** y-position of surface for each integer x column. */
+  /** Tableau privé des hauteurs de surface (taille = width) */
   private readonly heights: number[];
 
   constructor(width: number, height: number) {
     if (width <= 0 || height <= 0) {
-      throw new Error('Terrain dimensions must be positive');
+      throw new Error('TerrainManager: width and height must be positive');
     }
+
     this.width = Math.floor(width);
     this.height = Math.floor(height);
-    this.heights = new Array(this.width).fill(this.height * 0.72);
+    this.heights = new Array(this.width).fill(this.height * 0.7);
   }
 
   /**
-   * Generates rolling hills using multiple sine octaves + small noise.
-   * Deterministic when a seed is provided (simple LCG).
+   * Génère un paysage vallonné fluide en utilisant des ondes sinusoïdales cumulées.
+   * Ajoute un offset vertical pour positionner correctement le terrain.
    */
-  generate(seed: number = 1337): void {
-    // Simple LCG for reproducibility
-    let rng = seed >>> 0;
-
-    const random = (): number => {
-      rng = (rng * 1664525 + 1013904223) >>> 0;
-      return (rng >>> 8) / 0x1000000; // [0, 1)
-    };
-
-    const baseHeight = this.height * 0.68;
-    const amplitude1 = this.height * 0.09;
-    const amplitude2 = this.height * 0.055;
-    const amplitude3 = this.height * 0.025;
+  public generate(): void {
+    const base = this.height * 0.62;           // offset vertical principal
+    const amp1 = this.height * 0.11;           // grandes collines
+    const amp2 = this.height * 0.065;          // collines moyennes
+    const amp3 = this.height * 0.032;          // détails fins
 
     for (let x = 0; x < this.width; x++) {
-      const xf = x / this.width;
+      const nx = x * 0.012;                    // fréquence de base
 
-      let h = baseHeight;
+      // Ondes sinusoïdales cumulées (superposition)
+      let h =
+        base +
+        Math.sin(nx * 0.9) * amp1 +
+        Math.sin(nx * 1.85 + 1.2) * amp2 +
+        Math.sin(nx * 3.7 + 2.7) * amp3;
 
-      // Large rolling hills
-      h += Math.sin(xf * Math.PI * 2.7 + random() * 0.6) * amplitude1;
-      // Medium detail
-      h += Math.sin(xf * Math.PI * 5.3 + 1.7 + random() * 0.4) * amplitude2;
-      // Fine hills
-      h += Math.sin(xf * Math.PI * 11.8 + 4.2) * amplitude3;
+      // Léger bruit haute fréquence pour du relief naturel
+      h += Math.sin(x * 0.47) * 2.8;
 
-      // Very light high-frequency noise (jaggedness)
-      h += (random() - 0.5) * 7.5;
+      // Bornage pour éviter un terrain trop extrême
+      const minH = this.height * 0.28;
+      const maxH = this.height * 0.86;
 
-      // Clamp to reasonable playable range
-      const minSurface = Math.floor(this.height * 0.22);
-      const maxSurface = Math.floor(this.height * 0.88);
-      this.heights[x] = Math.max(minSurface, Math.min(maxSurface, h));
+      this.heights[x] = Math.max(minH, Math.min(maxH, h));
     }
 
-    // Light smoothing pass (reduces single-column spikes while keeping hills)
-    const smoothed = [...this.heights];
-    for (let x = 1; x < this.width - 1; x++) {
-      smoothed[x] = (this.heights[x - 1] + this.heights[x] * 1.6 + this.heights[x + 1]) / 3.6;
-    }
-    for (let x = 1; x < this.width - 1; x++) {
-      this.heights[x] = smoothed[x];
-    }
-  }
-
-  /** Returns the terrain surface Y at the given x (clamped). */
-  getHeightAt(x: number): number {
-    const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
-    return this.heights[xi];
+    // Lissage léger pour un rendu plus fluide
+    this.smoothHeights(0.55);
   }
 
   /**
-   * Carves a circular crater centered at (centerX, centerY) with given radius.
-   * This is the core destructible terrain method called by explosions.
+   * Dessine le terrain sur le contexte canvas en utilisant une couleur unie
+   * de la palette VGA.
    */
-  destroyTerrain(centerX: number, centerY: number, radius: number): void {
+  public draw(ctx: CanvasRenderingContext2D): void {
+    // Couleur de remplissage du terrain (Marron de la palette VGA)
+    ctx.fillStyle = VGA_PALETTE.BROWN;
+
+    ctx.beginPath();
+    ctx.moveTo(0, this.height);
+
+    for (let x = 0; x < this.width; x++) {
+      ctx.lineTo(x, this.heights[x]);
+    }
+
+    ctx.lineTo(this.width, this.height);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ligne supérieure du terrain (vert VGA pour l'herbe)
+    ctx.strokeStyle = VGA_PALETTE.GREEN;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+
+    for (let x = 0; x < this.width; x++) {
+      if (x === 0) {
+        ctx.moveTo(x, this.heights[x]);
+      } else {
+        ctx.lineTo(x, this.heights[x]);
+      }
+    }
+    ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+
+  /**
+   * Creuse un cratère circulaire parfait dans le terrain.
+   * Utilise la formule de Pythagore : Δy = √(radius² - (x - impactX)²)
+   */
+  public destroyTerrain(impactX: number, impactY: number, radius: number): void {
     if (radius <= 0) return;
 
     const r = radius;
     const r2 = r * r;
-    const startX = Math.max(0, Math.floor(centerX - r));
-    const endX = Math.min(this.width - 1, Math.floor(centerX + r));
+
+    const startX = Math.max(0, Math.floor(impactX - r));
+    const endX = Math.min(this.width - 1, Math.floor(impactX + r));
 
     for (let x = startX; x <= endX; x++) {
-      const dx = x - centerX;
+      const dx = x - impactX;
       const dx2 = dx * dx;
 
       if (dx2 > r2) continue;
 
+      // Formule demandée : Pythagore pour cratère circulaire
       const dy = Math.sqrt(r2 - dx2);
 
-      // Because Y increases downward, digging deeper = larger Y value
-      const newHeight = centerY + dy;
+      // Comme Y augmente vers le bas, creuser = augmenter la valeur de hauteur
+      const craterDepth = impactY + dy;
 
-      if (newHeight > this.heights[x]) {
-        this.heights[x] = newHeight;
+      if (craterDepth > this.heights[x]) {
+        this.heights[x] = craterDepth;
       }
     }
 
-    // Optional: very light re-smoothing near crater edges for nicer visuals
-    this.smoothRegion(Math.max(0, startX - 2), Math.min(this.width - 1, endX + 2), 0.6);
+    // Lissage léger autour du cratère pour un rendu plus naturel
+    this.smoothHeights(0.4, startX - 3, endX + 3);
   }
 
-  /** Simple local smoothing helper used after destruction. */
-  private smoothRegion(start: number, end: number, strength: number = 0.5): void {
-    const original = this.heights.slice(start, end + 1);
+  /**
+   * Vérifie si un point (x, y) touche ou pénètre dans le terrain.
+   */
+  public checkCollision(x: number, y: number): boolean {
+    if (x < 0 || x >= this.width) {
+      return false;
+    }
+    const surfaceY = this.heights[Math.floor(x)];
+    return y >= surfaceY;
+  }
 
-    for (let i = 1; i < original.length - 1; i++) {
-      const x = start + i;
-      const avg = (original[i - 1] + original[i] + original[i + 1]) / 3;
-      this.heights[x] = this.heights[x] * (1 - strength) + avg * strength;
+  /** Retourne la hauteur de surface à la position x (bornée) */
+  public getHeightAt(x: number): number {
+    const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
+    return this.heights[xi];
+  }
+
+  /** Retourne une copie en lecture seule de la heightmap */
+  public getHeightmap(): ReadonlyArray<number> {
+    return this.heights.slice();
+  }
+
+  // ==================== Méthodes privées ====================
+
+  /**
+   * Lissage de la heightmap (passe moyenne)
+   */
+  private smoothHeights(strength: number = 0.5, start?: number, end?: number): void {
+    const s = Math.max(0, start ?? 1);
+    const e = Math.min(this.width - 1, end ?? this.width - 2);
+
+    if (e - s < 2) return;
+
+    const copy = this.heights.slice(s, e + 1);
+
+    for (let i = 1; i < copy.length - 1; i++) {
+      const idx = s + i;
+      const avg = (copy[i - 1] + copy[i] + copy[i + 1]) / 3;
+      this.heights[idx] = this.heights[idx] * (1 - strength) + avg * strength;
     }
   }
-
-  /** Returns true if the point (x, y) is inside solid ground. */
-  isSolid(x: number, y: number): boolean {
-    if (x < 0 || x >= this.width) return false;
-    return y >= this.heights[Math.floor(x)];
-  }
-
-  /** Returns a readonly copy of the heightmap (useful for debugging / serialization). */
-  getHeightmap(): ReadonlyArray<number> {
-    return this.heights;
-  }
 }
+

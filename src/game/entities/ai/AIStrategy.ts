@@ -11,14 +11,14 @@
 
 import type { Player } from '../../../types/player';
 import type { FireCommand } from '../../../types/game';
-import type { Terrain } from '../../engine/Terrain';
+import type { TerrainManager } from '../../engine/Terrain';
 
 /**
  * Snapshot of the world passed to AI.
  * Keep this lightweight and serializable. Never give live mutable references to projectiles.
  */
 export interface AIWorldView {
-  readonly terrain: Terrain;           // read-only access via methods
+  readonly terrain: TerrainManager;    // read-only access via methods
   readonly players: ReadonlyArray<Player>;
   readonly currentPlayerId: string;
   readonly windForce: number;
