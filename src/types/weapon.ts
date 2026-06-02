@@ -16,6 +16,7 @@ export type WeaponId =
   | 'GRENADE'
   | 'CLUSTER'
   | 'NUKE'
+  | 'THERMONUCLEAR'
   | 'DRILLER';
 
 /** Static definition for a weapon type. */
@@ -74,6 +75,16 @@ export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
     price: 210,
     damage: 75,
     blastRadius: 62,
+    physicsType: 'projectile',
+    color: VGA_PALETTE.RED,
+    defaultAmmo: 1,
+  },
+  THERMONUCLEAR: {
+    id: 'THERMONUCLEAR',
+    name: 'Thermonuclear Bomb',
+    price: 2500,
+    damage: 120,
+    blastRadius: 160,
     physicsType: 'projectile',
     color: VGA_PALETTE.RED,
     defaultAmmo: 1,

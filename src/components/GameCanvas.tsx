@@ -472,9 +472,9 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // (affordable weapons computed inside the spending loop)
 
     // Stratégie très simple : l'IA dépense jusqu'à 70% de son argent
-    // en achetant d'abord des armes plus chères (NUKE, CLUSTER) puis du basique.
+    // en achetant d'abord des armes plus chères (THERMONUCLEAR first as most expensive/powerful).
     // MISSILE is unlimited and not in shop, so never auto-bought.
-    const preferredOrder: WeaponId[] = ['NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+    const preferredOrder: WeaponId[] = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
 
     let spent = 0;
     const budget = Math.floor((aiPlayer.money ?? 0) * 0.7);

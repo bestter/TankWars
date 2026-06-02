@@ -35,6 +35,7 @@ const WEAPON_DESCRIPTIONS: Partial<Record<WeaponId, string>> = {
   GRENADE: 'Grenade à rebond - utile en terrain accidenté',
   CLUSTER: 'MIRV / Sous-munitions - multiple impacts',
   NUKE: 'Mini-Nuke - gros dégâts + large cratère',
+  THERMONUCLEAR: 'Bombe thermonucléaire - détruit ~1/4 de la carte, mort instantanée au centre + énorme cratère',
   DRILLER: 'Foreur - perce le sol en profondeur',
 };
 

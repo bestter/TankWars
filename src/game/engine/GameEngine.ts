@@ -21,6 +21,7 @@ import {
   type WeaponId,
 } from '../../types/weapon';
 import type { Player } from '../../types/player';
+import { VGA_PALETTE } from '../../types/game';
 import type { Vector2, FireCommand, RoundResult } from '../../types/game';
 import type { RoundEndPayload } from '../../types/round';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
@@ -91,6 +92,18 @@ export class GameEngine {
     color: string;
     size: number;
   }> = [];
+
+  // Impact explosion VFX for huge weapons (e.g. THERMONUCLEAR). Separate from celebration fireworks.
+  // Particles use red/orange VGA tones + alpha for "red-orange" blast + flash.
+  private impactExplosions: Array<{
+    x: number;
+    y: number;
+    life: number;
+    maxLife: number;
+    size: number;
+    color: string;
+  }> = [];
+  private thermoFlashLife = 0; // short full-screen red flash on thermonuclear impact for "huge" punch
 
   // === Round-end (fin de manche) accumulators for money/kill rewards (React-owned phase uses these via award fn) ===
   private roundDamageDealt: Record<string, number> = {};
@@ -204,6 +217,11 @@ export class GameEngine {
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
       this.playImpactSound(hit.weaponId);
+
+      // Huge red-orange thermonuclear explosion VFX (flash + particles)
+      if (hit.weaponId === 'THERMONUCLEAR') {
+        this.spawnThermonuclearExplosion(hit.x, hit.y);
+      }
     };
 
     this.config = {
@@ -392,6 +410,8 @@ export class GameEngine {
   /** Clear round celebration fireworks when entering SUMMARY (prevents ongoing spawns in SUMMARY/SHOP) */
   public clearRoundCelebration(): void {
     this.fireworks = [];
+    this.impactExplosions = [];
+    this.thermoFlashLife = 0;
     this.celebrationCenterX = 0;
     this.celebrationColor = '#FFFFFF';
     this.celebrationWinnerTankId = null;
@@ -442,6 +462,8 @@ export class GameEngine {
     this.stopVictoryMusic();
     this.physicsEngine.clear(false);
     this.fireworks = [];
+    this.impactExplosions = [];
+    this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
@@ -511,6 +533,7 @@ export class GameEngine {
     // SUMMARY / SHOP: freeze combat simulation (tanks were dying during boutique → false draws)
     if (this.turnManager.isInterRoundPaused()) {
       this.updateFireworks();
+      this.updateImpactExplosions();
       return;
     }
 
@@ -531,6 +554,7 @@ export class GameEngine {
 
     // Mise à jour des feux d'artifice (si partie terminée)
     this.updateFireworks();
+    this.updateImpactExplosions();
 
     // Notification pour le layer React (interpolation, debug, etc.)
     this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
@@ -639,6 +663,18 @@ export class GameEngine {
     // Feux d'artifice pour célébration (fin de manche avec gagnant de round, ou fin de match)
     if (this.fireworks.length > 0) {
       this.drawFireworks(ctx);
+    }
+
+    // Huge impact explosions (THERMONUCLEAR etc.) + brief flash overlay
+    if (this.impactExplosions.length > 0 || this.thermoFlashLife > 0) {
+      if (this.thermoFlashLife > 0) {
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = VGA_PALETTE.RED;
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.globalAlpha = 1;
+        this.thermoFlashLife--;
+      }
+      this.drawImpactExplosions(ctx);
     }
 
     // Petit message de victoire sur le canvas seulement pour fin de match
@@ -886,6 +922,63 @@ export class GameEngine {
     ctx.globalAlpha = 1;
   }
 
+  /**
+   * Spawn red-orange thermonuclear impact explosion VFX + flash.
+   * Called from onProjectileHit for THERMONUCLEAR only.
+   * Uses blocky rects + alpha (retro feel, same technique as fireworks).
+   */
+  private spawnThermonuclearExplosion(x: number, y: number): void {
+    this.thermoFlashLife = 13; // frames of full-ish red flash overlay
+    const colors = [VGA_PALETTE.RED, VGA_PALETTE.YELLOW, VGA_PALETTE.DARK_RED, VGA_PALETTE.BROWN];
+    for (let i = 0; i < 42; i++) {
+      const spread = 38 + Math.random() * 18;
+      this.impactExplosions.push({
+        x: x + (Math.random() - 0.5) * spread,
+        y: y + (Math.random() - 0.5) * (spread * 0.7),
+        life: 42 + Math.random() * 28,
+        maxLife: 70,
+        size: 2.5 + Math.random() * 8.5,
+        color: colors[i % colors.length],
+      });
+    }
+  }
+
+  private updateImpactExplosions(): void {
+    const next: typeof this.impactExplosions = [];
+    for (const p of this.impactExplosions) {
+      p.life -= 1;
+      if (p.life > 0) {
+        // subtle expansion on the way out for "blast wave" feel (first half of life)
+        if (p.life > p.maxLife * 0.5) {
+          p.size = p.size * 1.012 + 0.04;
+        }
+        next.push(p);
+      }
+    }
+    this.impactExplosions = next;
+  }
+
+  private drawImpactExplosions(ctx: CanvasRenderingContext2D): void {
+    for (const p of this.impactExplosions) {
+      const a = Math.max(0.08, p.life / p.maxLife);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      const s = p.size;
+      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+
+      // glow / ring layers for "huge" red-orange explosion
+      if (s > 4) {
+        ctx.globalAlpha = a * 0.32;
+        ctx.fillRect(p.x - s * 0.9, p.y - s * 0.9, s * 1.8, s * 1.8);
+      }
+      if (s > 7) {
+        ctx.globalAlpha = a * 0.15;
+        ctx.fillRect(p.x - s * 1.35, p.y - s * 1.35, s * 2.7, s * 2.7);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   public isGameOver(): boolean {
     return this.gameOver;
   }
@@ -913,6 +1006,8 @@ export class GameEngine {
     this.winner = null;
     this.roundCombatActive = true;
     this.fireworks = [];
+    this.impactExplosions = [];
+    this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
@@ -1011,6 +1106,21 @@ export class GameEngine {
           osc.stop(now + 0.32);
           break;
         }
+        case 'THERMONUCLEAR': {
+          // Massive thermonuclear launch — deeper/longer than nuke
+          this.playNoiseBurst(0.36, 0.33, 520, 85);
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = 38;
+          gain.gain.value = 0.38;
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(now);
+          gain.gain.setValueAtTime(0.38, now);
+          gain.gain.linearRampToValueAtTime(0.0002, now + 0.38);
+          osc.stop(now + 0.42);
+          break;
+        }
         case 'DRILLER': {
           // Rapid noisy "drilling / boring" texture — series of gritty ticks
           for (let k = 0; k < 5; k++) {
@@ -1049,8 +1159,37 @@ export class GameEngine {
 
       const isNuke = weaponId === 'NUKE';
       const isCluster = weaponId === 'CLUSTER';
+      const isThermo = weaponId === 'THERMONUCLEAR';
 
-      if (isNuke) {
+      if (isThermo) {
+        // HUGE bomb sound: long multi-layer nuclear rumble + aftershocks (deeper + longer than nuke)
+        this.playNoiseBurst(0.82, 0.39, 1750, 48);
+        this.playNoiseBurst(0.62, 0.28, 880, 35, 0.18);
+        // deep body layers
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'triangle';
+        osc1.frequency.value = 32;
+        gain1.gain.value = 0.46;
+        osc1.connect(gain1); gain1.connect(ctx.destination);
+        osc1.start(now);
+        gain1.gain.setValueAtTime(0.46, now);
+        gain1.gain.linearRampToValueAtTime(0.00015, now + 0.85);
+        osc1.stop(now + 0.92);
+
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sawtooth';
+        osc2.frequency.value = 28;
+        gain2.gain.value = 0.22;
+        osc2.connect(gain2); gain2.connect(ctx.destination);
+        osc2.start(now + 0.12);
+        osc2.frequency.setValueAtTime(28, now + 0.12);
+        osc2.frequency.linearRampToValueAtTime(22, now + 0.75);
+        gain2.gain.setValueAtTime(0.22, now + 0.12);
+        gain2.gain.linearRampToValueAtTime(0.0001, now + 0.95);
+        osc2.stop(now + 1.0);
+      } else if (isNuke) {
         // Huge dirty explosion
         this.playNoiseBurst(0.55, 0.32, 2100, 95);
         // very low body
