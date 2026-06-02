@@ -74,6 +74,9 @@ export class GameEngine {
   // For round-end (non-match) celebration fireworks (color/position when !gameOver)
   private celebrationCenterX: number = 0;
   private celebrationColor: string = '#FFFFFF';
+  private celebrationWinnerTankId: string | null = null;
+  private celebrationAngle: number = 90;
+  private celebrationAngleDir: number = 1;
 
   /** True while tanks are fighting within a single combat round (until a kill or mutual destruction). */
   private roundCombatActive = true;
@@ -377,6 +380,11 @@ export class GameEngine {
     const cx = roundWinner ? roundWinner.tank.position.x : (this.tankManager.getAlivePlayers()[0]?.tank.position.x ?? this.width / 2);
     const cy = roundWinner ? roundWinner.tank.position.y - 30 : 60;
     const c = roundWinner ? roundWinner.tank.color : undefined;
+    if (roundWinner) {
+      this.celebrationWinnerTankId = roundWinner.tank.id;
+      this.celebrationAngle = 78.5;
+      this.celebrationAngleDir = 1;
+    }
     this.startFireworks(cx, cy, c);
     // Fanfare sting will play (reuses private audio logic)
   }
@@ -386,6 +394,9 @@ export class GameEngine {
     this.fireworks = [];
     this.celebrationCenterX = 0;
     this.celebrationColor = '#FFFFFF';
+    this.celebrationWinnerTankId = null;
+    this.celebrationAngle = 90;
+    this.celebrationAngleDir = 1;
   }
 
   /** Declare match winner (e.g. when round wraps with one survivor before engine detected it). */
@@ -393,6 +404,9 @@ export class GameEngine {
     if (this.gameOver) return;
     this.gameOver = true;
     this.winner = winner;
+    this.celebrationWinnerTankId = winner.tank.id;
+    this.celebrationAngle = 78.5;
+    this.celebrationAngleDir = 1;
     this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
     console.log(`[GAME OVER] WINNER: ${winner.name}`);
     this.onGameOver?.(winner);
@@ -428,6 +442,9 @@ export class GameEngine {
     this.stopVictoryMusic();
     this.physicsEngine.clear(false);
     this.fireworks = [];
+    this.celebrationWinnerTankId = null;
+    this.celebrationAngle = 90;
+    this.celebrationAngleDir = 1;
 
     this.terrain.generate();
     this.tankManager.spawnTanks(roster, this.terrain);
@@ -597,7 +614,27 @@ export class GameEngine {
     // Tanks (avec canon, jauge de vie et couleurs VGA)
     // Noms masqués dynamiquement si un projectile est en vol (phase de tir/résolution)
     const showPlayerNames = !this.physicsEngine.hasActiveProjectiles();
+
+    // Override the winning tank's cannon angle during celebration so it sweeps 78.5°-112.5°
+    // and visually "shoots" the fireworks (we restore immediately after draw).
+    const restoredAngles = new Map<string, number>();
+    if (this.celebrationWinnerTankId != null && this.celebrationAngle != null) {
+      for (const p of this.tankManager.getPlayers()) {
+        if (p.tank.id === this.celebrationWinnerTankId) {
+          restoredAngles.set(p.tank.id, p.tank.angle);
+          p.tank.angle = this.celebrationAngle;
+          break;
+        }
+      }
+    }
     this.tankManager.draw(ctx, showPlayerNames);
+    // restore
+    for (const p of this.tankManager.getPlayers()) {
+      const orig = restoredAngles.get(p.tank.id);
+      if (orig !== undefined) {
+        p.tank.angle = orig;
+      }
+    }
 
     // Feux d'artifice pour célébration (fin de manche avec gagnant de round, ou fin de match)
     if (this.fireworks.length > 0) {
@@ -742,6 +779,45 @@ export class GameEngine {
   }
 
   private updateFireworks(): void {
+    if (this.celebrationWinnerTankId) {
+      // Animate the winning tank's cannon sweeping back and forth during celebration
+      // and "shooting" fireworks from the barrel tip (so fireworks blow up from the tank).
+      const angleStep = 1.0; // deg per update tick (~120Hz) for visible cannon sweep + frequent shots
+      this.celebrationAngle += this.celebrationAngleDir * angleStep;
+      if (this.celebrationAngle > 112.5) {
+        this.celebrationAngle = 112.5;
+        this.celebrationAngleDir = -1;
+      } else if (this.celebrationAngle < 78.5) {
+        this.celebrationAngle = 78.5;
+        this.celebrationAngleDir = 1;
+      }
+
+      // Shoot a firework from the cannon tip at the current angle (with some spread)
+      if (Math.random() < 0.28) {
+        const winnerP = this.tankManager.getPlayers().find((p) => p.tank.id === this.celebrationWinnerTankId);
+        if (winnerP) {
+          const tank = winnerP.tank;
+          const tankHeight = 8;
+          const barrelLength = 18;
+          const rad = (this.celebrationAngle * Math.PI) / 180;
+          const barrelStartY = tank.position.y - tankHeight + 1;
+          const tipX = tank.position.x + Math.cos(rad) * barrelLength;
+          const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
+          const speed = 3.2 + Math.random() * 2.8;
+          const spread = (Math.random() - 0.5) * 1.0;
+          this.fireworks.push({
+            x: tipX,
+            y: tipY,
+            vx: Math.cos(rad) * speed + spread,
+            vy: -Math.sin(rad) * speed - 0.8 + spread * 0.4,
+            life: 32 + Math.random() * 16,
+            color: this.celebrationColor,
+            size: 2.2 + Math.random() * 1.3,
+          });
+        }
+      }
+    }
+
     if (this.fireworks.length === 0) return;
 
     const newFireworks: typeof this.fireworks = [];
@@ -837,6 +913,9 @@ export class GameEngine {
     this.winner = null;
     this.roundCombatActive = true;
     this.fireworks = [];
+    this.celebrationWinnerTankId = null;
+    this.celebrationAngle = 90;
+    this.celebrationAngleDir = 1;
     this.physicsEngine.clear(false);
     this.turnManager.reset();
 
