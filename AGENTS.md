@@ -99,7 +99,7 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 | Goal | Primary files |
 |------|----------------|
 | Menu / player setup | `MainMenu.tsx`, `types/player.ts` |
-| New weapon | `types/weapon.ts`, engine projectile handling, HUD/shop |
+| New weapon | `types/weapon.ts`, GameEngine (sounds + VFX/particles for large weapons), PhysicsEngine/TankManager (special damage/projectile rules), HUD/shop, GameCanvas (AI buy lists) |
 | Turn / round flow | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physics / explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
 | Terrain generation / craters | `Terrain.ts` |

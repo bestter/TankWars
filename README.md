@@ -17,18 +17,19 @@
 - **Authentic 16-Color VGA Palette** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters).
 - **Multiple Weapons**
-  - Missile (balanced)
+  - Missile (balanced, unlimited)
   - Grenade (arcing)
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast)
   - Driller (penetrating)
+  - Thermonuclear Bomb (devastating, destroys ~1/4 of the map with inner instant-kill zone; outer tanks fall into giant crater; huge red-orange explosion VFX and deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA Simple opponents before each battle. Unique VGA colors assigned automatically.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.
 - **Pluggable AI System** — Clean `AIEngine` interface. Phase 1 uses `AISimpleStrategy` (menu/profile id `v1-random`) — deliberately naive for safe testing.
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
-- **Ammo Inventory + Shop** — Limited shots per weapon. Full sequential weapon shop between rounds with money earned from damage and survival.
+- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned from damage and survival.
 
 ---
 
@@ -107,7 +108,7 @@ Fully working:
 - Projectile physics + wind
 - Turn system + AI turns (Phase 1: `AISimpleStrategy`, profile `v1-random`)
 - Keyboard aiming & firing + proper HUD
-- Multiple weapons with limited ammo
+- Multiple weapons with ammo (Missile unlimited; others limited)
 - Sequential weapon shop between rounds (full economy)
 - Round summaries + Game Over detection + restart
 

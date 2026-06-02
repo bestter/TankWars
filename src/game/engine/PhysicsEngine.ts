@@ -24,6 +24,12 @@ export interface Projectile {
   weaponId: WeaponId;
   /** Who fired this (player id) for kill/damage attribution at round end */
   ownerId?: string;
+  /** For cluster: mark sub-munitions so they don't re-split; also track apex */
+  isSubmunition?: boolean;
+  lastVy?: number;
+  /** Original cannon power/angle (affects sub-munition spread for cluster) */
+  initialAngle?: number;
+  initialPower?: number;
 }
 
 export interface ProjectileHitEvent {
@@ -70,6 +76,8 @@ export class PhysicsEngine {
       vy,
       weaponId,
       ownerId,
+      initialAngle: angle,
+      initialPower: power,
     });
 
     this.previousCount = this.projectiles.length;
@@ -89,6 +97,8 @@ export class PhysicsEngine {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
 
+      const prevVy = p.lastVy ?? p.vy;
+
       // Integrate velocity (semi-implicit): gravity + constant horizontal wind accel
       p.vy += gravity * dt;
       p.vx += wind * dt;
@@ -101,6 +111,8 @@ export class PhysicsEngine {
         p.vy -= (p.vy / speed) * drag;
       }
 
+      p.lastVy = p.vy;
+
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
@@ -112,6 +124,14 @@ export class PhysicsEngine {
 
       if (outOfBounds) {
         this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      // Cluster bomb: split into sub-munitions in the air (at apex: transition from rising to falling)
+      // Subs are released with spread velocities influenced by cannon power + direction (via initial + current vel)
+      // They continue under wind/gravity and will blow on their own impacts (stronger multi-hit effect).
+      if (p.weaponId === 'CLUSTER' && !p.isSubmunition && prevVy < 0 && p.vy >= 0) {
+        this.splitCluster(i, p);
         continue;
       }
 
@@ -176,6 +196,54 @@ export class PhysicsEngine {
   }
 
   /**
+   * Split a CLUSTER parent (at apex) into sub-munitions released in the air.
+   * Sub-munitions get velocities derived from parent's current trajectory + spread
+   * influenced by original cannon power and direction. They are affected by wind
+   * (and gravity) after release, and each will impact/explode independently (using
+   * CLUSTER's blast/damage rules for multiple spread-out hits, making it stronger).
+   * Parent is removed without its own explosion.
+   */
+  private splitCluster(
+    parentIndex: number,
+    p: Projectile,
+  ): void {
+    const numSubs = 5; // enough to make cluster noticeably stronger with spread
+    const power = p.initialPower ?? 50;
+    const maxSpreadRad = (Math.PI / 7) * (power / 70); // wider spread for higher power shots
+    const currentSpeed = Math.hypot(p.vx, p.vy);
+    const dir = Math.atan2(p.vy, p.vx);
+
+    for (let k = 0; k < numSubs; k++) {
+      const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
+      const spread = frac * maxSpreadRad * (0.7 + Math.random() * 0.6);
+      const subDir = dir + spread;
+
+      // subs get a fraction of current speed + variation; higher power gives more energetic subs
+      const subSpeed = currentSpeed * (0.5 + Math.random() * 0.4) * (0.65 + (power / 100) * 0.6);
+      const subVx = Math.cos(subDir) * subSpeed;
+      const subVy = Math.sin(subDir) * subSpeed;
+
+      // release near parent pos, offset slightly along original dir (prevents immediate re-collision)
+      const offset = 2.5;
+      const relX = p.x + Math.cos(dir) * offset;
+      const relY = p.y + Math.sin(dir) * offset;
+
+      this.projectiles.push({
+        x: relX,
+        y: relY,
+        vx: subVx,
+        vy: subVy,
+        weaponId: p.weaponId,
+        ownerId: p.ownerId,
+        isSubmunition: true,
+      });
+    }
+
+    // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
+    this.projectiles.splice(parentIndex, 1);
+  }
+
+  /**
    * Dessine tous les projectiles actifs.
    * Style simple et performant (petit cercle blanc/rouge).
    */
@@ -187,9 +255,16 @@ export class PhysicsEngine {
       // Utilise la couleur de l'arme si disponible, sinon blanc
       ctx.fillStyle = weapon?.color ?? VGA_PALETTE.WHITE;
 
-      // Petit obus visible (cercle de 3px)
+      let r = 2.5;
+      if (p.weaponId === 'CLUSTER' && !p.isSubmunition) {
+        r = 4.5; // visibly larger "parent" shell for cluster (before it splits in air)
+      } else if (p.isSubmunition) {
+        r = 1.8; // slightly smaller bomblets
+      }
+
+      // Petit obus visible (cercle)
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
 
       // Petit point brillant au centre pour plus de lisibilité

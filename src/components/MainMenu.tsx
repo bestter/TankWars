@@ -16,7 +16,7 @@
  * - Couleurs depuis VGA_PALETTE
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { Player } from '../types/player';
 import { VGA_PALETTE, type Color } from '../types/game';
 import { DEFAULT_INVENTORY } from '../types/weapon';
@@ -49,16 +49,19 @@ const TANK_COLOR_POOL: readonly Color[] = [
 ] as const;
 
 function getDefaultName(index: number, isHuman: boolean): string {
-  if (index === 0) return isHuman ? 'Bestter' : 'CPU-1';
-  return isHuman ? `Joueur ${index + 1}` : `CPU-${index + 1}`;
+  if (index === 0) return isHuman ? 'Player-1' : 'CPU-1';
+  return isHuman ? `Player ${index + 1}` : `CPU-${index + 1}`;
 }
 
 export function MainMenu({ onStartGame }: MainMenuProps) {
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([
-    { name: 'Bestter', isHuman: true, color: TANK_COLOR_POOL[0], id: 'p-1' },
+    { name: 'Player-1', isHuman: true, color: TANK_COLOR_POOL[0], id: 'p-1' },
     { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1], id: 'p-2' },
   ]);
+
+  // Refs for name inputs, to auto-focus/select when switching a player to Human
+  const nameInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // (couleurs maintenant gérées par playerConfigs, sélectionnables par l'utilisateur)
 
@@ -104,6 +107,16 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
   const handleTypeChange = (index: number, isHuman: boolean): void => {
     updatePlayer(index, { isHuman });
+    if (isHuman) {
+      // After re-render, focus and select the name input so user can immediately edit
+      setTimeout(() => {
+        const input = nameInputRefs.current[index];
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      }, 0);
+    }
   };
 
   const handleColorSelect = (index: number, newColor: Color): void => {
@@ -238,12 +251,13 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
                   {/* Nom du joueur (éditable) */}
                   <input
+                    ref={(el) => { nameInputRefs.current[index] = el; }}
                     type="text"
                     className="retro-input"
                     value={cfg.name}
                     maxLength={16}
                     onChange={(e) => handleNameChange(index, e.target.value)}
-                    placeholder={`Joueur ${index + 1}`}
+                    placeholder={`Player ${index + 1}`}
                     aria-label={`Nom du joueur ${index + 1}`}
                   />
 

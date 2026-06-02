@@ -2,7 +2,7 @@
 
 - Role: Senior Software Architect & Expert Game Developer
 - Stack: TypeScript, React, HTML5 Canvas 2D
-- Styling: Modern CSS / Tailwind CSS (No UI Kits)
+- Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency, no Tailwind)
 
 ## Core Principles
 
@@ -13,15 +13,17 @@
 ## TankWars Game Specifications
 
 - Game loop: Standard `requestAnimationFrame` with performance tracking.
-- Terrain: Destructible 2D terrain. Use pixel manipulation or high-density heightmaps.
+- Terrain: Destructible 2D terrain using custom heightmap algorithms in `Terrain.ts`; circular craters with falloff.
 - Players: 2 to 4 dynamic players (Humans or AI).
-- Palette: High-contrast 16-color VGA style (e.g., #00FF00, #FF00FF, #00FFFF, #FFFF00).
-- State Machine: MainMenu -> ShopPhase -> GameTurnPhase -> ResolutionPhase -> GameOver.
+- Palette: Use `VGA_PALETTE` from `src/types/game.ts` for all game rendering (16-color VGA).
+- State Machine: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (CELEBRATION for round-winner fireworks before SUMMARY; types in `src/types/game.ts`).
+- Weapons & Economy: Multiple weapons via `WEAPON_REGISTRY` in `src/types/weapon.ts` (Missile is unlimited and removed from shop; others have limited inventory that decrements on use). Shop between rounds. Includes advanced weapons like Thermonuclear Bomb (destroys ~1/4 map, inner kill zone, outer tanks fall, huge red-orange VFX + sounds in GameEngine).
 
 ## AI Implementation Rule
 
-- Design AI using a Strategy Pattern (`AIV1SimpleStrategy`).
-- Keep the AI controller isolated so it can be swapped later with a trajectory-calculating engine without refactoring the Tank entity.
+- All tank AI must implement the `AIEngine` interface (`src/game/entities/ai/AIEngine.ts`).
+- Current Phase 1: `AISimpleStrategy` (deliberately naive, profile `v1-random` in menu). Wired in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
+- Keep strategies pluggable and isolated; do not entangle AI logic inside `TankManager` or `GameEngine` internals. New strategies go in `game/entities/ai/`.
 
 ## Response Strategy
 
@@ -30,5 +32,5 @@
 
 ## Commit style
 
-- Always sign your comments by you name, and your EXACT model name for each commit.
+- Always sign your comments by your name, and your EXACT model name for each commit.
 - Use IMPERATIVE mood for commit messages.
