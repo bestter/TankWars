@@ -30,6 +30,8 @@ interface PlayerConfig {
   name: string;
   isHuman: boolean;
   color: Color;
+  /** stable identifier for React list keys (avoids array index keys) */
+  id: string;
 }
 
 /** Couleurs tanks jouables (palette VGA sûre, sans conflit avec assets jeu : 
@@ -54,8 +56,8 @@ function getDefaultName(index: number, isHuman: boolean): string {
 export function MainMenu({ onStartGame }: MainMenuProps) {
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([
-    { name: 'Bestter', isHuman: true, color: TANK_COLOR_POOL[0] },
-    { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1] },
+    { name: 'Bestter', isHuman: true, color: TANK_COLOR_POOL[0], id: 'p-1' },
+    { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1], id: 'p-2' },
   ]);
 
   // (couleurs maintenant gérées par playerConfigs, sélectionnables par l'utilisateur)
@@ -73,13 +75,14 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
       while (next.length < n) {
         const idx = next.length;
         const defaultIsHuman = idx === 0; // premier = humain par défaut
-        const usedColors = next.map((p) => p.color);
-        const available = TANK_COLOR_POOL.filter((c) => !usedColors.includes(c));
+        const usedColors = new Set(next.map((p) => p.color));
+        const available = TANK_COLOR_POOL.filter((c) => !usedColors.has(c));
         const newColor = available[0] ?? TANK_COLOR_POOL[idx % TANK_COLOR_POOL.length];
         next.push({
           name: getDefaultName(idx, defaultIsHuman),
           isHuman: defaultIsHuman,
           color: newColor,
+          id: `p-${Date.now()}-${idx}`,
         });
       }
 
@@ -197,31 +200,36 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
               const isHuman = cfg.isHuman;
 
               return (
-                <div key={index} className="retro-player-row">
-                  {/* Liste des couleurs disponibles pour ce joueur.
-                      Les couleurs sélectionnées par les autres joueurs sont retirées de cette liste.
-                      La couleur courante est mise en évidence. */}
+                <div key={cfg.id} className="retro-player-row">
+                  {/* Liste des couleurs disponibles pour ce joueur (sélectionnées par les autres retirées).
+                      La couleur courante est mise en évidence par bordure blanche.
+                      Utilise <button> pour accessibilité et clavier. */}
                   <div style={{ display: 'flex', gap: '2px', flexShrink: 0, alignItems: 'center' }}>
                     {TANK_COLOR_POOL
                       .filter((c) => !playerConfigs.some((pc, pi) => pi !== index && pc.color === c))
                       .map((availColor) => {
                         const isSelected = availColor === color;
                         return (
-                          <div
+                          <button
                             key={availColor}
+                            type="button"
                             className="retro-color-swatch"
                             style={{
                               backgroundColor: availColor,
-                              width: isSelected ? 18 : 12,
+                              width: isSelected ? 16 : 12,
                               height: isSelected ? 14 : 10,
                               border: isSelected
                                 ? `2px solid ${VGA_PALETTE.WHITE}`
                                 : '1px solid #555555',
+                              padding: 0,
+                              margin: 0,
                               cursor: 'pointer',
                               flexShrink: 0,
-                              opacity: isSelected ? 1 : 0.9,
+                              boxSizing: 'border-box',
+                              opacity: isSelected ? 1 : 0.85,
                             }}
                             title={availColor}
+                            aria-label={`Select color ${availColor} for this player`}
                             onClick={() => handleColorSelect(index, availColor)}
                           />
                         );
