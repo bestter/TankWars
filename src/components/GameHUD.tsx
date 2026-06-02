@@ -109,7 +109,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
           const def = WEAPON_REGISTRY[wid];
           const ammo = inventory[wid] ?? 0;
           const isCurrent = currentWeapon === wid;
-          const hasAmmo = ammo > 0;
+          const hasAmmo = wid === 'MISSILE' || ammo > 0;
           const selectable = canInteract && hasAmmo;
 
           const bg = isCurrent ? '#002200' : hasAmmo ? '#111111' : '#0a0a0a';
@@ -144,7 +144,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
               }}
               title={def.name}
             >
-              {getShortLabel(wid)}:{ammo}
+              {getShortLabel(wid)}:{wid === 'MISSILE' ? '∞' : ammo}
             </button>
           );
         })}

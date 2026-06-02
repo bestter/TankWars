@@ -167,6 +167,7 @@ export class TurnManager {
             weaponId: player.tank.currentWeapon,
           };
           this.fireCallback(player.tank.position, command, player.id);
+          this.consumeAmmo(player, player.tank.currentWeapon);
         } else {
           console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
           this.isInputLocked = false;
@@ -385,6 +386,10 @@ export class TurnManager {
 
     this.fireCallback(tank.position, command, player.id);
 
+    // Consume 1 from inventory for limited weapons (MISSILE is unlimited).
+    // Do this before locking so the HUD snapshot for the resolving turn reflects the spent round.
+    this.consumeAmmo(player, tank.currentWeapon);
+
     // Verrouille les inputs jusqu'à la fin de la résolution
     this.isInputLocked = true;
     this.notifyHudUpdate();
@@ -394,13 +399,13 @@ export class TurnManager {
     this.armTurnLockSafetyWatchdog();
   }
 
-  /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles) */
+  /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles; MISSILE always selectable). */
   public selectWeapon(weaponId: WeaponId): boolean {
     const player = this.getCurrentPlayer();
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
     const ammo = player.inventory[weaponId] ?? 0;
-    if (ammo <= 0) return false;
+    if (weaponId !== 'MISSILE' && ammo <= 0) return false;
     if (player.tank.currentWeapon === weaponId) return false;
 
     player.tank.currentWeapon = weaponId;
@@ -408,12 +413,12 @@ export class TurnManager {
     return true;
   }
 
-  /** Cycle l'arme active (delta = +1 ou -1). Filtre sur les armes avec munitions > 0. */
+  /** Cycle l'arme active (delta = +1 ou -1). Filtre sur les armes avec munitions > 0 (MISSILE always available as it is unlimited). */
   public cycleWeapon(delta: 1 | -1): boolean {
     const player = this.getCurrentPlayer();
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
-    const available = ALL_WEAPON_IDS.filter((id) => (player.inventory[id] ?? 0) > 0);
+    const available = ALL_WEAPON_IDS.filter((id) => id === 'MISSILE' || (player.inventory[id] ?? 0) > 0);
     if (available.length === 0) return false;
 
     const current = player.tank.currentWeapon;
@@ -427,6 +432,28 @@ export class TurnManager {
     player.tank.currentWeapon = nextWeapon;
     this.notifyHudUpdate();
     return true;
+  }
+
+  /**
+   * Decrements inventory for limited weapons after a shot (human or AI).
+   * MISSILE is unlimited: never decremented, always treated as available.
+   * If the just-fired limited weapon reaches 0 and was current, auto-switch
+   * currentWeapon to the first still-available (MISSILE is guaranteed).
+   * Mutates the live player (consistent with shop mutations) and notifies HUD.
+   */
+  private consumeAmmo(player: Player, weaponId: WeaponId): void {
+    if (weaponId === 'MISSILE') return;
+    const cur = player.inventory[weaponId] ?? 0;
+    if (cur <= 0) return;
+    const next = cur - 1;
+    player.inventory = { ...player.inventory, [weaponId]: next };
+    if (next === 0 && player.tank.currentWeapon === weaponId) {
+      const available = ALL_WEAPON_IDS.filter((id) => id === 'MISSILE' || (player.inventory[id] ?? 0) > 0);
+      if (available.length > 0) {
+        player.tank.currentWeapon = available[0];
+      }
+    }
+    this.notifyHudUpdate();
   }
 
   /** Passe au joueur suivant (saute les tanks morts).
@@ -637,6 +664,7 @@ export class TurnManager {
       };
 
       this.fireCallback(player.tank.position, command, player.id);
+      this.consumeAmmo(player, player.tank.currentWeapon);
 
       // If everything goes well, the normal onAllProjectilesSettled → nextTurn() will happen.
       // The resolution timeout acts as a safety net.

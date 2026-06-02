@@ -150,7 +150,7 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId);
+      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId);
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }

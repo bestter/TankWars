@@ -10,7 +10,7 @@
 import type { Player } from '../../../types/player';
 import type { FireCommand, AngleDegrees, Power } from '../../../types/game';
 import type { AIStrategy } from './AIStrategy';
-import { WEAPON_REGISTRY, type WeaponId } from '../../../types/weapon';
+import { WEAPON_REGISTRY, type WeaponId, ALL_WEAPON_IDS } from '../../../types/weapon';
 
 export class RandomAIStrategy implements AIStrategy {
   public readonly name = 'v1-random';
@@ -22,9 +22,10 @@ export class RandomAIStrategy implements AIStrategy {
     // Random power in a reasonable range
     const power: Power = 35 + Math.random() * 55;
 
-    // Prefer weapons the AI actually has ammo for
-    const availableWeapons = Object.keys(self.inventory).filter(
-      (id) => (self.inventory[id as WeaponId] ?? 0) > 0
+    // Prefer weapons the AI actually has ammo for.
+    // MISSILE is unlimited (may be absent from inventory map) and is always available.
+    const availableWeapons = ALL_WEAPON_IDS.filter(
+      (id) => id === 'MISSILE' || (self.inventory[id as WeaponId] ?? 0) > 0
     ) as WeaponId[];
 
     let weaponId: WeaponId = self.tank.currentWeapon;

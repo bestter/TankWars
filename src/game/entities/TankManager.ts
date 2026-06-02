@@ -8,6 +8,7 @@
 import type { Player } from '../../types/player';
 import type { TerrainManager } from '../engine/Terrain';
 import { VGA_PALETTE } from '../../types/game';
+import type { WeaponId } from '../../types/weapon';
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -370,7 +371,10 @@ export class TankManager {
   /**
    * Applique des dégâts d'explosion avec atténuation linéaire selon la distance.
    * Les dégâts sont d'abord absorbés par le bouclier, puis par la vie.
+   * Special case: if weaponId === 'NUKE' and distance is small (<=10), this is a
+   * "direct hit" — instantly kills the tank (health=0, shield=0) regardless of falloff.
    * @param killerId - Optional shooter id (for round-end kill attribution; splash counts for the explosion's firer)
+   * @param weaponId - Optional weapon for special direct-hit rules (e.g. nuke one-shot)
    * @returns Number of *new* kills caused by *this* explosion (for attribution to the killer)
    */
   public applyExplosionDamage(
@@ -379,6 +383,7 @@ export class TankManager {
     radius: number,
     maxDamage: number,
     killerId?: string,
+    weaponId?: WeaponId,
   ): number {
     let killsThisExplosion = 0;
 
@@ -392,15 +397,22 @@ export class TankManager {
 
       if (distance > radius) continue;
 
-      // Dégâts dégressifs linéaires
-      const falloff = 1 - distance / radius;
-      const damage = maxDamage * Math.max(0, falloff);
-
-      if (damage <= 0) continue;
-
       const healthBefore = tank.health;
 
-      // Bouclier en priorité
+      // Dégâts dégressifs linéaires
+      let damage = maxDamage * Math.max(0, 1 - distance / radius);
+
+      // Nuke direct hit rule (per request): one direct hit kills the tank outright.
+      // Threshold ~10px is slightly > tank half-extent (body 14px wide); near-center impact counts.
+      if (weaponId === 'NUKE' && distance <= 10) {
+        tank.shield = 0;
+        tank.health = 0;
+        damage = 0; // avoid double-subtract in the generic path below
+      }
+
+      if (damage <= 0 && tank.health > 0) continue;
+
+      // Bouclier en priorité (skipped or no-op for nuke direct which already zeroed)
       let remainingDamage = damage;
 
       if (tank.shield > 0) {

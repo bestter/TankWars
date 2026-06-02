@@ -5,6 +5,8 @@
  * Colors referenced from the shared VGA_PALETTE.
  *
  * Weapons drive both shop pricing and the simulation parameters in the engine.
+ * MISSILE is special: unlimited (never in shop, never decrements on use, always selectable in HUD).
+ * Other weapons have limited inventory that drops after each use (see TurnManager.consumeAmmo).
  */
 
 import { VGA_PALETTE, type Color } from './game';
@@ -91,9 +93,12 @@ export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
 /** Helper: concrete weapon type from registry. */
 export type WeaponDef = (typeof WEAPON_REGISTRY)[WeaponId];
 
-/** Safe default starting inventory for new players (human or AI). */
+/**
+ * Safe default starting inventory for new players (human or AI).
+ * MISSILE is unlimited (always available, never decrements, removed from shop);
+ * only limited weapons appear here and are decremented on use.
+ */
 export const DEFAULT_INVENTORY: Partial<Record<WeaponId, number>> = {
-  MISSILE: 6,
   GRENADE: 2,
 } as const;
 
@@ -101,3 +106,11 @@ export const DEFAULT_INVENTORY: Partial<Record<WeaponId, number>> = {
 export const ALL_WEAPON_IDS: readonly WeaponId[] = Object.keys(
   WEAPON_REGISTRY,
 ) as WeaponId[];
+
+/**
+ * Weapon ids offered in the shop (and auto-bought by AI).
+ * MISSILE is unlimited and not sold — it is always available to every tank.
+ */
+export const SHOP_WEAPON_IDS: readonly WeaponId[] = ALL_WEAPON_IDS.filter(
+  (id) => id !== 'MISSILE',
+);

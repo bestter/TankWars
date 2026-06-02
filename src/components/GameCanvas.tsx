@@ -22,7 +22,7 @@ import { WindBanner } from './WindBanner';
 import { RoundSummary } from './RoundSummary';
 import { WeaponShop } from './WeaponShop';
 import type { WeaponId } from '../types/weapon';
-import { WEAPON_REGISTRY } from '../types/weapon';
+import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from '../types/weapon';
 import type { GamePhase, RoundResult } from '../types/game';
 
 export interface GameCanvasProps {
@@ -158,7 +158,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           currentWeapon: 'MISSILE',
         },
         money: 200,
-        inventory: { MISSILE: 5, GRENADE: 2 },
+        inventory: { ...DEFAULT_INVENTORY },
       },
       {
         id: 'player-2',
@@ -178,7 +178,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           currentWeapon: 'MISSILE',
         },
         money: 200,
-        inventory: { MISSILE: 5, GRENADE: 2 },
+        inventory: { ...DEFAULT_INVENTORY },
       },
     ];
 
@@ -472,8 +472,9 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // (affordable weapons computed inside the spending loop)
 
     // Stratégie très simple : l'IA dépense jusqu'à 70% de son argent
-    // en achetant d'abord des armes plus chères (NUKE, CLUSTER) puis du basique
-    const preferredOrder: WeaponId[] = ['NUKE', 'CLUSTER', 'DRILLER', 'GRENADE', 'MISSILE'];
+    // en achetant d'abord des armes plus chères (NUKE, CLUSTER) puis du basique.
+    // MISSILE is unlimited and not in shop, so never auto-bought.
+    const preferredOrder: WeaponId[] = ['NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
 
     let spent = 0;
     const budget = Math.floor((aiPlayer.money ?? 0) * 0.7);
@@ -608,7 +609,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           currentWeapon: 'MISSILE',
         },
         money: 200,
-        inventory: { MISSILE: 5, GRENADE: 2 },
+        inventory: { ...DEFAULT_INVENTORY },
       },
       {
         id: 'player-2',
@@ -628,7 +629,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           currentWeapon: 'MISSILE',
         },
         money: 200,
-        inventory: { MISSILE: 5, GRENADE: 2 },
+        inventory: { ...DEFAULT_INVENTORY },
       },
     ];
 

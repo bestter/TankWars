@@ -14,7 +14,7 @@
  */
 
 import type { Player } from '../types/player';
-import { WEAPON_REGISTRY, type WeaponId, ALL_WEAPON_IDS } from '../types/weapon';
+import { WEAPON_REGISTRY, type WeaponId, SHOP_WEAPON_IDS } from '../types/weapon';
 import { VGA_PALETTE } from '../types/game';
 
 export interface WeaponShopProps {
@@ -90,7 +90,7 @@ export function WeaponShop({
 
       {/* Weapon list */}
       <div style={{ textAlign: 'left', marginBottom: 16 }}>
-        {ALL_WEAPON_IDS.map((wid) => {
+        {SHOP_WEAPON_IDS.map((wid) => {
           const def = WEAPON_REGISTRY[wid];
           const currentStock = inventory[wid] ?? 0;
           const canAfford = money >= def.price;
