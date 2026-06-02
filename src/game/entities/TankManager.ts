@@ -9,6 +9,9 @@ import type { Player } from '../../types/player';
 import type { TerrainManager } from '../engine/Terrain';
 import { VGA_PALETTE } from '../../types/game';
 
+/** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
+const BOTTOM_SUPPORT_MARGIN = 14;
+
 export class TankManager {
   private players: Player[] = [];
 
@@ -135,28 +138,40 @@ export class TankManager {
       if (tank.isDead) continue;
 
       const groundY = terrain.getHeightAt(tank.position.x);
-      // Snaps tank to the terrain surface (prevents getting stuck or falling behind under micro-smoothing/adjustments)
-      tank.position.y = groundY;
+      const pitFloorY = terrain.height - BOTTOM_SUPPORT_MARGIN;
+
+      if (groundY >= pitFloorY) {
+        // Ground destroyed to the bottom — tank falls into the pit (accelerate downward).
+        const fallSpeed = 4.5;
+        tank.position.y = Math.min(terrain.height + 40, tank.position.y + fallSpeed);
+      } else {
+        tank.position.y = groundY;
+      }
     }
   }
 
   /**
-   * Vérifie si des tanks sont enterrés sous le plancher ou tombés hors écran.
-   * Si la position Y du tank dépasse le bas de l'écran de combat, le tank est considéré
-   * comme battu/effondré.
+   * Tanks die when they fall through the bottom of the map or sink after losing all ground support.
    */
   public checkTankBurial(terrain: TerrainManager): void {
+    const pitFloorY = terrain.height - BOTTOM_SUPPORT_MARGIN;
+
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      // Élimination uniquement si le tank est passé sous le bas de l'écran (chute hors carte).
-      // Ne pas confondre avec un cratère profond : position.y suit la surface via updateTankPositions.
-      if (tank.position.y > terrain.height + 8) {
+      const groundY = terrain.getHeightAt(tank.position.x);
+      const unsupported = groundY >= pitFloorY;
+      const fallenThrough = tank.position.y > terrain.height + 8;
+
+      if (unsupported || fallenThrough) {
         tank.isDead = true;
-        const details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
+        const cause = 'burial';
+        const details = unsupported
+          ? `no ground support (surfaceY=${groundY.toFixed(1)} >= pitFloor=${pitFloorY.toFixed(1)})`
+          : `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=burial/out-of-bounds pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
+          `[DEATH] player=${player.name} (id=${player.id}) cause=${cause} pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) ${details}`
         );
         this.onPlayerDied?.(player.id, 'burial', details);
       }

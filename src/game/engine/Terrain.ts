@@ -128,15 +128,14 @@ export class TerrainManager {
       const craterDepth = impactY + dy;
 
       if (craterDepth > this.heights[x]) {
-        // Cap surface so deep craters cannot push the ground past the play area floor
-        // (prevents false "burial" kills when tanks snap to an over-deep heightmap value).
-        const maxSurfaceY = this.height - 18;
+        // Surface can be dug down to the canvas floor (y = height).
+        const maxSurfaceY = this.height - 1;
         this.heights[x] = Math.min(maxSurfaceY, craterDepth);
       }
     }
 
-    // Lissage léger autour du cratère pour un rendu plus naturel
-    this.smoothHeights(0.4, startX - 3, endX + 3);
+    // Smooth crater edges only — never raise the surface (which would undo destruction).
+    this.smoothHeights(0.35, startX - 3, endX + 3, true);
   }
 
   /**
@@ -166,7 +165,15 @@ export class TerrainManager {
   /**
    * Lissage de la heightmap (passe moyenne)
    */
-  private smoothHeights(strength: number = 0.5, start?: number, end?: number): void {
+  /**
+   * @param preserveDepth When true, smoothing never shallowens the surface (keeps craters open).
+   */
+  private smoothHeights(
+    strength: number = 0.5,
+    start?: number,
+    end?: number,
+    preserveDepth = false,
+  ): void {
     const s = Math.max(0, start ?? 1);
     const e = Math.min(this.width - 1, end ?? this.width - 2);
 
@@ -177,7 +184,8 @@ export class TerrainManager {
     for (let i = 1; i < copy.length - 1; i++) {
       const idx = s + i;
       const avg = (copy[i - 1] + copy[i] + copy[i + 1]) / 3;
-      this.heights[idx] = this.heights[idx] * (1 - strength) + avg * strength;
+      const blended = copy[i] * (1 - strength) + avg * strength;
+      this.heights[idx] = preserveDepth ? Math.max(copy[i], blended) : blended;
     }
   }
 }
