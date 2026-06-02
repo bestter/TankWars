@@ -8,7 +8,7 @@
  * - TypeScript strict, zéro `any`
  * - Utilise WEAPON_REGISTRY pour les caractéristiques des armes
  * - Utilise TerrainManager pour les collisions et destructions
- * - Physique parabolique simple (gravité + vent)
+ * - Ballistic motion: gravity, horizontal wind acceleration, light air drag
  */
 
 import { WEAPON_REGISTRY, type WeaponId } from '../../types/weapon';
@@ -31,6 +31,9 @@ export interface ProjectileHitEvent {
   y: number;
   weaponId: WeaponId;
 }
+
+/** Air drag coefficient (1/s); slows shells slightly without overpowering wind. */
+const PROJECTILE_DRAG = 0.28;
 
 export class PhysicsEngine {
   private projectiles: Projectile[] = [];
@@ -86,9 +89,17 @@ export class PhysicsEngine {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
 
-      // Physique
+      // Integrate velocity (semi-implicit): gravity + constant horizontal wind accel
       p.vy += gravity * dt;
       p.vx += wind * dt;
+
+      // Light air resistance (opposes motion; wind still drifts trajectories over time)
+      const speed = Math.hypot(p.vx, p.vy);
+      if (speed > 4) {
+        const drag = PROJECTILE_DRAG * speed * dt;
+        p.vx -= (p.vx / speed) * drag;
+        p.vy -= (p.vy / speed) * drag;
+      }
 
       p.x += p.vx * dt;
       p.y += p.vy * dt;

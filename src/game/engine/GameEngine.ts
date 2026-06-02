@@ -25,6 +25,7 @@ import type { Vector2, FireCommand, RoundResult } from '../../types/game';
 import type { RoundEndPayload } from '../../types/round';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
 import type { AIEngine } from '../entities/ai/AIEngine';
+import { rollRoundWind } from '../wind';
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -98,6 +99,8 @@ export class GameEngine {
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
   public onAllProjectilesSettled?: () => void;
+  /** Fired when a new combat round rolls wind (React HUD). */
+  public onWindChange?: (force: number) => void;
   public onPhysicsStep?: (projectiles: ReadonlyArray<Projectile>) => void;
 
   /** Callback pour le HUD React (angle, puissance, joueur actif, etc.) */
@@ -215,6 +218,7 @@ export class GameEngine {
     this.gameOver = false;
     this.winner = null;
     this.tankManager.spawnTanks(players, this.terrain);
+    this.randomizeWindForRound();
 
     // Initialise le système de tours
     this.turnManager.startFirstTurn();
@@ -225,8 +229,19 @@ export class GameEngine {
     return this.physicsEngine.getProjectiles();
   }
 
+  public getWindForce(): number {
+    return this.windForce;
+  }
+
   public setWindForce(force: number): void {
     this.windForce = force;
+    this.onWindChange?.(this.windForce);
+  }
+
+  /** New random wind for a combat round; notifies React via onWindChange. */
+  public randomizeWindForRound(): void {
+    this.setWindForce(rollRoundWind());
+    console.log(`[WIND] New round wind: ${this.windForce.toFixed(1)} px/s²`);
   }
 
   // Legacy setTanks removed - use setPlayers + TankManager instead
@@ -384,6 +399,7 @@ export class GameEngine {
 
     this.terrain.generate();
     this.tankManager.spawnTanks(roster, this.terrain);
+    this.randomizeWindForRound();
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
     this.turnManager.reset(); // this sets internal round=1; caller in React can treat displayRound separately

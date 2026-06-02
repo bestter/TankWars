@@ -7,7 +7,6 @@
  * - Thick borders, monospace, high-contrast VGA palette accents (Cyan/Magenta/Green/Yellow)
  * - Player name + color swatch
  * - Angle + Power
- * - Wind force + direction arrow
  * - Current weapon + remaining ammo
  * - Clickable weapon selector (small retro buttons) + keyboard support (A/E) handled upstream in TurnManager
  */
@@ -19,7 +18,6 @@ import { VGA_PALETTE } from '../types/game';
 
 export interface GameHUDProps {
   turnInfo: CurrentTurnInfo | null;
-  wind: number;
   /** Called when human clicks a weapon button. Parent wires to TurnManager.selectWeapon */
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
@@ -36,16 +34,13 @@ function getShortLabel(id: WeaponId): string {
   }
 }
 
-export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
+export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
   const canInteract = isHumanTurn && !isLocked;
 
   const currentWeapon = turnInfo?.currentWeapon;
   const inventory = turnInfo?.inventory ?? {};
-
-  const windDir = wind >= 0 ? '→' : '←';
-  const windAbs = Math.abs(wind);
 
   return (
     <div
@@ -90,14 +85,6 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
         <span style={{ color: VGA_PALETTE.CYAN, marginLeft: 4 }}>POW</span>
         <span style={{ color: VGA_PALETTE.YELLOW, fontWeight: 'bold', minWidth: 20 }}>
           {turnInfo ? turnInfo.power : '--'}
-        </span>
-      </div>
-
-      {/* === WIND (gameState.windForce) === */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 3, color: VGA_PALETTE.GREEN, pointerEvents: 'none' }}>
-        <span style={{ color: VGA_PALETTE.CYAN }}>WIND</span>
-        <span style={{ fontWeight: 'bold' }}>
-          {windDir} {windAbs}
         </span>
       </div>
 

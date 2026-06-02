@@ -18,6 +18,7 @@ import { VGA_PALETTE, type FireCommand } from '../types/game';
 import { AISimpleStrategy } from '../game/entities/ai/AISimpleStrategy';
 import type { Player } from '../types/player';
 import { GameHUD } from './GameHUD';
+import { WindBanner } from './WindBanner';
 import { RoundSummary } from './RoundSummary';
 import { WeaponShop } from './WeaponShop';
 import type { WeaponId } from '../types/weapon';
@@ -39,7 +40,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const [wind, setWind] = useState(12);
+  const [wind, setWind] = useState(0);
   const [turnInfo, setTurnInfo] = useState<CurrentTurnInfo | null>(null);
   const [winner, setWinner] = useState<Player | null>(null);
   const [showNewGameButton, setShowNewGameButton] = useState(false);
@@ -172,8 +173,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     // Inject the simple AI strategy (requis pour tout joueur !isHuman, qu'il vienne du menu ou de la démo)
     engine.setAIEngine(new AISimpleStrategy());
-
-    engine.setWindForce(wind);
+    engine.onWindChange = setWind;
 
     // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
     // while idle, causing massive spam during SHOP / between turns / SUMMARY).
@@ -246,12 +246,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       ctxRef.current = null;
     };
   }, []);
-
-  // Keep wind in sync with engine (wind can also be changed by game rules later)
-  useEffect(() => {
-    const engine = engineRef.current;
-    engine?.setWindForce(wind);
-  }, [wind]);
 
   // Sync gamePhaseRef to avoid stale values inside onTurnChange / engine callbacks (registered once in mount effect)
   useEffect(() => {
@@ -625,19 +619,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <label style={{ color: VGA_PALETTE.GRAY, fontSize: 13 }}>
-          Wind: <strong style={{ color: VGA_PALETTE.CYAN }}>{wind}</strong>
-        </label>
-        <input
-          type="range"
-          min={-60}
-          max={60}
-          step={2}
-          value={wind}
-          onChange={(e) => setWind(Number(e.target.value))}
-          style={{ width: 180 }}
-        />
-
         <button onClick={() => fireWeapon('MISSILE')} style={{ fontSize: 12 }}>
           Fire Missile
         </button>
@@ -661,6 +642,10 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       </div>
 
       <div style={{ position: 'relative' }}>
+        {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
+          <WindBanner windForce={wind} />
+        )}
+
         <canvas
           ref={canvasRef}
           onClick={handleCanvasClick}
@@ -676,7 +661,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
           <GameHUD
             turnInfo={turnInfo}
-            wind={wind}
             onWeaponSelect={handleWeaponSelect}
           />
         )}
