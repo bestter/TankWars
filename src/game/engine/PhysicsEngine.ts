@@ -38,7 +38,7 @@ const PROJECTILE_DRAG = 0.28;
 export class PhysicsEngine {
   private projectiles: Projectile[] = [];
 
-  /** Callback appelé lorsqu'un projectile touche le terrain */
+  /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
 
   /**
@@ -77,7 +77,7 @@ export class PhysicsEngine {
 
   /**
    * Met à jour tous les projectiles.
-   * Applique gravité, vent, collisions terrain et limites d'écran.
+   * Applique gravité, vent, collisions terrain/tanks et limites d'écran.
    */
   public updateProjectiles(
     dt: number,
@@ -115,6 +115,15 @@ export class PhysicsEngine {
         continue;
       }
 
+      // Direct collision with a tank (the shell touches or flies into the tank body).
+      // Check tanks BEFORE terrain so a low trajectory that clips a tank explodes on the tank
+      // (not buried in ground). The impact uses the projectile's current position and the
+      // weapon's own rules (blastRadius, damage, special direct-kill zones like nuke/thermo, etc.).
+      if (tankManager && tankManager.checkTankCollision(p.x, p.y)) {
+        this.handleImpact(i, p, terrainManager, tankManager);
+        continue;
+      }
+
       // Collision avec le terrain
       if (terrainManager.checkCollision(p.x, p.y)) {
         this.handleImpact(i, p, terrainManager, tankManager);
@@ -125,7 +134,7 @@ export class PhysicsEngine {
   }
 
   /**
-   * Gère l'impact d'un projectile :
+   * Gère l'impact d'un projectile (terrain ou tank direct hit) :
    * - Destruction du terrain
    * - Application des dégâts aux tanks (si TankManager fourni)
    * - Mise à jour des positions des tanks (chute)

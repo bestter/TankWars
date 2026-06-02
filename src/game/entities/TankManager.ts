@@ -369,6 +369,33 @@ export class TankManager {
   }
 
   /**
+   * Check if a projectile point (x, y) is inside any alive tank's visual bounding box.
+   * This implements direct "touch or fly into a tank" collisions so the shell explodes
+   * immediately (per weapon rules: blast radius, damage, special kill zones, etc.)
+   * instead of only triggering on terrain.
+   */
+  public checkTankCollision(x: number, y: number): boolean {
+    const tankWidth = 14;
+    const tankHeight = 8;
+
+    for (const player of this.players) {
+      const tank = player.tank;
+      if (tank.isDead) continue;
+
+      const { x: tx, y: ty } = tank.position;
+      if (
+        x >= tx - tankWidth / 2 &&
+        x <= tx + tankWidth / 2 &&
+        y >= ty - tankHeight &&
+        y <= ty
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Applique des dégâts d'explosion avec atténuation linéaire selon la distance.
    * Les dégâts sont d'abord absorbés par le bouclier, puis par la vie.
    * Special cases:
