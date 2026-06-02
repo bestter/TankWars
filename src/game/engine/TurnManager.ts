@@ -26,6 +26,8 @@ export interface CurrentTurnInfo {
   /** Turn index within the current combat round (increments each time play passes to the next tank). */
   turn: number;
   isInputLocked: boolean;
+  /** True while any alive tank is currently falling (vy > 0) or we are waiting for stabilization after a shot. */
+  tanksAreFalling: boolean;
 }
 
 export class TurnManager {
@@ -76,6 +78,14 @@ export class TurnManager {
   // Driven by real-time setTimeout because it is a very short rendering transition delay
   private physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * When true after projectiles settle, we defer nextTurn() until !tankManager.anyTankIsFalling().
+   * This makes the game wait (keeping input locked, no shooting possible) until all tanks have stopped falling.
+   */
+  private awaitingTankStabilization = false;
+
+  private wasFallingForHud = false;
+
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
   public onTurnChange?: (player: Player, round: number) => void;
@@ -116,7 +126,7 @@ export class TurnManager {
    */
   public update(dt: number): void {
     // 1. Watchdog général du verrouillage du tour
-    if (this.isTurnLockWatchdogArmed && this.isInputLocked) {
+    if (this.isTurnLockWatchdogArmed && this.isInputLocked && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
       this.turnLockAccumulatedTime += dt;
       if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
         const stillCurrent = this.getCurrentPlayer();
@@ -124,6 +134,7 @@ export class TurnManager {
           `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? 'unknown'} — forcing nextTurn (missed settlement?)`
         );
         this.isInputLocked = false;
+        this.clearAwaitingStabilization();
         this.clearResolutionTimeout();
         this.clearSettlementSafetyTimeout();
         this.clearTurnLockSafetyTimeout();
@@ -133,7 +144,7 @@ export class TurnManager {
     }
 
     // 2. Sécurité de résolution de l'IA (si l'IA prend trop de temps à décider)
-    if (this.isResolutionSafetyArmed && this.isInputLocked && this.resolutionPlayer) {
+    if (this.isResolutionSafetyArmed && this.isInputLocked && this.resolutionPlayer && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
       this.resolutionAccumulatedTime += dt;
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
         const player = this.resolutionPlayer;
@@ -159,6 +170,7 @@ export class TurnManager {
         } else {
           console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
           this.isInputLocked = false;
+          this.clearAwaitingStabilization();
           this.clearResolutionTimeout();
           this.clearSettlementSafetyTimeout();
           this.clearTurnLockSafetyTimeout();
@@ -168,7 +180,7 @@ export class TurnManager {
     }
 
     // 3. Sécurité de stabilisation du tir de l'IA
-    if (this.isSettlementSafetyArmed && this.isInputLocked && this.settlementPlayerId) {
+    if (this.isSettlementSafetyArmed && this.isInputLocked && this.settlementPlayerId && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
       this.settlementAccumulatedTime += dt;
       if (this.settlementAccumulatedTime >= this.SETTLEMENT_SAFETY_LIMIT) {
         if (this.aiTurnGeneration === this.settlementGeneration) {
@@ -176,6 +188,7 @@ export class TurnManager {
           if (stillCurrent?.id === this.settlementPlayerId && this.isInputLocked) {
             console.warn(`[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing nextTurn as safety net`);
             this.isInputLocked = false;
+            this.clearAwaitingStabilization();
             this.clearResolutionTimeout();
             this.clearSettlementSafetyTimeout();
             this.clearTurnLockSafetyTimeout();
@@ -186,17 +199,40 @@ export class TurnManager {
         }
       }
     }
+
+    // 4. Wait for any tanks that are still falling (post-crater gravity) before advancing the turn.
+    // While this is true, isInputLocked remains set from the shot, preventing any new shots (human or AI).
+    // We poll here (called at 120 Hz from GameEngine) so we advance exactly when stable.
+    if (this.awaitingTankStabilization) {
+      if (!this.tankManager.anyTankIsFalling()) {
+        this.clearAwaitingStabilization();
+        this.clearSettlementSafetyTimeout();
+        this.clearTurnLockSafetyTimeout();
+        this.nextTurn();
+      }
+      // While legitimately waiting for stabilization, suppress safety timer accumulation
+      // so a long fall (deep pit) doesn't trigger false "missed settlement" forces.
+      return;
+    }
+
+    // Detect falling state changes to refresh HUD indicator (e.g. craters during resolution)
+    const isFallingNow = this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization;
+    if (isFallingNow !== this.wasFallingForHud) {
+      this.wasFallingForHud = isFallingNow;
+      this.notifyHudUpdate();
+    }
   }
 
   /** Connecte le TurnManager au système de physique pour détecter la fin des projectiles */
   public connectToPhysics(physicsEngine: PhysicsEngine): void {
     physicsEngine.onAllProjectilesSettled = () => {
-      // On attend un petit délai pour que les dégâts et la chute des tanks soient appliqués
       this.clearPhysicsSettlementTimeout();
-      this.physicsSettlementTimeoutId = setTimeout(() => {
-        this.nextTurn();
-        this.physicsSettlementTimeoutId = null;
-      }, 120);
+      // Do not advance immediately. Set flag so update() will wait until no tanks are falling
+      // (per requirement: game waits, no shooting possible while any tank is falling).
+      // This also gives time for post-impact fall damage to be applied.
+      this.awaitingTankStabilization = true;
+      this.notifyHudUpdate(); // refresh HUD so [TANKS FALLING] indicator appears
+      // The previous fixed 120ms was a rough approximation for fall/damage; we now poll properly.
     };
   }
 
@@ -226,6 +262,7 @@ export class TurnManager {
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
+    this.clearAwaitingStabilization();
     this.removeInputListeners();
 
     // Invalidate any in-flight async AI turns so they abort before firing
@@ -238,6 +275,7 @@ export class TurnManager {
   public resumeForCombat(): void {
     this.interRoundPaused = false;
     this.isInputLocked = false;
+    this.clearAwaitingStabilization();
     this.setupInputListeners();
   }
 
@@ -247,7 +285,7 @@ export class TurnManager {
 
     // Seul un humain peut contrôler via clavier
     if (!player.isHuman) return;
-    if (this.isInputLocked) return;
+    if (this.isInputLocked || this.tankManager.anyTankIsFalling()) return;
 
     switch (event.key) {
       case 'ArrowLeft':
@@ -327,7 +365,7 @@ export class TurnManager {
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return false;
     if (!player.isHuman) return false;
-    if (this.isInputLocked || this.interRoundPaused) return false;
+    if (this.isInputLocked || this.interRoundPaused || this.tankManager.anyTankIsFalling()) return false;
     this.fire();
     return true;
   }
@@ -335,7 +373,7 @@ export class TurnManager {
   /** Déclenche le tir du joueur actuel (après validation tryFire). */
   private fire(): void {
     const player = this.getCurrentPlayer();
-    if (!player || this.isInputLocked) return;
+    if (!player || this.isInputLocked || this.tankManager.anyTankIsFalling()) return;
 
     const tank = player.tank;
 
@@ -401,6 +439,8 @@ export class TurnManager {
     if (this.interRoundPaused) return;
     if (this.isMatchEnded()) return;
 
+    this.clearAwaitingStabilization();
+
     const players = this.tankManager.getPlayers();
     if (players.length === 0) return;
 
@@ -463,6 +503,7 @@ export class TurnManager {
       inventory: { ...player.inventory },
       turn: this.turnNumber,
       isInputLocked: this.isInputLocked,
+      tanksAreFalling: this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
     };
   }
 
@@ -518,6 +559,7 @@ export class TurnManager {
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
+    this.clearAwaitingStabilization();
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
     this.isInputLocked = false;
@@ -635,6 +677,11 @@ export class TurnManager {
       clearTimeout(this.physicsSettlementTimeoutId);
       this.physicsSettlementTimeoutId = null;
     }
+  }
+
+  private clearAwaitingStabilization(): void {
+    this.awaitingTankStabilization = false;
+    this.wasFallingForHud = false;
   }
 
   private clearResolutionTimeout(): void {

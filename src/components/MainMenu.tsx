@@ -16,7 +16,7 @@
  * - Couleurs depuis VGA_PALETTE
  */
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import type { Player } from '../types/player';
 import { VGA_PALETTE, type Color } from '../types/game';
 import { DEFAULT_INVENTORY } from '../types/weapon';
@@ -29,16 +29,21 @@ export interface MainMenuProps {
 interface PlayerConfig {
   name: string;
   isHuman: boolean;
+  color: Color;
 }
 
-/** Couleurs tanks jouables (ordre stable pour attribution auto) */
+/** Couleurs tanks jouables (palette VGA sûre, sans conflit avec assets jeu : 
+ * sol=BROWN, herbe=GREEN, ciel=DARK_BLUE, lave=DARK_RED/RED/YELLOW, 
+ * et couleurs UI principales comme CYAN/MAGENTA utilisées dans HUD. 
+ * Évite aussi BLACK/WHITE/GRAY pour contraste/unicité.
+ */
 const TANK_COLOR_POOL: readonly Color[] = [
-  VGA_PALETTE.RED,      // #FF5555
-  VGA_PALETTE.GREEN,    // #55FF55
-  VGA_PALETTE.CYAN,     // #55FFFF
-  VGA_PALETTE.YELLOW,   // #FFFF55
-  VGA_PALETTE.MAGENTA,  // #FF55FF
-  VGA_PALETTE.BLUE,     // #5555FF
+  VGA_PALETTE.BLUE,       // #5555FF - safe
+  VGA_PALETTE.DARK_CYAN,  // #00AAAA - safe
+  VGA_PALETTE.DARK_MAGENTA, // #AA00AA - safe
+  VGA_PALETTE.MAGENTA,    // #FF55FF - acceptable for tanks
+  VGA_PALETTE.CYAN,       // #55FFFF - was in old, acceptable
+  VGA_PALETTE.DARK_GREEN, // #00AA00 - distinct from grass
 ] as const;
 
 function getDefaultName(index: number, isHuman: boolean): string {
@@ -49,14 +54,11 @@ function getDefaultName(index: number, isHuman: boolean): string {
 export function MainMenu({ onStartGame }: MainMenuProps) {
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([
-    { name: 'Bestter', isHuman: true },
-    { name: 'CPU-1', isHuman: false },
+    { name: 'Bestter', isHuman: true, color: TANK_COLOR_POOL[0] },
+    { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1] },
   ]);
 
-  // Couleurs auto uniques (slice du pool)
-  const assignedColors = useMemo<Color[]>(() => {
-    return TANK_COLOR_POOL.slice(0, numPlayers);
-  }, [numPlayers]);
+  // (couleurs maintenant gérées par playerConfigs, sélectionnables par l'utilisateur)
 
   // Synchronise le tableau de configs quand on change le nombre de joueurs
   const changeNumPlayers = (n: 2 | 3 | 4): void => {
@@ -71,9 +73,13 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
       while (next.length < n) {
         const idx = next.length;
         const defaultIsHuman = idx === 0; // premier = humain par défaut
+        const usedColors = next.map((p) => p.color);
+        const available = TANK_COLOR_POOL.filter((c) => !usedColors.includes(c));
+        const newColor = available[0] ?? TANK_COLOR_POOL[idx % TANK_COLOR_POOL.length];
         next.push({
           name: getDefaultName(idx, defaultIsHuman),
           isHuman: defaultIsHuman,
+          color: newColor,
         });
       }
 
@@ -97,6 +103,10 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
     updatePlayer(index, { isHuman });
   };
 
+  const handleColorSelect = (index: number, newColor: Color): void => {
+    updatePlayer(index, { color: newColor });
+  };
+
   // Validation légère avant start
   const canStart = playerConfigs.every((cfg) => cfg.name.trim().length > 0);
 
@@ -105,7 +115,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
     if (!canStart) return;
 
     const players: Player[] = playerConfigs.map((cfg, i) => {
-      const color = assignedColors[i];
+      const color = cfg.color;
       const id = `player-${i + 1}`;
       const tankId = `tank-${i + 1}`;
       const trimmedName = cfg.name.trim();
@@ -183,17 +193,40 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
           {/* Liste des joueurs configurables */}
           <div style={{ marginBottom: 6 }}>
             {playerConfigs.map((cfg, index) => {
-              const color = assignedColors[index];
+              const color = cfg.color;
               const isHuman = cfg.isHuman;
 
               return (
                 <div key={index} className="retro-player-row">
-                  {/* Swatch couleur VGA unique */}
-                  <div
-                    className="retro-color-swatch"
-                    style={{ backgroundColor: color }}
-                    title={`Couleur VGA ${color}`}
-                  />
+                  {/* Liste des couleurs disponibles pour ce joueur.
+                      Les couleurs sélectionnées par les autres joueurs sont retirées de cette liste.
+                      La couleur courante est mise en évidence. */}
+                  <div style={{ display: 'flex', gap: '2px', flexShrink: 0, alignItems: 'center' }}>
+                    {TANK_COLOR_POOL
+                      .filter((c) => !playerConfigs.some((pc, pi) => pi !== index && pc.color === c))
+                      .map((availColor) => {
+                        const isSelected = availColor === color;
+                        return (
+                          <div
+                            key={availColor}
+                            className="retro-color-swatch"
+                            style={{
+                              backgroundColor: availColor,
+                              width: isSelected ? 18 : 12,
+                              height: isSelected ? 14 : 10,
+                              border: isSelected
+                                ? `2px solid ${VGA_PALETTE.WHITE}`
+                                : '1px solid #555555',
+                              cursor: 'pointer',
+                              flexShrink: 0,
+                              opacity: isSelected ? 1 : 0.9,
+                            }}
+                            title={availColor}
+                            onClick={() => handleColorSelect(index, availColor)}
+                          />
+                        );
+                      })}
+                  </div>
 
                   {/* Nom du joueur (éditable) */}
                   <input
@@ -241,8 +274,8 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
           </div>
 
           <div style={{ fontSize: 10, color: '#666666', marginTop: -2, marginBottom: 8 }}>
-            Les couleurs sont attribuées automatiquement depuis la palette VGA (uniques).
-            Les IA utilisent la stratégie basique « v1-random ».
+            Pour chaque joueur, seule la liste des couleurs encore disponibles est affichée (les couleurs déjà choisies par les autres joueurs sont retirées).<br />
+            Palette VGA sûre (exclut sol, herbe, ciel, lave et couleurs UI principales). Les couleurs doivent être uniques.
           </div>
 
           {/* === GROS BOUTON D'ACTION === */}

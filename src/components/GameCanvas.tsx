@@ -11,7 +11,7 @@
  * logic lives inside GameEngine (strict decoupling).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../game/engine/GameEngine';
 import type { CurrentTurnInfo } from '../game/engine/TurnManager';
 import { VGA_PALETTE } from '../types/game';
@@ -79,12 +79,32 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   // Snapshot des joueurs initiaux au montage (évite de mettre initialPlayers dans les deps du useEffect one-shot)
   const initialPlayersRef = useRef(initialPlayers);
 
+  // Timer for round celebration fireworks (10s auto-advance or skip with SPACE)
+  const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const clearShopAiTimeout = (): void => {
     if (shopAiTimeoutRef.current !== null) {
       clearTimeout(shopAiTimeoutRef.current);
       shopAiTimeoutRef.current = null;
     }
   };
+
+  const clearCelebrationTimer = useCallback(() => {
+    if (celebrationTimerRef.current !== null) {
+      clearTimeout(celebrationTimerRef.current);
+      celebrationTimerRef.current = null;
+    }
+  }, []);
+
+  const goToSummary = useCallback(() => {
+    clearCelebrationTimer();
+    const eng = engineRef.current;
+    if (eng) {
+      eng.clearRoundCelebration();
+    }
+    setGamePhase('SUMMARY');
+    gamePhaseRef.current = 'SUMMARY';
+  }, [clearCelebrationTimer]);
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -213,10 +233,18 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       setWinner(null);
       setShowNewGameButton(false);
 
-      engine.triggerRoundCelebration();
+      engine.triggerRoundCelebration(payload.roundWinner ?? undefined);
       setCurrentManche((prev) => prev + 1);
-      setGamePhase('SUMMARY');
-      gamePhaseRef.current = 'SUMMARY';
+      setGamePhase('CELEBRATION');
+      gamePhaseRef.current = 'CELEBRATION';
+
+      // Auto-advance to SUMMARY after ~10s of fireworks, unless skipped via SPACE/click
+      clearCelebrationTimer();
+      celebrationTimerRef.current = setTimeout(() => {
+        if (gamePhaseRef.current === 'CELEBRATION') {
+          goToSummary();
+        }
+      }, 10000);
     };
 
     engineRef.current = engine;
@@ -239,6 +267,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
     return () => {
       clearShopAiTimeout();
+      // inline to avoid exhaustive-deps on stable clear func
+      if (celebrationTimerRef.current !== null) {
+        clearTimeout(celebrationTimerRef.current);
+        celebrationTimerRef.current = null;
+      }
       engine.stop();
       engine.getTurnManager().removeInputListeners();
       if (rafId) cancelAnimationFrame(rafId);
@@ -252,10 +285,34 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     gamePhaseRef.current = gamePhase;
   }, [gamePhase]);
 
+  // Global SPACE (or click handled in handleCanvasClick) to skip round celebration fireworks
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (gamePhaseRef.current === 'CELEBRATION' && (e.key === ' ' || e.key === 'Spacebar' || e.key.toLowerCase() === 'space')) {
+        e.preventDefault();
+        // inline logic (dupe of goToSummary) so effect can use [] without exhaustive-deps warning
+        clearCelebrationTimer();
+        const eng = engineRef.current;
+        if (eng) {
+          eng.clearRoundCelebration();
+        }
+        setGamePhase('SUMMARY');
+        gamePhaseRef.current = 'SUMMARY';
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [clearCelebrationTimer]);
+
   /** Canvas click = Spacebar: fire current human tank's selected weapon. */
   const handleCanvasClick = (): void => {
     const engine = engineRef.current;
     if (!engine) return;
+    if (gamePhaseRef.current === 'CELEBRATION') {
+      // Skip the fireworks celebration early
+      goToSummary();
+      return;
+    }
     if (gamePhaseRef.current !== 'COMBAT' && gamePhaseRef.current !== 'RESOLUTION') {
       return;
     }
@@ -517,6 +574,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     setCurrentShopIndex(0);
     currentShopIndexRef.current = 0;
 
+    clearCelebrationTimer();
     setGamePhase('COMBAT');
     gamePhaseRef.current = 'COMBAT';
     shopFinishingRef.current = false;
@@ -581,6 +639,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     setWinner(null);
     setShowNewGameButton(false);
     setTurnInfo(null);
+    clearCelebrationTimer();
     setGamePhase('COMBAT');
     gamePhaseRef.current = 'COMBAT';
     setRoundResult(null);
@@ -668,6 +727,28 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         {gamePhase === 'SUMMARY' && (
           <div className="retro-badge">
             PHASE: {gamePhase}
+          </div>
+        )}
+
+        {/* Celebration banner during pre-SUMMARY fireworks (from winning tank) */}
+        {gamePhase === 'CELEBRATION' && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.7)',
+              color: VGA_PALETTE.YELLOW,
+              font: 'bold 14px monospace',
+              padding: '4px 12px',
+              border: `2px solid ${VGA_PALETTE.YELLOW}`,
+              zIndex: 20,
+              pointerEvents: 'none',
+              textShadow: '0 0 4px #000',
+            }}
+          >
+            CELEBRATION — Appuyez sur ESPACE (ou cliquez) pour continuer
           </div>
         )}
 

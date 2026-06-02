@@ -150,7 +150,20 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
         })}
 
         {/* Lock / status indicator */}
-        {turnInfo && isLocked && (
+        {turnInfo && turnInfo.tanksAreFalling && (
+          <span
+            style={{
+              marginLeft: 6,
+              color: VGA_PALETTE.YELLOW,
+              fontSize: '12px',
+              pointerEvents: 'none',
+              fontWeight: 'bold',
+            }}
+          >
+            [TANKS FALLING]
+          </span>
+        )}
+        {turnInfo && isLocked && !turnInfo.tanksAreFalling && (
           <span
             style={{
               marginLeft: 6,
@@ -162,7 +175,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
             [RESOLVING]
           </span>
         )}
-        {turnInfo && !isHumanTurn && !isLocked && (
+        {turnInfo && !isHumanTurn && !isLocked && !turnInfo.tanksAreFalling && (
           <span
             style={{
               marginLeft: 6,

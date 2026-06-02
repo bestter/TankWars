@@ -16,6 +16,9 @@
 
 import { VGA_PALETTE } from '../../types/game';
 
+/** Margin from canvas bottom for the lava "floor" level. When terrain is destroyed to/beyond this, lava is exposed visually and tanks touching it die instantly. */
+const LAVA_TOP_MARGIN = 6;
+
 export class TerrainManager {
   public readonly width: number;
   public readonly height: number;
@@ -72,33 +75,64 @@ export class TerrainManager {
    * de la palette VGA.
    */
   public draw(ctx: CanvasRenderingContext2D): void {
-    // Couleur de remplissage du terrain (Marron de la palette VGA)
-    ctx.fillStyle = VGA_PALETTE.BROWN;
+    const lavaTop = this.lavaTop;
 
-    ctx.beginPath();
-    ctx.moveTo(0, this.height);
+    // Draw lava at the absolute bottom (the "floor level" when all ground is destroyed)
+    // Retro VGA-style lava using DARK_RED base + RED/YELLOW accents for bubbly look
+    ctx.fillStyle = VGA_PALETTE.DARK_RED;
+    ctx.fillRect(0, lavaTop, this.width, this.height - lavaTop);
 
-    for (let x = 0; x < this.width; x++) {
-      ctx.lineTo(x, this.heights[x]);
+    // Simple pixel-art lava texture / bubbles (static for perf + retro feel)
+    ctx.fillStyle = VGA_PALETTE.RED;
+    for (let x = 0; x < this.width; x += 3) {
+      const offset = (x % 5);
+      ctx.fillRect(x, lavaTop + 1 + offset, 2, 2 + (x % 2));
+    }
+    ctx.fillStyle = VGA_PALETTE.YELLOW;
+    for (let x = 2; x < this.width; x += 5) {
+      ctx.fillRect(x, lavaTop + 3 + (x % 3), 1, 1);
     }
 
-    ctx.lineTo(this.width, this.height);
+    // Brown terrain fill, but clamped so it never goes below lavaTop.
+    // When heights[x] >= lavaTop (fully dug out), that column shows pure lava (no ground left).
+    ctx.fillStyle = VGA_PALETTE.BROWN;
+    ctx.beginPath();
+    ctx.moveTo(0, lavaTop);
+
+    for (let x = 0; x < this.width; x++) {
+      // Clamp surface to lavaTop: brown ground "thickness" goes to zero when dug to lava
+      const h = Math.min(this.heights[x], lavaTop);
+      ctx.lineTo(x, h);
+    }
+
+    ctx.lineTo(this.width, lavaTop);
     ctx.closePath();
     ctx.fill();
 
-    // Ligne supérieure du terrain (vert VGA pour l'herbe)
+    // Green grass edge line: only on terrain surfaces that haven't reached the lava floor.
+    // Deep craters/pits will have their floor as lava (no grass line on lava).
     ctx.strokeStyle = VGA_PALETTE.GREEN;
     ctx.lineWidth = 3;
     ctx.beginPath();
-
+    let drawingEdge = false;
     for (let x = 0; x < this.width; x++) {
-      if (x === 0) {
-        ctx.moveTo(x, this.heights[x]);
-      } else {
-        ctx.lineTo(x, this.heights[x]);
+      const h = this.heights[x];
+      if (h < lavaTop) {
+        if (!drawingEdge) {
+          ctx.moveTo(x, h);
+          drawingEdge = true;
+        } else {
+          ctx.lineTo(x, h);
+        }
+      } else if (drawingEdge) {
+        ctx.stroke();
+        ctx.beginPath();
+        drawingEdge = false;
       }
     }
-    ctx.stroke();
+    if (drawingEdge) {
+      ctx.stroke();
+    }
     ctx.lineWidth = 1;
   }
 
@@ -158,6 +192,11 @@ export class TerrainManager {
   /** Retourne une copie en lecture seule de la heightmap */
   public getHeightmap(): ReadonlyArray<number> {
     return this.heights.slice();
+  }
+
+  /** Y position of the lava "floor" at the bottom of the map. Exposed when terrain heights reach or exceed this (no ground left). Tanks that reach this y die instantly. */
+  public get lavaTop(): number {
+    return this.height - LAVA_TOP_MARGIN;
   }
 
   // ==================== Méthodes privées ====================
