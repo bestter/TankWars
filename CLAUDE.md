@@ -1,31 +1,40 @@
 # Bestter's TankWars Project Guide
 
+**Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules; operational detail lives in AGENTS.md.
+
 ## Build & Development Commands
 
 - Install dependencies: `npm install`
-- Start dev server: `npm run dev`
+- Start dev server: `npm run dev` (http://localhost:5173)
 - Build project: `npm run build`
+- Preview production build: `npm run preview`
 - Run linter: `npm run lint`
+- React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
+
+Before finishing substantive work: `npm run lint` and `npm run build` must pass. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
 
 ## Architecture & Code Style Guidelines
 
 - **Tech Stack:** React (functional components, hooks) + TypeScript + HTML5 Canvas.
-- **State Separation:** Keep React state (turns, shop, money) strictly decoupled from the Canvas 2D high-frequency loop (physics, rendering).
+- **State Separation:** Keep React state (turns, shop, money, `GamePhase`) strictly decoupled from the Canvas 2D high-frequency loop (physics, rendering).
+- **Phase ownership:** `App.tsx` — `MENU` vs combat; `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
 - **Type Safety:** Strict TypeScript. Zero `any`. Define structural types inside `src/types/`.
-- **Canvas Rendering:** Use 16-color VGA palette hex codes for assets/tanks.
-- **Terrain Logic:** Implement custom destructible terrain algorithms (pixel-manipulation via `ImageData` or high-density heightmaps). Do not use external physics engines.
+- **Canvas Rendering:** Use `VGA_PALETTE` from `src/types/game.ts` for all game visuals.
+- **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
 
 ## AI Strategy Pattern (Crucial)
 
-- AI controllers must implement a unified interface (`src/game/entities/ai/AIEngine.ts`).
-- Phase 1 must strictly be a simple/stupid random trajectory injector to allow testing without blocking the architecture.
-- Phase 2 will have much smarter AI.
+- Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire strategies in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
+- **Phase 1 (current):** `AISimpleStrategy` — deliberately naive. Menu/profile label: `aiProfile: 'v1-random'`.
+- **Phase 2 (planned):** new `AIEngine` implementations (wind, terrain, prediction). Do not entangle AI inside `TankManager` or `GameEngine`.
+- **Legacy:** `AIStrategy` / `RandomAIStrategy` are an older contract and are not wired at runtime unless explicitly revived.
 
 ## Error Prevention
 
 - Never modify HTML5 canvas properties directly inside a React render cycle; always pass updates through refs or dedicated game engine methods.
+- Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
 
 ## Commit style
 
-- Always sign your comments by you name, and your EXACT model name for each commit.
+- Always sign your comments by your name, and your EXACT model name for each commit.
 - Use IMPERATIVE mood for commit messages.

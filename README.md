@@ -24,7 +24,7 @@
   - Driller (penetrating)
 - **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA Simple opponents before each battle. Unique VGA colors assigned automatically.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.
-- **Pluggable AI System** — Clean `AIEngine` interface. Current Phase 1 implementation ("v1-random") is deliberately naive for safe testing.
+- **Pluggable AI System** — Clean `AIEngine` interface. Phase 1 uses `AISimpleStrategy` (menu/profile id `v1-random`) — deliberately naive for safe testing.
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
@@ -70,6 +70,9 @@ npm run preview
 
 # Lint
 npm run lint
+
+# React health scan (before/after UI changes)
+npm run doctor
 ```
 
 ---
@@ -79,8 +82,9 @@ npm run lint
 This project follows a strict separation of concerns:
 
 - **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
+- **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
-- **AI** (`src/game/entities/ai/`): All AI behavior injected through the `AIEngine` interface. Easy to swap "stupid random" Phase 1 AI with sophisticated trajectory solvers later.
+- **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine` (`AISimpleStrategy` for Phase 1; player `aiProfile` `v1-random` in the menu). Swap in smarter engines later without refactoring the core.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -89,7 +93,7 @@ This project follows a strict separation of concerns:
 - No React state inside the render loop.
 - AI strategies must not block the core architecture.
 
-See [CLAUDE.md](./CLAUDE.md) for the full developer guide.
+**Developer docs:** [AGENTS.md](./AGENTS.md) (coding agents — layout, commands, checklists) · [CLAUDE.md](./CLAUDE.md) (project rules).
 
 ---
 
@@ -101,7 +105,7 @@ Fully working:
 - **Main Menu** (`MENU` phase): Retro DOS/VGA interface with player count (2-4), name editing, Human/IA Simple toggles, and automatic unique VGA color assignment.
 - Terrain generation + real-time cratering
 - Projectile physics + wind
-- Turn system + AI turns (Phase 1 "v1-random" strategy)
+- Turn system + AI turns (Phase 1: `AISimpleStrategy`, profile `v1-random`)
 - Keyboard aiming & firing + proper HUD
 - Multiple weapons with limited ammo
 - Sequential weapon shop between rounds (full economy)
@@ -140,10 +144,11 @@ This is an early-stage project focused on solid foundational architecture before
 
 To explore the codebase:
 
-- Start with `src/App.tsx` (top-level phase management) and the new `src/components/MainMenu.tsx`
+- Start with `src/App.tsx` (top-level phase management) and `src/components/MainMenu.tsx`
 - Main game view + engine integration: `src/components/GameCanvas.tsx`
 - Core simulation lives in `src/game/engine/GameEngine.ts`
 - Terrain destruction: `src/game/engine/Terrain.ts`
-- AI contract: `src/game/entities/ai/AIEngine.ts`
+- AI contract: `src/game/entities/ai/AIEngine.ts` (Phase 1: `AISimpleStrategy.ts`)
+- Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!
