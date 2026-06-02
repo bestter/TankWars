@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../game/engine/GameEngine';
 import type { CurrentTurnInfo } from '../game/engine/TurnManager';
-import { VGA_PALETTE, type FireCommand } from '../types/game';
+import { VGA_PALETTE } from '../types/game';
 import { AISimpleStrategy } from '../game/entities/ai/AISimpleStrategy';
 import type { Player } from '../types/player';
 import { GameHUD } from './GameHUD';
@@ -252,38 +252,14 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     gamePhaseRef.current = gamePhase;
   }, [gamePhase]);
 
-  // === INPUT: Click to fire test shot ===
-  const handleCanvasClick = (/* event: React.MouseEvent<HTMLCanvasElement> */): void => {
-    const engine = engineRef.current;
-    const canvas = canvasRef.current;
-    if (!engine || !canvas) return;
-
-    void canvas.getBoundingClientRect(); // placeholder until real tank positioning is wired
-
-    // Fire from left side for demo (you can later hook this to real tank position + UI)
-    const from = { x: 120, y: 260 };
-
-    const command: FireCommand = {
-      angle: -25 + (Math.random() - 0.5) * 30,
-      power: 55 + Math.random() * 25,
-      weaponId: 'MISSILE',
-    };
-
-    engine.fireProjectile(from, command, 'player-demo'); // demo owner for attribution
-  };
-
-  // Helper to fire a specific weapon (for future UI)
-  const fireWeapon = (weaponId: WeaponId) => {
+  /** Canvas click = Spacebar: fire current human tank's selected weapon. */
+  const handleCanvasClick = (): void => {
     const engine = engineRef.current;
     if (!engine) return;
-
-    const from = { x: 120 + Math.random() * 40, y: 255 };
-    const command: FireCommand = {
-      angle: -45 + Math.random() * 25,
-      power: 60 + Math.random() * 20,
-      weaponId,
-    };
-    engine.fireProjectile(from, command, 'player-demo');
+    if (gamePhaseRef.current !== 'COMBAT' && gamePhaseRef.current !== 'RESOLUTION') {
+      return;
+    }
+    engine.getTurnManager().tryFire();
   };
 
   // Weapon selection from HUD (clicks). Delegates to TurnManager (decoupled)
@@ -618,28 +594,17 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <button onClick={() => fireWeapon('MISSILE')} style={{ fontSize: 12 }}>
-          Fire Missile
-        </button>
-        <button onClick={() => fireWeapon('GRENADE')} style={{ fontSize: 12 }}>
-          Fire Grenade
-        </button>
-        <button onClick={() => fireWeapon('NUKE')} style={{ fontSize: 12 }}>
-          Fire Nuke
-        </button>
-
-        {/* Retour menu principal (démontage canvas/engine pour économiser ressources) */}
-        {onReturnToMenu && (
+      {onReturnToMenu && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', width: CANVAS_WIDTH }}>
           <button
             onClick={onReturnToMenu}
-            style={{ fontSize: 11, padding: '3px 9px', marginLeft: 4 }}
+            style={{ fontSize: 11, padding: '3px 9px' }}
             title="Retour à l'écran d'accueil et configuration des joueurs"
           >
             MENU
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div style={{ position: 'relative' }}>
         {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
@@ -751,7 +716,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       )}
 
       <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
-        <strong>Controls:</strong> ← → Adjust angle • ↑ ↓ Adjust power • SPACE to fire • A/E switch weapon<br />
+        <strong>Controls:</strong> ← → angle • ↑ ↓ power • SPACE or click to fire • A/E switch weapon<br />
         Each round lasts until a tank is destroyed; shop opens after each round
       </div>
     </div>

@@ -272,7 +272,7 @@ export class TurnManager {
 
       case ' ':
       case 'Spacebar':
-        this.fire();
+        this.tryFire();
         event.preventDefault();
         break;
 
@@ -319,7 +319,20 @@ export class TurnManager {
     this.notifyHudUpdate();
   }
 
-  /** Déclenche le tir du joueur actuel */
+  /**
+   * Fire the current human player's shot (same as Spacebar).
+   * No-op during AI turns, resolution lock, or inter-round pause.
+   */
+  public tryFire(): boolean {
+    const player = this.getCurrentPlayer();
+    if (!player || player.tank.isDead) return false;
+    if (!player.isHuman) return false;
+    if (this.isInputLocked || this.interRoundPaused) return false;
+    this.fire();
+    return true;
+  }
+
+  /** Déclenche le tir du joueur actuel (après validation tryFire). */
   private fire(): void {
     const player = this.getCurrentPlayer();
     if (!player || this.isInputLocked) return;
