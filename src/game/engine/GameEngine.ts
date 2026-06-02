@@ -22,6 +22,7 @@ import {
 } from '../../types/weapon';
 import type { Player } from '../../types/player';
 import type { Vector2, FireCommand, RoundResult } from '../../types/game';
+import type { RoundEndPayload } from '../../types/round';
 import type { AIStrategy } from '../entities/ai/AIStrategy';
 import type { AIEngine } from '../entities/ai/AIEngine';
 
@@ -65,9 +66,12 @@ export class GameEngine {
   // every single frame while idle, which was causing log spam during SHOP/SUMMARY/idle periods).
   private previousProjectileCount = 0;
 
-  // Game over state
+  // Game over state (entire match ended)
   private gameOver = false;
   private winner: import('../../types/player').Player | null = null;
+
+  /** True while tanks are fighting within a single combat round (until a kill or mutual destruction). */
+  private roundCombatActive = true;
 
   // Simple fireworks for winner celebration
   private fireworks: Array<{
@@ -99,11 +103,17 @@ export class GameEngine {
   /** Callback pour le HUD React (angle, puissance, joueur actif, etc.) */
   public onTurnHudUpdate?: (info: import('./TurnManager').CurrentTurnInfo) => void;
 
-  /** Called when only one player remains alive */
+  /** Called when only one player remains alive (entire match). */
   public onGameOver?: (winner: import('../../types/player').Player) => void;
 
-  /** Called when all players are dead (draw / partie nulle) */
+  /** Called when all players are dead (match draw). */
   public onDraw?: () => void;
+
+  /**
+   * Called once when a combat round ends (< 2 tanks alive).
+   * React shows SUMMARY → SHOP if the match continues, or GAME_OVER if not.
+   */
+  public onRoundEnded?: (payload: RoundEndPayload) => void;
 
   constructor(
     width: number,
@@ -135,6 +145,7 @@ export class GameEngine {
 
     // Connecte le TurnManager au système de physique (fin de volée → nextTurn)
     this.turnManager.connectToPhysics(this.physicsEngine);
+    this.turnManager.setMatchEndedChecker(() => this.gameOver);
 
     // Transmet les mises à jour HUD du TurnManager vers l'extérieur (React)
     this.turnManager.onHudUpdate = (info) => {
@@ -200,6 +211,9 @@ export class GameEngine {
 
   /** Initialise les joueurs et place leurs tanks sur le terrain */
   public setPlayers(players: Player[]): void {
+    this.roundCombatActive = true;
+    this.gameOver = false;
+    this.winner = null;
     this.tankManager.spawnTanks(players, this.terrain);
 
     // Initialise le système de tours
@@ -327,19 +341,49 @@ export class GameEngine {
     // Fanfare sting will play (reuses private audio logic)
   }
 
-  /** Prepare a brand new round (preserve money/inventory, reset health/terrain/turn state). Called after SHOP. */
-  public startNextRound(): void {
+  /** Declare match winner (e.g. when round wraps with one survivor before engine detected it). */
+  public declareMatchWinner(winner: Player): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.winner = winner;
+    this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
+    console.log(`[GAME OVER] WINNER: ${winner.name}`);
+    this.onGameOver?.(winner);
+  }
+
+  /** Declare draw when all players are eliminated. */
+  public declareMatchDraw(): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.winner = null;
+    console.log('[GAME OVER] DRAW (partie nulle)');
+    this.onDraw?.();
+  }
+
+  /**
+   * Prepare a brand new round (preserve money/inventory, reset health/terrain/turn state). Called after SHOP.
+   * Safe to call while inter-round pause is active (spawns before combat resumes).
+   */
+  public startNextRound(): boolean {
+    const roster = [...this.tankManager.getPlayers()];
+    if (roster.length < 2) {
+      console.warn(
+        `[GameEngine] startNextRound skipped: need at least 2 players in roster (have ${roster.length})`,
+      );
+      return false;
+    }
+
+    // New combat round — everyone in the match respawns (deaths only end the manche, not the campaign)
+    this.gameOver = false;
+    this.winner = null;
+    this.roundCombatActive = true;
+
     this.stopVictoryMusic();
-    this.physicsEngine.clear();
+    this.physicsEngine.clear(false);
     this.fireworks = [];
-    // Note: do NOT touch gameOver/winner here (only full reset does)
 
-    // Fresh terrain
     this.terrain.generate();
-
-    // Reset live tank combat state but KEEP money + inventory + currentWeapon
-    const players = [...this.tankManager.getPlayers()];
-    this.tankManager.spawnTanks(players, this.terrain); // this resets health/pos/shield/isDead/angle but not money
+    this.tankManager.spawnTanks(roster, this.terrain);
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
     this.turnManager.reset(); // this sets internal round=1; caller in React can treat displayRound separately
@@ -355,6 +399,7 @@ export class GameEngine {
 
     // Reset projectile settlement tracker (physics.clear() was just called)
     this.previousProjectileCount = 0;
+    return true;
   }
 
   // === Game Loop ===
@@ -397,6 +442,12 @@ export class GameEngine {
   };
 
   private update(dt: number): void {
+    // SUMMARY / SHOP: freeze combat simulation (tanks were dying during boutique → false draws)
+    if (this.turnManager.isInterRoundPaused()) {
+      this.updateFireworks();
+      return;
+    }
+
     const gravity = this.config.gravity;
     const wind = this.windForce;
 
@@ -424,48 +475,58 @@ export class GameEngine {
     }
     this.previousProjectileCount = currentCount;
 
-    // === Game Over Check ===
-    if (!this.gameOver) {
-      const alivePlayers = this.tankManager.getAlivePlayers();
-      const aliveCount = alivePlayers.length;
+    this.tryEndCombatRound();
+  }
 
-      if (aliveCount === 1) {
-        const winner = this.tankManager.getWinner();
-        if (winner) {
-          const losers = this.tankManager.getPlayers().filter(p => p.id !== winner.id).map(p => p.name);
-          this.gameOver = true;
-          this.winner = winner;
-          this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
-          console.log(`[GAME OVER] WINNER: ${winner.name} | LOSERS: ${losers.join(', ') || 'none'}`);
-          this.onGameOver?.(winner);
-        }
-      } else if (aliveCount === 0) {
-        // Draw / "partie nulle"
-        const allPlayers = this.tankManager.getPlayers().map(p => p.name);
-        this.gameOver = true;
-        this.winner = null;
+  /**
+   * Ends the current combat round when at least one tank is eliminated, or all are destroyed.
+   * Match continuation (shop) vs match over is decided in React via onRoundEnded.
+   */
+  private tryEndCombatRound(): void {
+    if (!this.roundCombatActive || this.gameOver) return;
 
-        // === Résumé clair des causes de mort ===
-        console.log(`[GAME OVER] DRAW (partie nulle) - all players dead: ${allPlayers.join(', ')}`);
-        console.log('=== RÉSUMÉ DES CAUSES DE MORT ===');
-        const playerList = this.tankManager.getPlayers();
-        for (const p of playerList) {
-          const reasons = this.deathReasons[p.id] || [];
-          if (reasons.length === 0) {
-            console.log(`  - ${p.name}: aucune mort enregistrée (peut-être tué avant le tracking ou spawn)`);
-            continue;
-          }
-          console.log(`  - ${p.name}:`);
-          for (const r of reasons) {
-            const roundInfo = r.round ? ` (round ~${r.round})` : '';
-            console.log(`      • ${r.cause}${roundInfo}: ${r.info ?? ''}`);
-          }
-        }
-        console.log('==================================');
+    const roster = this.tankManager.getPlayers();
+    const survivors = this.tankManager.getAlivePlayers();
+    const anyEliminated = roster.some((p) => p.tank.isDead);
 
-        this.onDraw?.();
+    if (!anyEliminated) return;
+
+    this.roundCombatActive = false;
+
+    const isDraw = survivors.length === 0;
+    const roundWinner = survivors.length === 1 ? survivors[0] : null;
+
+    if (isDraw) {
+      const allPlayers = this.tankManager.getPlayers().map((p) => p.name);
+      console.log(`[ROUND END] DRAW — all tanks destroyed: ${allPlayers.join(', ')}`);
+      this.logDeathSummary();
+    } else if (roundWinner) {
+      console.log(`[ROUND END] ${roundWinner.name} is the last tank standing this round`);
+    }
+
+    this.onRoundEnded?.({
+      survivors,
+      isDraw,
+      roundWinner,
+    });
+  }
+
+  private logDeathSummary(): void {
+    console.log('=== RÉSUMÉ DES CAUSES DE MORT ===');
+    const playerList = this.tankManager.getPlayers();
+    for (const p of playerList) {
+      const reasons = this.deathReasons[p.id] || [];
+      if (reasons.length === 0) {
+        console.log(`  - ${p.name}: aucune mort enregistrée`);
+        continue;
+      }
+      console.log(`  - ${p.name}:`);
+      for (const r of reasons) {
+        const turnInfo = r.round ? ` (turn ~${r.round})` : '';
+        console.log(`      • ${r.cause}${turnInfo}: ${r.info ?? ''}`);
       }
     }
+    console.log('==================================');
   }
 
   // === Rendering (called by GameCanvas every frame) ===
@@ -699,7 +760,7 @@ export class GameEngine {
     this.deathReasons[playerId].push({
       cause,
       info,
-      round: this.turnManager.getCurrentRound(),
+      round: this.turnManager.getCurrentTurnNumber(),
     });
   }
 
@@ -708,8 +769,9 @@ export class GameEngine {
     this.stopVictoryMusic();
     this.gameOver = false;
     this.winner = null;
+    this.roundCombatActive = true;
     this.fireworks = [];
-    this.physicsEngine.clear();
+    this.physicsEngine.clear(false);
     this.turnManager.reset();
 
     // Regenerate terrain

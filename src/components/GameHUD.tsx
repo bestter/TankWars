@@ -101,9 +101,9 @@ export function GameHUD({ turnInfo, wind, onWeaponSelect }: GameHUDProps) {
         </span>
       </div>
 
-      {/* === ROUND === */}
+      {/* === TURN (within current combat round) === */}
       <div style={{ color: VGA_PALETTE.GRAY, pointerEvents: 'none' }}>
-        RND <span style={{ color: VGA_PALETTE.WHITE }}>{turnInfo ? turnInfo.round : '-'}</span>
+        TRN <span style={{ color: VGA_PALETTE.WHITE }}>{turnInfo ? turnInfo.turn : '-'}</span>
       </div>
 
       {/* === WEAPON + SELECTOR (clickable) === */}

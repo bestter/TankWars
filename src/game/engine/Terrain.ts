@@ -128,7 +128,10 @@ export class TerrainManager {
       const craterDepth = impactY + dy;
 
       if (craterDepth > this.heights[x]) {
-        this.heights[x] = craterDepth;
+        // Cap surface so deep craters cannot push the ground past the play area floor
+        // (prevents false "burial" kills when tanks snap to an over-deep heightmap value).
+        const maxSurfaceY = this.height - 18;
+        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
       }
     }
 

@@ -23,7 +23,8 @@ export interface CurrentTurnInfo {
   power: number;
   currentWeapon: WeaponId;
   inventory: Partial<Record<WeaponId, number>>;
-  round: number;
+  /** Turn index within the current combat round (increments each time play passes to the next tank). */
+  turn: number;
   isInputLocked: boolean;
 }
 
@@ -34,11 +35,19 @@ export class TurnManager {
   private aiEngine?: AIEngine;
 
   private currentPlayerIndex = 0;
-  private currentRound = 1;
+  /** Monotonic turn counter within the current combat round (not a match "manche"). */
+  private turnNumber = 1;
   private isInputLocked = false;
 
   private listenersAttached = false;
   private isProcessingAI = false;
+
+  /** True during SUMMARY/SHOP — blocks nextTurn from projectile clear / stale settlement callbacks */
+  private interRoundPaused = false;
+
+  public isInterRoundPaused(): boolean {
+    return this.interRoundPaused;
+  }
 
   // 1. General recovery watchdog (12s): forces turn to advance if turn stays locked
   private turnLockAccumulatedTime = 0;
@@ -71,6 +80,13 @@ export class TurnManager {
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
   public onTurnChange?: (player: Player, round: number) => void;
 
+  /** When true, nextTurn / AI turns are suppressed (match ended). Wired from GameEngine.gameOver. */
+  private isMatchEnded: () => boolean = () => false;
+
+  public setMatchEndedChecker(checker: () => boolean): void {
+    this.isMatchEnded = checker;
+  }
+
   constructor(
     tankManager: TankManager,
     terrainManager: TerrainManager,
@@ -83,9 +99,9 @@ export class TurnManager {
     this.aiEngine = aiEngine;
   }
 
-  /** Gets the current round number */
-  public getCurrentRound(): number {
-    return this.currentRound;
+  /** Current turn number within the active combat round. */
+  public getCurrentTurnNumber(): number {
+    return this.turnNumber;
   }
 
   /** Permet de changer la stratégie IA à chaud */
@@ -203,6 +219,7 @@ export class TurnManager {
    *  Also clears any pending AI safety timers so they don't fire during pause or interfere with the next manche.
    */
   public pauseForInterRound(): void {
+    this.interRoundPaused = true;
     this.isInputLocked = true;
     this.isProcessingAI = false;
     this.clearPhysicsSettlementTimeout();
@@ -219,6 +236,7 @@ export class TurnManager {
 
   /** Resume after returning from SHOP to COMBAT */
   public resumeForCombat(): void {
+    this.interRoundPaused = false;
     this.isInputLocked = false;
     this.setupInputListeners();
   }
@@ -363,11 +381,13 @@ export class TurnManager {
   /** Passe au joueur suivant (saute les tanks morts).
    *
    * - Saute automatiquement les joueurs dont tank.isDead === true.
-   * - Quand l'index repasse à 0, on incrémente currentRound (manche suivante).
-   * - La décision d'aller en SUMMARY (fin de partie) est prise côté React
-   *   UNIQUEMENT quand il reste 0 ou 1 joueur vivant.
+   * - Combat rounds end only when a tank is eliminated (or all destroyed), not on index wrap.
+   * - turnNumber increments each time a new tank becomes active.
    */
   public nextTurn(): void {
+    if (this.interRoundPaused) return;
+    if (this.isMatchEnded()) return;
+
     const players = this.tankManager.getPlayers();
     if (players.length === 0) return;
 
@@ -379,7 +399,6 @@ export class TurnManager {
 
       if (this.currentPlayerIndex >= players.length) {
         this.currentPlayerIndex = 0;
-        this.currentRound++;
       }
 
       attempts++;
@@ -387,6 +406,8 @@ export class TurnManager {
       players[this.currentPlayerIndex]?.tank.isDead &&
       attempts < maxAttempts
     );
+
+    this.turnNumber++;
 
     // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
     this.isInputLocked = false;
@@ -399,7 +420,7 @@ export class TurnManager {
     const newPlayer = this.getCurrentPlayer();
 
     if (newPlayer) {
-      this.onTurnChange?.(newPlayer, this.currentRound);
+      this.onTurnChange?.(newPlayer, this.turnNumber);
       this.notifyHudUpdate();
 
       // Si c'est une IA, on lance son tour de manière asynchrone (sans bloquer le rendu)
@@ -427,7 +448,7 @@ export class TurnManager {
       power: Math.round(player.tank.power),
       currentWeapon: player.tank.currentWeapon,
       inventory: { ...player.inventory },
-      round: this.currentRound,
+      turn: this.turnNumber,
       isInputLocked: this.isInputLocked,
     };
   }
@@ -442,27 +463,40 @@ export class TurnManager {
   /** Démarre le premier tour (appelé après setPlayers) */
   public startFirstTurn(): void {
     this.currentPlayerIndex = 0;
-    this.currentRound = 1;
+    this.turnNumber = 1;
     this.isInputLocked = false;
 
-    // Saute les joueurs morts au cas où
     const players = this.tankManager.getPlayers();
-    while (players[this.currentPlayerIndex]?.tank.isDead) {
+    if (players.length === 0) {
+      console.warn('[TurnManager] startFirstTurn: no players');
+      return;
+    }
+
+    // Saute les joueurs morts (borné — évite boucle infinie)
+    let attempts = 0;
+    const maxAttempts = Math.max(players.length * 2, 1);
+    while (
+      players[this.currentPlayerIndex]?.tank.isDead &&
+      attempts < maxAttempts
+    ) {
       this.currentPlayerIndex++;
       if (this.currentPlayerIndex >= players.length) {
         this.currentPlayerIndex = 0;
-        this.currentRound++;
       }
+      attempts++;
     }
 
     const firstPlayer = this.getCurrentPlayer();
-    if (firstPlayer) {
-      this.onTurnChange?.(firstPlayer, this.currentRound);
-      this.notifyHudUpdate();
-
-      // Si c'est une IA, on lance son tour de manière asynchrone
-      this.handleAITurnIfNeeded(firstPlayer);
+    if (!firstPlayer || firstPlayer.tank.isDead) {
+      console.warn(
+        `[TurnManager] startFirstTurn: no living player (turn=${this.turnNumber}, attempts=${attempts})`,
+      );
+      return;
     }
+
+    this.onTurnChange?.(firstPlayer, this.turnNumber);
+    this.notifyHudUpdate();
+    this.handleAITurnIfNeeded(firstPlayer);
   }
 
   /** Réinitialise complètement le gestionnaire de tours */
@@ -472,9 +506,10 @@ export class TurnManager {
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
     this.currentPlayerIndex = 0;
-    this.currentRound = 1;
+    this.turnNumber = 1;
     this.isInputLocked = false;
     this.isProcessingAI = false;
+    this.interRoundPaused = false;
     this.removeInputListeners();
 
     // Invalidate any pending async AI activity
@@ -486,7 +521,7 @@ export class TurnManager {
    * Ne bloque pas le rendu du Canvas grâce à l'utilisation de setTimeout + Promise.
    */
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
-    if (player.isHuman || this.isProcessingAI) return;
+    if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
     if (!this.aiEngine) {
       console.warn(`[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`);
       setTimeout(() => this.nextTurn(), 800);
@@ -512,7 +547,7 @@ export class TurnManager {
         phase: 'COMBAT',
         players: [...this.tankManager.getPlayers()],
         currentPlayerIndex: this.currentPlayerIndex,
-        turn: this.currentRound,
+        turn: this.turnNumber,
       };
 
       const decision = await this.aiEngine.executeTurn(

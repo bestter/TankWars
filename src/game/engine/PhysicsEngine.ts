@@ -183,13 +183,16 @@ export class PhysicsEngine {
     return this.projectiles;
   }
 
-  /** Supprime tous les projectiles en vol */
-  public clear(): void {
+  /**
+   * Supprime tous les projectiles en vol.
+   * @param notifySettlement When false, avoids firing onAllProjectilesSettled (e.g. startNextRound during SHOP).
+   */
+  public clear(notifySettlement = true): void {
     const hadProjectiles = this.projectiles.length > 0;
     this.projectiles = [];
     this.previousCount = 0;
 
-    if (hadProjectiles) {
+    if (hadProjectiles && notifySettlement) {
       this.onAllProjectilesSettled?.();
     }
   }

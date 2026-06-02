@@ -50,13 +50,14 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
   // Logical manche number for SUMMARY title "FIN DE MANCHE N" (persistent across chained rounds)
   const [currentManche, setCurrentManche] = useState(1);
+  /** Last combat round outcome (manche), not whole-match game over */
+  const [lastRoundOutcome, setLastRoundOutcome] = useState<{
+    isDraw: boolean;
+    winner: Player | null;
+  } | null>(null);
 
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
   const gamePhaseRef = useRef<GamePhase>('COMBAT');
-
-  // Ref for round tracking (read inside onTurnChange callback which is registered once at mount;
-  // engine's internal round resets on each startNextRound, we use this to detect wraps within session)
-  const lastSeenEngineRoundRef = useRef(0);
 
   // === SHOP (boutique) state - sequential per living player ===
   const [shopPlayers, setShopPlayers] = useState<Player[]>([]);
@@ -67,12 +68,22 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   // would see values from the render when the first timeout was scheduled.
   const shopPlayersRef = useRef<Player[]>([]);
   const currentShopIndexRef = useRef(0);
+  /** Prevents double finishShopPhase from chained AI timeouts */
+  const shopFinishingRef = useRef(false);
+  const shopAiTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Snapshot of players for safe UI rendering (avoids reading refs during render)
   const [uiPlayers, setUiPlayers] = useState<Player[]>([]);
 
   // Snapshot des joueurs initiaux au montage (évite de mettre initialPlayers dans les deps du useEffect one-shot)
   const initialPlayersRef = useRef(initialPlayers);
+
+  const clearShopAiTimeout = (): void => {
+    if (shopAiTimeoutRef.current !== null) {
+      clearTimeout(shopAiTimeoutRef.current);
+      shopAiTimeoutRef.current = null;
+    }
+  };
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -181,83 +192,34 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       setTurnInfo(info);
     };
 
-    // Game Over handling (takes precedence over SUMMARY)
-    engine.onGameOver = (winningPlayer) => {
-      setWinner(winningPlayer);
-      setShowNewGameButton(false);
-      setGamePhase('GAME_OVER');
-      gamePhaseRef.current = 'GAME_OVER';
+    const tm = engine.getTurnManager();
 
-      // Show "New game ?" button after 7 seconds
-      setTimeout(() => {
-        setShowNewGameButton(true);
-      }, 7000);
-    };
+    /**
+     * Combat round ends when a tank is eliminated (or all destroyed).
+     * Always SUMMARY → SHOP → next manche (full roster respawns). No match Game Over here.
+     */
+    engine.onRoundEnded = (payload) => {
+      if (gamePhaseRef.current !== 'COMBAT') return;
 
-    // Draw (partie nulle) - 0 survivors
-    engine.onDraw = () => {
+      tm.pauseForInterRound();
+
+      const res = engine.awardEndOfRoundEarnings();
+      setRoundResult(res);
+      setLastRoundOutcome({
+        isDraw: payload.isDraw,
+        winner: payload.roundWinner,
+      });
+      setUiPlayers([...engine.getTankManager().getPlayers()]);
       setWinner(null);
       setShowNewGameButton(false);
-      setGamePhase('GAME_OVER');
-      gamePhaseRef.current = 'GAME_OVER';
 
-      setTimeout(() => {
-        setShowNewGameButton(true);
-      }, 7000);
-    };
-
-    // === Round progression + end-of-manche chaining ===
-    // TurnManager increments currentRound on wrap (full player cycle = end of a "manche").
-    // We trigger the inter-round SUMMARY (for chaining) only when >=2 players are still alive.
-    // If the round wraps with 0 or 1 survivor, we treat it as match end (draw or win)
-    // instead of starting a pointless new "manche".
-    const tm = engine.getTurnManager();
-    tm.onTurnChange = (_player, round) => {
-      // Always keep turnInfo fresh
-      // (the engine already calls notifyHudUpdate which sets via onTurnHudUpdate)
-
-      if (round > lastSeenEngineRoundRef.current) {
-        lastSeenEngineRoundRef.current = round;
-
-        // Trigger SUMMARY (fin de manche) after each full cycle to support "Jouer la manche suivante".
-        // Uses ref to avoid stale gamePhase from mount-time closure.
-        // (We intentionally ignore alive count here: chaining works for survivors even if >1 alive;
-        // when <=1 the GAME_OVER path from engine will take precedence.)
-        if (round >= 2 && gamePhaseRef.current !== 'GAME_OVER') {
-          const aliveCount = engine.getTankManager().getAlivePlayers().length;
-
-          if (aliveCount >= 2) {
-            // Normal inter-round chaining: award earnings, show SUMMARY so players can shop
-            // and continue the match on new terrain with preserved money/inventory.
-            const res = engine.awardEndOfRoundEarnings();
-            setRoundResult(res);
-
-            engine.triggerRoundCelebration();
-
-            tm.pauseForInterRound();
-            setGamePhase('SUMMARY');
-            gamePhaseRef.current = 'SUMMARY';
-          } else {
-            // The round wrapped but the match is already over (0 or 1 survivor).
-            // This can happen if everyone died on the last shot of the cycle.
-            // Award what we can, show final SUMMARY (UI will say "Aucun survivant" if 0).
-            // Do not start a new chaining cycle.
-            const res = engine.awardEndOfRoundEarnings();
-            setRoundResult(res);
-            tm.pauseForInterRound();
-            setGamePhase('SUMMARY');
-            gamePhaseRef.current = 'SUMMARY';
-          }
-        }
-        // else: round==1 after startNextRound (new session) → stay in COMBAT
-      }
+      engine.triggerRoundCelebration();
+      setCurrentManche((prev) => prev + 1);
+      setGamePhase('SUMMARY');
+      gamePhaseRef.current = 'SUMMARY';
     };
 
     engineRef.current = engine;
-
-    // Initialize tracking refs (first onTurnChange for round=1 happens inside setPlayers before listener assign,
-    // but subsequent wraps and post-startNextRound calls will use these)
-    lastSeenEngineRoundRef.current = 1;
     gamePhaseRef.current = 'COMBAT';
 
     // Start the internal physics loop
@@ -276,6 +238,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     renderLoop();
 
     return () => {
+      clearShopAiTimeout();
       engine.stop();
       engine.getTurnManager().removeInputListeners();
       if (rafId) cancelAnimationFrame(rafId);
@@ -337,35 +300,65 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     tm.selectWeapon(weaponId);
   };
 
+  const endMatchFromShop = (
+    engine: GameEngine,
+    survivors: Player[],
+  ): void => {
+    clearShopAiTimeout();
+    shopFinishingRef.current = true;
+    engine.getTurnManager().pauseForInterRound();
+    setShopPlayers([]);
+    shopPlayersRef.current = [];
+
+    if (survivors.length === 1) {
+      const matchWinner = engine.getTankManager().getWinner();
+      if (matchWinner) {
+        engine.declareMatchWinner(matchWinner);
+        setWinner(matchWinner);
+      }
+    } else {
+      if (!engine.isGameOver()) {
+        engine.declareMatchDraw();
+      }
+      setWinner(null);
+    }
+
+    setShowNewGameButton(false);
+    setGamePhase('GAME_OVER');
+    gamePhaseRef.current = 'GAME_OVER';
+    setTimeout(() => setShowNewGameButton(true), 7000);
+    shopFinishingRef.current = false;
+  };
+
   // SUMMARY → SHOP transition (full sequential shop per spec)
   const handleGoToShop = (): void => {
     const engine = engineRef.current;
     if (!engine) return;
 
+    clearShopAiTimeout();
+    shopFinishingRef.current = false;
     engine.getTurnManager().pauseForInterRound();
 
-    // Snapshot only living players for the shop phase (order preserved)
-    const living = engine.getTankManager().getAlivePlayers();
-    setShopPlayers(living);
-    shopPlayersRef.current = living;
-    setUiPlayers(living);
+    // Full match roster shops (eliminated tanks respawn next manche after startNextRound)
+    const roster = [...engine.getTankManager().getPlayers()];
+    if (roster.length < 2) {
+      endMatchFromShop(engine, roster);
+      return;
+    }
+
+    setShopPlayers(roster);
+    shopPlayersRef.current = roster;
+    setUiPlayers(roster);
     setCurrentShopIndex(0);
     currentShopIndexRef.current = 0;
     setGamePhase('SHOP');
     gamePhaseRef.current = 'SHOP';
 
-    // Guard: if no one left to shop (pure draw), don't enter broken shop state
-    if (living.length === 0) {
-      setGamePhase('GAME_OVER');
-      gamePhaseRef.current = 'GAME_OVER';
-      setTimeout(() => setShowNewGameButton(true), 1000);
-      return;
-    }
-
-    // If the very first player in shop is an AI, process it immediately
-    if (!living[0].isHuman) {
-      // Small delay so the UI has time to render the SHOP phase if needed
-      setTimeout(() => processNextShopperIfAI(), 50);
+    if (!roster[0].isHuman) {
+      shopAiTimeoutRef.current = setTimeout(() => {
+        shopAiTimeoutRef.current = null;
+        processNextShopperIfAI();
+      }, 50);
     }
   };
 
@@ -462,7 +455,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       const def = WEAPON_REGISTRY[wid];
       if (!def) continue;
 
+      let buysThisWeapon = 0;
+      const maxBuysPerWeapon = 12;
+
       while (
+        buysThisWeapon < maxBuysPerWeapon &&
         (aiPlayer.money ?? 0) >= def.price &&
         spent + def.price <= budget &&
         (aiPlayer.money ?? 0) > 80 // garde un peu d'argent
@@ -471,6 +468,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         aiPlayer.money = (aiPlayer.money ?? 0) - def.price;
         aiPlayer.inventory = { ...aiPlayer.inventory, [wid]: currentStock + 1 };
         spent += def.price;
+        buysThisWeapon++;
       }
     }
   };
@@ -490,52 +488,68 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       // Si le suivant est une IA, on la traite immédiatement (using fresh ref data)
       const nextPlayer = shopPlayersRef.current[nextIndex];
       if (nextPlayer && !nextPlayer.isHuman) {
-        setTimeout(() => processNextShopperIfAI(), 80);
+        clearShopAiTimeout();
+        shopAiTimeoutRef.current = setTimeout(() => {
+          shopAiTimeoutRef.current = null;
+          processNextShopperIfAI();
+        }, 80);
       }
     }
   };
 
   /** Traite le shopper courant s'il s'agit d'une IA (achats auto + avance) */
   const processNextShopperIfAI = (): void => {
+    if (shopFinishingRef.current || gamePhaseRef.current !== 'SHOP') return;
+
     const currentLen = shopPlayersRef.current.length;
     if (currentLen === 0) return;
     const idx = currentShopIndexRef.current;
     const current = shopPlayersRef.current[idx];
     if (!current || current.isHuman) return;
 
-    // IA achète automatiquement
     autoBuyForAI(current);
-
-    // Passe au suivant
     advanceToNextShopper();
   };
 
   /** Termine complètement la phase boutique et lance la nouvelle manche */
   const finishShopPhase = (): void => {
+    if (shopFinishingRef.current) return;
+
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Réinitialise terrain + tanks (ancrage) + tours → COMBAT
-    engine.startNextRound();
+    shopFinishingRef.current = true;
+    clearShopAiTimeout();
 
-    // Refresh UI snapshot with the newly positioned living players
-    const freshLiving = engine.getTankManager().getAlivePlayers();
-    setUiPlayers(freshLiving);
+    const tm = engine.getTurnManager();
+    const roster = engine.getTankManager().getPlayers();
 
+    if (roster.length < 2) {
+      shopFinishingRef.current = false;
+      endMatchFromShop(engine, [...roster]);
+      return;
+    }
+
+    const started = engine.startNextRound();
+    if (!started) {
+      shopFinishingRef.current = false;
+      endMatchFromShop(engine, [...roster]);
+      return;
+    }
+
+    tm.resumeForCombat();
+
+    setLastRoundOutcome(null);
+    setUiPlayers([...engine.getTankManager().getPlayers()]);
     setRoundResult(null);
     setShopPlayers([]);
     shopPlayersRef.current = [];
     setCurrentShopIndex(0);
     currentShopIndexRef.current = 0;
 
-    // Reset engine-round tracking ref for the new combat session (so round=1 after reset does not re-trigger SUMMARY)
-    lastSeenEngineRoundRef.current = 0;
-
-    // Advance logical manche for next SUMMARY title ("FIN DE MANCHE N")
-    setCurrentManche((prev) => prev + 1);
-
     setGamePhase('COMBAT');
     gamePhaseRef.current = 'COMBAT';
+    shopFinishingRef.current = false;
   };
 
   // Restart a brand new game
@@ -600,7 +614,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     setGamePhase('COMBAT');
     gamePhaseRef.current = 'COMBAT';
     setRoundResult(null);
-    lastSeenEngineRoundRef.current = 0;
     setCurrentManche(1);
     setUiPlayers(newPlayers);
     setShopPlayers([]);
@@ -674,6 +687,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
             round={currentManche}
             players={uiPlayers}
             result={roundResult}
+            roundOutcome={lastRoundOutcome}
             onNextRound={handleNextRound}
             onNewGame={handleNewGameFromSummary}
           />
@@ -711,7 +725,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         {/* === GAME OVER OVERLAY === */}
         {/* For draws (winner === null via onDraw), we rely on SUMMARY showing "Aucun survivant"
             or the delayed New Game button. No big colored text to avoid null access. */}
-        {winner && (
+        {winner && gamePhase === 'GAME_OVER' && (
           <div
             style={{
               position: 'absolute',
@@ -754,7 +768,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
       <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
         <strong>Controls:</strong> ← → Adjust angle • ↑ ↓ Adjust power • SPACE to fire • A/E switch weapon<br />
-        Multiple combat rounds until only one (or zero) survivor remains
+        Each round lasts until a tank is destroyed; shop opens after each round
       </div>
     </div>
   );

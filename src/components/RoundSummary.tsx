@@ -2,35 +2,49 @@
  * TankWars - RoundSummary React Component (src/components/RoundSummary.tsx)
  *
  * Retro VGA-style centered overlay shown when GamePhase === 'SUMMARY' (fin de manche).
- * Displays earnings, survivors, and cumulative money (the "score").
+ * Displays earnings, round outcome, and cumulative money.
  *
- * Updated for manche chaining:
- * - Big primary button "Jouer la manche suivante" → preserves players/scores/money/inventory, new terrain, reset health, reposition.
- * - Small discreet "New Game (Revenir au menu)" → full reset + MENU phase.
- *
- * - Thick VGA borders, monospace, high-contrast palette (Cyan/Magenta/Green/Yellow).
- * - Reuses the live canvas + fireworks underneath (per spec: do not clear animation/music).
- * - Purely presentational; all logic (awards, phase) lives in GameEngine + GameCanvas (decoupled).
+ * After every round: SUMMARY → SHOP → new manche (new terrain, all tanks respawn).
+ * Whole-match Game Over is only via "New Game (Revenir au menu)".
  */
 
 import type { Player } from '../types/player';
 import type { RoundResult } from '../types/game';
 import { VGA_PALETTE } from '../types/game';
 
+export interface RoundEndOutcome {
+  isDraw: boolean;
+  winner: Player | null;
+}
+
 export interface RoundSummaryProps {
   round: number;
-  /** Live players from engine (money has already been mutated by awardEndOfRoundEarnings) */
+  /** Full match roster (money already updated by awardEndOfRoundEarnings) */
   players: ReadonlyArray<Player>;
   result: RoundResult | null;
-  /** Gros bouton principal : enchaîne la manche en conservant scores/argent/inventaire (passe par SHOP) */
+  roundOutcome: RoundEndOutcome | null;
   onNextRound: () => void;
-  /** Bouton discret : reset complet + retour MENU (nouvelle partie) */
   onNewGame: () => void;
 }
 
-export function RoundSummary({ round, players, result, onNextRound, onNewGame }: RoundSummaryProps) {
+export function RoundSummary({
+  round,
+  players,
+  result,
+  roundOutcome,
+  onNextRound,
+  onNewGame,
+}: RoundSummaryProps) {
   const alivePlayers = players.filter((p) => !p.tank.isDead);
-  const sorted = [...alivePlayers].sort((a, b) => (b.money ?? 0) - (a.money ?? 0));
+  const sorted = [...players].sort((a, b) => (b.money ?? 0) - (a.money ?? 0));
+  const canContinue = players.length >= 2;
+
+  let outcomeLine = 'Manche terminée';
+  if (roundOutcome?.isDraw) {
+    outcomeLine = 'Manche nulle — tous les tanks détruits';
+  } else if (roundOutcome?.winner) {
+    outcomeLine = `Vainqueur de la manche : ${roundOutcome.winner.name}`;
+  }
 
   return (
     <div
@@ -43,7 +57,6 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
         backgroundColor: 'rgba(0, 0, 0, 0.92)',
       }}
     >
-      {/* Header */}
       <div
         style={{
           fontSize: '18px',
@@ -55,19 +68,23 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
       >
         FIN DE MANCHE {round}
       </div>
+      <div
+        style={{
+          fontSize: '13px',
+          color: roundOutcome?.winner ? roundOutcome.winner.tank.color : VGA_PALETTE.YELLOW,
+          marginBottom: 8,
+        }}
+      >
+        {outcomeLine}
+      </div>
       <div style={{ fontSize: '12px', color: VGA_PALETTE.GRAY, marginBottom: 12 }}>
-        Résultats &amp; gains • Survivants : {alivePlayers.length} / {players.length}
+        Survivants cette manche : {alivePlayers.length} / {players.length} • Boutique ensuite
       </div>
 
-      {/* Players list with earnings */}
       <div style={{ marginBottom: 14, textAlign: 'left' }}>
-        {sorted.length === 0 && (
-          <div style={{ color: VGA_PALETTE.GRAY, textAlign: 'center' }}>Aucun survivant</div>
-        )}
-
         {sorted.map((p) => {
           const currentMoney = p.money ?? 0;
-          // Simple visual: we don't have per-player pre-money here, but the award already happened in engine
+          const eliminated = p.tank.isDead;
           return (
             <div
               key={p.id}
@@ -79,6 +96,7 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
                 marginBottom: 4,
                 backgroundColor: '#111',
                 border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
+                opacity: eliminated ? 0.55 : 1,
               }}
             >
               <span
@@ -93,19 +111,19 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
               />
               <span style={{ color: p.tank.color, fontWeight: 'bold', minWidth: 70 }}>
                 {p.name}
+                {eliminated ? ' (KO)' : ''}
               </span>
               <span style={{ color: VGA_PALETTE.GREEN, marginLeft: 'auto' }}>
                 {currentMoney}$
               </span>
               <span style={{ color: VGA_PALETTE.CYAN, fontSize: 12 }}>
-                (base 500 + 300/kill)
+                (base 500 + 300/kill si vivant)
               </span>
             </div>
           );
         })}
       </div>
 
-      {/* Summary stats */}
       <div
         style={{
           fontSize: '12px',
@@ -119,20 +137,21 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
         Terrain détruit : ~{result?.terrainDestroyed ?? 0} unités
       </div>
 
-      {/* Gros bouton principal pour enchaîner les manches (conserve progression: scores, argent, inventaire) */}
       <button
         onClick={onNextRound}
+        disabled={!canContinue}
         className="retro-btn"
         style={{
           fontSize: '15px',
           padding: '11px 28px',
           minWidth: 260,
+          opacity: canContinue ? 1 : 0.45,
+          cursor: canContinue ? 'pointer' : 'not-allowed',
         }}
       >
-        Jouer la manche suivante
+        Aller à la boutique → manche suivante
       </button>
 
-      {/* Bouton discret et petit : New Game complet (reset + retour menu) */}
       <button
         onClick={onNewGame}
         style={{
@@ -150,7 +169,7 @@ export function RoundSummary({ round, players, result, onNextRound, onNewGame }:
       </button>
 
       <div style={{ fontSize: '12px', color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}>
-        Les gains ont été ajoutés à votre argent total
+        Prochaine manche : nouveau terrain et nouvelles positions
       </div>
     </div>
   );

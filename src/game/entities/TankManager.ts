@@ -150,10 +150,11 @@ export class TankManager {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      // Si le tank tombe en dessous du terrain jouable (fond de l'écran), il est éliminé
-      if (tank.position.y >= terrain.height - 10) {
+      // Élimination uniquement si le tank est passé sous le bas de l'écran (chute hors carte).
+      // Ne pas confondre avec un cratère profond : position.y suit la surface via updateTankPositions.
+      if (tank.position.y > terrain.height + 8) {
         tank.isDead = true;
-        const details = `y=${tank.position.y.toFixed(1)} >= height=${terrain.height} (fallen off screen)`;
+        const details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         console.log(
           `[DEATH] player=${player.name} (id=${player.id}) cause=burial/out-of-bounds pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
         );
