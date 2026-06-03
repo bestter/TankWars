@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../game/engine/GameEngine';
 import type { CurrentTurnInfo } from '../game/engine/TurnManager';
 import { VGA_PALETTE } from '../types/game';
-import { AISimpleStrategy } from '../game/entities/ai/AISimpleStrategy';
+import { AIByProfileStrategy } from '../game/entities/ai/AIByProfileStrategy';
 import type { Player } from '../types/player';
 import { GameHUD } from './GameHUD';
 import { WindBanner } from './WindBanner';
@@ -191,8 +191,9 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     engine.setPlayers(players);
     setUiPlayers(players);
 
-    // Inject the simple AI strategy (requis pour tout joueur !isHuman, qu'il vienne du menu ou de la démo)
-    engine.setAIEngine(new AISimpleStrategy());
+    // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
+    // Supports mixed human + different AI types in one match. Demos without aiProfile fall back to v1.
+    engine.setAIEngine(new AIByProfileStrategy());
     engine.onWindChange = setWind;
 
     // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
@@ -215,7 +216,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     const tm = engine.getTurnManager();
 
     /**
-     * Combat round ends when a tank is eliminated (or all destroyed).
+     * Combat round ends on last man standing (0 or 1 tanks remain alive).
      * Always SUMMARY → SHOP → next manche (full roster respawns). No match Game Over here.
      */
     engine.onRoundEnded = (payload) => {
@@ -634,7 +635,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     ];
 
     engine.setPlayers(newPlayers);
-    engine.setAIEngine(new AISimpleStrategy());
+    engine.setAIEngine(new AIByProfileStrategy());
 
     // Reset local UI state + round tracking refs (for clean new match)
     setWinner(null);
@@ -799,7 +800,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
       <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
         <strong>Controls:</strong> ← → angle • ↑ ↓ power • SPACE or click to fire • A/E switch weapon<br />
-        Each round lasts until a tank is destroyed; shop opens after each round
+        Each round is last-man-standing (continues until only one remains); shop opens after each round
       </div>
     </div>
   );

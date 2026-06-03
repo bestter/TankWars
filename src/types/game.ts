@@ -76,6 +76,10 @@ export interface GameState {
   turn: number;
   /** Present only when phase === 'GAME_OVER' */
   winnerId?: Player['id'];
+  /** Current wind (px/s² horizontal accel) + gravity for this combat round.
+   *  Provided to AIEngine (for wind-aware / terrain-aware smarter AI aiming). */
+  windForce: number;
+  gravity: number;
 }
 
 /** Summary emitted after a RESOLUTION phase for logging / money rewards / UI. */

@@ -79,7 +79,7 @@ export class GameEngine {
   private celebrationAngle: number = 90;
   private celebrationAngleDir: number = 1;
 
-  /** True while tanks are fighting within a single combat round (until a kill or mutual destruction). */
+  /** True while tanks are fighting within a single combat round (until <= 1 alive: last man standing). */
   private roundCombatActive = true;
 
   // Simple fireworks for winner celebration
@@ -136,7 +136,7 @@ export class GameEngine {
   public onDraw?: () => void;
 
   /**
-   * Called once when a combat round ends (< 2 tanks alive).
+   * Called once when a combat round ends (last man standing: 0 or 1 tanks alive).
    * React shows SUMMARY → SHOP if the match continues, or GAME_OVER if not.
    */
   public onRoundEnded?: (payload: RoundEndPayload) => void;
@@ -232,6 +232,7 @@ export class GameEngine {
     };
 
     this.windForce = this.config.windForce;
+    this.turnManager.setEnvironment(this.windForce, this.config.gravity);
   }
 
   // === Public API ===
@@ -248,7 +249,7 @@ export class GameEngine {
     return this.turnManager;
   }
 
-  /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy) */
+  /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy or AIByProfileStrategy for mixed v1/v2). */
   public setAIEngine(aiEngine: AIEngine): void {
     this.turnManager.setAIEngine(aiEngine);
   }
@@ -261,6 +262,7 @@ export class GameEngine {
     this.tankManager.spawnTanks(players, this.terrain);
     this.lastSlideTimes.clear();
     this.randomizeWindForRound();
+    this.turnManager.setEnvironment(this.windForce, this.config.gravity);
 
     // Initialise le système de tours
     this.turnManager.startFirstTurn();
@@ -278,6 +280,7 @@ export class GameEngine {
   public setWindForce(force: number): void {
     this.windForce = force;
     this.onWindChange?.(this.windForce);
+    this.turnManager.setEnvironment(this.windForce, this.config.gravity);
   }
 
   /** New random wind for a combat round; notifies React via onWindChange. */
@@ -472,6 +475,7 @@ export class GameEngine {
     this.tankManager.spawnTanks(roster, this.terrain);
     this.lastSlideTimes.clear(); // fresh per round for throttle maps
     this.randomizeWindForRound();
+    this.turnManager.setEnvironment(this.windForce, this.config.gravity);
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
     this.turnManager.reset(); // this sets internal round=1; caller in React can treat displayRound separately
@@ -572,17 +576,16 @@ export class GameEngine {
   }
 
   /**
-   * Ends the current combat round when at least one tank is eliminated, or all are destroyed.
+   * Ends the current combat round on last man standing (0 or 1 tanks alive).
+   * While >=2 remain alive, combat and turns continue (skipping dead players).
    * Match continuation (shop) vs match over is decided in React via onRoundEnded.
    */
   private tryEndCombatRound(): void {
     if (!this.roundCombatActive || this.gameOver) return;
 
-    const roster = this.tankManager.getPlayers();
     const survivors = this.tankManager.getAlivePlayers();
-    const anyEliminated = roster.some((p) => p.tank.isDead);
 
-    if (!anyEliminated) return;
+    if (survivors.length >= 2) return;
 
     this.roundCombatActive = false;
 

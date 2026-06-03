@@ -30,6 +30,8 @@ export interface Projectile {
   /** Original cannon power/angle (affects sub-munition spread for cluster) */
   initialAngle?: number;
   initialPower?: number;
+  /** Number of terrain bounces so far (only used by GRENADE physicsType) */
+  bounceCount?: number;
 }
 
 export interface ProjectileHitEvent {
@@ -146,7 +148,13 @@ export class PhysicsEngine {
 
       // Collision avec le terrain
       if (terrainManager.checkCollision(p.x, p.y)) {
-        this.handleImpact(i, p, terrainManager, tankManager);
+        const weapon = WEAPON_REGISTRY[p.weaponId];
+        if (weapon?.physicsType === 'grenade') {
+          this.bounceGrenade(i, p, terrainManager, tankManager);
+          continue;
+        } else {
+          this.handleImpact(i, p, terrainManager, tankManager);
+        }
       }
     }
 
@@ -244,6 +252,63 @@ export class PhysicsEngine {
   }
 
   /**
+   * Handles bouncing behavior for GRENADE (physicsType === 'grenade').
+   * On terrain contact: reflects velocity with energy loss + friction, increments bounce count.
+   * After a few bounces (or when energy is low) it detonates via handleImpact (crater + damage).
+   * Direct tank hits always explode immediately (handled before reaching here).
+   * This makes the grenade "rebond" as advertised ("Grenade à rebond").
+   */
+  private bounceGrenade(
+    index: number,
+    p: Projectile,
+    terrainManager: TerrainManager,
+    tankManager?: TankManager,
+  ): void {
+    const surfaceY = terrainManager.getHeightAt(p.x);
+
+    // Pop the projectile just above the surface to prevent sticking / re-trigger this frame.
+    // Use the current x for surface query (heightmap is per-column).
+    p.y = surfaceY - 1.2;
+
+    const bounceCount = (p.bounceCount ?? 0) + 1;
+    p.bounceCount = bounceCount;
+
+    // Check if this contact should cause detonation rather than another bounce.
+    // Explodes on the Nth bounce or when nearly stopped (prevents infinite micro-hops).
+    // 4 allows 3 visible bounces which feels good for "grenade à rebond" on rough maps.
+    const speed = Math.hypot(p.vx, p.vy);
+    const MAX_BOUNCES = 4;
+    const shouldExplode = bounceCount >= MAX_BOUNCES || speed < 3.2 || Math.abs(p.vy) < 2.0;
+
+    if (shouldExplode) {
+      // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
+      this.handleImpact(index, p, terrainManager, tankManager);
+      return;
+    }
+
+    // Apply bounce physics (retro artillery feel with lossy bounces).
+    // Vertical restitution: controls how high it bounces back up.
+    const restitution = 0.58 + Math.random() * 0.12; // 0.58–0.70, slight natural variance
+    p.vy = -p.vy * restitution;
+
+    // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
+    p.vx *= 0.78 + (Math.random() - 0.5) * 0.06;
+
+    // Tiny extra vertical impulse for lively but diminishing hops.
+    p.vy += (Math.random() - 0.5) * 0.5;
+
+    // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
+    if (p.vy > -1.0) {
+      p.vy = -1.0 - Math.random() * 1.2;
+    }
+
+    // Clamp absurd horizontal speeds after many skids (safety).
+    if (Math.abs(p.vx) > 12) {
+      p.vx = Math.sign(p.vx) * 12;
+    }
+  }
+
+  /**
    * Dessine tous les projectiles actifs.
    * Style simple et performant (petit cercle blanc/rouge).
    */
@@ -260,6 +325,8 @@ export class PhysicsEngine {
         r = 4.5; // visibly larger "parent" shell for cluster (before it splits in air)
       } else if (p.isSubmunition) {
         r = 1.8; // slightly smaller bomblets
+      } else if (p.weaponId === 'GRENADE') {
+        r = 3.2; // grenades are a bit chunkier to read during bounces
       }
 
       // Petit obus visible (cercle)

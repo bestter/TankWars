@@ -8,13 +8,14 @@
 import type { AIEngine } from './AIEngine';
 import type { GameState } from '../../../types/game';
 import type { Player } from '../../../types/player';
+import type { WeaponId } from '../../../types/weapon';
 
 export class AISimpleStrategy implements AIEngine {
   async executeTurn(
     tankId: string,
     gameState: GameState,
     /* _terrainManager: TerrainManager */ // Not heavily used in V1
-  ): Promise<{ angle: number; power: number }> {
+  ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const currentPlayer = gameState.players.find((p) => p.tank.id === tankId);
     if (!currentPlayer) {
       return { angle: 45, power: 50 };
@@ -52,9 +53,11 @@ export class AISimpleStrategy implements AIEngine {
 
     const power = 60 + Math.random() * 30; // 60 → 90 (stronger shots for better range)
 
+    const weaponId = currentPlayer.tank.currentWeapon || 'MISSILE';
     return {
       angle: Math.round(angle * 10) / 10,
       power: Math.round(power),
+      weaponId,
     };
   }
 

@@ -121,6 +121,13 @@ export class TankManager {
 
       // Angle de départ par défaut (sensé pour le côté du terrain)
       tank.angle = x < terrain.width / 2 ? 45 : 135;
+
+      // Defaults for the new round (power + MISSILE as the always-available unlimited default)
+      tank.power = 50;
+      tank.currentWeapon = 'MISSILE';
+
+      // Clear per-round AI revenge data
+      tank.lastHitBy = undefined;
     });
 
     // Initialize velocities and fall tracking for new spawns
@@ -462,6 +469,11 @@ export class TankManager {
 
       if (remainingDamage > 0) {
         tank.health = Math.max(0, tank.health - remainingDamage);
+      }
+
+      // Record attacker for AI "revenge" targeting (even non-lethal hits). Cleared on round respawn.
+      if (healthBefore > tank.health && killerId) {
+        tank.lastHitBy = killerId;
       }
 
       if (healthBefore > 0 && tank.health <= 0) {

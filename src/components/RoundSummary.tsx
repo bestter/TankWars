@@ -5,7 +5,7 @@
  * Displays earnings, round outcome, and cumulative money.
  *
  * After every round: SUMMARY → SHOP → new manche (new terrain, all tanks respawn).
- * Whole-match Game Over is only via "New Game (Revenir au menu)".
+ * A round ends only when last man standing (0 or 1 alive). Whole-match Game Over is only via "New Game (Revenir au menu)".
  */
 
 import type { Player } from '../types/player';

@@ -1,5 +1,5 @@
 /**
- * Round-end payload — a combat round ends as soon as at least one tank is eliminated,
+ * Round-end payload — a combat round ends on last man standing (0 or 1 tank alive),
  * or when every tank is destroyed (draw). Shop runs after this, not after a full turn cycle.
  * Distinct from TurnManager `turn` counter (individual shots within a round).
  */

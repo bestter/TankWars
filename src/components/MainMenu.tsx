@@ -4,7 +4,7 @@
  * Écran d'accueil rétro DOS/VGA :
  * - Fond noir + bordure double ligne style ancien terminal
  * - Titre géant clignotant jaune VGA (#FFFF55 / blanc)
- * - Configuration joueurs (2-4) : nom + type Humain / IA Simple
+ * - Configuration joueurs (2-4) : nom + type Humain / IA Simple (Mr. Simple) / IA OK (smarter v2)
  * - Attribution auto de couleurs VGA uniques (palette partagée)
  * - Au clic START : fabrique les Player[] valides + invoke callback
  *
@@ -32,6 +32,8 @@ interface PlayerConfig {
   color: Color;
   /** stable identifier for React list keys (avoids array index keys) */
   id: string;
+  /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE" (Mr. Simple). */
+  aiProfile?: 'v1-random' | 'v2-heuristic';
 }
 
 /** Couleurs tanks jouables (palette VGA sûre, sans conflit avec assets jeu : 
@@ -57,7 +59,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([
     { name: 'Player-1', isHuman: true, color: TANK_COLOR_POOL[0], id: 'p-1' },
-    { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1], id: 'p-2' },
+    { name: 'CPU-1', isHuman: false, color: TANK_COLOR_POOL[1], id: 'p-2', aiProfile: 'v1-random' },
   ]);
 
   // Refs for name inputs, to auto-focus/select when switching a player to Human
@@ -81,12 +83,16 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
         const usedColors = new Set(next.map((p) => p.color));
         const available = TANK_COLOR_POOL.filter((c) => !usedColors.has(c));
         const newColor = available[0] ?? TANK_COLOR_POOL[idx % TANK_COLOR_POOL.length];
-        next.push({
+        const newCfg: PlayerConfig = {
           name: getDefaultName(idx, defaultIsHuman),
           isHuman: defaultIsHuman,
           color: newColor,
           id: `p-${Date.now()}-${idx}`,
-        });
+        };
+        if (!defaultIsHuman) {
+          newCfg.aiProfile = 'v1-random'; // default IA SIMPLE
+        }
+        next.push(newCfg);
       }
 
       // Tronquer si on diminue
@@ -106,7 +112,11 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   };
 
   const handleTypeChange = (index: number, isHuman: boolean): void => {
-    updatePlayer(index, { isHuman });
+    if (isHuman) {
+      updatePlayer(index, { isHuman, aiProfile: undefined });
+    } else {
+      updatePlayer(index, { isHuman, aiProfile: 'v1-random' });
+    }
     if (isHuman) {
       // After re-render, focus and select the name input so user can immediately edit
       setTimeout(() => {
@@ -140,7 +150,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
         id,
         name: trimmedName,
         isHuman: cfg.isHuman,
-        aiProfile: cfg.isHuman ? undefined : 'v1-random',
+        aiProfile: cfg.isHuman ? undefined : (cfg.aiProfile ?? 'v1-random'),
         tank: {
           id: tankId,
           position: { x: 80 + i * 160, y: 280 }, // placeholder (spawnTanks recalcule sur terrain)
@@ -261,7 +271,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     aria-label={`Nom du joueur ${index + 1}`}
                   />
 
-                  {/* Toggle type : Humain / IA Simple (deux boutons) */}
+                  {/* Toggle type : Humain / IA variants (IA OK = smarter v2 "heuristic" per user request) */}
                   <button
                     type="button"
                     className={`retro-type-btn ${isHuman ? 'active' : ''}`}
@@ -272,11 +282,19 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                   </button>
                   <button
                     type="button"
-                    className={`retro-type-btn ${!isHuman ? 'active' : ''}`}
-                    onClick={() => handleTypeChange(index, false)}
-                    title="IA Simple (v1-random) — Phase 1"
+                    className={`retro-type-btn ${!isHuman && cfg.aiProfile !== 'v2-heuristic' ? 'active' : ''}`}
+                    onClick={() => updatePlayer(index, { isHuman: false, aiProfile: 'v1-random' })}
+                    title="IA Simple (v1-random) — Mr. Simple (Phase 1, naïf)"
                   >
                     IA SIMPLE
+                  </button>
+                  <button
+                    type="button"
+                    className={`retro-type-btn ${!isHuman && cfg.aiProfile === 'v2-heuristic' ? 'active' : ''}`}
+                    onClick={() => updatePlayer(index, { isHuman: false, aiProfile: 'v2-heuristic' })}
+                    title="IA OK (v2-heuristic) — IA compétente (vise, se venge, s'améliore, mémoire par round)"
+                  >
+                    IA OK
                   </button>
 
                   {/* Indicateur IA / Humain compact */}
@@ -288,7 +306,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                       minWidth: 22,
                     }}
                   >
-                    {isHuman ? 'P' : 'CPU'}
+                    {isHuman ? 'P' : (cfg.aiProfile === 'v2-heuristic' ? 'OK' : 'CPU')}
                   </span>
                 </div>
               );

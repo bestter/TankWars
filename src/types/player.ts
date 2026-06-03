@@ -31,6 +31,9 @@ export interface Tank {
   maxShield: number;
   /** True when the tank is destroyed. */
   isDead: boolean;
+  /** Last player id (owner) whose shot/explosion damaged this tank (for AI revenge targeting).
+   *  Set during damage application; cleared on round respawn via spawnTanks. */
+  lastHitBy?: string;
   /** Must be a value from VGA_PALETTE (enforced at construction). */
   color: Color;
   /** Weapon that will be used on next FireCommand. */
@@ -48,6 +51,6 @@ export interface Player {
   money: number;
   /** Ammo remaining per weapon type. Keys absent or <=0 mean unavailable. */
   inventory: Partial<Record<WeaponId, number>>;
-  /** Strategy identifier used by AIEngine when !isHuman. Phase 1 = 'v1-random'. */
+  /** Strategy identifier used by AIEngine when !isHuman. Phase 1 = 'v1-random' (simple), 'v2-heuristic' = smarter "OK" AI (see AIHeuristicStrategy). */
   aiProfile?: 'v1-random' | 'v2-heuristic';
 }

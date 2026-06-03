@@ -47,6 +47,10 @@ export class TurnManager {
   /** True during SUMMARY/SHOP — blocks nextTurn from projectile clear / stale settlement callbacks */
   private interRoundPaused = false;
 
+  /** Environment snapshot for AI (wind/gravity change per round or config; passed via GameState to AIEngine). */
+  private currentWindForce = 0;
+  private currentGravity = 260;
+
   public isInterRoundPaused(): boolean {
     return this.interRoundPaused;
   }
@@ -95,6 +99,12 @@ export class TurnManager {
 
   public setMatchEndedChecker(checker: () => boolean): void {
     this.isMatchEnded = checker;
+  }
+
+  /** Update current wind/gravity so they can be included in GameState snapshots for AIEngine (heuristic aiming etc). */
+  public setEnvironment(windForce: number, gravity: number): void {
+    this.currentWindForce = windForce;
+    this.currentGravity = gravity;
   }
 
   constructor(
@@ -459,7 +469,7 @@ export class TurnManager {
   /** Passe au joueur suivant (saute les tanks morts).
    *
    * - Saute automatiquement les joueurs dont tank.isDead === true.
-   * - Combat rounds end only when a tank is eliminated (or all destroyed), not on index wrap.
+   * - Combat rounds end only on last man standing (<=1 alive), not on index wrap.
    * - turnNumber increments each time a new tank becomes active.
    */
   public nextTurn(): void {
@@ -630,6 +640,8 @@ export class TurnManager {
         players: [...this.tankManager.getPlayers()],
         currentPlayerIndex: this.currentPlayerIndex,
         turn: this.turnNumber,
+        windForce: this.currentWindForce,
+        gravity: this.currentGravity,
       };
 
       const decision = await this.aiEngine.executeTurn(
@@ -644,6 +656,9 @@ export class TurnManager {
         return;
       }
 
+      if (decision.weaponId) {
+        player.tank.currentWeapon = decision.weaponId;
+      }
       player.tank.angle = Math.max(0, Math.min(180, decision.angle));
       player.tank.power = Math.max(0, Math.min(100, decision.power));
       this.notifyHudUpdate();
