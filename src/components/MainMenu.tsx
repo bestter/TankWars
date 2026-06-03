@@ -33,7 +33,7 @@ interface PlayerConfig {
   /** stable identifier for React list keys (avoids array index keys) */
   id: string;
   /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE" (Mr. Simple). */
-  aiProfile?: 'v1-random' | 'v2-heuristic';
+  aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart';
 }
 
 /** Couleurs tanks jouables (palette VGA sûre, sans conflit avec assets jeu : 
@@ -271,42 +271,55 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     aria-label={`Nom du joueur ${index + 1}`}
                   />
 
-                  {/* Toggle type : Humain / IA variants (IA OK = smarter v2 "heuristic" per user request) */}
-                  <button
-                    type="button"
-                    className={`retro-type-btn ${isHuman ? 'active' : ''}`}
-                    onClick={() => handleTypeChange(index, true)}
-                    title="Contrôlé par un humain (clavier/souris)"
+                  {/* Select Controller Type (Humain, IA Simple, IA OK, IA Sniper, IA Expert) */}
+                  <select
+                    className="retro-input"
+                    style={{
+                      width: '120px',
+                      flex: 'none',
+                      fontSize: '11px',
+                      padding: '2px 4px',
+                      cursor: 'pointer',
+                      color: isHuman ? '#55FF55' : '#FFAA00',
+                      border: `1px solid ${isHuman ? '#55FF55' : '#FFAA00'}`,
+                      background: '#000000',
+                    }}
+                    value={isHuman ? 'human' : (cfg.aiProfile ?? 'v1-random')}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'human') {
+                        handleTypeChange(index, true);
+                      } else {
+                        updatePlayer(index, {
+                          isHuman: false,
+                          aiProfile: val as 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart',
+                        });
+                      }
+                    }}
+                    aria-label={`Type de contrôleur pour joueur ${index + 1}`}
                   >
-                    HUMAIN
-                  </button>
-                  <button
-                    type="button"
-                    className={`retro-type-btn ${!isHuman && cfg.aiProfile !== 'v2-heuristic' ? 'active' : ''}`}
-                    onClick={() => updatePlayer(index, { isHuman: false, aiProfile: 'v1-random' })}
-                    title="IA Simple (v1-random) — Mr. Simple (Phase 1, naïf)"
-                  >
-                    IA SIMPLE
-                  </button>
-                  <button
-                    type="button"
-                    className={`retro-type-btn ${!isHuman && cfg.aiProfile === 'v2-heuristic' ? 'active' : ''}`}
-                    onClick={() => updatePlayer(index, { isHuman: false, aiProfile: 'v2-heuristic' })}
-                    title="IA OK (v2-heuristic) — IA compétente (vise, se venge, s'améliore, mémoire par round)"
-                  >
-                    IA OK
-                  </button>
+                    <option value="human" style={{ color: '#55FF55', background: '#000000' }}>HUMAIN</option>
+                    <option value="v1-random" style={{ color: '#FFAA00', background: '#000000' }}>IA SIMPLE</option>
+                    <option value="v2-heuristic" style={{ color: '#FFAA00', background: '#000000' }}>IA OK</option>
+                    <option value="v3-sniper" style={{ color: '#FFAA00', background: '#000000' }}>IA SNIPER</option>
+                    <option value="v4-smart" style={{ color: '#FFAA00', background: '#000000' }}>IA EXPERT</option>
+                  </select>
 
-                  {/* Indicateur IA / Humain compact */}
+                  {/* Compact Status Indicator */}
                   <span
                     style={{
                       fontSize: 9,
                       color: isHuman ? '#55FF55' : '#FFAA00',
                       marginLeft: 2,
-                      minWidth: 22,
+                      minWidth: 32,
+                      textAlign: 'center',
                     }}
                   >
-                    {isHuman ? 'P' : (cfg.aiProfile === 'v2-heuristic' ? 'OK' : 'CPU')}
+                    {isHuman ? 'P' : (
+                      cfg.aiProfile === 'v2-heuristic' ? 'OK' :
+                      cfg.aiProfile === 'v3-sniper' ? 'SNIP' :
+                      cfg.aiProfile === 'v4-smart' ? 'EXPT' : 'CPU'
+                    )}
                   </span>
                 </div>
               );

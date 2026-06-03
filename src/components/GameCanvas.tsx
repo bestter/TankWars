@@ -470,15 +470,24 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   const autoBuyForAI = (aiPlayer: Player): void => {
     if (!aiPlayer || aiPlayer.isHuman) return;
 
-    // (affordable weapons computed inside the spending loop)
+    const profile = aiPlayer.aiProfile ?? 'v1-random';
 
-    // Stratégie très simple : l'IA dépense jusqu'à 70% de son argent
-    // en achetant d'abord des armes plus chères (THERMONUCLEAR first as most expensive/powerful).
-    // MISSILE is unlimited and not in shop, so never auto-bought.
-    const preferredOrder: WeaponId[] = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+    // Configure budget and priorities depending on AI profile
+    let preferredOrder: WeaponId[] = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+    let budgetRatio = 0.7; // default 70% budget spending
+
+    if (profile === 'v3-sniper') {
+      // Sniper only wants precise kinetic weapon: Driller
+      preferredOrder = ['DRILLER'];
+      budgetRatio = 0.7;
+    } else if (profile === 'v4-smart') {
+      // Smart AI spends more aggressively (85% budget) on its tools
+      preferredOrder = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+      budgetRatio = 0.85;
+    }
 
     let spent = 0;
-    const budget = Math.floor((aiPlayer.money ?? 0) * 0.7);
+    const budget = Math.floor((aiPlayer.money ?? 0) * budgetRatio);
 
     for (const wid of preferredOrder) {
       const def = WEAPON_REGISTRY[wid];
