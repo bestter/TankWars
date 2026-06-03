@@ -24,9 +24,10 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 
 ## AI Strategy Pattern (Crucial)
 
-- Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire strategies in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
-- **Phase 1 (current):** `AISimpleStrategy` — deliberately naive. Menu/profile label: `aiProfile: 'v1-random'`.
-- **Phase 2 (planned):** new `AIEngine` implementations (wind, terrain, prediction). Do not entangle AI inside `TankManager` or `GameEngine`.
+- Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire strategies in `GameCanvas.tsx` via `engine.setAIEngine(...)` (uses `AIByProfileStrategy` router).
+- **Phase 1:** `AISimpleStrategy` — deliberately naive ("IA SIMPLE" / "Mr. Simple"). Menu/profile label: `aiProfile: 'v1-random'`.
+- **Phase 2 (implemented):** `AIHeuristicStrategy` ("IA OK"). Heuristic aiming (wind, terrain sampling, ballistic search), revenge targeting (`lastHitBy`), per-round memory + precision improvement on targets, smart weapon selection. Menu/profile label: `aiProfile: 'v2-heuristic'`. Supports mixed AI types.
+- Do not entangle AI inside `TankManager` or `GameEngine`.
 - **Legacy:** `AIStrategy` / `RandomAIStrategy` are an older contract and are not wired at runtime unless explicitly revived.
 
 ## Error Prevention

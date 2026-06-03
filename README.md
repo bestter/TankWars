@@ -18,14 +18,16 @@
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters).
 - **Multiple Weapons**
   - Missile (balanced, unlimited)
-  - Grenade (arcing)
+  - Grenade (arcing + bounces on terrain)
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast)
   - Driller (penetrating)
   - Thermonuclear Bomb (devastating, destroys ~1/4 of the map with inner instant-kill zone; outer tanks fall into giant crater; huge red-orange explosion VFX and deep bomb sound)
-- **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA Simple opponents before each battle. Unique VGA colors assigned automatically.
+- **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA Simple ("Mr. Simple") / IA OK opponents before each battle. Unique VGA colors assigned automatically.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.
-- **Pluggable AI System** — Clean `AIEngine` interface. Phase 1 uses `AISimpleStrategy` (menu/profile id `v1-random`) — deliberately naive for safe testing.
+- **Pluggable AI System** — Clean `AIEngine` interface. `AIByProfileStrategy` router selects per player:
+  - Phase 1: `AISimpleStrategy` ("IA SIMPLE" / "Mr. Simple", `aiProfile: 'v1-random'`) — deliberately naive.
+  - Phase 2: `AIHeuristicStrategy` ("IA OK", `aiProfile: 'v2-heuristic'`) — wind/terrain-aware heuristic aiming, revenge targeting, per-round memory + precision ramp on targets, weapon selection. Not a one-shot sniper.
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
@@ -85,7 +87,10 @@ This project follows a strict separation of concerns:
 - **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
-- **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine` (`AISimpleStrategy` for Phase 1; player `aiProfile` `v1-random` in the menu). Swap in smarter engines later without refactoring the core.
+- **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches based on `player.aiProfile`:
+  - `v1-random`: `AISimpleStrategy` (Phase 1, "IA SIMPLE").
+  - `v2-heuristic`: `AIHeuristicStrategy` (Phase 2 "IA OK" — heuristic + memory + revenge).
+  Swap implementations without touching core engine.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -100,24 +105,24 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human and IA Simple) on a fully interactive destructible battlefield.
+**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human, IA SIMPLE "Mr. Simple", and IA OK) on a fully interactive destructible battlefield.
 
 Fully working:
-- **Main Menu** (`MENU` phase): Retro DOS/VGA interface with player count (2-4), name editing, Human/IA Simple toggles, and automatic unique VGA color assignment.
+- **Main Menu** (`MENU` phase): Retro DOS/VGA interface with player count (2-4), name editing, Human/IA SIMPLE ("Mr. Simple")/IA OK toggles (v1-random / v2-heuristic), and automatic unique VGA color assignment.
 - Terrain generation + real-time cratering
 - Projectile physics + wind
-- Turn system + AI turns (Phase 1: `AISimpleStrategy`, profile `v1-random`)
+- Turn system + AI turns (Phase 1 `AISimpleStrategy` "IA SIMPLE" + Phase 2 `AIHeuristicStrategy` "IA OK" via profile selector)
 - Keyboard aiming & firing + proper HUD
 - Multiple weapons with ammo (Missile unlimited; others limited)
 - Sequential weapon shop between rounds (full economy)
 - Round summaries + Game Over detection + restart
 
 In progress / planned:
-- More advanced AI (v2-heuristic, predictive aiming, terrain awareness)
 - Sound effects & particle polish
 - Local hotseat multiplayer polish (already supports up to 4 players)
 - More weapons and power-ups
 - Persistent high scores / match history
+- Further AI refinements (v2-heuristic "IA OK" already implemented)
 
 ---
 
@@ -149,7 +154,7 @@ To explore the codebase:
 - Main game view + engine integration: `src/components/GameCanvas.tsx`
 - Core simulation lives in `src/game/engine/GameEngine.ts`
 - Terrain destruction: `src/game/engine/Terrain.ts`
-- AI contract: `src/game/entities/ai/AIEngine.ts` (Phase 1: `AISimpleStrategy.ts`)
+- AI contract: `src/game/entities/ai/AIEngine.ts` (Phase 1: `AISimpleStrategy.ts`, Phase 2: `AIHeuristicStrategy.ts`; router `AIByProfileStrategy.ts`)
 - Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!

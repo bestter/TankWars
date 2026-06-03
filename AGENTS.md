@@ -27,7 +27,7 @@ src/
 ├── main.tsx
 ├── types/                  # Single source of truth (game, player, weapon) — zero `any`
 ├── components/
-│   ├── MainMenu.tsx        # Player count, names, Human / IA Simple
+│   ├── MainMenu.tsx        # Player count, names, Human / IA Simple / IA OK
 │   ├── GameCanvas.tsx      # Canvas ref + GameEngine lifecycle + React phase overlays
 │   ├── GameHUD.tsx
 │   ├── WeaponShop.tsx
@@ -41,9 +41,11 @@ src/
     └── entities/
         ├── TankManager.ts
         └── ai/
-            ├── AIEngine.ts       # Strategy contract — implement this for new AI
+            ├── AIEngine.ts             # Strategy contract — implement this for new AI
+            ├── AIByProfileStrategy.ts  # Dispatcher selecting per-player aiProfile (v1/v2)
+            ├── AIHeuristicStrategy.ts  # Phase 2 "IA OK" (v2-heuristic) — wind/terrain aware, revenge, memory, precision
+            ├── AISimpleStrategy.ts     # Phase 1 naive (v1-random)
             ├── AIStrategy.ts
-            ├── AISimpleStrategy.ts
             └── RandomAIStrategy.ts
 ```
 
@@ -86,19 +88,26 @@ Types live in `src/types/game.ts`:
 All tank AI must implement `AIEngine` (`src/game/entities/ai/AIEngine.ts`):
 
 ```ts
-executeTurn(tankId, gameState, terrainManager): Promise<{ angle: number; power: number }>
+executeTurn(tankId, gameState, terrainManager): Promise<{ angle: number; power: number; weaponId?: WeaponId }>
 getResolutionFallback?(): { angle: number; power: number } | null  // sync bailout
 ```
 
-- **Phase 1 (current):** naive random trajectories (`AISimpleStrategy` / `RandomAIStrategy`) — keep simple so architecture can be tested.
-- **Phase 2 (planned):** smarter solvers (wind, terrain, prediction) as **new strategy classes** wired through the same interface — do not entangle AI logic inside `TankManager` or `GameEngine` internals.
-- Register new strategies in `GameCanvas.tsx` where AI opponents are constructed.
+- **Phase 1:** `AISimpleStrategy` (menu `aiProfile: 'v1-random'`, "IA SIMPLE" / "Mr. Simple") — deliberately naive random-within-safe-ranges for architecture testing.
+- **Phase 2 (implemented):** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") as a new strategy class. Heuristic/predictive aiming using wind + gravity + terrain sampling. Key behaviours:
+  - Revenge: if damaged (`lastHitBy`), switch to attacker as next target; otherwise stick to previous target.
+  - New target: prefer weakest (lowest health), slight human bias.
+  - Per-turn precision ramp on the same target + per-round memory of successes/fails (health drop detection) to improve/adjust.
+  - Weapon selection (GRENADE on rough terrain, CLUSTER vs groups, etc.).
+  - Not a sniper: residual noise + coarse simulation so kills typically take 3+ shots.
+- A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types).
+- New strategies must be registered in `GameCanvas.tsx`; do not entangle AI logic inside `TankManager` or `GameEngine` internals.
+- Supporting data: `aiProfile` on `Player`, `lastHitBy` on `Tank`, `windForce`/`gravity` on `GameState` snapshots for AI.
 
 ## Common tasks — where to edit
 
 | Goal | Primary files |
 |------|----------------|
-| Menu / player setup | `MainMenu.tsx`, `types/player.ts` |
+| Menu / player setup | `MainMenu.tsx`, `types/player.ts` (now supports IA SIMPLE + IA OK profile choice) |
 | New weapon | `types/weapon.ts`, GameEngine (sounds + VFX/particles for large weapons), PhysicsEngine/TankManager (special damage/projectile rules), HUD/shop, GameCanvas (AI buy lists) |
 | Turn / round flow | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physics / explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
@@ -138,9 +147,9 @@ After substantive changes:
 
 Do not block current architecture for these; implement incrementally when asked:
 
-- Phase 2 AI (heuristic / predictive aiming)
 - Sound, particles, more weapons
 - Persistent scores / match history
+- Further AI improvements (beyond v2-heuristic "IA OK")
 
 ---
 
