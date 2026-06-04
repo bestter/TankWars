@@ -23,7 +23,9 @@
 ## AI Implementation Rule
 
 - All tank AI must implement the `AIEngine` interface (`src/game/entities/ai/AIEngine.ts`).
-- Current Phase 1: `AISimpleStrategy` (deliberately naive, profile `v1-random` in menu). Wired in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
+- `AIByProfileStrategy` (wired in `GameCanvas.tsx` via `engine.setAIEngine(...)`) dispatches per-player based on `player.aiProfile` (supports mixed Human + AI types):
+  - `v1-random`: `AISimpleStrategy` ("IA SIMPLE" / "Mr. Simple") — deliberately naive.
+  - `v2-heuristic`: `AIHeuristicStrategy` ("IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection. Not a one-shot sniper.
 - Keep strategies pluggable and isolated; do not entangle AI logic inside `TankManager` or `GameEngine` internals. New strategies go in `game/entities/ai/`.
 
 ## Response Strategy
