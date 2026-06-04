@@ -87,6 +87,33 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: 'MISSILE' };
     }
 
+    // === Update memory from previous shot on the PREVIOUS target ===
+    if (mem.currentTargetId) {
+      const prevTarget = gameState.players.find((p) => p.id === mem.currentTargetId);
+      if (prevTarget) {
+        const wasAlive = (mem.lastKnownHealth[prevTarget.id] ?? 0) > 0;
+        const isDeadNow = prevTarget.tank.isDead || prevTarget.tank.health <= 0;
+
+        if (wasAlive && isDeadNow) {
+          // Success! Target was killed (by us or someone else, we successfully resolved this threat)
+          mem.roundSuccesses += 1;
+          console.log(`[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`);
+        } else if (!isDeadNow) {
+          // Still alive: compare health to check for a hit
+          const prevHealth = mem.lastKnownHealth[prevTarget.id] ?? (prevTarget.tank.health + 20);
+          if (prevTarget.tank.health < prevHealth - 0.1) {
+            mem.roundSuccesses += 1;
+            console.log(`[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`);
+          } else {
+            // Miss!
+            mem.roundFails += 1;
+            mem.lastPowerBias += (Math.random() - 0.5) * 1.2;
+            console.log(`[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`);
+          }
+        }
+      }
+    }
+
     // === Target selection per spec ===
     let target: Player | undefined;
 
@@ -116,18 +143,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     mem.currentTargetId = target!.id;
 
-    // === Update memory from previous shot on this target (success = health dropped) ===
-    const prevHealth = mem.lastKnownHealth[target!.id] ?? (target!.tank.health + 20);
-    if (target!.tank.health < prevHealth - 0.1) {
-      mem.roundSuccesses += 1;
-    } else if (mem.currentTargetId) {
-      // we had been targeting it and no visible effect
-      mem.roundFails += 1;
-      // learn a tiny bias (e.g. was short -> add power next time)
-      mem.lastPowerBias += (Math.random() - 0.5) * 1.2;
-    }
-
-    // Record current known healths for next comparison
+    // Record current known healths of all alive enemies for next comparison
     mem.lastKnownHealth = {};
     for (const e of enemies) {
       mem.lastKnownHealth[e.id] = e.tank.health;
