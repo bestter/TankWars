@@ -13,8 +13,20 @@ import type { WeaponId } from '../../types/weapon';
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
 
-/** Falling damage: 1 health point per this many pixels of downward travel while falling. */
-const FALL_DAMAGE_LEVEL_HEIGHT = 2; // further increased damage (was 4) per user request for more punishing falls
+/** Falling damage constants: pixels of downward travel per 1 HP of damage. */
+const FALL_DAMAGE_LEVEL_HEIGHT_NORMAL = 2; // normal/slope fall
+const FALL_DAMAGE_LEVEL_HEIGHT_VOID = 1;   // void fall (accelerated damage)
+
+/** Falling gravity constants. */
+const TANK_GRAVITY_NORMAL = 850; // px/s² — original/slope gravity
+const TANK_GRAVITY_VOID = 1200;   // px/s² — accelerated gravity for void fall
+
+/** Falling terminal velocity constants. */
+const TERMINAL_V_NORMAL = 16.0;  // original terminal velocity
+const TERMINAL_V_VOID = 24.0;    // accelerated terminal velocity for void fall
+
+/** Vertical gap threshold (in pixels) to distinguish falling in the void from sliding down a slope. */
+const VOID_FALL_THRESHOLD = 12;
 
 export class TankManager {
   private players: Player[] = [];
@@ -24,6 +36,9 @@ export class TankManager {
 
   /** Accumulated downward distance per tank while falling. Used to apply "1 damage per level". */
   private fallenDistances: Map<string, number> = new Map();
+
+  /** Map to track if a tank is falling in the void (versus sliding down a slope). */
+  private isVoidFall: Map<string, boolean> = new Map();
 
   /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
   public onPlayerDied?: (playerId: string, cause: 'explosion' | 'burial', details: string) => void;
@@ -39,6 +54,7 @@ export class TankManager {
     this.players = players;
     this.velocities.clear();
     this.fallenDistances.clear();
+    this.isVoidFall.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -49,6 +65,7 @@ export class TankManager {
   public clearVelocities(): void {
     this.velocities.clear();
     this.fallenDistances.clear();
+    this.isVoidFall.clear();
   }
 
   public getPlayers(): ReadonlyArray<Player> {
@@ -133,6 +150,7 @@ export class TankManager {
     // Initialize velocities and fall tracking for new spawns
     this.velocities.clear();
     this.fallenDistances.clear();
+    this.isVoidFall.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -210,6 +228,7 @@ export class TankManager {
         }
         const cur = this.velocities.get(id) ?? 0;
         this.velocities.set(id, Math.max(cur, 5.5));
+        this.isVoidFall.set(id, true);
       } else if (tank.position.y + 0.5 < groundY) {
         // Normal crater under tank: give kick so it falls gradually (was instant before)
         if ((this.velocities.get(id) ?? 0) <= 0) {
@@ -217,12 +236,17 @@ export class TankManager {
         }
         const cur = this.velocities.get(id) ?? 0;
         this.velocities.set(id, Math.max(cur + 2.5, 3.5));
+
+        // Determine if falling in the void based on height gap
+        const gap = groundY - tank.position.y;
+        this.isVoidFall.set(id, gap >= VOID_FALL_THRESHOLD);
       } else {
         // Resting or very close: snap exactly + zero vel (prevents float)
         if (Math.abs(tank.position.y - groundY) < 3) {
           tank.position.y = groundY;
           this.velocities.set(id, 0);
         }
+        this.isVoidFall.set(id, false);
       }
     }
   }
@@ -234,8 +258,6 @@ export class TankManager {
    * Gravity/terminal increased slightly for faster falling animation while keeping retro feel.
    */
   public applyGravity(dt: number, terrain: TerrainManager): void {
-    const TANK_GRAVITY = 850; // px/s² — increased for slightly faster falling animation (was 580)
-    const TERMINAL_V = 16.0;
     const pitFloorY = terrain.height - BOTTOM_SUPPORT_MARGIN;
 
     for (const player of this.players) {
@@ -243,6 +265,7 @@ export class TankManager {
       if (tank.isDead) {
         this.velocities.delete(tank.id);
         this.fallenDistances.delete(tank.id);
+        this.isVoidFall.delete(tank.id);
         continue;
       }
 
@@ -254,7 +277,18 @@ export class TankManager {
 
       if (tank.position.y < groundY || inPit) {
         // Falling (normal crater or pit)
-        vy = Math.min(vy + TANK_GRAVITY * dt, TERMINAL_V);
+        // Initialize void fall flag if not already set
+        if (!this.isVoidFall.has(id)) {
+          const gap = groundY - tank.position.y;
+          this.isVoidFall.set(id, gap >= VOID_FALL_THRESHOLD || inPit);
+        }
+        const isVoid = this.isVoidFall.get(id) ?? false;
+
+        const gravity = isVoid ? TANK_GRAVITY_VOID : TANK_GRAVITY_NORMAL;
+        const terminalV = isVoid ? TERMINAL_V_VOID : TERMINAL_V_NORMAL;
+        const damageLevelHeight = isVoid ? FALL_DAMAGE_LEVEL_HEIGHT_VOID : FALL_DAMAGE_LEVEL_HEIGHT_NORMAL;
+
+        vy = Math.min(vy + gravity * dt, terminalV);
         const prevY = tank.position.y;
         tank.position.y += vy * dt;
         this.velocities.set(id, vy);
@@ -270,38 +304,38 @@ export class TankManager {
           this.onPlayerDied?.(player.id, 'burial', details);
           this.velocities.delete(id);
           this.fallenDistances.delete(id);
+          this.isVoidFall.delete(id);
           continue; // stop processing this tank for the frame
         }
 
-        // === Fall damage: 1 point per FALL_DAMAGE_LEVEL_HEIGHT pixels of downward travel ===
+        // === Fall damage: 1 point per damageLevelHeight pixels of downward travel ===
         const deltaFall = tank.position.y - prevY;
         if (deltaFall > 0) {
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
 
-          const levelsCrossed = Math.floor(fallen / FALL_DAMAGE_LEVEL_HEIGHT);
+          const levelsCrossed = Math.floor(fallen / damageLevelHeight);
           if (levelsCrossed > 0) {
             const dmg = levelsCrossed; // 1 per level
             const healthBefore = tank.health;
             tank.health = Math.max(0, tank.health - dmg);
 
             // keep remainder so we don't lose fractional progress
-            fallen -= levelsCrossed * FALL_DAMAGE_LEVEL_HEIGHT;
+            fallen -= levelsCrossed * damageLevelHeight;
             this.fallenDistances.set(id, fallen);
 
             console.log(
-              `[FALL DMG] ${player.name} +${deltaFall.toFixed(1)}px (accum ${ (fallen + levelsCrossed * FALL_DAMAGE_LEVEL_HEIGHT).toFixed(1)}) -> ${dmg} dmg, health=${tank.health}`
+              `[FALL DMG] ${player.name} ${isVoid ? '(VOID)' : '(SLOPE)'} +${deltaFall.toFixed(1)}px (accum ${(fallen + levelsCrossed * damageLevelHeight).toFixed(1)}) -> ${dmg} dmg, health=${tank.health}`
             );
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;
-              const totalFallen = (fallen + levelsCrossed * FALL_DAMAGE_LEVEL_HEIGHT).toFixed(0);
+              const totalFallen = (fallen + levelsCrossed * damageLevelHeight).toFixed(0);
               const details = `fall damage (${dmg} pts after ~${totalFallen}px)`;
               console.log(
                 `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
               );
               this.onPlayerDied?.(player.id, 'burial', details);
-              // Sad burial sound will be played by GameEngine wiring (per plan)
             }
           }
         }
@@ -334,6 +368,7 @@ export class TankManager {
         }
         this.velocities.set(id, vy);
         this.fallenDistances.set(id, 0);
+        this.isVoidFall.set(id, false);
       }
     }
   }
