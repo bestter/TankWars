@@ -144,7 +144,11 @@ export class AIHeuristicStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
+    if (isNewTarget) {
+      console.log(`[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`);
+    }
 
     // Record current known healths of all alive enemies for next comparison
     mem.lastKnownHealth = {};

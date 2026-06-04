@@ -88,7 +88,11 @@ export class AISniperStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
+    if (isNewTarget) {
+      console.log(`[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`);
+    }
 
     // Increment attempt counter for this target
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
