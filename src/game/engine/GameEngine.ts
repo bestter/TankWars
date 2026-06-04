@@ -315,10 +315,9 @@ export class GameEngine {
 
     // Calculate barrel tip position so the projectile starts at the end of the barrel
     // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
-    const tankHeight = 8;
-    const barrelLength = 18;
+    const barrelLength = 20;
     const angleRad = (command.angle * Math.PI) / 180;
-    const barrelStartY = from.y - tankHeight + 1;
+    const barrelStartY = from.y - 13;
     const launchX = from.x + Math.cos(angleRad) * barrelLength;
     const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
 
@@ -836,10 +835,9 @@ export class GameEngine {
         const winnerP = this.tankManager.getPlayers().find((p) => p.tank.id === this.celebrationWinnerTankId);
         if (winnerP) {
           const tank = winnerP.tank;
-          const tankHeight = 8;
-          const barrelLength = 18;
+          const barrelLength = 20;
           const rad = (this.celebrationAngle * Math.PI) / 180;
-          const barrelStartY = tank.position.y - tankHeight + 1;
+          const barrelStartY = tank.position.y - 13;
           const tipX = tank.position.x + Math.cos(rad) * barrelLength;
           const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
           const speed = 3.2 + Math.random() * 2.8;

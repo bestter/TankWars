@@ -110,7 +110,7 @@ This project follows a strict separation of concerns:
 
 Fully working:
 - **Main Menu** (`MENU` phase): Retro DOS/VGA interface with player count (2-4), name editing, Human/IA SIMPLE ("Mr. Simple")/IA OK toggles (v1-random / v2-heuristic), and automatic unique VGA color assignment.
-- **Visual tank redesign** — Complete: Steps 1, 2, and 3 landed (procedural canvas drawing, pre-game color selection with mutual exclusion, live tank preview, and dynamic slope-aware chassis tilt).
+- **Visual tank redesign** — Complete: Steps 1, 2, and 3 landed (procedural canvas drawing, pre-game color selection with mutual exclusion, live tank preview, dynamic slope-aware chassis tilt, and scaled up to 24x15 with matching hitboxes).
 - Terrain generation + real-time cratering
 - Projectile physics + wind
 - Turn system + AI turns (Phase 1 `AISimpleStrategy` "IA SIMPLE" + Phase 2 `AIHeuristicStrategy` "IA OK" via profile selector)

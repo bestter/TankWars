@@ -21,8 +21,8 @@ export function TankPreview({ color }: TankPreviewProps) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Draw the procedural tank sprite!
-    // Centered at x=20, y=14, base width=26, height=13, hull angle 0, independent turret angle 25
-    drawTankSprite(ctx, 20, 14, 26, 13, 0, 25, color);
+    // Centered at x=20, y=13, base width=24, height=15, hull angle 0, independent turret angle 25
+    drawTankSprite(ctx, 20, 13, 24, 15, 0, 25, color);
   }, [color]);
 
   return (

@@ -76,7 +76,7 @@ Types live in `src/types/game.ts`:
 ### Visual & terrain rules
 
 - Use **`VGA_PALETTE`** from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, etc. for tank redesign).
-- Tank rendering: pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Fully integrated into the 120 Hz engine render loop with dynamic slope-aware chassis tilt.
+- Tank rendering: pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Fully integrated into the 120 Hz engine render loop (scaled up to 24x15 with matching hitboxes) with dynamic slope-aware chassis tilt.
 - Terrain: custom **heightmap** algorithms in `Terrain.ts`; circular craters with falloff. No Matter.js, Rapier, Phaser, etc.
 - Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency in repo).
 

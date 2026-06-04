@@ -418,8 +418,8 @@ export class TankManager {
    * instead of only triggering on terrain.
    */
   public checkTankCollision(x: number, y: number): boolean {
-    const tankWidth = 14;
-    const tankHeight = 8;
+    const tankWidth = 24;
+    const tankHeight = 15;
 
     for (const player of this.players) {
       const tank = player.tank;
@@ -537,8 +537,8 @@ export class TankManager {
     showPlayerNames: boolean = true,
     terrain?: TerrainManager
   ): void {
-    const tankWidth = 16;
-    const tankHeight = 10;
+    const tankWidth = 24;
+    const tankHeight = 15;
 
     for (const player of this.players) {
       const tank = player.tank;
@@ -561,15 +561,15 @@ export class TankManager {
       }
 
       // Dessine le sprite de tank détaillé de l'Étape 1
-      // Pivot à y - 5 pour caler exactement le bas des chenilles sur y (niveau du sol)
+      // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
       // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
-      drawTankSprite(ctx, x, y - 5, tankWidth, tankHeight, hullAngle, -tank.angle, color);
+      drawTankSprite(ctx, x, y - 8, tankWidth, tankHeight, hullAngle, -tank.angle, color);
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
       const barHeight = 3;
       const barX = x - barWidth / 2;
-      const barY = y - 18; // au-dessus du dôme de la tourelle
+      const barY = y - 24; // au-dessus du dôme de la tourelle
 
       const healthRatio = Math.max(0, tank.health / tank.maxHealth);
 
@@ -591,7 +591,7 @@ export class TankManager {
         ctx.font = '12px monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        const nameY = y - 28; // au-dessus de la jauge de vie
+        const nameY = y - 34; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
     }

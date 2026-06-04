@@ -62,33 +62,36 @@ export function drawTankSprite(
 
   // Tread texture: blocky vertical grousers (dotted/segmented pattern)
   ctx.fillStyle = VGA_PALETTE.BLACK;
-  const treadSpacing = 4.2;
-  const treadWidth = 1.6;
-  const treadInset = 2.2;
+  const treadSpacing = width * 0.18;
+  const treadWidth = width * 0.07;
+  const treadInset = width * 0.09;
+  const grouserYOffset = height * 0.06;
+  const grouserHeightReduction = height * 0.12;
+
   for (let tx = -trackWidth / 2 + treadInset; tx < trackWidth / 2 - treadInset - 0.5; tx += treadSpacing) {
-    ctx.fillRect(tx, trackY + 0.6, treadWidth, trackHeight - 1.2);
+    ctx.fillRect(tx, trackY + grouserYOffset, treadWidth, trackHeight - grouserHeightReduction);
   }
 
   // Subtle top ridge on track for definition
   ctx.strokeStyle = VGA_PALETTE.GRAY;
-  ctx.lineWidth = 0.7;
+  ctx.lineWidth = Math.max(0.5, width * 0.03);
   ctx.strokeRect(-trackWidth / 2, trackY, trackWidth, trackHeight);
 
   // ============================================
   // CHÂSSIS (BASE) - beveled polygon, primaryColor armor
   // ============================================
-  const bevel = Math.min(2.2, width * 0.11);
-  const topInset = Math.min(1.8, width * 0.09);
+  const bevel = width * 0.11;
+  const topInset = width * 0.09;
   const chBottom = chassisTop + chassisHeight;
+  const hullOutlineOffset = width * 0.045;
 
   ctx.fillStyle = primaryColor;
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = Math.max(0.7, width * 0.04);
   ctx.beginPath();
   // Beveled tank body (trapezoidal with chamfers for "blindage" retro look)
-  // Order: bottom-left -> bottom-right -> lower-right bevel -> upper-right -> top-right inset -> top-left inset -> upper-left -> lower-left bevel
-  ctx.moveTo(-hw + 0.8, chBottom);
-  ctx.lineTo(+hw - 0.8, chBottom);
+  ctx.moveTo(-hw + hullOutlineOffset, chBottom);
+  ctx.lineTo(+hw - hullOutlineOffset, chBottom);
   ctx.lineTo(+hw - bevel, chBottom - bevel * 0.9);
   ctx.lineTo(+hw - bevel, chassisTop + bevel);
   ctx.lineTo(+hw - bevel - topInset, chassisTop);
@@ -101,17 +104,18 @@ export function drawTankSprite(
 
   // Panel line / armor seam (extra detail, keeps retro geometric)
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-  ctx.lineWidth = 0.6;
+  ctx.lineWidth = Math.max(0.5, width * 0.025);
   ctx.beginPath();
-  ctx.moveTo(-hw + 2.5, chassisTop + chassisHeight * 0.42);
-  ctx.lineTo(+hw - 2.5, chassisTop + chassisHeight * 0.42);
+  const panelLineInset = width * 0.11;
+  ctx.moveTo(-hw + panelLineInset, chassisTop + chassisHeight * 0.42);
+  ctx.lineTo(+hw - panelLineInset, chassisTop + chassisHeight * 0.42);
   ctx.stroke();
 
   // ============================================
   // TOURELLE (DÔME) - arc-based dome reacting to player color
   // ============================================
-  const turretMountY = chassisTop - 0.8; // sits proud on top of chassis
-  const turretRadius = Math.max(3.8, Math.min(5.8, width * 0.30));
+  const turretMountY = chassisTop - height * 0.08; // sits proud on top of chassis
+  const turretRadius = width * 0.25;
 
   ctx.save();
   ctx.translate(0, turretMountY);
@@ -126,7 +130,7 @@ export function drawTankSprite(
   ctx.arc(0, -turretRadius * 0.28, turretRadius * 0.92, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = Math.max(0.7, width * 0.04);
   ctx.stroke();
 
   // Inner darker detail (hatch / ring) for depth without extra colors
@@ -138,12 +142,13 @@ export function drawTankSprite(
   // ============================================
   // CANON - thick line + muzzle, oriented by turretAngle
   // ============================================
-  const barrelLength = Math.max(11, width * 0.82);
-  const barrelThickness = Math.max(2.0, width * 0.115);
+  const barrelLength = width * 0.83;
+  const barrelThickness = width * 0.12;
+  const shadowThickness = barrelThickness + width * 0.08;
 
   // Shadow/outline pass (slightly behind for retro volume)
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-  ctx.lineWidth = barrelThickness + 1.6;
+  ctx.lineWidth = shadowThickness;
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(0, 0);
@@ -161,9 +166,10 @@ export function drawTankSprite(
 
   // Muzzle tip (bright accent - retro "flash" detail)
   ctx.fillStyle = VGA_PALETTE.WHITE;
-  const muzzleX = barrelLength + 0.8;
-  const muzzleHalf = 1.3;
-  ctx.fillRect(muzzleX - 1.2, -muzzleHalf, 2.8, muzzleHalf * 2);
+  const muzzleX = barrelLength + width * 0.04;
+  const muzzleHalf = width * 0.06;
+  const muzzleThickness = width * 0.12;
+  ctx.fillRect(muzzleX - muzzleThickness * 0.45, -muzzleHalf, muzzleThickness, muzzleHalf * 2);
 
   ctx.restore(); // turret local transform
   ctx.restore(); // hull world transform
