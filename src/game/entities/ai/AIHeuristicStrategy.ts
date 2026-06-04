@@ -128,15 +128,18 @@ export class AIHeuristicStrategy implements AIEngine {
       target = enemies.find((e) => e.id === mem.currentTargetId);
     }
 
-    // 3. New target: weakest (lowest health). Slight preference for humans (like v1)
+    // 3. New target: weakest (lowest health) among AIs first, fallback to human only if no AIs left
     if (!target) {
-      const sorted = [...enemies].sort((a, b) => {
+      const aiEnemies = enemies.filter((e) => !e.isHuman);
+      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+
+      const sorted = [...candidates].sort((a, b) => {
         const h = a.tank.health - b.tank.health;
         if (h !== 0) return h;
-        // tie: prefer human slightly
+        // tie-breaker: prefer AI over human (Human Privilege)
         const ha = a.isHuman ? 1 : 0;
         const hb = b.isHuman ? 1 : 0;
-        return hb - ha;
+        return ha - hb; // AI (0) comes before human (1)
       });
       target = sorted[0];
     }

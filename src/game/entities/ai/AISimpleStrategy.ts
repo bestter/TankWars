@@ -30,11 +30,10 @@ export class AISimpleStrategy implements AIEngine {
       return { angle: 45, power: 50 };
     }
 
-    // Prefer human players as target, otherwise pick random
-    let target: Player | undefined = enemies.find((p) => p.isHuman);
-    if (!target) {
-      target = enemies[Math.floor(Math.random() * enemies.length)];
-    }
+    // Human privilege: Prioritize targeting other AIs, fallback to human only if no AIs left
+    const aiEnemies = enemies.filter((e) => !e.isHuman);
+    const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+    const target: Player = candidates[Math.floor(Math.random() * candidates.length)];
 
     const myX = currentPlayer.tank.position.x;
     const targetX = target.tank.position.x;

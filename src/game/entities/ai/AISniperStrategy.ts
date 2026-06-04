@@ -73,14 +73,17 @@ export class AISniperStrategy implements AIEngine {
     }
 
     if (!target) {
-      const sorted = [...enemies].sort((a, b) => {
+      const aiEnemies = enemies.filter((e) => !e.isHuman);
+      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+
+      const sorted = [...candidates].sort((a, b) => {
         // Prefer weakest target
         const h = a.tank.health - b.tank.health;
         if (h !== 0) return h;
-        // Tie-breaker: human target first
+        // Tie-breaker: prefer AI over human (Human Privilege)
         const ha = a.isHuman ? 1 : 0;
         const hb = b.isHuman ? 1 : 0;
-        return hb - ha;
+        return ha - hb; // AI (0) comes before human (1)
       });
       target = sorted[0];
     }

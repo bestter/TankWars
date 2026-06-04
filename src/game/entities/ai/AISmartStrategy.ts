@@ -69,22 +69,29 @@ export class AISmartStrategy implements AIEngine {
     }
 
     // Target selection:
-    // 1. Prioritize a target that is close to death if we can finish them off
-    let target = enemies.find((e) => e.tank.health + e.tank.shield <= 30);
+    // 1. Prioritize a target that is close to death if we can finish them off (prefer AI)
+    let target = enemies.find((e) => !e.isHuman && e.tank.health + e.tank.shield <= 30);
+    if (!target) {
+      target = enemies.find((e) => e.tank.health + e.tank.shield <= 30);
+    }
 
     // 2. Otherwise stick to the current target if alive
     if (!target && mem.currentTargetId) {
       target = enemies.find((e) => e.id === mem.currentTargetId);
     }
 
-    // 3. Otherwise pick the weakest (lowest health), with slight human bias
+    // 3. Otherwise pick the weakest (lowest health) among AIs first, fallback to human only if no AIs left
     if (!target) {
-      const sorted = [...enemies].sort((a, b) => {
+      const aiEnemies = enemies.filter((e) => !e.isHuman);
+      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+
+      const sorted = [...candidates].sort((a, b) => {
         const h = a.tank.health - b.tank.health;
         if (h !== 0) return h;
+        // tie-breaker: prefer AI over human (Human Privilege)
         const ha = a.isHuman ? 1 : 0;
         const hb = b.isHuman ? 1 : 0;
-        return hb - ha;
+        return ha - hb; // AI (0) comes before human (1)
       });
       target = sorted[0];
     }
