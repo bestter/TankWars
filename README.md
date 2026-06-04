@@ -14,7 +14,7 @@
 ## Features
 
 - **Destructible Heightmap Terrain** — Procedurally generated rolling hills using layered sine waves + high-frequency noise. Circular crater destruction with smooth falloff.
-- **Authentic 16-Color VGA Palette** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette.
+- **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with high-contrast arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, ...) to support the upcoming tank visual redesign.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters).
 - **Multiple Weapons**
   - Missile (balanced, unlimited)
@@ -87,6 +87,7 @@ This project follows a strict separation of concerns:
 - **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
+- **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate for future engine integration. Strict React/Canvas decoupling.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches based on `player.aiProfile`:
   - `v1-random`: `AISimpleStrategy` (Phase 1, "IA SIMPLE").
   - `v2-heuristic`: `AIHeuristicStrategy` (Phase 2 "IA OK" — heuristic + memory + revenge).
@@ -118,6 +119,7 @@ Fully working:
 - Round summaries + Game Over detection + restart
 
 In progress / planned:
+- Visual tank redesign (Step 1 landed: pure `drawTankSprite` procedural Canvas renderer in `game/rendering/tankSprite.ts` + extended neon VGA palette; integration + hull slope support coming)
 - Sound effects & particle polish
 - Local hotseat multiplayer polish (already supports up to 4 players)
 - More weapons and power-ups
@@ -155,6 +157,7 @@ To explore the codebase:
 - Core simulation lives in `src/game/engine/GameEngine.ts`
 - Terrain destruction: `src/game/engine/Terrain.ts`
 - AI contract: `src/game/entities/ai/AIEngine.ts` (Phase 1: `AISimpleStrategy.ts`, Phase 2: `AIHeuristicStrategy.ts`; router `AIByProfileStrategy.ts`)
+- Procedural rendering (tank sprites etc.): `src/game/rendering/tankSprite.ts`
 - Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!

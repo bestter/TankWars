@@ -19,8 +19,9 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 - **State Separation:** Keep React state (turns, shop, money, `GamePhase`) strictly decoupled from the Canvas 2D high-frequency loop (physics, rendering).
 - **Phase ownership:** `App.tsx` — `MENU` vs combat; `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
 - **Type Safety:** Strict TypeScript. Zero `any`. Define structural types inside `src/types/`.
-- **Canvas Rendering:** Use `VGA_PALETTE` from `src/types/game.ts` for all game visuals.
+- **Canvas Rendering:** Use `VGA_PALETTE` from `src/types/game.ts` (classic 16-color VGA + extended high-contrast neon/arcade colors for tank redesign) for all game visuals. Pure procedural drawing helpers live in `src/game/rendering/` (e.g. `drawTankSprite` — geometric chenilles, beveled chassis, independent turret/cannon, strict save/translate/rotate/restore transforms).
 - **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
+- **Rendering helpers:** New pure Canvas-only routines (e.g. tank sprites) must be placed in `game/rendering/`, remain fully decoupled, and are only wired later into the engine render path (never called from React).
 
 ## AI Strategy Pattern (Crucial)
 
