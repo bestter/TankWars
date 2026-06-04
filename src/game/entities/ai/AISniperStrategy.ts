@@ -153,8 +153,8 @@ export class AISniperStrategy implements AIEngine {
     for (let a = aMin; a <= aMax; a += 1.0) {
       let lo = 20;
       let hi = 95;
-      // 10 binary search steps (more accurate than 7)
-      for (let iter = 0; iter < 10; iter++) {
+      // 12 binary search steps (more accurate than 7)
+      for (let iter = 0; iter < 12; iter++) {
         const p = (lo + hi) / 2;
         const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
         const xErr = Math.abs(res.landX - targetX);
@@ -226,6 +226,7 @@ export class AISniperStrategy implements AIEngine {
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
+    console.log("Sniper fallback called");
     const angle = 45 + Math.random() * 90;
     const power = 55 + Math.random() * 20;
     return {
