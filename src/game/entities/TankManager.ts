@@ -9,6 +9,7 @@ import type { Player } from '../../types/player';
 import type { TerrainManager } from '../engine/Terrain';
 import { VGA_PALETTE } from '../../types/game';
 import type { WeaponId } from '../../types/weapon';
+import { drawTankSprite } from '../rendering/tankSprite';
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -531,9 +532,13 @@ export class TankManager {
    * Rendu rétro des tanks (style VGA 16 couleurs).
    * Affiche optionnellement les noms des joueurs (masqués pendant le vol des projectiles).
    */
-  public draw(ctx: CanvasRenderingContext2D, showPlayerNames: boolean = true): void {
-    const tankWidth = 14;
-    const tankHeight = 8;
+  public draw(
+    ctx: CanvasRenderingContext2D,
+    showPlayerNames: boolean = true,
+    terrain?: TerrainManager
+  ): void {
+    const tankWidth = 16;
+    const tankHeight = 10;
 
     for (const player of this.players) {
       const tank = player.tank;
@@ -542,63 +547,29 @@ export class TankManager {
       const { x, y } = tank.position;
       const color = tank.color;
 
-      // === Corps du tank (rectangle rétro) ===
-      ctx.fillStyle = color;
-      ctx.fillRect(x - tankWidth / 2, y - tankHeight, tankWidth, tankHeight);
+      // Calcul dynamique de l'angle du châssis en fonction de la pente du terrain
+      let hullAngle = 0;
+      if (terrain) {
+        const checkDist = 6;
+        const yLeft = terrain.getHeightAt(x - checkDist);
+        const yRight = terrain.getHeightAt(x + checkDist);
+        const dx = checkDist * 2;
+        const dy = yRight - yLeft;
+        const rawAngleRad = Math.atan2(dy, dx);
+        const maxTiltDeg = 35; // inclinaison max pour garder le rendu propre
+        hullAngle = Math.max(-maxTiltDeg, Math.min(maxTiltDeg, (rawAngleRad * 180) / Math.PI));
+      }
 
-      // Bordure sombre pour effet rétro
-      ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x - tankWidth / 2, y - tankHeight, tankWidth, tankHeight);
-
-      // === Tourelle (petit cercle sur le tank) ===
-      const turretRadius = 5;
-      ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.beginPath();
-      ctx.arc(x, y - tankHeight + 1, turretRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y - tankHeight + 1, turretRadius - 1.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // === Canon (barrel) qui pivote selon l'angle ===
-      const angleRad = (tank.angle * Math.PI) / 180;
-      const barrelLength = 18;       // Plus long pour bien voir l'angle
-      const barrelThickness = 3;
-
-      // Le canon part du centre de la tourelle
-      const barrelStartY = y - tankHeight + 1;
-
-      const barrelEndX = x + Math.cos(angleRad) * barrelLength;
-      const barrelEndY = barrelStartY + Math.sin(angleRad) * barrelLength * -1; // inversion Y
-
-      // Ombre du canon
-      ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.lineWidth = barrelThickness + 2;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(x, barrelStartY);
-      ctx.lineTo(barrelEndX, barrelEndY);
-      ctx.stroke();
-
-      // Canon principal (couleur du joueur)
-      ctx.strokeStyle = color;
-      ctx.lineWidth = barrelThickness;
-      ctx.beginPath();
-      ctx.moveTo(x, barrelStartY);
-      ctx.lineTo(barrelEndX, barrelEndY);
-      ctx.stroke();
-
-      // Petit embout blanc au bout du canon (rétro style)
-      ctx.fillStyle = VGA_PALETTE.WHITE;
-      ctx.fillRect(barrelEndX - 1, barrelEndY - 1, 2, 2);
+      // Dessine le sprite de tank détaillé de l'Étape 1
+      // Pivot à y - 5 pour caler exactement le bas des chenilles sur y (niveau du sol)
+      // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
+      drawTankSprite(ctx, x, y - 5, tankWidth, tankHeight, hullAngle, -tank.angle, color);
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
       const barHeight = 3;
       const barX = x - barWidth / 2;
-      const barY = y - tankHeight - 9;
+      const barY = y - 18; // au-dessus du dôme de la tourelle
 
       const healthRatio = Math.max(0, tank.health / tank.maxHealth);
 
@@ -616,12 +587,11 @@ export class TankManager {
       ctx.strokeRect(barX, barY, barWidth, barHeight);
 
       // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
-      // Positionné au-dessus de la jauge de vie. Masqué dynamiquement pendant les tirs.
       if (showPlayerNames) {
         ctx.font = '12px monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        const nameY = y - tankHeight - 24;
+        const nameY = y - 28; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
     }

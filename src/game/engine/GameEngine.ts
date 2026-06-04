@@ -654,7 +654,7 @@ export class GameEngine {
         }
       }
     }
-    this.tankManager.draw(ctx, showPlayerNames);
+    this.tankManager.draw(ctx, showPlayerNames, this.terrain);
     // restore
     for (const p of this.tankManager.getPlayers()) {
       const orig = restoredAngles.get(p.tank.id);

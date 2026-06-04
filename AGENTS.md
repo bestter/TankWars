@@ -39,7 +39,7 @@ src/
     │   ├── Terrain.ts      # Heightmap + crater destruction
     │   └── TurnManager.ts
     ├── rendering/
-    │   └── tankSprite.ts   # Pure `drawTankSprite()` (Canvas2D only) — chenilles, beveled chassis, dome turret, independent cannon (Step 1 visual tank redesign)
+    │   └── tankSprite.ts   # Pure `drawTankSprite()` (Canvas2D only) — chenilles, beveled chassis, dome turret, independent cannon (integrated visual tank redesign)
     └── entities/
         ├── TankManager.ts
         └── ai/
@@ -76,7 +76,7 @@ Types live in `src/types/game.ts`:
 ### Visual & terrain rules
 
 - Use **`VGA_PALETTE`** from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, etc. for tank redesign).
-- Tank rendering: new pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Step 1 of visual tank redesign — not yet integrated into the 120 Hz loop.
+- Tank rendering: pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Fully integrated into the 120 Hz engine render loop with dynamic slope-aware chassis tilt.
 - Terrain: custom **heightmap** algorithms in `Terrain.ts`; circular craters with falloff. No Matter.js, Rapier, Phaser, etc.
 - Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency in repo).
 
@@ -151,7 +151,7 @@ After substantive changes:
 
 Do not block current architecture for these; implement incrementally when asked:
 
-- Visual tank redesign (Step 1 complete: `drawTankSprite` + extended neon VGA palette; Step 2+ = integrate into TankManager/GameEngine render, slope-aware hull angle, richer details)
+- Visual tank redesign (Complete: Steps 1, 2, and 3 landed with procedural canvas drawing, pre-game color selection with mutual exclusion, live tank preview, and dynamic slope-aware chassis tilt)
 - Sound, particles, more weapons
 - Persistent scores / match history
 - Further AI improvements (beyond v2-heuristic "IA OK")
