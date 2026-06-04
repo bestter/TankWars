@@ -11,7 +11,10 @@
 import type { Player } from './player';
 import type { WeaponId } from './weapon';
 
-/** Classic 16-color VGA palette (high-contrast, suitable for tanks/explosions/UI). */
+/** Classic 16-color VGA palette (high-contrast, suitable for tanks/explosions/UI).
+ *  Extended with high-contrast arcade/neon colors for the tank visual redesign (Step 1).
+ *  New colors are bright/saturated to pop on dark terrain and backgrounds.
+ */
 export const VGA_PALETTE = {
   BLACK: '#000000',
   DARK_BLUE: '#0000AA',
@@ -29,6 +32,14 @@ export const VGA_PALETTE = {
   MAGENTA: '#FF55FF',
   YELLOW: '#FFFF55',
   WHITE: '#FFFFFF',
+
+  // --- High-Contrast Arcade/Neon (tank redesign) ---
+  ELECTRIC_CYAN: '#00F7FF',
+  FLASH_GREEN: '#00FF7F',
+  NEON_PINK: '#FF1A8C',
+  CYBER_YELLOW: '#D7FF00',
+  FLUO_ORANGE: '#FF8C00',
+  VOLT_PURPLE: '#B300FF',
 } as const;
 
 export type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
