@@ -476,8 +476,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     let budgetRatio = 0.7; // default 70% budget spending
 
     if (profile === 'v3-sniper') {
-      // Sniper only wants precise kinetic weapon: Driller
-      preferredOrder = ['DRILLER'];
+      // Sniper only wants precise kinetic weapons: Driller, Bullet
+      preferredOrder = ['BULLET', 'DRILLER'];
       budgetRatio = 0.7;
     } else if (profile === 'v4-smart') {
       // Smart AI spends more aggressively (85% budget) on its tools
@@ -489,6 +489,9 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     const budget = Math.floor((aiPlayer.money ?? 0) * budgetRatio);
 
     for (const wid of preferredOrder) {
+      if (wid === 'BULLET' && profile !== 'v3-sniper') {
+        continue;
+      }
       const def = WEAPON_REGISTRY[wid];
       if (!def) continue;
 

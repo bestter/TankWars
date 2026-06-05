@@ -22,6 +22,7 @@
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast)
   - Driller (penetrating)
+  - Bullet (precision shot, x3 direct hit damage multiplier)
   - Thermonuclear Bomb (devastating, destroys ~1/4 of the map with inner instant-kill zone; outer tanks fall into giant crater; huge red-orange explosion VFX and deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT before each battle. Unique VGA colors assigned automatically with live previews and mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.

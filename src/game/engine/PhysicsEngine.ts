@@ -173,7 +173,7 @@ export class PhysicsEngine {
       }
 
       if (collision) {
-        this.handleImpact(i, p, terrainManager, tankManager);
+        this.handleImpact(i, p, terrainManager, tankManager, true);
         continue;
       }
 
@@ -184,7 +184,7 @@ export class PhysicsEngine {
           this.bounceGrenade(i, p, terrainManager, tankManager);
           continue;
         } else {
-          this.handleImpact(i, p, terrainManager, tankManager);
+          this.handleImpact(i, p, terrainManager, tankManager, false);
         }
       }
     }
@@ -204,6 +204,7 @@ export class PhysicsEngine {
     p: Projectile,
     terrainManager: TerrainManager,
     tankManager?: TankManager,
+    isDirectHit: boolean = false,
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
@@ -218,7 +219,7 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId);
+      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId, isDirectHit);
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }

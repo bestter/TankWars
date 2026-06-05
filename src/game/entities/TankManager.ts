@@ -466,6 +466,7 @@ export class TankManager {
     maxDamage: number,
     killerId?: string,
     weaponId?: WeaponId,
+    isDirectHit?: boolean,
   ): number {
     let killsThisExplosion = 0;
 
@@ -483,6 +484,20 @@ export class TankManager {
 
       // Dégâts dégressifs linéaires
       let damage = maxDamage * Math.max(0, 1 - distance / radius);
+
+      // BULLET direct hit damage multiplier (x3)
+      if (weaponId === 'BULLET' && isDirectHit) {
+        const tankWidth = 24;
+        const tankHeight = 15;
+        const isDirectHitOnThisTank = 
+          explosionX >= tank.position.x - tankWidth / 2 &&
+          explosionX <= tank.position.x + tankWidth / 2 &&
+          explosionY >= tank.position.y - tankHeight &&
+          explosionY <= tank.position.y;
+        if (isDirectHitOnThisTank) {
+          damage *= 3;
+        }
+      }
 
       // Nuke direct hit rule (per request): one direct hit kills the tank outright.
       // Threshold ~10px is slightly > tank half-extent (body 14px wide); near-center impact counts.

@@ -91,7 +91,12 @@ export class AISniperStrategy implements AIEngine {
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    const chosenWeapon: WeaponId = (self.inventory?.DRILLER ?? 0) > 0 ? 'DRILLER' : 'MISSILE';
+    let chosenWeapon: WeaponId = 'MISSILE';
+    if ((self.inventory?.BULLET ?? 0) > 0) {
+      chosenWeapon = 'BULLET';
+    } else if ((self.inventory?.DRILLER ?? 0) > 0) {
+      chosenWeapon = 'DRILLER';
+    }
     self.tank.currentWeapon = chosenWeapon;
 
     // Compute the shot solution
