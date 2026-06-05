@@ -13,7 +13,7 @@
  * It is exported for the next integration step; it is NOT wired into GameEngine or TankManager yet.
  */
 
-import { VGA_PALETTE } from '../../types/game';
+import { VGA_PALETTE } from "../../types/game";
 
 /**
  * Draws a detailed procedural tank sprite.
@@ -35,7 +35,7 @@ export function drawTankSprite(
   height: number,
   angle: number,
   turretAngle: number,
-  primaryColor: string
+  primaryColor: string,
 ): void {
   const hullRad = (angle * Math.PI) / 180;
   const turretRad = (turretAngle * Math.PI) / 180;
@@ -68,8 +68,17 @@ export function drawTankSprite(
   const grouserYOffset = height * 0.06;
   const grouserHeightReduction = height * 0.12;
 
-  for (let tx = -trackWidth / 2 + treadInset; tx < trackWidth / 2 - treadInset - 0.5; tx += treadSpacing) {
-    ctx.fillRect(tx, trackY + grouserYOffset, treadWidth, trackHeight - grouserHeightReduction);
+  for (
+    let tx = -trackWidth / 2 + treadInset;
+    tx < trackWidth / 2 - treadInset - 0.5;
+    tx += treadSpacing
+  ) {
+    ctx.fillRect(
+      tx,
+      trackY + grouserYOffset,
+      treadWidth,
+      trackHeight - grouserHeightReduction,
+    );
   }
 
   // Subtle top ridge on track for definition
@@ -123,7 +132,12 @@ export function drawTankSprite(
 
   // Turret base band (small platform under dome)
   ctx.fillStyle = primaryColor;
-  ctx.fillRect(-turretRadius * 0.72, -turretRadius * 0.18, turretRadius * 1.44, turretRadius * 0.42);
+  ctx.fillRect(
+    -turretRadius * 0.72,
+    -turretRadius * 0.18,
+    turretRadius * 1.44,
+    turretRadius * 0.42,
+  );
 
   // Main dome (arc/circle) - classic rounded turret silhouette
   ctx.beginPath();
@@ -149,7 +163,7 @@ export function drawTankSprite(
   // Shadow/outline pass (slightly behind for retro volume)
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
   ctx.lineWidth = shadowThickness;
-  ctx.lineCap = 'round';
+  ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(barrelLength * 0.97, 0);
@@ -158,7 +172,7 @@ export function drawTankSprite(
   // Primary barrel (player color)
   ctx.strokeStyle = primaryColor;
   ctx.lineWidth = barrelThickness;
-  ctx.lineCap = 'round';
+  ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(barrelLength, 0);
@@ -169,7 +183,12 @@ export function drawTankSprite(
   const muzzleX = barrelLength + width * 0.04;
   const muzzleHalf = width * 0.06;
   const muzzleThickness = width * 0.12;
-  ctx.fillRect(muzzleX - muzzleThickness * 0.45, -muzzleHalf, muzzleThickness, muzzleHalf * 2);
+  ctx.fillRect(
+    muzzleX - muzzleThickness * 0.45,
+    -muzzleHalf,
+    muzzleThickness,
+    muzzleHalf * 2,
+  );
 
   ctx.restore(); // turret local transform
   ctx.restore(); // hull world transform

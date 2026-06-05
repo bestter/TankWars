@@ -5,10 +5,10 @@
  * Deliberately naive and predictable for testing purposes.
  */
 
-import type { AIEngine } from './AIEngine';
-import type { GameState } from '../../../types/game';
-import type { Player } from '../../../types/player';
-import type { WeaponId } from '../../../types/weapon';
+import type { AIEngine } from "./AIEngine";
+import type { GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
+import type { WeaponId } from "../../../types/weapon";
 
 export class AISimpleStrategy implements AIEngine {
   async executeTurn(
@@ -33,9 +33,12 @@ export class AISimpleStrategy implements AIEngine {
     // Human privilege: Prioritize targeting other AIs, fallback to human only if no AIs left
     const aiEnemies = enemies.filter((e) => !e.isHuman);
     const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
-    const target: Player = candidates[Math.floor(Math.random() * candidates.length)];
+    const target: Player =
+      candidates[Math.floor(Math.random() * candidates.length)];
 
-    console.log(`[AI TARGET] ${currentPlayer.name} (Simple V1) targeted ${target.name}`);
+    console.log(
+      `[AI TARGET] ${currentPlayer.name} (Simple V1) targeted ${target.name}`,
+    );
 
     const myX = currentPlayer.tank.position.x;
     const targetX = target.tank.position.x;
@@ -54,7 +57,7 @@ export class AISimpleStrategy implements AIEngine {
 
     const power = 60 + Math.random() * 30; // 60 → 90 (stronger shots for better range)
 
-    const weaponId = currentPlayer.tank.currentWeapon || 'MISSILE';
+    const weaponId = currentPlayer.tank.currentWeapon || "MISSILE";
     return {
       angle: Math.round(angle * 10) / 10,
       power: Math.round(power),
@@ -68,7 +71,7 @@ export class AISimpleStrategy implements AIEngine {
    */
   getResolutionFallback(): { angle: number; power: number } | null {
     const angle = 40 + Math.random() * 100; // 40° → 140°
-    const power = 55 + Math.random() * 30;  // 55-85 (safer)
+    const power = 55 + Math.random() * 30; // 55-85 (safer)
     return {
       angle: Math.round(angle),
       power: Math.round(power),

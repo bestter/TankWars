@@ -10,11 +10,11 @@
  * - Tactical weapon selection: Uses nukes for long distance, grenades/clusters for hills or close range.
  */
 
-import type { AIEngine } from './AIEngine';
-import type { GameState } from '../../../types/game';
-import type { Player } from '../../../types/player';
-import type { TerrainManager } from '../../engine/Terrain';
-import { WEAPON_REGISTRY, type WeaponId } from '../../../types/weapon';
+import type { AIEngine } from "./AIEngine";
+import type { GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
+import type { TerrainManager } from "../../engine/Terrain";
+import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 
 interface SmartMemory {
   currentTargetId?: string;
@@ -49,64 +49,100 @@ export class AISmartStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((p) => p.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
-    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
+    if (
+      mem.lastSelfHealth != null &&
+      self.tank.health > mem.lastSelfHealth + 5
+    ) {
       this.resetForNewRound(mem);
     }
     mem.lastSelfHealth = self.tank.health;
 
-    // Find living enemies
-    const enemies = gameState.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead,
-    );
-    if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
-    }
-
     // Target selection:
-    // 1. Prioritize a target that is close to death if we can finish them off (prefer AI)
-    let target = enemies.find((e) => !e.isHuman && e.tank.health + e.tank.shield <= 30);
-    if (!target) {
-      target = enemies.find((e) => e.tank.health + e.tank.shield <= 30);
+    let target: Player | undefined;
+    let hasEnemies = false;
+
+    // Single pass tracking for different priorities
+    let finishOffAi: Player | undefined;
+    let finishOffHuman: Player | undefined;
+    let currentTarget: Player | undefined;
+
+    let bestFallbackTarget: Player | undefined;
+    let bestFallbackIsAi = false;
+
+    for (let i = 0; i < gameState.players.length; i++) {
+      const p = gameState.players[i];
+      if (p.id !== self.id && !p.tank.isDead) {
+        hasEnemies = true;
+        const pIsAi = !p.isHuman;
+        const healthTotal = p.tank.health + p.tank.shield;
+
+        // 1. Close to death targets
+        if (healthTotal <= 30) {
+          if (pIsAi && !finishOffAi) finishOffAi = p;
+          else if (!pIsAi && !finishOffHuman) finishOffHuman = p;
+        }
+
+        // 2. Current target tracking
+        if (mem.currentTargetId === p.id) {
+          currentTarget = p;
+        }
+
+        // 3. General fallback (weakest AI, then weakest human)
+        if (!bestFallbackTarget) {
+          bestFallbackTarget = p;
+          bestFallbackIsAi = pIsAi;
+        } else {
+          if (pIsAi && !bestFallbackIsAi) {
+            bestFallbackTarget = p;
+            bestFallbackIsAi = pIsAi;
+          } else if (pIsAi === bestFallbackIsAi) {
+            if (p.tank.health < bestFallbackTarget.tank.health) {
+              bestFallbackTarget = p;
+            }
+          }
+        }
+      }
     }
 
-    // 2. Otherwise stick to the current target if alive
-    if (!target && mem.currentTargetId) {
-      target = enemies.find((e) => e.id === mem.currentTargetId);
+    if (!hasEnemies) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    // 3. Otherwise pick the weakest (lowest health) among AIs first, fallback to human only if no AIs left
-    if (!target) {
-      const aiEnemies = enemies.filter((e) => !e.isHuman);
-      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
-
-      const sorted = [...candidates].sort((a, b) => {
-        const h = a.tank.health - b.tank.health;
-        if (h !== 0) return h;
-        // tie-breaker: prefer AI over human (Human Privilege)
-        const ha = a.isHuman ? 1 : 0;
-        const hb = b.isHuman ? 1 : 0;
-        return ha - hb; // AI (0) comes before human (1)
-      });
-      target = sorted[0];
+    // Resolution in priority order
+    if (finishOffAi) {
+      target = finishOffAi;
+    } else if (finishOffHuman) {
+      target = finishOffHuman;
+    } else if (currentTarget) {
+      target = currentTarget;
+    } else {
+      target = bestFallbackTarget;
     }
 
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget) {
-      console.log(`[AI TARGET] ${self.name} (Smart V4) selected NEW target: ${target!.name}`);
+      console.log(
+        `[AI TARGET] ${self.name} (Smart V4) selected NEW target: ${target!.name}`,
+      );
     }
 
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
     // Weapon selection
-    const chosenWeapon = this.chooseTacticalWeapon(self, target!, terrainManager, gameState);
+    const chosenWeapon = this.chooseTacticalWeapon(
+      self,
+      target!,
+      terrainManager,
+      gameState,
+    );
     self.tank.currentWeapon = chosenWeapon; // Sync live snap for HUD display
 
     // Compute the shot
@@ -156,25 +192,28 @@ export class AISmartStrategy implements AIEngine {
 
     // 1. Thermonuclear - only if target is far enough away to not kill ourselves
     // (blast radius is 160px; so we want distance to target to be > 200px)
-    if (dist > 220 && has('THERMONUCLEAR')) return 'THERMONUCLEAR';
+    if (dist > 220 && has("THERMONUCLEAR")) return "THERMONUCLEAR";
 
     // 2. Baby Nuke for long range
-    if (dist > 180 && has('NUKE')) return 'NUKE';
+    if (dist > 180 && has("NUKE")) return "NUKE";
 
     // 3. Grenade if target is hidden behind a hill (to bounce over/down the hill)
-    if (isHidden && has('GRENADE')) return 'GRENADE';
+    if (isHidden && has("GRENADE")) return "GRENADE";
 
     // 4. Cluster if target has neighbors nearby (clustered targets)
     const neighbors = gs.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead && Math.abs(p.tank.position.x - tx) < 80,
+      (p) =>
+        p.id !== self.id &&
+        !p.tank.isDead &&
+        Math.abs(p.tank.position.x - tx) < 80,
     ).length;
-    if (neighbors >= 2 && has('CLUSTER')) return 'CLUSTER';
+    if (neighbors >= 2 && has("CLUSTER")) return "CLUSTER";
 
     // 5. Driller for hidden targets under high slopes
-    if (isHidden && has('DRILLER')) return 'DRILLER';
+    if (isHidden && has("DRILLER")) return "DRILLER";
 
     // Default
-    return 'MISSILE';
+    return "MISSILE";
   }
 
   private computeSmartShot(
@@ -212,7 +251,19 @@ export class AISmartStrategy implements AIEngine {
       let hi = 95;
       for (let iter = 0; iter < 10; iter++) {
         const p = (lo + hi) / 2;
-        const res = this.simulateSmartShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain, weaponId);
+        const res = this.simulateSmartShot(
+          sx,
+          sy,
+          a,
+          p,
+          wind,
+          gravity,
+          BASE_SPEED,
+          DT,
+          MAX_STEPS,
+          terrain,
+          weaponId,
+        );
 
         // Self-damage check: Penalty if it hits too close to self
         const selfDist = Math.hypot(res.landX - sx, res.landY - sy);
@@ -220,7 +271,8 @@ export class AISmartStrategy implements AIEngine {
 
         const xErr = Math.abs(res.landX - tx);
         const yErr = Math.abs(res.landY - ty) * 0.35;
-        const err = xErr + yErr + (res.hitTerrainEarly ? 20 : 0) + selfHarmPenalty;
+        const err =
+          xErr + yErr + (res.hitTerrainEarly ? 20 : 0) + selfHarmPenalty;
 
         if (err < best.err) {
           best = { angle: a, power: p, err };
@@ -280,8 +332,8 @@ export class AISmartStrategy implements AIEngine {
     let prevVy: number;
 
     const DRAG = 0.28;
-    const isGrenade = weaponId === 'GRENADE';
-    const isCluster = weaponId === 'CLUSTER';
+    const isGrenade = weaponId === "GRENADE";
+    const isCluster = weaponId === "CLUSTER";
 
     for (let step = 0; step < maxSteps; step++) {
       prevVy = vy;
@@ -314,7 +366,8 @@ export class AISmartStrategy implements AIEngine {
           bounceCount++;
 
           const speed = Math.hypot(vx, vy);
-          const shouldExplode = bounceCount >= 4 || speed < 3.2 || Math.abs(vy) < 2.0;
+          const shouldExplode =
+            bounceCount >= 4 || speed < 3.2 || Math.abs(vy) < 2.0;
           if (shouldExplode) {
             landX = x;
             landY = y;

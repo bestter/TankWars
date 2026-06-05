@@ -11,10 +11,10 @@
  * - Clickable weapon selector (small retro buttons) + keyboard support (A/E) handled upstream in TurnManager
  */
 
-import type { CurrentTurnInfo } from '../game/engine/TurnManager';
-import type { WeaponId } from '../types/weapon';
-import { WEAPON_REGISTRY } from '../types/weapon';
-import { VGA_PALETTE } from '../types/game';
+import type { CurrentTurnInfo } from "../game/engine/TurnManager";
+import type { WeaponId } from "../types/weapon";
+import { WEAPON_REGISTRY } from "../types/weapon";
+import { VGA_PALETTE } from "../types/game";
 
 export interface GameHUDProps {
   turnInfo: CurrentTurnInfo | null;
@@ -22,16 +22,29 @@ export interface GameHUDProps {
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
 
-const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER'] as const;
+const WEAPON_ORDER: readonly WeaponId[] = [
+  "MISSILE",
+  "GRENADE",
+  "CLUSTER",
+  "NUKE",
+  "THERMONUCLEAR",
+  "DRILLER",
+] as const;
 
 function getShortLabel(id: WeaponId): string {
   switch (id) {
-    case 'MISSILE': return 'MIS';
-    case 'GRENADE': return 'GRE';
-    case 'CLUSTER': return 'CLS';
-    case 'NUKE': return 'NUK';
-    case 'THERMONUCLEAR': return 'THM';
-    case 'DRILLER': return 'DRL';
+    case "MISSILE":
+      return "MIS";
+    case "GRENADE":
+      return "GRE";
+    case "CLUSTER":
+      return "CLS";
+    case "NUKE":
+      return "NUK";
+    case "THERMONUCLEAR":
+      return "THM";
+    case "DRILLER":
+      return "DRL";
   }
 }
 
@@ -48,27 +61,36 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
       className="retro-hud"
       style={{
         border: `3px solid ${VGA_PALETTE.CYAN}`,
-        fontSize: '12px',
-        lineHeight: '1.1',
+        fontSize: "12px",
+        lineHeight: "1.1",
       }}
     >
       {/* === PLAYER === */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, pointerEvents: 'none' }}>
-        <span style={{ color: VGA_PALETTE.MAGENTA, fontWeight: 'bold' }}>P:</span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          pointerEvents: "none",
+        }}
+      >
+        <span style={{ color: VGA_PALETTE.MAGENTA, fontWeight: "bold" }}>
+          P:
+        </span>
         {turnInfo ? (
           <>
             <span
               style={{
-                display: 'inline-block',
+                display: "inline-block",
                 width: 9,
                 height: 9,
                 backgroundColor: turnInfo.playerColor,
                 border: `1px solid ${VGA_PALETTE.WHITE}`,
                 marginRight: 2,
-                verticalAlign: 'middle',
+                verticalAlign: "middle",
               }}
             />
-            <span style={{ color: turnInfo.playerColor, fontWeight: 'bold' }}>
+            <span style={{ color: turnInfo.playerColor, fontWeight: "bold" }}>
               {turnInfo.playerName}
             </span>
           </>
@@ -78,30 +100,52 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
       </div>
 
       {/* === ANGLE / POWER === */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          pointerEvents: "none",
+        }}
+      >
         <span style={{ color: VGA_PALETTE.CYAN }}>ANG</span>
-        <span style={{ color: VGA_PALETTE.YELLOW, fontWeight: 'bold', minWidth: 28 }}>
-          {turnInfo ? `${turnInfo.angle}°` : '--'}
+        <span
+          style={{
+            color: VGA_PALETTE.YELLOW,
+            fontWeight: "bold",
+            minWidth: 28,
+          }}
+        >
+          {turnInfo ? `${turnInfo.angle}°` : "--"}
         </span>
         <span style={{ color: VGA_PALETTE.CYAN, marginLeft: 4 }}>POW</span>
-        <span style={{ color: VGA_PALETTE.YELLOW, fontWeight: 'bold', minWidth: 20 }}>
-          {turnInfo ? turnInfo.power : '--'}
+        <span
+          style={{
+            color: VGA_PALETTE.YELLOW,
+            fontWeight: "bold",
+            minWidth: 20,
+          }}
+        >
+          {turnInfo ? turnInfo.power : "--"}
         </span>
       </div>
 
       {/* === TURN (within current combat round) === */}
-      <div style={{ color: VGA_PALETTE.GRAY, pointerEvents: 'none' }}>
-        TRN <span style={{ color: VGA_PALETTE.WHITE }}>{turnInfo ? turnInfo.turn : '-'}</span>
+      <div style={{ color: VGA_PALETTE.GRAY, pointerEvents: "none" }}>
+        TRN{" "}
+        <span style={{ color: VGA_PALETTE.WHITE }}>
+          {turnInfo ? turnInfo.turn : "-"}
+        </span>
       </div>
 
       {/* === WEAPON + SELECTOR (clickable) === */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
+          display: "flex",
+          alignItems: "center",
           gap: 3,
-          marginLeft: 'auto',
-          pointerEvents: 'auto',
+          marginLeft: "auto",
+          pointerEvents: "auto",
         }}
       >
         <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>WEP</span>
@@ -110,10 +154,10 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
           const def = WEAPON_REGISTRY[wid];
           const ammo = inventory[wid] ?? 0;
           const isCurrent = currentWeapon === wid;
-          const hasAmmo = wid === 'MISSILE' || ammo > 0;
+          const hasAmmo = wid === "MISSILE" || ammo > 0;
           const selectable = canInteract && hasAmmo;
 
-          const bg = isCurrent ? '#002200' : hasAmmo ? '#111111' : '#0a0a0a';
+          const bg = isCurrent ? "#002200" : hasAmmo ? "#111111" : "#0a0a0a";
           const borderCol = isCurrent
             ? VGA_PALETTE.GREEN
             : hasAmmo
@@ -140,12 +184,12 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
                 backgroundColor: bg,
                 color: textCol,
                 borderColor: borderCol,
-                cursor: selectable ? 'pointer' : 'default',
+                cursor: selectable ? "pointer" : "default",
                 opacity: hasAmmo ? 1 : 0.55,
               }}
               title={def.name}
             >
-              {getShortLabel(wid)}:{wid === 'MISSILE' ? '∞' : ammo}
+              {getShortLabel(wid)}:{wid === "MISSILE" ? "∞" : ammo}
             </button>
           );
         })}
@@ -156,9 +200,9 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
             style={{
               marginLeft: 6,
               color: VGA_PALETTE.YELLOW,
-              fontSize: '12px',
-              pointerEvents: 'none',
-              fontWeight: 'bold',
+              fontSize: "12px",
+              pointerEvents: "none",
+              fontWeight: "bold",
             }}
           >
             [TANKS FALLING]
@@ -169,8 +213,8 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
             style={{
               marginLeft: 6,
               color: VGA_PALETTE.RED,
-              fontSize: '12px',
-              pointerEvents: 'none',
+              fontSize: "12px",
+              pointerEvents: "none",
             }}
           >
             [RESOLVING]
@@ -181,8 +225,8 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
             style={{
               marginLeft: 6,
               color: VGA_PALETTE.CYAN,
-              fontSize: '12px',
-              pointerEvents: 'none',
+              fontSize: "12px",
+              pointerEvents: "none",
             }}
           >
             [AI TURN]
@@ -192,7 +236,14 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
 
       {/* Current weapon name (small) */}
       {turnInfo && (
-        <div style={{ color: VGA_PALETTE.GRAY, fontSize: '12px', pointerEvents: 'none', minWidth: 52 }}>
+        <div
+          style={{
+            color: VGA_PALETTE.GRAY,
+            fontSize: "12px",
+            pointerEvents: "none",
+            minWidth: 52,
+          }}
+        >
           {WEAPON_REGISTRY[currentWeapon!]?.name ?? currentWeapon}
         </div>
       )}

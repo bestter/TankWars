@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import './App.css'
-import { GameCanvas } from './components/GameCanvas'
-import { MainMenu } from './components/MainMenu'
-import type { GamePhase } from './types/game'
-import type { Player } from './types/player'
+import { useState } from "react";
+import "./App.css";
+import { GameCanvas } from "./components/GameCanvas";
+import { MainMenu } from "./components/MainMenu";
+import type { GamePhase } from "./types/game";
+import type { Player } from "./types/player";
 
 /**
  * Bestter's TankWars - Root App (src/App.tsx)
@@ -17,36 +17,36 @@ import type { Player } from './types/player'
  */
 
 function App() {
-  const [phase, setPhase] = useState<GamePhase>('MENU')
-  const [players, setPlayers] = useState<Player[] | null>(null)
+  const [phase, setPhase] = useState<GamePhase>("MENU");
+  const [players, setPlayers] = useState<Player[] | null>(null);
 
   const handleStartGame = (initialPlayers: Player[]): void => {
-    setPlayers(initialPlayers)
-    setPhase('COMBAT')
-  }
+    setPlayers(initialPlayers);
+    setPhase("COMBAT");
+  };
 
   const handleReturnToMenu = (): void => {
     // Démontage du canvas/engine → libération ressources + retour config
-    setPlayers(null)
-    setPhase('MENU')
-  }
+    setPlayers(null);
+    setPhase("MENU");
+  };
 
-  const showMenu = phase === 'MENU' && players === null
+  const showMenu = phase === "MENU" && players === null;
 
   return (
     <div
       style={{
-        minHeight: '100vh',
-        background: '#000000',
-        fontFamily: 'monospace',
+        minHeight: "100vh",
+        background: "#000000",
+        fontFamily: "monospace",
         // Padding seulement hors menu (le menu gère son propre centrage full black)
-        padding: showMenu ? 0 : '12px',
+        padding: showMenu ? 0 : "12px",
       }}
     >
       {showMenu ? (
         <MainMenu onStartGame={handleStartGame} />
       ) : (
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <div style={{ display: "flex", justifyContent: "center" }}>
           <GameCanvas
             initialPlayers={players ?? undefined}
             onReturnToMenu={handleReturnToMenu}
@@ -54,7 +54,7 @@ function App() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

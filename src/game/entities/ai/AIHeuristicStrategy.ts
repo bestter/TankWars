@@ -17,11 +17,11 @@
  * Memory lives in the strategy instance (one per match; fresh on new game).
  */
 
-import type { AIEngine } from './AIEngine';
-import type { GameState } from '../../../types/game';
-import type { Player } from '../../../types/player';
-import type { TerrainManager } from '../../engine/Terrain';
-import { type WeaponId } from '../../../types/weapon';
+import type { AIEngine } from "./AIEngine";
+import type { GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
+import type { TerrainManager } from "../../engine/Terrain";
+import { type WeaponId } from "../../../types/weapon";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -69,13 +69,16 @@ export class AIHeuristicStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((p) => p.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
-    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
+    if (
+      mem.lastSelfHealth != null &&
+      self.tank.health > mem.lastSelfHealth + 5
+    ) {
       this.resetForNewRound(mem);
     }
     mem.lastSelfHealth = self.tank.health;
@@ -84,12 +87,14 @@ export class AIHeuristicStrategy implements AIEngine {
       (p) => p.id !== self.id && !p.tank.isDead,
     );
     if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     // === Update memory from previous shot on the PREVIOUS target ===
     if (mem.currentTargetId) {
-      const prevTarget = gameState.players.find((p) => p.id === mem.currentTargetId);
+      const prevTarget = gameState.players.find(
+        (p) => p.id === mem.currentTargetId,
+      );
       if (prevTarget) {
         const wasAlive = (mem.lastKnownHealth[prevTarget.id] ?? 0) > 0;
         const isDeadNow = prevTarget.tank.isDead || prevTarget.tank.health <= 0;
@@ -97,18 +102,25 @@ export class AIHeuristicStrategy implements AIEngine {
         if (wasAlive && isDeadNow) {
           // Success! Target was killed (by us or someone else, we successfully resolved this threat)
           mem.roundSuccesses += 1;
-          console.log(`[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`);
+          console.log(
+            `[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`,
+          );
         } else if (!isDeadNow) {
           // Still alive: compare health to check for a hit
-          const prevHealth = mem.lastKnownHealth[prevTarget.id] ?? (prevTarget.tank.health + 20);
+          const prevHealth =
+            mem.lastKnownHealth[prevTarget.id] ?? prevTarget.tank.health + 20;
           if (prevTarget.tank.health < prevHealth - 0.1) {
             mem.roundSuccesses += 1;
-            console.log(`[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`);
+            console.log(
+              `[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`,
+            );
           } else {
             // Miss!
             mem.roundFails += 1;
             mem.lastPowerBias += (Math.random() - 0.5) * 1.2;
-            console.log(`[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`);
+            console.log(
+              `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
+            );
           }
         }
       }
@@ -147,7 +159,9 @@ export class AIHeuristicStrategy implements AIEngine {
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget) {
-      console.log(`[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`);
+      console.log(
+        `[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`,
+      );
     }
 
     // Record current known healths of all alive enemies for next comparison
@@ -160,7 +174,12 @@ export class AIHeuristicStrategy implements AIEngine {
     mem.targetAttempts[target!.id] = attempts;
 
     // === Choose weapon (OK AI opportunism) + compute improved shot ===
-    const chosenWeapon = this.chooseWeapon(self, target!, terrainManager, gameState);
+    const chosenWeapon = this.chooseWeapon(
+      self,
+      target!,
+      terrainManager,
+      gameState,
+    );
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
     self.tank.currentWeapon = chosenWeapon; // live ref from gameState snapshot of roster
 
@@ -203,18 +222,25 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainVariance = Math.max(terrainVariance, Math.abs(h - prev));
       prev = h;
     }
-    if (terrainVariance > 28 && has('GRENADE')) return 'GRENADE';
+    if (terrainVariance > 28 && has("GRENADE")) return "GRENADE";
 
     // Enemies clustered? cluster value
     const nearby = gs.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead && Math.abs(p.tank.position.x - target.tank.position.x) < 70,
+      (p) =>
+        p.id !== self.id &&
+        !p.tank.isDead &&
+        Math.abs(p.tank.position.x - target.tank.position.x) < 70,
     ).length;
-    if (nearby >= 1 && has('CLUSTER')) return 'CLUSTER';
+    if (nearby >= 1 && has("CLUSTER")) return "CLUSTER";
 
-    if (Math.abs(target.tank.position.x - self.tank.position.x) > 380 && has('NUKE')) return 'NUKE';
+    if (
+      Math.abs(target.tank.position.x - self.tank.position.x) > 380 &&
+      has("NUKE")
+    )
+      return "NUKE";
 
     // default unlimited
-    return 'MISSILE';
+    return "MISSILE";
   }
 
   /**
@@ -254,7 +280,18 @@ export class AIHeuristicStrategy implements AIEngine {
       let hi = 90;
       for (let iter = 0; iter < 7; iter++) {
         const p = (lo + hi) / 2;
-        const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
+        const res = this.simulateShot(
+          sx,
+          sy,
+          a,
+          p,
+          wind,
+          gravity,
+          BASE_SPEED,
+          DT,
+          MAX_STEPS,
+          terrain,
+        );
         const xErr = Math.abs(res.landX - tx);
         const yErr = Math.abs(res.landY - ty) * 0.35;
         const err = xErr + yErr + (res.hitTerrainEarly ? 30 : 0);

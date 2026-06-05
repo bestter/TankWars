@@ -11,19 +11,19 @@
  * logic lives inside GameEngine (strict decoupling).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { GameEngine } from '../game/engine/GameEngine';
-import type { CurrentTurnInfo } from '../game/engine/TurnManager';
-import { VGA_PALETTE } from '../types/game';
-import { AIByProfileStrategy } from '../game/entities/ai/AIByProfileStrategy';
-import type { Player } from '../types/player';
-import { GameHUD } from './GameHUD';
-import { WindBanner } from './WindBanner';
-import { RoundSummary } from './RoundSummary';
-import { WeaponShop } from './WeaponShop';
-import type { WeaponId } from '../types/weapon';
-import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from '../types/weapon';
-import type { GamePhase, RoundResult } from '../types/game';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GameEngine } from "../game/engine/GameEngine";
+import type { CurrentTurnInfo } from "../game/engine/TurnManager";
+import { VGA_PALETTE } from "../types/game";
+import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
+import type { Player } from "../types/player";
+import { GameHUD } from "./GameHUD";
+import { WindBanner } from "./WindBanner";
+import { RoundSummary } from "./RoundSummary";
+import { WeaponShop } from "./WeaponShop";
+import type { WeaponId } from "../types/weapon";
+import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from "../types/weapon";
+import type { GamePhase, RoundResult } from "../types/game";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -35,7 +35,10 @@ export interface GameCanvasProps {
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
 
-export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps = {}) {
+export function GameCanvas({
+  initialPlayers,
+  onReturnToMenu,
+}: GameCanvasProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -46,7 +49,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   const [showNewGameButton, setShowNewGameButton] = useState(false);
 
   // React-owned high-level phase + round summary (per architecture: React owns phase/money/turns)
-  const [gamePhase, setGamePhase] = useState<GamePhase>('COMBAT');
+  const [gamePhase, setGamePhase] = useState<GamePhase>("COMBAT");
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
 
   // Logical manche number for SUMMARY title "FIN DE MANCHE N" (persistent across chained rounds)
@@ -58,7 +61,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   } | null>(null);
 
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
-  const gamePhaseRef = useRef<GamePhase>('COMBAT');
+  const gamePhaseRef = useRef<GamePhase>("COMBAT");
 
   // === SHOP (boutique) state - sequential per living player ===
   const [shopPlayers, setShopPlayers] = useState<Player[]>([]);
@@ -80,7 +83,9 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   const initialPlayersRef = useRef(initialPlayers);
 
   // Timer for round celebration fireworks (10s auto-advance or skip with SPACE)
-  const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const clearShopAiTimeout = (): void => {
     if (shopAiTimeoutRef.current !== null) {
@@ -102,8 +107,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     if (eng) {
       eng.clearRoundCelebration();
     }
-    setGamePhase('SUMMARY');
-    gamePhaseRef.current = 'SUMMARY';
+    setGamePhase("SUMMARY");
+    gamePhaseRef.current = "SUMMARY";
   }, [clearCelebrationTimer]);
 
   // Stable render function that delegates to the engine
@@ -123,7 +128,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
 
-    const ctx = canvas.getContext('2d', {
+    const ctx = canvas.getContext("2d", {
       alpha: false,
       desynchronized: true,
     });
@@ -141,11 +146,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // Note: positions sont des placeholders. setPlayers → TankManager.spawnTanks les recalcule sur le terrain généré.
     const demoPlayers: Player[] = [
       {
-        id: 'player-1',
-        name: 'You',
+        id: "player-1",
+        name: "You",
         isHuman: true,
         tank: {
-          id: 'tank-1',
+          id: "tank-1",
           position: { x: 180, y: 320 },
           angle: 45,
           power: 50,
@@ -155,17 +160,17 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           maxShield: 40,
           isDead: false,
           color: VGA_PALETTE.BLUE,
-          currentWeapon: 'MISSILE',
+          currentWeapon: "MISSILE",
         },
         money: 200,
         inventory: { ...DEFAULT_INVENTORY },
       },
       {
-        id: 'player-2',
-        name: 'AI Bot',
+        id: "player-2",
+        name: "AI Bot",
         isHuman: false,
         tank: {
-          id: 'tank-2',
+          id: "tank-2",
           position: { x: 620, y: 295 },
           angle: 135,
           power: 50,
@@ -175,7 +180,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           maxShield: 40,
           isDead: false,
           color: VGA_PALETTE.RED,
-          currentWeapon: 'MISSILE',
+          currentWeapon: "MISSILE",
         },
         money: 200,
         inventory: { ...DEFAULT_INVENTORY },
@@ -183,9 +188,10 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     ];
 
     const snapshotPlayers = initialPlayersRef.current;
-    const players: Player[] = snapshotPlayers && snapshotPlayers.length >= 2
-      ? snapshotPlayers.map((p) => ({ ...p })) // clone shallow (objets Player mutés par l'engine ensuite)
-      : demoPlayers;
+    const players: Player[] =
+      snapshotPlayers && snapshotPlayers.length >= 2
+        ? snapshotPlayers.map((p) => ({ ...p })) // clone shallow (objets Player mutés par l'engine ensuite)
+        : demoPlayers;
 
     // Initialize players (this also calls setupInputListeners + starts first turn)
     engine.setPlayers(players);
@@ -199,7 +205,13 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
     // while idle, causing massive spam during SHOP / between turns / SUMMARY).
     engine.onProjectileHit = (hit) => {
-      console.log('[GameEngine] Hit:', hit.weaponId, 'at', hit.x.toFixed(1), hit.y.toFixed(1));
+      console.log(
+        "[GameEngine] Hit:",
+        hit.weaponId,
+        "at",
+        hit.x.toFixed(1),
+        hit.y.toFixed(1),
+      );
     };
 
     // Note: GameEngine.onAllProjectilesSettled is intentionally left unassigned here.
@@ -220,7 +232,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
      * Always SUMMARY → SHOP → next manche (full roster respawns). No match Game Over here.
      */
     engine.onRoundEnded = (payload) => {
-      if (gamePhaseRef.current !== 'COMBAT') return;
+      if (gamePhaseRef.current !== "COMBAT") return;
 
       tm.pauseForInterRound();
 
@@ -236,20 +248,20 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
       engine.triggerRoundCelebration(payload.roundWinner ?? undefined);
       setCurrentManche((prev) => prev + 1);
-      setGamePhase('CELEBRATION');
-      gamePhaseRef.current = 'CELEBRATION';
+      setGamePhase("CELEBRATION");
+      gamePhaseRef.current = "CELEBRATION";
 
       // Auto-advance to SUMMARY after ~10s of fireworks, unless skipped via SPACE/click
       clearCelebrationTimer();
       celebrationTimerRef.current = setTimeout(() => {
-        if (gamePhaseRef.current === 'CELEBRATION') {
+        if (gamePhaseRef.current === "CELEBRATION") {
           goToSummary();
         }
       }, 10000);
     };
 
     engineRef.current = engine;
-    gamePhaseRef.current = 'COMBAT';
+    gamePhaseRef.current = "COMBAT";
 
     // Start the internal physics loop
     engine.start();
@@ -290,7 +302,12 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   // Global SPACE (or click handled in handleCanvasClick) to skip round celebration fireworks
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gamePhaseRef.current === 'CELEBRATION' && (e.key === ' ' || e.key === 'Spacebar' || e.key.toLowerCase() === 'space')) {
+      if (
+        gamePhaseRef.current === "CELEBRATION" &&
+        (e.key === " " ||
+          e.key === "Spacebar" ||
+          e.key.toLowerCase() === "space")
+      ) {
         e.preventDefault();
         // inline logic (dupe of goToSummary) so effect can use [] without exhaustive-deps warning
         clearCelebrationTimer();
@@ -298,24 +315,27 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         if (eng) {
           eng.clearRoundCelebration();
         }
-        setGamePhase('SUMMARY');
-        gamePhaseRef.current = 'SUMMARY';
+        setGamePhase("SUMMARY");
+        gamePhaseRef.current = "SUMMARY";
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [clearCelebrationTimer]);
 
   /** Canvas click = Spacebar: fire current human tank's selected weapon. */
   const handleCanvasClick = (): void => {
     const engine = engineRef.current;
     if (!engine) return;
-    if (gamePhaseRef.current === 'CELEBRATION') {
+    if (gamePhaseRef.current === "CELEBRATION") {
       // Skip the fireworks celebration early
       goToSummary();
       return;
     }
-    if (gamePhaseRef.current !== 'COMBAT' && gamePhaseRef.current !== 'RESOLUTION') {
+    if (
+      gamePhaseRef.current !== "COMBAT" &&
+      gamePhaseRef.current !== "RESOLUTION"
+    ) {
       return;
     }
     engine.getTurnManager().tryFire();
@@ -329,10 +349,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     tm.selectWeapon(weaponId);
   };
 
-  const endMatchFromShop = (
-    engine: GameEngine,
-    survivors: Player[],
-  ): void => {
+  const endMatchFromShop = (engine: GameEngine, survivors: Player[]): void => {
     clearShopAiTimeout();
     shopFinishingRef.current = true;
     engine.getTurnManager().pauseForInterRound();
@@ -353,8 +370,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     }
 
     setShowNewGameButton(false);
-    setGamePhase('GAME_OVER');
-    gamePhaseRef.current = 'GAME_OVER';
+    setGamePhase("GAME_OVER");
+    gamePhaseRef.current = "GAME_OVER";
     setTimeout(() => setShowNewGameButton(true), 7000);
     shopFinishingRef.current = false;
   };
@@ -380,8 +397,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     setUiPlayers(roster);
     setCurrentShopIndex(0);
     currentShopIndexRef.current = 0;
-    setGamePhase('SHOP');
-    gamePhaseRef.current = 'SHOP';
+    setGamePhase("SHOP");
+    gamePhaseRef.current = "SHOP";
 
     if (!roster[0].isHuman) {
       shopAiTimeoutRef.current = setTimeout(() => {
@@ -425,9 +442,12 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     if (shopPlayers.length === 0) return;
 
     // We get the live object from the engine snapshot (same reference the engine mutates)
-    const enginePlayers = engineRef.current?.getTankManager().getPlayers() ?? [];
+    const enginePlayers =
+      engineRef.current?.getTankManager().getPlayers() ?? [];
     const idx = currentShopIndexRef.current;
-    const currentPlayer = enginePlayers.find((p) => p.id === shopPlayersRef.current[idx]?.id) || shopPlayersRef.current[idx];
+    const currentPlayer =
+      enginePlayers.find((p) => p.id === shopPlayersRef.current[idx]?.id) ||
+      shopPlayersRef.current[idx];
 
     if (!currentPlayer || !currentPlayer.isHuman) return;
 
@@ -469,19 +489,31 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   const autoBuyForAI = (aiPlayer: Player): void => {
     if (!aiPlayer || aiPlayer.isHuman) return;
 
-    const profile = aiPlayer.aiProfile ?? 'v1-random';
+    const profile = aiPlayer.aiProfile ?? "v1-random";
 
     // Configure budget and priorities depending on AI profile
-    let preferredOrder: WeaponId[] = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+    let preferredOrder: WeaponId[] = [
+      "THERMONUCLEAR",
+      "NUKE",
+      "CLUSTER",
+      "DRILLER",
+      "GRENADE",
+    ];
     let budgetRatio = 0.7; // default 70% budget spending
 
-    if (profile === 'v3-sniper') {
+    if (profile === "v3-sniper") {
       // Sniper only wants precise kinetic weapon: Driller
-      preferredOrder = ['DRILLER'];
+      preferredOrder = ["DRILLER"];
       budgetRatio = 0.7;
-    } else if (profile === 'v4-smart') {
+    } else if (profile === "v4-smart") {
       // Smart AI spends more aggressively (85% budget) on its tools
-      preferredOrder = ['THERMONUCLEAR', 'NUKE', 'CLUSTER', 'DRILLER', 'GRENADE'];
+      preferredOrder = [
+        "THERMONUCLEAR",
+        "NUKE",
+        "CLUSTER",
+        "DRILLER",
+        "GRENADE",
+      ];
       budgetRatio = 0.85;
     }
 
@@ -536,7 +568,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
 
   /** Traite le shopper courant s'il s'agit d'une IA (achats auto + avance) */
   const processNextShopperIfAI = (): void => {
-    if (shopFinishingRef.current || gamePhaseRef.current !== 'SHOP') return;
+    if (shopFinishingRef.current || gamePhaseRef.current !== "SHOP") return;
 
     const currentLen = shopPlayersRef.current.length;
     if (currentLen === 0) return;
@@ -585,8 +617,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     currentShopIndexRef.current = 0;
 
     clearCelebrationTimer();
-    setGamePhase('COMBAT');
-    gamePhaseRef.current = 'COMBAT';
+    setGamePhase("COMBAT");
+    gamePhaseRef.current = "COMBAT";
     shopFinishingRef.current = false;
   };
 
@@ -601,11 +633,11 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     // Recreate fresh players
     const newPlayers: Player[] = [
       {
-        id: 'player-1',
-        name: 'You',
+        id: "player-1",
+        name: "You",
         isHuman: true,
         tank: {
-          id: 'tank-1',
+          id: "tank-1",
           position: { x: 180, y: 320 },
           angle: 45,
           power: 50,
@@ -615,17 +647,17 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           maxShield: 40,
           isDead: false,
           color: VGA_PALETTE.BLUE,
-          currentWeapon: 'MISSILE',
+          currentWeapon: "MISSILE",
         },
         money: 200,
         inventory: { ...DEFAULT_INVENTORY },
       },
       {
-        id: 'player-2',
-        name: 'AI Bot',
+        id: "player-2",
+        name: "AI Bot",
         isHuman: false,
         tank: {
-          id: 'tank-2',
+          id: "tank-2",
           position: { x: 620, y: 295 },
           angle: 135,
           power: 50,
@@ -635,7 +667,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           maxShield: 40,
           isDead: false,
           color: VGA_PALETTE.RED,
-          currentWeapon: 'MISSILE',
+          currentWeapon: "MISSILE",
         },
         money: 200,
         inventory: { ...DEFAULT_INVENTORY },
@@ -650,8 +682,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     setShowNewGameButton(false);
     setTurnInfo(null);
     clearCelebrationTimer();
-    setGamePhase('COMBAT');
-    gamePhaseRef.current = 'COMBAT';
+    setGamePhase("COMBAT");
+    gamePhaseRef.current = "COMBAT";
     setRoundResult(null);
     setCurrentManche(1);
     setUiPlayers(newPlayers);
@@ -662,12 +694,25 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
       {onReturnToMenu && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', width: CANVAS_WIDTH }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            width: CANVAS_WIDTH,
+          }}
+        >
           <button
             onClick={onReturnToMenu}
-            style={{ fontSize: 11, padding: '3px 9px' }}
+            style={{ fontSize: 11, padding: "3px 9px" }}
             title="Retour à l'écran d'accueil et configuration des joueurs"
           >
             MENU
@@ -675,8 +720,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         </div>
       )}
 
-      <div style={{ position: 'relative' }}>
-        {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
+      <div style={{ position: "relative" }}>
+        {(gamePhase === "COMBAT" || gamePhase === "RESOLUTION") && (
           <WindBanner windForce={wind} />
         )}
 
@@ -685,22 +730,19 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
           onClick={handleCanvasClick}
           style={{
             border: `3px solid ${VGA_PALETTE.GRAY}`,
-            imageRendering: 'pixelated',
-            cursor: winner ? 'default' : 'crosshair',
-            background: '#000000',
+            imageRendering: "pixelated",
+            cursor: winner ? "default" : "crosshair",
+            background: "#000000",
           }}
         />
 
         {/* Retro VGA HUD overlay (superposed on canvas) — only during active combat */}
-        {(gamePhase === 'COMBAT' || gamePhase === 'RESOLUTION') && (
-          <GameHUD
-            turnInfo={turnInfo}
-            onWeaponSelect={handleWeaponSelect}
-          />
+        {(gamePhase === "COMBAT" || gamePhase === "RESOLUTION") && (
+          <GameHUD turnInfo={turnInfo} onWeaponSelect={handleWeaponSelect} />
         )}
 
         {/* Round Summary overlay (fin de manche) — keeps canvas + fireworks visible underneath */}
-        {gamePhase === 'SUMMARY' && (
+        {gamePhase === "SUMMARY" && (
           <RoundSummary
             round={currentManche}
             players={uiPlayers}
@@ -712,7 +754,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         )}
 
         {/* Weapon Shop overlay — full sequential boutique (humans one-by-one + AI auto) */}
-        {gamePhase === 'SHOP' && shopPlayers.length > 0 && (
+        {gamePhase === "SHOP" && shopPlayers.length > 0 && (
           <>
             {shopPlayers[currentShopIndex]?.isHuman ? (
               <WeaponShop
@@ -725,37 +767,39 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
             ) : (
               // Pendant qu'une IA achète automatiquement (très rapide)
               <div className="retro-ai-overlay">
-                L'IA <strong style={{ color: shopPlayers[currentShopIndex]?.tank.color }}>
+                L'IA{" "}
+                <strong
+                  style={{ color: shopPlayers[currentShopIndex]?.tank.color }}
+                >
                   {shopPlayers[currentShopIndex]?.name}
-                </strong> fait ses achats...
+                </strong>{" "}
+                fait ses achats...
               </div>
             )}
           </>
         )}
 
         {/* Phase indicator minimal pour SUMMARY seulement (le SHOP a maintenant son propre UI) */}
-        {gamePhase === 'SUMMARY' && (
-          <div className="retro-badge">
-            PHASE: {gamePhase}
-          </div>
+        {gamePhase === "SUMMARY" && (
+          <div className="retro-badge">PHASE: {gamePhase}</div>
         )}
 
         {/* Celebration banner during pre-SUMMARY fireworks (from winning tank) */}
-        {gamePhase === 'CELEBRATION' && (
+        {gamePhase === "CELEBRATION" && (
           <div
             style={{
-              position: 'absolute',
+              position: "absolute",
               top: 12,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(0,0,0,0.7)',
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "rgba(0,0,0,0.7)",
               color: VGA_PALETTE.YELLOW,
-              font: 'bold 14px monospace',
-              padding: '4px 12px',
+              font: "bold 14px monospace",
+              padding: "4px 12px",
               border: `2px solid ${VGA_PALETTE.YELLOW}`,
               zIndex: 20,
-              pointerEvents: 'none',
-              textShadow: '0 0 4px #000',
+              pointerEvents: "none",
+              textShadow: "0 0 4px #000",
             }}
           >
             CELEBRATION — Appuyez sur ESPACE (ou cliquez) pour continuer
@@ -765,52 +809,51 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
         {/* === GAME OVER OVERLAY === */}
         {/* For draws (winner === null via onDraw), we rely on SUMMARY showing "Aucun survivant"
             or the delayed New Game button. No big colored text to avoid null access. */}
-        {winner && gamePhase === 'GAME_OVER' && (
+        {winner && gamePhase === "GAME_OVER" && (
           <div
             style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              textAlign: 'center',
-              pointerEvents: 'none',
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              textAlign: "center",
+              pointerEvents: "none",
               zIndex: 10,
             }}
           >
             <div
               style={{
-                fontSize: '72px',
-                fontWeight: 'bold',
+                fontSize: "72px",
+                fontWeight: "bold",
                 color: winner.tank.color,
-                textShadow: '0 0 20px #000, 0 0 40px #000',
-                fontFamily: 'monospace',
-                marginBottom: '12px',
+                textShadow: "0 0 20px #000, 0 0 40px #000",
+                fontFamily: "monospace",
+                marginBottom: "12px",
               }}
             >
               {winner.name} WINS!
             </div>
-            <div style={{ fontSize: '24px', color: '#AAAAAA' }}>
-              Game Over
-            </div>
+            <div style={{ fontSize: "24px", color: "#AAAAAA" }}>Game Over</div>
           </div>
         )}
       </div>
 
       {/* New Game Button - appears after delay */}
       {showNewGameButton && (
-        <button
-          onClick={handleNewGame}
-          className="retro-newgame-btn"
-        >
+        <button onClick={handleNewGame} className="retro-newgame-btn">
           New Game ?
         </button>
       )}
 
-      <div style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: 'center' }}>
-        <strong>Controls:</strong> ← → angle • ↑ ↓ power • SPACE or click to fire • A/E switch weapon<br />
-        Each round is last-man-standing (continues until only one remains); shop opens after each round
+      <div
+        style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: "center" }}
+      >
+        <strong>Controls:</strong> ← → angle • ↑ ↓ power • SPACE or click to
+        fire • A/E switch weapon
+        <br />
+        Each round is last-man-standing (continues until only one remains); shop
+        opens after each round
       </div>
     </div>
   );
 }
-

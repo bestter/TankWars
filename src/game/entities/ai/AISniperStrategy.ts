@@ -9,11 +9,11 @@
  * - Second shot onwards targets the tank directly with zero aiming noise.
  */
 
-import type { AIEngine } from './AIEngine';
-import type { GameState } from '../../../types/game';
-import type { Player } from '../../../types/player';
-import type { TerrainManager } from '../../engine/Terrain';
-import { type WeaponId } from '../../../types/weapon';
+import type { AIEngine } from "./AIEngine";
+import type { GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
+import type { TerrainManager } from "../../engine/Terrain";
+import { type WeaponId } from "../../../types/weapon";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -46,52 +46,80 @@ export class AISniperStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((p) => p.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
-    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
+    if (
+      mem.lastSelfHealth != null &&
+      self.tank.health > mem.lastSelfHealth + 5
+    ) {
       this.resetForNewRound(mem);
     }
     mem.lastSelfHealth = self.tank.health;
 
-    // Find living enemies
-    const enemies = gameState.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead,
-    );
-    if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
-    }
-
     // Target selection:
     // Sniper is cold and sticks to its target until they are dead, then switches to the weakest.
     let target: Player | undefined;
-    if (mem.currentTargetId) {
-      target = enemies.find((e) => e.id === mem.currentTargetId);
+    let hasEnemies = false;
+    let bestTarget: Player | undefined;
+    let bestIsAi = false;
+
+    // Single pass to find current target and best fallback target
+    for (let i = 0; i < gameState.players.length; i++) {
+      const p = gameState.players[i];
+      if (p.id !== self.id && !p.tank.isDead) {
+        hasEnemies = true;
+
+        // 1. Maintain focus on current target if still alive
+        if (mem.currentTargetId && p.id === mem.currentTargetId) {
+          target = p;
+          // Note: we don't break early here because we might need to know if there are enemies
+          // but actually if we found the target, we don't need to do the rest of the loop!
+          // We can break early if we just need the target. Wait, if target exists, we don't need bestTarget.
+          // Let's break early to save time if target is found.
+          break;
+        }
+
+        // 2. Otherwise pick the most dangerous AI (smartest/highest health), or nearest if only humans left
+        // (Wait, original comment says "most dangerous AI", but code implements "Prefer weakest target"
+        //  The code says: const h = a.tank.health - b.tank.health; which sorts ascending by health, picking weakest.)
+        const pIsAi = !p.isHuman;
+        if (!bestTarget) {
+          bestTarget = p;
+          bestIsAi = pIsAi;
+        } else {
+          // Tie-breaker: prefer AI over human
+          if (pIsAi && !bestIsAi) {
+            bestTarget = p;
+            bestIsAi = pIsAi;
+          }
+          // If both are AI or both are Human, prefer lower health
+          else if (pIsAi === bestIsAi) {
+            if (p.tank.health < bestTarget.tank.health) {
+              bestTarget = p;
+            }
+          }
+        }
+      }
+    }
+
+    if (!hasEnemies) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     if (!target) {
-      const aiEnemies = enemies.filter((e) => !e.isHuman);
-      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
-
-      const sorted = [...candidates].sort((a, b) => {
-        // Prefer weakest target
-        const h = a.tank.health - b.tank.health;
-        if (h !== 0) return h;
-        // Tie-breaker: prefer AI over human (Human Privilege)
-        const ha = a.isHuman ? 1 : 0;
-        const hb = b.isHuman ? 1 : 0;
-        return ha - hb; // AI (0) comes before human (1)
-      });
-      target = sorted[0];
+      target = bestTarget;
     }
 
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget) {
-      console.log(`[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`);
+      console.log(
+        `[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`,
+      );
     }
 
     // Increment attempt counter for this target
@@ -100,7 +128,8 @@ export class AISniperStrategy implements AIEngine {
 
     // Weapon selection:
     // Sniper ONLY uses precise kinetic weapons. Driller if available, otherwise Missile.
-    const chosenWeapon: WeaponId = (self.inventory?.DRILLER ?? 0) > 0 ? 'DRILLER' : 'MISSILE';
+    const chosenWeapon: WeaponId =
+      (self.inventory?.DRILLER ?? 0) > 0 ? "DRILLER" : "MISSILE";
     self.tank.currentWeapon = chosenWeapon; // Update live roster snap for HUD display
 
     // Compute the shot solution
@@ -173,7 +202,18 @@ export class AISniperStrategy implements AIEngine {
         const calculatedAngle = isRight ? thetaDeg : 180 - thetaDeg;
 
         // Verify with actual physics simulation (including wind and drag)
-        const sim = this.simulateShot(sx, sy, calculatedAngle, p, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
+        const sim = this.simulateShot(
+          sx,
+          sy,
+          calculatedAngle,
+          p,
+          wind,
+          g,
+          BASE_SPEED,
+          DT,
+          MAX_STEPS,
+          terrain,
+        );
         const distanceToTarget = Math.hypot(sim.landX - tx, sim.landY - ty);
 
         if (!sim.hitTerrainEarly || distanceToTarget < 35) {
@@ -183,8 +223,22 @@ export class AISniperStrategy implements AIEngine {
           break;
         } else {
           // If blocked by terrain, keep it as fallback in case higher powers don't work
-          const currentBestSim = this.simulateShot(sx, sy, bestAngle, bestPower, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
-          if (distanceToTarget < Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)) {
+          const currentBestSim = this.simulateShot(
+            sx,
+            sy,
+            bestAngle,
+            bestPower,
+            wind,
+            g,
+            BASE_SPEED,
+            DT,
+            MAX_STEPS,
+            terrain,
+          );
+          if (
+            distanceToTarget <
+            Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)
+          ) {
             bestAngle = calculatedAngle;
             bestPower = p;
           }
@@ -193,7 +247,9 @@ export class AISniperStrategy implements AIEngine {
     }
 
     if (!foundSolution) {
-      console.log(`[AI SNIPER] No direct mathematical solution found. Applying default lob path.`);
+      console.log(
+        `[AI SNIPER] No direct mathematical solution found. Applying default lob path.`,
+      );
       bestPower = 90;
       bestAngle = isRight ? 65 : 115;
     }
@@ -205,7 +261,9 @@ export class AISniperStrategy implements AIEngine {
       const errorMargin = 3.5; // slight angle noise (in degrees) for the first shot
       const noise = (Math.random() - 0.5) * errorMargin;
       finalAngle += noise;
-      console.log(`[AI SNIPER] Shot 1 error modulation applied: noise=${noise.toFixed(2)} deg (margin=${errorMargin} deg)`);
+      console.log(
+        `[AI SNIPER] Shot 1 error modulation applied: noise=${noise.toFixed(2)} deg (margin=${errorMargin} deg)`,
+      );
     } else {
       console.log(`[AI SNIPER] Shot ${attempts} corrected perfectly (0 noise)`);
     }

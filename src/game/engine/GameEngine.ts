@@ -12,21 +12,18 @@
  * - AI decisions are injected via the AIStrategy interface (see src/game/entities/ai/).
  */
 
-import { TerrainManager } from './Terrain';
-import { PhysicsEngine, type Projectile } from './PhysicsEngine';
-import { TankManager } from '../entities/TankManager';
-import { TurnManager } from './TurnManager';
-import {
-  WEAPON_REGISTRY,
-  type WeaponId,
-} from '../../types/weapon';
-import type { Player } from '../../types/player';
-import { VGA_PALETTE } from '../../types/game';
-import type { Vector2, FireCommand, RoundResult } from '../../types/game';
-import type { RoundEndPayload } from '../../types/round';
-import type { AIStrategy } from '../entities/ai/AIStrategy';
-import type { AIEngine } from '../entities/ai/AIEngine';
-import { rollRoundWind } from '../wind';
+import { TerrainManager } from "./Terrain";
+import { PhysicsEngine, type Projectile } from "./PhysicsEngine";
+import { TankManager } from "../entities/TankManager";
+import { TurnManager } from "./TurnManager";
+import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
+import type { Player } from "../../types/player";
+import { VGA_PALETTE } from "../../types/game";
+import type { Vector2, FireCommand, RoundResult } from "../../types/game";
+import type { RoundEndPayload } from "../../types/round";
+import type { AIStrategy } from "../entities/ai/AIStrategy";
+import type { AIEngine } from "../entities/ai/AIEngine";
+import { rollRoundWind } from "../wind";
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -70,11 +67,11 @@ export class GameEngine {
 
   // Game over state (entire match ended)
   private gameOver = false;
-  private winner: import('../../types/player').Player | null = null;
+  private winner: import("../../types/player").Player | null = null;
 
   // For round-end (non-match) celebration fireworks (color/position when !gameOver)
   private celebrationCenterX: number = 0;
-  private celebrationColor: string = '#FFFFFF';
+  private celebrationColor: string = "#FFFFFF";
   private celebrationWinnerTankId: string | null = null;
   private celebrationAngle: number = 90;
   private celebrationAngleDir: number = 1;
@@ -114,7 +111,10 @@ export class GameEngine {
   private aliveAtLastShot: Set<string> = new Set();
 
   // Debug: accumulate death reasons to produce a clear summary at game end (especially for "partie nulle")
-  private deathReasons: Record<string, Array<{ cause: string; info?: string; round?: number }>> = {};
+  private deathReasons: Record<
+    string,
+    Array<{ cause: string; info?: string; round?: number }>
+  > = {};
 
   // Audio state for new SFX (throttling prevents slide scrape spam at 120 Hz)
   private lastSlideTimes: Map<string, number> = new Map();
@@ -127,10 +127,12 @@ export class GameEngine {
   public onPhysicsStep?: (projectiles: ReadonlyArray<Projectile>) => void;
 
   /** Callback pour le HUD React (angle, puissance, joueur actif, etc.) */
-  public onTurnHudUpdate?: (info: import('./TurnManager').CurrentTurnInfo) => void;
+  public onTurnHudUpdate?: (
+    info: import("./TurnManager").CurrentTurnInfo,
+  ) => void;
 
   /** Called when only one player remains alive (entire match). */
-  public onGameOver?: (winner: import('../../types/player').Player) => void;
+  public onGameOver?: (winner: import("../../types/player").Player) => void;
 
   /** Called when all players are dead (match draw). */
   public onDraw?: () => void;
@@ -141,11 +143,7 @@ export class GameEngine {
    */
   public onRoundEnded?: (payload: RoundEndPayload) => void;
 
-  constructor(
-    width: number,
-    height: number,
-    config: Partial<GameConfig> = {},
-  ) {
+  constructor(width: number, height: number, config: Partial<GameConfig> = {}) {
     this.width = Math.floor(width);
     this.height = Math.floor(height);
 
@@ -159,23 +157,25 @@ export class GameEngine {
     // Also branch to play distinct death SFX (explosion vs sad burial).
     this.tankManager.onPlayerDied = (playerId, cause, details) => {
       this.recordDeath(playerId, cause, details);
-      if (cause === 'explosion') {
+      if (cause === "explosion") {
         this.playTankDestroyedByExplosionSound();
-      } else if (cause === 'burial') {
+      } else if (cause === "burial") {
         this.playTankSadBurialSound();
       }
     };
 
     // Wire tank movement / pit SFX (consumed by applyGravity in TankManager)
-    this.tankManager.onTankSliding = (playerId) => this.playTankSlidingSound(playerId);
-    this.tankManager.onTankTouchedFloor = () => this.playTankTouchLowestFloorSound();
+    this.tankManager.onTankSliding = (playerId) =>
+      this.playTankSlidingSound(playerId);
+    this.tankManager.onTankTouchedFloor = () =>
+      this.playTankTouchLowestFloorSound();
 
     // Crée le TurnManager avec un callback de tir
     this.turnManager = new TurnManager(
       this.tankManager,
       this.terrain,
       (from, command, ownerId) => {
-        this.fireProjectile(from, command, ownerId ?? 'unknown');
+        this.fireProjectile(from, command, ownerId ?? "unknown");
       },
     );
 
@@ -190,15 +190,18 @@ export class GameEngine {
 
     // Forward hit events from PhysicsEngine (owner now threaded for round rewards)
     this.physicsEngine.onProjectileHit = (hit) => {
-      const firer = this.currentFirerId ?? 'unknown';
+      const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
 
       // Accumulate for end-of-round earnings (damage + kill attribution via alive diff)
-      if (firer !== 'unknown') {
-        this.roundDamageDealt[firer] = (this.roundDamageDealt[firer] ?? 0) + (weapon?.damage ?? 0);
+      if (firer !== "unknown") {
+        this.roundDamageDealt[firer] =
+          (this.roundDamageDealt[firer] ?? 0) + (weapon?.damage ?? 0);
 
         // Attribute any players who died due to *this* impact (splash + direct, works for chains)
-        const nowAlive = new Set(this.tankManager.getAlivePlayers().map((p) => p.id));
+        const nowAlive = new Set(
+          this.tankManager.getAlivePlayers().map((p) => p.id),
+        );
         for (const id of this.aliveAtLastShot) {
           if (!nowAlive.has(id)) {
             this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
@@ -219,7 +222,7 @@ export class GameEngine {
       this.playImpactSound(hit.weaponId);
 
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
-      if (hit.weaponId === 'THERMONUCLEAR') {
+      if (hit.weaponId === "THERMONUCLEAR") {
         this.spawnThermonuclearExplosion(hit.x, hit.y);
       }
     };
@@ -300,7 +303,7 @@ export class GameEngine {
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
-    ownerId: string = 'unknown',
+    ownerId: string = "unknown",
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
@@ -322,7 +325,7 @@ export class GameEngine {
     const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
 
     console.log(
-      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) launch=(${launchX.toFixed(1)},${launchY.toFixed(1)}) angle=${command.angle} power=${command.power}`
+      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) launch=(${launchX.toFixed(1)},${launchY.toFixed(1)}) angle=${command.angle} power=${command.power}`,
     );
 
     // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
@@ -331,7 +334,9 @@ export class GameEngine {
     );
 
     // Lookup firer color for projectile harmonization + recoil trigger (Step 4 polish)
-    const firerPlayer = this.tankManager.getPlayers().find((p) => p.id === ownerId);
+    const firerPlayer = this.tankManager
+      .getPlayers()
+      .find((p) => p.id === ownerId);
     const ownerColor = firerPlayer?.tank.color;
 
     // Micro recoil on chassis at fire instant (opposite barrel dir)
@@ -357,8 +362,8 @@ export class GameEngine {
    */
   public requestAIShot(
     aiStrategy: AIStrategy,
-    self: import('../../types/player').Player,
-    worldView: import('../entities/ai/AIStrategy').AIWorldView,
+    self: import("../../types/player").Player,
+    worldView: import("../entities/ai/AIStrategy").AIWorldView,
   ): boolean {
     const decision = aiStrategy.decideShot(self, worldView);
     if (!decision) return false;
@@ -405,9 +410,14 @@ export class GameEngine {
   }
 
   /** Lightweight celebration reuse for SUMMARY (does NOT set gameOver or winner). Keeps existing final-win paths untouched. */
-  public triggerRoundCelebration(roundWinner?: import('../../types/player').Player): void {
+  public triggerRoundCelebration(
+    roundWinner?: import("../../types/player").Player,
+  ): void {
     if (this.gameOver) return;
-    const cx = roundWinner ? roundWinner.tank.position.x : (this.tankManager.getAlivePlayers()[0]?.tank.position.x ?? this.width / 2);
+    const cx = roundWinner
+      ? roundWinner.tank.position.x
+      : (this.tankManager.getAlivePlayers()[0]?.tank.position.x ??
+        this.width / 2);
     const cy = roundWinner ? roundWinner.tank.position.y - 30 : 60;
     const c = roundWinner ? roundWinner.tank.color : undefined;
     if (roundWinner) {
@@ -425,7 +435,7 @@ export class GameEngine {
     this.impactExplosions = [];
     this.thermoFlashLife = 0;
     this.celebrationCenterX = 0;
-    this.celebrationColor = '#FFFFFF';
+    this.celebrationColor = "#FFFFFF";
     this.celebrationWinnerTankId = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
@@ -450,7 +460,7 @@ export class GameEngine {
     if (this.gameOver) return;
     this.gameOver = true;
     this.winner = null;
-    console.log('[GAME OVER] DRAW (partie nulle)');
+    console.log("[GAME OVER] DRAW (partie nulle)");
     this.onDraw?.();
   }
 
@@ -556,7 +566,13 @@ export class GameEngine {
     const wind = this.windForce;
 
     // Délégation complète au nouveau PhysicsEngine + TankManager
-    this.physicsEngine.updateProjectiles(dt, gravity, wind, this.terrain, this.tankManager);
+    this.physicsEngine.updateProjectiles(
+      dt,
+      gravity,
+      wind,
+      this.terrain,
+      this.tankManager,
+    );
 
     // Continuous tank gravity (post-crater drops, pit falls). Produces slide/floor callbacks.
     this.tankManager.applyGravity(dt, this.terrain);
@@ -608,10 +624,14 @@ export class GameEngine {
 
     if (isDraw) {
       const allPlayers = this.tankManager.getPlayers().map((p) => p.name);
-      console.log(`[ROUND END] DRAW — all tanks destroyed: ${allPlayers.join(', ')}`);
+      console.log(
+        `[ROUND END] DRAW — all tanks destroyed: ${allPlayers.join(", ")}`,
+      );
       this.logDeathSummary();
     } else if (roundWinner) {
-      console.log(`[ROUND END] ${roundWinner.name} is the last tank standing this round`);
+      console.log(
+        `[ROUND END] ${roundWinner.name} is the last tank standing this round`,
+      );
     }
 
     this.onRoundEnded?.({
@@ -622,7 +642,7 @@ export class GameEngine {
   }
 
   private logDeathSummary(): void {
-    console.log('=== RÉSUMÉ DES CAUSES DE MORT ===');
+    console.log("=== RÉSUMÉ DES CAUSES DE MORT ===");
     const playerList = this.tankManager.getPlayers();
     for (const p of playerList) {
       const reasons = this.deathReasons[p.id] || [];
@@ -632,18 +652,18 @@ export class GameEngine {
       }
       console.log(`  - ${p.name}:`);
       for (const r of reasons) {
-        const turnInfo = r.round ? ` (turn ~${r.round})` : '';
-        console.log(`      • ${r.cause}${turnInfo}: ${r.info ?? ''}`);
+        const turnInfo = r.round ? ` (turn ~${r.round})` : "";
+        console.log(`      • ${r.cause}${turnInfo}: ${r.info ?? ""}`);
       }
     }
-    console.log('==================================');
+    console.log("==================================");
   }
 
   // === Rendering (called by GameCanvas every frame) ===
 
   public render(ctx: CanvasRenderingContext2D): void {
     // Sky
-    ctx.fillStyle = '#0000AA';
+    ctx.fillStyle = "#0000AA";
     ctx.fillRect(0, 0, this.width, this.height);
 
     // Terrain (délégué au TerrainManager qui utilise la palette VGA)
@@ -682,7 +702,11 @@ export class GameEngine {
     // Uses sine on real timestamp for bob (as specified), player primary color for instant ID.
     // Drawn after tanks so it sits on top; cheap math only (no allocs in 120 Hz path).
     const activePlayer = this.turnManager.getCurrentPlayer();
-    if (activePlayer && !activePlayer.tank.isDead && !this.turnManager.isInterRoundPaused()) {
+    if (
+      activePlayer &&
+      !activePlayer.tank.isDead &&
+      !this.turnManager.isInterRoundPaused()
+    ) {
       const tx = activePlayer.tank.position.x;
       const ty = activePlayer.tank.position.y;
       const color = activePlayer.tank.color;
@@ -725,8 +749,8 @@ export class GameEngine {
     // Petit message de victoire sur le canvas seulement pour fin de match
     if (this.gameOver && this.winner) {
       ctx.fillStyle = this.winner.tank.color;
-      ctx.font = 'bold 28px monospace';
-      ctx.textAlign = 'center';
+      ctx.font = "bold 28px monospace";
+      ctx.textAlign = "center";
       ctx.fillText(`${this.winner.name} WINS!`, this.width / 2, 80);
     }
   }
@@ -738,10 +762,14 @@ export class GameEngine {
   }
 
   /** Starts a fireworks celebration above the winner (or round winner) */
-  private startFireworks(centerX: number, centerY: number, color?: string): void {
+  private startFireworks(
+    centerX: number,
+    centerY: number,
+    color?: string,
+  ): void {
     this.fireworks = [];
     this.celebrationCenterX = centerX;
-    this.celebrationColor = color ?? this.winner?.tank.color ?? '#FFFFFF';
+    this.celebrationColor = color ?? this.winner?.tank.color ?? "#FFFFFF";
     this.playVictoryFanfare();
 
     // Create more initial big rockets for a joyful start
@@ -789,8 +817,12 @@ export class GameEngine {
       const notes = [60, 64, 67, 72, 76, 79, 84]; // C major arpeggio (joyful)
       const noteDuration = 0.18;
 
-      this.victoryOscillators.forEach(osc => {
-        try { osc.stop(); } catch { /* ignore */ }
+      this.victoryOscillators.forEach((osc) => {
+        try {
+          osc.stop();
+        } catch {
+          /* ignore */
+        }
       });
       this.victoryOscillators = [];
 
@@ -801,10 +833,10 @@ export class GameEngine {
 
         const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
 
-        osc.type = 'sawtooth';
+        osc.type = "sawtooth";
         osc.frequency.value = frequency;
 
-        filter.type = 'lowpass';
+        filter.type = "lowpass";
         filter.frequency.value = 1800;
 
         gain.gain.value = 0.18;
@@ -833,7 +865,7 @@ export class GameEngine {
           const gain = c2.createGain();
           const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
 
-          osc.type = i === 0 ? 'square' : 'sawtooth';
+          osc.type = i === 0 ? "square" : "sawtooth";
           osc.frequency.value = freq;
 
           gain.gain.value = 0.12;
@@ -853,8 +885,12 @@ export class GameEngine {
   }
 
   private stopVictoryMusic(): void {
-    this.victoryOscillators.forEach(osc => {
-      try { osc.stop(); } catch { /* ignore */ }
+    this.victoryOscillators.forEach((osc) => {
+      try {
+        osc.stop();
+      } catch {
+        /* ignore */
+      }
     });
     this.victoryOscillators = [];
   }
@@ -875,7 +911,9 @@ export class GameEngine {
 
       // Shoot a firework from the cannon tip at the current angle (with some spread)
       if (Math.random() < 0.28) {
-        const winnerP = this.tankManager.getPlayers().find((p) => p.tank.id === this.celebrationWinnerTankId);
+        const winnerP = this.tankManager
+          .getPlayers()
+          .find((p) => p.tank.id === this.celebrationWinnerTankId);
         if (winnerP) {
           const tank = winnerP.tank;
           const barrelLength = 20;
@@ -905,7 +943,7 @@ export class GameEngine {
     for (const p of this.fireworks) {
       p.x += p.vx;
       p.y += p.vy;
-      p.vy += 0.10; // gravity
+      p.vy += 0.1; // gravity
       p.life -= 1;
 
       if (p.life > 0) {
@@ -933,8 +971,12 @@ export class GameEngine {
 
     // Keep spawning lots of big rockets while celebrating (game over match win OR round win fireworks)
     if (this.fireworks.length < 22 && Math.random() < 0.42) {
-      const winnerX = this.winner?.tank.position.x ?? this.celebrationCenterX ?? this.width / 2;
-      const spawnColor = this.winner?.tank.color ?? this.celebrationColor ?? '#FFFFFF';
+      const winnerX =
+        this.winner?.tank.position.x ??
+        this.celebrationCenterX ??
+        this.width / 2;
+      const spawnColor =
+        this.winner?.tank.color ?? this.celebrationColor ?? "#FFFFFF";
       this.fireworks.push({
         x: winnerX + (Math.random() - 0.5) * 130,
         y: 50 + Math.random() * 80,
@@ -973,7 +1015,12 @@ export class GameEngine {
    */
   private spawnThermonuclearExplosion(x: number, y: number): void {
     this.thermoFlashLife = 13; // frames of full-ish red flash overlay
-    const colors = [VGA_PALETTE.RED, VGA_PALETTE.YELLOW, VGA_PALETTE.DARK_RED, VGA_PALETTE.BROWN];
+    const colors = [
+      VGA_PALETTE.RED,
+      VGA_PALETTE.YELLOW,
+      VGA_PALETTE.DARK_RED,
+      VGA_PALETTE.BROWN,
+    ];
     for (let i = 0; i < 42; i++) {
       const spread = 38 + Math.random() * 18;
       this.impactExplosions.push({
@@ -1027,7 +1074,7 @@ export class GameEngine {
     return this.gameOver;
   }
 
-  public getWinner(): import('../../types/player').Player | null {
+  public getWinner(): import("../../types/player").Player | null {
     return this.winner;
   }
 
@@ -1097,75 +1144,79 @@ export class GameEngine {
       // Heavy use of noise (LFSR) + a little low tone for body. Short, gritty, not melodic.
 
       switch (weaponId) {
-        case 'MISSILE': {
+        case "MISSILE": {
           // Classic rocket launch: mid noise whoosh + quick low "thump" body
           this.playNoiseBurst(0.09, 0.22, 1800, 420);
           // subtle low end "report"
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'triangle'; // more "NES triangle channel" feel than sine
+          osc.type = "triangle"; // more "NES triangle channel" feel than sine
           osc.frequency.value = 95;
           gain.gain.value = 0.18;
-          osc.connect(gain); gain.connect(ctx.destination);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
           osc.start(now);
           gain.gain.setValueAtTime(0.18, now);
           gain.gain.linearRampToValueAtTime(0.0005, now + 0.07);
           osc.stop(now + 0.09);
           break;
         }
-        case 'GRENADE': {
+        case "GRENADE": {
           // Lobbed: shorter, slightly higher noise "pop" with a little tail
           this.playNoiseBurst(0.07, 0.26, 2400, 650);
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'square';
+          osc.type = "square";
           osc.frequency.value = 140;
           gain.gain.value = 0.15;
-          osc.connect(gain); gain.connect(ctx.destination);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
           osc.start(now);
           gain.gain.setValueAtTime(0.15, now);
           gain.gain.linearRampToValueAtTime(0.0004, now + 0.09);
           osc.stop(now + 0.11);
           break;
         }
-        case 'CLUSTER': {
+        case "CLUSTER": {
           // Multiple small noisy "submunition release" pops — not clean chirps
           for (let k = 0; k < 4; k++) {
             this.playNoiseBurst(0.045, 0.15, 2600 + k * 120, 900);
           }
           break;
         }
-        case 'NUKE': {
+        case "NUKE": {
           // Deep heavy launch rumble
           this.playNoiseBurst(0.28, 0.28, 650, 140);
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'triangle';
+          osc.type = "triangle";
           osc.frequency.value = 55;
           gain.gain.value = 0.35;
-          osc.connect(gain); gain.connect(ctx.destination);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
           osc.start(now);
           gain.gain.setValueAtTime(0.35, now);
           gain.gain.linearRampToValueAtTime(0.0003, now + 0.26);
           osc.stop(now + 0.32);
           break;
         }
-        case 'THERMONUCLEAR': {
+        case "THERMONUCLEAR": {
           // Massive thermonuclear launch — deeper/longer than nuke
           this.playNoiseBurst(0.36, 0.33, 520, 85);
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'triangle';
+          osc.type = "triangle";
           osc.frequency.value = 38;
           gain.gain.value = 0.38;
-          osc.connect(gain); gain.connect(ctx.destination);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
           osc.start(now);
           gain.gain.setValueAtTime(0.38, now);
           gain.gain.linearRampToValueAtTime(0.0002, now + 0.38);
           osc.stop(now + 0.42);
           break;
         }
-        case 'DRILLER': {
+        case "DRILLER": {
           // Rapid noisy "drilling / boring" texture — series of gritty ticks
           for (let k = 0; k < 5; k++) {
             this.playNoiseBurst(0.028, 0.18, 3200 - k * 180, 1100);
@@ -1173,10 +1224,11 @@ export class GameEngine {
           // low "motor" hum underneath
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'sawtooth';
+          osc.type = "sawtooth";
           osc.frequency.value = 85;
           gain.gain.value = 0.12;
-          osc.connect(gain); gain.connect(ctx.destination);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
           osc.start(now);
           osc.frequency.setValueAtTime(85, now);
           osc.frequency.linearRampToValueAtTime(72, now + 0.12);
@@ -1201,9 +1253,9 @@ export class GameEngine {
       // Use LFSR noise + downward filter sweep (bright crackle → low rumble).
       // Only a little low triangle body for the "oomph", not a clean pongy tone.
 
-      const isNuke = weaponId === 'NUKE';
-      const isCluster = weaponId === 'CLUSTER';
-      const isThermo = weaponId === 'THERMONUCLEAR';
+      const isNuke = weaponId === "NUKE";
+      const isCluster = weaponId === "CLUSTER";
+      const isThermo = weaponId === "THERMONUCLEAR";
 
       if (isThermo) {
         // HUGE bomb sound: long multi-layer nuclear rumble + aftershocks (deeper + longer than nuke)
@@ -1212,10 +1264,11 @@ export class GameEngine {
         // deep body layers
         const osc1 = ctx.createOscillator();
         const gain1 = ctx.createGain();
-        osc1.type = 'triangle';
+        osc1.type = "triangle";
         osc1.frequency.value = 32;
         gain1.gain.value = 0.46;
-        osc1.connect(gain1); gain1.connect(ctx.destination);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
         osc1.start(now);
         gain1.gain.setValueAtTime(0.46, now);
         gain1.gain.linearRampToValueAtTime(0.00015, now + 0.85);
@@ -1223,10 +1276,11 @@ export class GameEngine {
 
         const osc2 = ctx.createOscillator();
         const gain2 = ctx.createGain();
-        osc2.type = 'sawtooth';
+        osc2.type = "sawtooth";
         osc2.frequency.value = 28;
         gain2.gain.value = 0.22;
-        osc2.connect(gain2); gain2.connect(ctx.destination);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
         osc2.start(now + 0.12);
         osc2.frequency.setValueAtTime(28, now + 0.12);
         osc2.frequency.linearRampToValueAtTime(22, now + 0.75);
@@ -1239,10 +1293,11 @@ export class GameEngine {
         // very low body
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.type = 'triangle';
+        osc.type = "triangle";
         osc.frequency.value = 42;
         gain.gain.value = 0.42;
-        osc.connect(gain); gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
         osc.start(now);
         gain.gain.setValueAtTime(0.42, now);
         gain.gain.linearRampToValueAtTime(0.0002, now + 0.6);
@@ -1254,17 +1309,18 @@ export class GameEngine {
         }
       } else {
         // Standard missile/grenade/driller hit
-        const startCut = (weaponId === 'DRILLER') ? 3200 : 1950;
-        const endCut = (weaponId === 'GRENADE') ? 380 : 160;
+        const startCut = weaponId === "DRILLER" ? 3200 : 1950;
+        const endCut = weaponId === "GRENADE" ? 380 : 160;
         this.playNoiseBurst(0.22, 0.26, startCut, endCut);
 
         // light low body
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.type = 'triangle';
+        osc.type = "triangle";
         osc.frequency.value = 78;
         gain.gain.value = 0.17;
-        osc.connect(gain); gain.connect(ctx.destination);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
         osc.start(now);
         gain.gain.setValueAtTime(0.17, now);
         gain.gain.linearRampToValueAtTime(0.0003, now + 0.18);
@@ -1288,10 +1344,11 @@ export class GameEngine {
       // Low dirty body (triangle for that old console bass thump)
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'triangle';
+      osc.type = "triangle";
       osc.frequency.value = 58;
       gain.gain.value = 0.32;
-      osc.connect(gain); gain.connect(ctx.destination);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
       osc.start(now);
       gain.gain.setValueAtTime(0.32, now);
       gain.gain.linearRampToValueAtTime(0.0003, now + 0.42);
@@ -1316,10 +1373,11 @@ export class GameEngine {
       const t2 = now + 0.48;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'triangle';
+      osc.type = "triangle";
       osc.frequency.value = 48;
       gain.gain.value = 0.21;
-      osc.connect(gain); gain.connect(ctx.destination);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
       osc.start(t2);
       gain.gain.setValueAtTime(0.21, t2);
       gain.gain.linearRampToValueAtTime(0.0002, t2 + 0.38);
@@ -1351,7 +1409,7 @@ export class GameEngine {
       // for a bit more "dirt" while staying percussive and satisfying.
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'triangle';
+      osc.type = "triangle";
       osc.frequency.value = 48;
       gain.gain.value = 0.36;
       osc.connect(gain);
@@ -1368,12 +1426,18 @@ export class GameEngine {
     }
   }
 
-  /** 
+  /**
    * Noise burst helper — now with retro LFSR-style noise (more NES/ATARI grit than pure white)
    * and optional filter sweep (start high for crackle, sweep low for body rumble).
    * This is the key to moving away from "PONG" clean beeps toward thumpy, crackly old-school explosions.
    */
-  private playNoiseBurst(duration: number, volume: number, cutoff: number, sweepTo?: number, startOffset = 0): void {
+  private playNoiseBurst(
+    duration: number,
+    volume: number,
+    cutoff: number,
+    sweepTo?: number,
+    startOffset = 0,
+  ): void {
     const ctx = this.ensureAudioContext();
     if (!ctx) return;
     try {
@@ -1383,19 +1447,19 @@ export class GameEngine {
 
       // Simple 16-bit LFSR for grittier, more "console noise channel" character (periodicity + buzz)
       // instead of modern white noise. This helps the "NES/ATARI but realistic" feel.
-      let lfsr = 0xACE1 >>> 0;
+      let lfsr = 0xace1 >>> 0;
       for (let i = 0; i < len; i++) {
         // 16-bit LFSR with common taps (0, 2, 3, 5) for decent length sequence
         const bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1;
         lfsr = ((lfsr >>> 1) | (bit << 15)) >>> 0;
-        data[i] = (lfsr & 1) ? 0.9 : -0.9;  // slightly less than full scale for headroom when layered
+        data[i] = lfsr & 1 ? 0.9 : -0.9; // slightly less than full scale for headroom when layered
       }
 
       const src = ctx.createBufferSource();
       src.buffer = buf;
 
       const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
+      filter.type = "lowpass";
       filter.frequency.value = cutoff;
 
       const gain = ctx.createGain();

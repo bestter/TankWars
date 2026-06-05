@@ -6,9 +6,9 @@
  * executeTurn may return optional weaponId to let AI pick ammo for the shot.
  */
 
-import type { GameState } from '../../../types/game';
-import type { TerrainManager } from '../../engine/Terrain';
-import type { WeaponId } from '../../../types/weapon';
+import type { GameState } from "../../../types/game";
+import type { TerrainManager } from "../../engine/Terrain";
+import type { WeaponId } from "../../../types/weapon";
 
 export interface AIEngine {
   /**
