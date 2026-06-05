@@ -436,3 +436,18 @@
   text-align: center;
   letter-spacing: 0.3px;
 }
+
+.retro-color-swatch-btn {
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  position: relative;
+  transition: all 0.15s ease-in-out;
+}
+
+.retro-color-swatch-btn:hover:not(:disabled) {
+  opacity: 1 !important;
+  transform: scale(1.2) !important;
+}
+

@@ -133,52 +133,91 @@ export class AISniperStrategy implements AIEngine {
     const tx = target.tank.position.x;
     const ty = target.tank.position.y - 6; // Aim at center body of tank
     const dx = tx - sx;
+    const dy = sy - ty; // Altitude relative to self (Y is inverted in canvas, so sy - ty > 0 means target is higher)
     const isRight = dx > 0;
-
-    // Safe angle cones
-    const aMin = isRight ? 20 : 100;
-    const aMax = isRight ? 80 : 160;
 
     const BASE_SPEED = 4.2;
     const DT = 1 / 120;
     const MAX_STEPS = 420;
 
-    // "NEVER one-shot": On attempt 1, offset the target's X position by 30px.
-    // This guarantees a clean miss that does 0 damage or extremely minor splash (28px radius),
-    // meaning the tank is never destroyed on the first shot.
-    // On attempt 2+, aim exactly at the target.
-    let targetX = tx;
-    if (attempts === 1) {
-      // Offset away from target (towards screen bounds or just randomly)
-      const offsetDirection = dx > 0 ? -30 : 30; // Land slightly short
-      targetX = tx + offsetDirection;
-    }
+    const x = Math.abs(dx);
+    const y = dy;
+    const g = gravity;
 
-    let best = { angle: isRight ? 55 : 125, power: 60, err: 99999 };
+    // 1. Calculate minimum required initial speed v_min for a valid ballistic path
+    // Formula: v^2_min = g * (y + sqrt(x^2 + y^2))
+    const minVSq = g * (y + Math.sqrt(x * x + y * y));
+    const minV = Math.sqrt(Math.max(0.1, minVSq));
+    const minPower = minV / BASE_SPEED;
 
-    // Finer search (1.0 deg steps) for surgical sniper precision
-    for (let a = aMin; a <= aMax; a += 1.0) {
-      let lo = 20;
-      let hi = 95;
-      // 12 binary search steps (more accurate than 7)
-      for (let iter = 0; iter < 12; iter++) {
-        const p = (lo + hi) / 2;
-        const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
-        const xErr = Math.abs(res.landX - targetX);
-        const yErr = Math.abs(res.landY - ty) * 0.35;
-        const err = xErr + yErr + (res.hitTerrainEarly ? 20 : 0);
-        if (err < best.err) {
-          best = { angle: a, power: p, err };
+    // Start with a safety margin (e.g. +6%) to counteract drag/wind resistance
+    let power = Math.max(50, Math.ceil(minPower * 1.06));
+    power = Math.min(95, power);
+
+    let bestAngle = isRight ? 55 : 125;
+    let bestPower = power;
+    let foundSolution = false;
+
+    // Try finding the optimal lob angle, increasing power if terrain obstacles are met
+    for (let p = power; p <= 95; p += 5) {
+      const v = p * BASE_SPEED;
+      const vSq = v * v;
+      const discriminant = vSq * vSq - g * (g * x * x + 2 * y * vSq);
+
+      if (discriminant >= 0) {
+        // High lob trajectory (positive root +)
+        const tanTheta = (vSq + Math.sqrt(discriminant)) / (g * x);
+        const thetaRad = Math.atan(tanTheta);
+        const thetaDeg = (thetaRad * 180) / Math.PI;
+
+        const calculatedAngle = isRight ? thetaDeg : 180 - thetaDeg;
+
+        // Verify with actual physics simulation (including wind and drag)
+        const sim = this.simulateShot(sx, sy, calculatedAngle, p, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
+        const distanceToTarget = Math.hypot(sim.landX - tx, sim.landY - ty);
+
+        if (!sim.hitTerrainEarly || distanceToTarget < 35) {
+          bestAngle = calculatedAngle;
+          bestPower = p;
+          foundSolution = true;
+          break;
+        } else {
+          // If blocked by terrain, keep it as fallback in case higher powers don't work
+          const currentBestSim = this.simulateShot(sx, sy, bestAngle, bestPower, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
+          if (distanceToTarget < Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)) {
+            bestAngle = calculatedAngle;
+            bestPower = p;
+          }
         }
-        if (res.landX < targetX - 2) lo = p;
-        else hi = p;
       }
     }
 
-    const angle = best.angle;
-    const power = best.power;
+    if (!foundSolution) {
+      console.log(`[AI SNIPER] No direct mathematical solution found. Applying default lob path.`);
+      bestPower = 90;
+      bestAngle = isRight ? 65 : 115;
+    }
 
-    return { angle, power };
+    let finalAngle = bestAngle;
+
+    // 3. Add precision modulator (Tâche 3)
+    if (attempts === 1) {
+      const errorMargin = 3.5; // slight angle noise (in degrees) for the first shot
+      const noise = (Math.random() - 0.5) * errorMargin;
+      finalAngle += noise;
+      console.log(`[AI SNIPER] Shot 1 error modulation applied: noise=${noise.toFixed(2)} deg (margin=${errorMargin} deg)`);
+    } else {
+      console.log(`[AI SNIPER] Shot ${attempts} corrected perfectly (0 noise)`);
+    }
+
+    // Keep angle within safe cones to prevent shooting backward
+    if (isRight) {
+      finalAngle = Math.max(15, Math.min(85, finalAngle));
+    } else {
+      finalAngle = Math.max(95, Math.min(165, finalAngle));
+    }
+
+    return { angle: finalAngle, power: bestPower };
   }
 
   private simulateShot(

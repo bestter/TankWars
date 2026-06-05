@@ -14,7 +14,7 @@
 ## Features
 
 - **Destructible Heightmap Terrain** — Procedurally generated rolling hills using layered sine waves + high-frequency noise. Circular crater destruction with smooth falloff.
-- **Authentic 16-Color VGA Palette** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette.
+- **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with high-contrast arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, ...) to support the upcoming tank visual redesign.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters).
 - **Multiple Weapons**
   - Missile (balanced, unlimited)
@@ -23,11 +23,14 @@
   - Baby Nuke (massive blast)
   - Driller (penetrating)
   - Thermonuclear Bomb (devastating, destroys ~1/4 of the map with inner instant-kill zone; outer tanks fall into giant crater; huge red-orange explosion VFX and deep bomb sound)
-- **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA Simple ("Mr. Simple") / IA OK opponents before each battle. Unique VGA colors assigned automatically.
+- **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT before each battle. Unique VGA colors assigned automatically with live previews and mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.
-- **Pluggable AI System** — Clean `AIEngine` interface. `AIByProfileStrategy` router selects per player:
+- **Pluggable AI System** — Clean `AIEngine` interface. `AIByProfileStrategy` router selects per player (mixed Human + AI supported):
   - Phase 1: `AISimpleStrategy` ("IA SIMPLE" / "Mr. Simple", `aiProfile: 'v1-random'`) — deliberately naive.
-  - Phase 2: `AIHeuristicStrategy` ("IA OK", `aiProfile: 'v2-heuristic'`) — wind/terrain-aware heuristic aiming, revenge targeting, per-round memory + precision ramp on targets, weapon selection. Not a one-shot sniper.
+  - Phase 2: `AIHeuristicStrategy` ("IA OK", `aiProfile: 'v2-heuristic'`) — wind/terrain-aware, revenge (`lastHitBy`), memory/precision ramp, smart weapon choice.
+  - Phase 3: `AISniperStrategy` ("IA SNIPER", `aiProfile: 'v3-sniper'`) — high precision.
+  - Phase 4: `AISmartStrategy` ("IA EXPERT", `aiProfile: 'v4-smart'`) — adaptive/smart.
+  All wired in MainMenu + GameCanvas. Not one-shot snipers by design (v2+).
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
@@ -45,7 +48,7 @@
 | `A` / `E` | Switch weapon                   |
 | Mouse     | Click weapon buttons in HUD     |
 
-The game now starts on a full retro Main Menu where you configure players before entering combat. During a match the in-game HUD provides weapon selection and turn information.
+The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks play before SUMMARY.
 
 ---
 
@@ -87,6 +90,7 @@ This project follows a strict separation of concerns:
 - **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
+- **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate for future engine integration. Strict React/Canvas decoupling.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches based on `player.aiProfile`:
   - `v1-random`: `AISimpleStrategy` (Phase 1, "IA SIMPLE").
   - `v2-heuristic`: `AIHeuristicStrategy` (Phase 2 "IA OK" — heuristic + memory + revenge).
@@ -99,30 +103,30 @@ This project follows a strict separation of concerns:
 - No React state inside the render loop.
 - AI strategies must not block the core architecture.
 
-**Developer docs:** [AGENTS.md](./AGENTS.md) (coding agents — layout, commands, checklists) · [CLAUDE.md](./CLAUDE.md) (project rules).
+**Developer docs:** [AGENTS.md](./AGENTS.md) (coding agents — layout, commands, checklists, Step 4 polish notes) · [CLAUDE.md](./CLAUDE.md) · [GROK.md](./GROK.md) · [CURSOR.md](./CURSOR.md) (project rules).
 
 ---
 
 ## Current Status
 
-**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human, IA SIMPLE "Mr. Simple", and IA OK) on a fully interactive destructible battlefield.
+**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human + IA SIMPLE / IA OK / IA SNIPER / IA EXPERT) on a fully interactive destructible battlefield with Step 4, 5, 6 & 7 gameplay, physics and AI polish.
 
 Fully working:
-- **Main Menu** (`MENU` phase): Retro DOS/VGA interface with player count (2-4), name editing, Human/IA SIMPLE ("Mr. Simple")/IA OK toggles (v1-random / v2-heuristic), and automatic unique VGA color assignment.
+- **Main Menu** (`MENU` phase): Retro DOS/VGA with player count (2-4), names, Human/IA profiles (v1-v4), ColorPicker (mutual exclusion) + live TankPreview, auto VGA colors.
+- **Visual tank redesign, positioning & collision (Steps 1-6 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margins and minimum distance constraints; **Step 6** direct AABB shell-to-tank collision detection with launch-time self-sabotage protection.
 - Terrain generation + real-time cratering
-- Projectile physics + wind
-- Turn system + AI turns (Phase 1 `AISimpleStrategy` "IA SIMPLE" + Phase 2 `AIHeuristicStrategy` "IA OK" via profile selector)
-- Keyboard aiming & firing + proper HUD
-- Multiple weapons with ammo (Missile unlimited; others limited)
-- Sequential weapon shop between rounds (full economy)
-- Round summaries + Game Over detection + restart
+- Projectile physics + wind + owner color inheritance
+- Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations + noise error modulator)
+- Keyboard + HUD (WindBanner)
+- Multiple weapons + limited ammo + shop economy
+- Round summaries (CELEBRATION fireworks) + Game Over + next round / restart
 
 In progress / planned:
 - Sound effects & particle polish
 - Local hotseat multiplayer polish (already supports up to 4 players)
 - More weapons and power-ups
 - Persistent high scores / match history
-- Further AI refinements (v2-heuristic "IA OK" already implemented)
+- Further AI refinements (v1-v4 profiles implemented)
 
 ---
 
@@ -152,9 +156,11 @@ To explore the codebase:
 
 - Start with `src/App.tsx` (top-level phase management) and `src/components/MainMenu.tsx`
 - Main game view + engine integration: `src/components/GameCanvas.tsx`
-- Core simulation lives in `src/game/engine/GameEngine.ts`
+- Core simulation lives in `src/game/engine/GameEngine.ts` (also hosts active turn indicator + recoil trigger + celebration)
 - Terrain destruction: `src/game/engine/Terrain.ts`
-- AI contract: `src/game/entities/ai/AIEngine.ts` (Phase 1: `AISimpleStrategy.ts`, Phase 2: `AIHeuristicStrategy.ts`; router `AIByProfileStrategy.ts`)
+- AI contract: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
+- Tank + recoil visuals: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
+- Projectile color harmonization: `src/game/engine/PhysicsEngine.ts`
 - Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!

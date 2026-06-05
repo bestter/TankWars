@@ -20,6 +20,8 @@ import { useState, useRef } from 'react';
 import type { Player } from '../types/player';
 import { VGA_PALETTE, type Color } from '../types/game';
 import { DEFAULT_INVENTORY } from '../types/weapon';
+import { ColorPicker } from './ColorPicker';
+import { TankPreview } from './TankPreview';
 
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
@@ -36,19 +38,20 @@ interface PlayerConfig {
   aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart';
 }
 
-/** Couleurs tanks jouables (palette VGA sûre, sans conflit avec assets jeu : 
- * sol=BROWN, herbe=GREEN, ciel=DARK_BLUE, lave=DARK_RED/RED/YELLOW, 
- * et couleurs UI principales comme CYAN/MAGENTA utilisées dans HUD. 
- * Évite aussi BLACK/WHITE/GRAY pour contraste/unicité.
+/** Couleurs tanks jouables (palette VGA rétro classique + extensions néon haute visibilité)
+ *  Chaque couleur est distincte et offre un excellent contraste sur fond sombre.
  */
 const TANK_COLOR_POOL: readonly Color[] = [
-  VGA_PALETTE.BLUE,       // #5555FF - safe
-  VGA_PALETTE.DARK_CYAN,  // #00AAAA - safe
-  VGA_PALETTE.DARK_MAGENTA, // #AA00AA - safe
-  VGA_PALETTE.MAGENTA,    // #FF55FF - acceptable for tanks
-  VGA_PALETTE.CYAN,       // #55FFFF - was in old, acceptable
-  VGA_PALETTE.DARK_GREEN, // #00AA00 - distinct from grass
+  VGA_PALETTE.BLUE,            // #5555FF - Joueur 1 (Bleu par défaut)
+  VGA_PALETTE.RED,             // #FF5555 - Joueur 2 (Rouge par défaut)
+  VGA_PALETTE.ELECTRIC_CYAN,   // #00F7FF
+  VGA_PALETTE.FLASH_GREEN,     // #00FF7F
+  VGA_PALETTE.NEON_PINK,       // #FF1A8C
+  VGA_PALETTE.CYBER_YELLOW,    // #D7FF00
+  VGA_PALETTE.FLUO_ORANGE,     // #FF8C00
+  VGA_PALETTE.VOLT_PURPLE,     // #B300FF
 ] as const;
+
 
 function getDefaultName(index: number, isHuman: boolean): string {
   if (index === 0) return isHuman ? 'Player-1' : 'CPU-1';
@@ -221,43 +224,14 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
             {playerConfigs.map((cfg, index) => {
               const color = cfg.color;
               const isHuman = cfg.isHuman;
+              const unavailableColors = new Set(
+                playerConfigs.filter((_, pi) => pi !== index).map((pc) => pc.color)
+              );
 
               return (
-                <div key={cfg.id} className="retro-player-row">
-                  {/* Liste des couleurs disponibles pour ce joueur (sélectionnées par les autres retirées).
-                      La couleur courante est mise en évidence par bordure blanche.
-                      Utilise <button> pour accessibilité et clavier. */}
-                  <div style={{ display: 'flex', gap: '2px', flexShrink: 0, alignItems: 'center' }}>
-                    {TANK_COLOR_POOL
-                      .filter((c) => !playerConfigs.some((pc, pi) => pi !== index && pc.color === c))
-                      .map((availColor) => {
-                        const isSelected = availColor === color;
-                        return (
-                          <button
-                            key={availColor}
-                            type="button"
-                            className="retro-color-swatch"
-                            style={{
-                              backgroundColor: availColor,
-                              width: isSelected ? 16 : 12,
-                              height: isSelected ? 14 : 10,
-                              border: isSelected
-                                ? `2px solid ${VGA_PALETTE.WHITE}`
-                                : '1px solid #555555',
-                              padding: 0,
-                              margin: 0,
-                              cursor: 'pointer',
-                              flexShrink: 0,
-                              boxSizing: 'border-box',
-                              opacity: isSelected ? 1 : 0.85,
-                            }}
-                            title={availColor}
-                            aria-label={`Select color ${availColor} for this player`}
-                            onClick={() => handleColorSelect(index, availColor)}
-                          />
-                        );
-                      })}
-                  </div>
+                <div key={cfg.id} className="retro-player-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* Aperçu miniature du tank */}
+                  <TankPreview color={color} />
 
                   {/* Nom du joueur (éditable) */}
                   <input
@@ -269,6 +243,14 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     onChange={(e) => handleNameChange(index, e.target.value)}
                     placeholder={`Player ${index + 1}`}
                     aria-label={`Nom du joueur ${index + 1}`}
+                  />
+
+                  {/* Sélecteur de couleur avec exclusion mutuelle */}
+                  <ColorPicker
+                    selectedColor={color}
+                    onColorSelect={(newColor) => handleColorSelect(index, newColor)}
+                    unavailableColors={unavailableColors}
+                    colorPool={TANK_COLOR_POOL}
                   />
 
                   {/* Select Controller Type (Humain, IA Simple, IA OK, IA Sniper, IA Expert) */}
@@ -326,10 +308,11 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
             })}
           </div>
 
-          <div style={{ fontSize: 10, color: '#666666', marginTop: -2, marginBottom: 8 }}>
-            Pour chaque joueur, seule la liste des couleurs encore disponibles est affichée (les couleurs déjà choisies par les autres joueurs sont retirées).<br />
-            Palette VGA sûre (exclut sol, herbe, ciel, lave et couleurs UI principales). Les couleurs doivent être uniques.
+          <div style={{ fontSize: 10, color: '#666666', marginTop: -2, marginBottom: 8, lineHeight: '1.4' }}>
+            Sélectionnez la couleur de chaque tank. Les pastilles avec une croix rouge (✕) et atténuées sont déjà choisies par d'autres joueurs (exclusion mutuelle).<br />
+            Un aperçu miniature en temps réel du tank s'affiche à gauche de chaque joueur.
           </div>
+
 
           {/* === GROS BOUTON D'ACTION === */}
           <div style={{ textAlign: 'center' }}>

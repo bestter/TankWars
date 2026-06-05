@@ -9,6 +9,7 @@ import type { Player } from '../../types/player';
 import type { TerrainManager } from '../engine/Terrain';
 import { VGA_PALETTE } from '../../types/game';
 import type { WeaponId } from '../../types/weapon';
+import { drawTankSprite } from '../rendering/tankSprite';
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -40,6 +41,11 @@ export class TankManager {
   /** Map to track if a tank is falling in the void (versus sliding down a slope). */
   private isVoidFall: Map<string, boolean> = new Map();
 
+  /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
+   *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
+   */
+  private recoilState: Map<string, { dx: number; dy: number; remaining: number }> = new Map();
+
   /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
   public onPlayerDied?: (playerId: string, cause: 'explosion' | 'burial', details: string) => void;
 
@@ -55,6 +61,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -66,6 +73,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
   }
 
   public getPlayers(): ReadonlyArray<Player> {
@@ -151,6 +159,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -416,13 +425,14 @@ export class TankManager {
    * immediately (per weapon rules: blast radius, damage, special kill zones, etc.)
    * instead of only triggering on terrain.
    */
-  public checkTankCollision(x: number, y: number): boolean {
-    const tankWidth = 14;
-    const tankHeight = 8;
+  public checkTankCollision(x: number, y: number, ignoreOwnerId?: string): boolean {
+    const tankWidth = 24;
+    const tankHeight = 15;
 
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
+      if (ignoreOwnerId && player.id === ignoreOwnerId) continue;
 
       const { x: tx, y: ty } = tank.position;
       if (
@@ -531,9 +541,13 @@ export class TankManager {
    * Rendu rétro des tanks (style VGA 16 couleurs).
    * Affiche optionnellement les noms des joueurs (masqués pendant le vol des projectiles).
    */
-  public draw(ctx: CanvasRenderingContext2D, showPlayerNames: boolean = true): void {
-    const tankWidth = 14;
-    const tankHeight = 8;
+  public draw(
+    ctx: CanvasRenderingContext2D,
+    showPlayerNames: boolean = true,
+    terrain?: TerrainManager
+  ): void {
+    const tankWidth = 24;
+    const tankHeight = 15;
 
     for (const player of this.players) {
       const tank = player.tank;
@@ -542,63 +556,38 @@ export class TankManager {
       const { x, y } = tank.position;
       const color = tank.color;
 
-      // === Corps du tank (rectangle rétro) ===
-      ctx.fillStyle = color;
-      ctx.fillRect(x - tankWidth / 2, y - tankHeight, tankWidth, tankHeight);
+      // Calcul dynamique de l'angle du châssis en fonction de la pente du terrain
+      let hullAngle = 0;
+      if (terrain) {
+        const checkDist = 6;
+        const yLeft = terrain.getHeightAt(x - checkDist);
+        const yRight = terrain.getHeightAt(x + checkDist);
+        const dx = checkDist * 2;
+        const dy = yRight - yLeft;
+        const rawAngleRad = Math.atan2(dy, dx);
+        const maxTiltDeg = 35; // inclinaison max pour garder le rendu propre
+        hullAngle = Math.max(-maxTiltDeg, Math.min(maxTiltDeg, (rawAngleRad * 180) / Math.PI));
+      }
 
-      // Bordure sombre pour effet rétro
-      ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x - tankWidth / 2, y - tankHeight, tankWidth, tankHeight);
+      // Apply transient recoil offset (only to chassis sprite for "kick" feel; bars/names stay anchored)
+      let spriteX = x;
+      let spriteY = y - 8;
+      const rec = this.recoilState.get(tank.id);
+      if (rec) {
+        spriteX += rec.dx;
+        spriteY += rec.dy;
+      }
 
-      // === Tourelle (petit cercle sur le tank) ===
-      const turretRadius = 5;
-      ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.beginPath();
-      ctx.arc(x, y - tankHeight + 1, turretRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y - tankHeight + 1, turretRadius - 1.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // === Canon (barrel) qui pivote selon l'angle ===
-      const angleRad = (tank.angle * Math.PI) / 180;
-      const barrelLength = 18;       // Plus long pour bien voir l'angle
-      const barrelThickness = 3;
-
-      // Le canon part du centre de la tourelle
-      const barrelStartY = y - tankHeight + 1;
-
-      const barrelEndX = x + Math.cos(angleRad) * barrelLength;
-      const barrelEndY = barrelStartY + Math.sin(angleRad) * barrelLength * -1; // inversion Y
-
-      // Ombre du canon
-      ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.lineWidth = barrelThickness + 2;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(x, barrelStartY);
-      ctx.lineTo(barrelEndX, barrelEndY);
-      ctx.stroke();
-
-      // Canon principal (couleur du joueur)
-      ctx.strokeStyle = color;
-      ctx.lineWidth = barrelThickness;
-      ctx.beginPath();
-      ctx.moveTo(x, barrelStartY);
-      ctx.lineTo(barrelEndX, barrelEndY);
-      ctx.stroke();
-
-      // Petit embout blanc au bout du canon (rétro style)
-      ctx.fillStyle = VGA_PALETTE.WHITE;
-      ctx.fillRect(barrelEndX - 1, barrelEndY - 1, 2, 2);
+      // Dessine le sprite de tank détaillé de l'Étape 1
+      // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
+      // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
+      drawTankSprite(ctx, spriteX, spriteY, tankWidth, tankHeight, hullAngle, -tank.angle, color);
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
       const barHeight = 3;
       const barX = x - barWidth / 2;
-      const barY = y - tankHeight - 9;
+      const barY = y - 24; // au-dessus du dôme de la tourelle
 
       const healthRatio = Math.max(0, tank.health / tank.maxHealth);
 
@@ -616,14 +605,50 @@ export class TankManager {
       ctx.strokeRect(barX, barY, barWidth, barHeight);
 
       // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
-      // Positionné au-dessus de la jauge de vie. Masqué dynamiquement pendant les tirs.
       if (showPlayerNames) {
         ctx.font = '12px monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        const nameY = y - tankHeight - 24;
+        const nameY = y - 34; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
     }
+  }
+
+  /**
+   * Trigger a short visual recoil kick on the tank chassis (Step 4 arcade polish).
+   * Called at fire time from GameEngine. Direction = opposite to barrel.
+   * Offset is world-space pixels; applied during draw for the sprite only.
+   */
+  public triggerRecoil(tankId: string, angle: number): void {
+    const rad = (angle * Math.PI) / 180;
+    const dist = 2.8; // micro displacement (few pixels) — feels punchy at 120 Hz
+    // Opposite to launch vector (cos for x, -sin for y in world). Recoil "pushes tank back".
+    const dx = -Math.cos(rad) * dist;
+    const dy = Math.sin(rad) * dist;
+    this.recoilState.set(tankId, { dx, dy, remaining: 9 }); // ~75 ms at 120 Hz physics steps
+  }
+
+  /**
+   * Decay active recoil states (called per physics dt in GameEngine.update).
+   * Frame-counter based (no heavy time math or allocs per frame).
+   */
+  public decayRecoil(): void {
+    // Collect to avoid any iterator mutation concerns (defensive, zero cost for N<=4)
+    const toRemove: string[] = [];
+    for (const [id, rec] of this.recoilState) {
+      rec.remaining -= 1;
+      if (rec.remaining <= 0) {
+        toRemove.push(id);
+      }
+    }
+    for (const id of toRemove) {
+      this.recoilState.delete(id);
+    }
+  }
+
+  /** Clear any active recoil (e.g. when entering SUMMARY/SHOP or new round). */
+  public clearRecoil(): void {
+    this.recoilState.clear();
   }
 }
