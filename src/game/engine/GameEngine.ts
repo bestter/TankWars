@@ -378,21 +378,22 @@ export class GameEngine {
    */
   public awardEndOfRoundEarnings(): RoundResult {
     const players = this.tankManager.getPlayers();
-    const survivors = players.filter((p) => !p.tank.isDead).map((p) => p.id);
+    const survivors: string[] = [];
+
+    // Apply earnings (base + kill bonus) only to survivors
+    for (const p of players) {
+      if (p.tank.isDead) continue;
+      survivors.push(p.id);
+      const kills = this.roundKills[p.id] ?? 0;
+      const earnings = 500 + kills * 300;
+      p.money = (p.money ?? 0) + earnings;
+    }
 
     const result: RoundResult = {
       damageDealt: { ...this.roundDamageDealt },
       terrainDestroyed: this.roundTerrainDestroyed,
       survivors,
     };
-
-    // Apply earnings (base + kill bonus) only to survivors
-    for (const p of players) {
-      if (p.tank.isDead) continue;
-      const kills = this.roundKills[p.id] ?? 0;
-      const earnings = 500 + kills * 300;
-      p.money = (p.money ?? 0) + earnings;
-    }
 
     // Reset for next round
     this.roundDamageDealt = {};
