@@ -10,7 +10,7 @@
 - Use imperative commit style and sign with your exact model: e.g. `Add floating active indicator (Step 4) — Grok 4.3 (xAI)`.
 - The system prompt identifies you as "Grok 4.3 released by xAI in April 2026".
 
-## Recent Polish (Step 4, 5 & 6)
+## Recent Polish (Step 4, 5, 6 & 7)
 
 Implemented (pure Canvas 2D, 120 Hz safe):
 - Active turn indicator: inverted triangle above current player tank (via `turnManager.getCurrentPlayer()`), colored with tank primary, vertical bob via the exact formula `Math.sin(Date.now() / 200) * 5`. Drawn late in `GameEngine.render`.
@@ -18,6 +18,7 @@ Implemented (pure Canvas 2D, 120 Hz safe):
 - Recoil: lightweight `recoilState` Map in TankManager (dx/dy/remaining frames). `triggerRecoil` called from fire path (opposite angle vector). Decayed in physics `update`. Offset applied to sprite draw position only (chassis "kick").
 - Tank positioning (Step 5): Randomized tank X positions on canvas with 100px minimum distance safety constraint to avoid overlaps and 13% width margin from left/right edges. Snapped vertically to the terrain heightmap (`Y = groundY`).
 - Shell-Tank collision (Step 6): Direct AABB collision check in `PhysicsEngine.updateProjectiles` checking against active tank bounding boxes (24x15) with self-sabotage protection at launch (ignores owner's hitbox until it exits it).
+- Sniper AI (Step 7): Predictive balistic trajectory equations solver in `AISniperStrategy.ts` replacing brute force search. Features noise error margin modulation for the first shot (very close, but slightly imperfect) and 0-noise perfect hits for the second shot onwards.
 
 Keep these cheap: no per-frame allocations in hot paths, use existing Maps, native Math.
 

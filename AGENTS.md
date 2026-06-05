@@ -185,7 +185,7 @@ Do not block current architecture for these; implement incrementally when asked:
 - Visual tank redesign (Complete: Steps 1-6: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator, owner-colored projectiles, micro chassis recoil on fire; **Step 5**: random position with minimum distance and safety margin constraints on terrain; **Step 6**: direct AABB shell-to-tank collision with self-sabotage protection at launch)
 - Sound, particles, more weapons
 - Persistent scores / match history
-- Further AI improvements (v3-sniper + v4-smart implemented; further tuning)
+- Further AI improvements (v3-sniper optimized with predictive ballistic trajectory equations and error modulation (Step 7 complete); v4-smart implemented)
 
 ---
 

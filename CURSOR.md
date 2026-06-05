@@ -23,12 +23,13 @@
 - Tank visuals: exclusively `drawTankSprite(...)` (see `src/game/rendering/tankSprite.ts`). Supports hull angle (slope) + independent turretAngle. Now includes Step 4: active indicator (GameEngine), owner-colored shells (PhysicsEngine), recoil (TankManager).
 - State machine (see `src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons & Economy: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited (never in shop). Others limited, decrement on use. Shop between rounds. Advanced weapons (Thermonuclear etc.) have special VFX/sounds in GameEngine.
-- Step 4, 5 & 6 Polish (recent): 
+- Step 4, 5, 6 & 7 Polish (recent): 
   - Active Player floating indicator (inverted triangle, player color, sine bob `Math.sin(Date.now() / 200) * 5`) drawn in `GameEngine.render` for the tank returned by `turnManager.getCurrentPlayer()`.
   - Projectiles inherit tank color (`ownerColor`).
   - Recoil: small temporary chassis displacement opposite firing angle on every shot.
   - Step 5 Tank Spawn Positioning: Randomized X coordinates at each round via `spawnTanks` (100px minimum separation safety, 13% width margins, snapped vertically to `Y = groundY`).
   - Step 6 Shell-Tank Collision: Direct AABB collision check in `PhysicsEngine.updateProjectiles` checking against active tank bounding boxes (24x15) with self-sabotage protection at launch (ignores owner's hitbox until it exits it).
+  - Step 7 Sniper AI Optimization: Solves exact ballistic trajectory equations for optimal angle calculations in `AISniperStrategy.ts`. Introduces random angle noise (error margin 3.5 deg) for the first shot and 0-noise perfect hits for subsequent shots.
 
 ## AI Implementation Rule (Cursor must respect)
 
