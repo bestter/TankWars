@@ -149,6 +149,7 @@ export class AISniperStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget) {
       console.log(
