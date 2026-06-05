@@ -187,6 +187,10 @@ Do not block current architecture for these; implement incrementally when asked:
 - Persistent scores / match history
 - Further AI improvements (v3-sniper optimized with highly accurate numerical trajectory search that handles drag and wind, and coordinate-shifting deliberate first-shot miss (Step 7 complete); v4-smart implemented)
 
+## Recent Bug Fixes
+
+- **Round Transition Hang:** Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
+
 ---
 
 When unsure about a design constraint, prefer **strict React/Canvas separation** and **pluggable AI via `AIEngine`** over shortcuts.

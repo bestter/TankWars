@@ -40,6 +40,10 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 - Never modify HTML5 canvas properties directly inside a React render cycle; always pass updates through refs or dedicated game engine methods.
 - Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
 
+## Recent Bug Fixes
+
+- **Round Transition Hang:** Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
+
 ## Commit style
 
 - Always sign your comments by your name, and your EXACT model name for each commit.
