@@ -39,6 +39,24 @@ export class AISniperStrategy implements AIEngine {
     mem.targetAttempts = {};
   }
 
+  /**
+   * Logique d'achat exclusive au Sniper (à appeler durant la phase de boutique du jeu)
+   * Seul le Sniper dépense 150$ pour cette arme secrète.
+   */
+  public shopDecision(player: Player): WeaponId[] {
+    const purchases: WeaponId[] = [];
+    let currentMoney = player.money ?? 0;
+    const BULLET_COST = 150;
+
+    // Le sniper achète autant de BULLET que ses finances le lui permettent
+    while (currentMoney >= BULLET_COST) {
+      purchases.push('BULLET');
+      currentMoney -= BULLET_COST;
+    }
+
+    return purchases;
+  }
+
   async executeTurn(
     tankId: string,
     gameState: GameState,
