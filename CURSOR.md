@@ -70,3 +70,6 @@
 ---
 
 Follow AGENTS.md strictly. When in doubt, prefer the strictest interpretation of React/Canvas separation and pluggable AI.
+
+
+- Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.

@@ -51,3 +51,5 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 
 - Always sign your comments by your name, and your EXACT model name for each commit.
 - Use IMPERATIVE mood for commit messages.
+
+- Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.
