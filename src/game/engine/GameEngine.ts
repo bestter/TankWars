@@ -330,7 +330,16 @@ export class GameEngine {
       this.tankManager.getAlivePlayers().map((p) => p.id),
     );
 
-    // Délégation complète au PhysicsEngine (nouveau système) — now with owner for attribution
+    // Lookup firer color for projectile harmonization + recoil trigger (Step 4 polish)
+    const firerPlayer = this.tankManager.getPlayers().find((p) => p.id === ownerId);
+    const ownerColor = firerPlayer?.tank.color;
+
+    // Micro recoil on chassis at fire instant (opposite barrel dir)
+    if (firerPlayer) {
+      this.tankManager.triggerRecoil(firerPlayer.tank.id, command.angle);
+    }
+
+    // Délégation complète au PhysicsEngine (nouveau système) — now with owner + color for attribution + visuals
     this.physicsEngine.launchProjectile(
       launchX,
       launchY,
@@ -338,6 +347,7 @@ export class GameEngine {
       command.power,
       command.weaponId,
       ownerId,
+      ownerColor,
     );
   }
 
@@ -419,6 +429,7 @@ export class GameEngine {
     this.celebrationWinnerTankId = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
+    this.tankManager.clearRecoil(); // ensure no stale kick visible in non-combat phases
   }
 
   /** Declare match winner (e.g. when round wraps with one survivor before engine detected it). */
@@ -537,6 +548,7 @@ export class GameEngine {
     if (this.turnManager.isInterRoundPaused()) {
       this.updateFireworks();
       this.updateImpactExplosions();
+      this.tankManager.clearRecoil(); // ensure chassis is un-shifted for summary/shop renders
       return;
     }
 
@@ -548,6 +560,9 @@ export class GameEngine {
 
     // Continuous tank gravity (post-crater drops, pit falls). Produces slide/floor callbacks.
     this.tankManager.applyGravity(dt, this.terrain);
+
+    // Decay transient visual recoil (micro arcade feedback on fire)
+    this.tankManager.decayRecoil();
 
     // Vérifie si des tanks sont enterrés (règle : si Y_tank > hauteur_planche → battu)
     this.tankManager.checkTankBurial(this.terrain);
@@ -660,6 +675,34 @@ export class GameEngine {
       if (orig !== undefined) {
         p.tank.angle = orig;
       }
+    }
+
+    // === Active Player Indicator (Step 4 polish) ===
+    // Small inverted triangle (down-pointing arrow) floating above the current turn's tank.
+    // Uses sine on real timestamp for bob (as specified), player primary color for instant ID.
+    // Drawn after tanks so it sits on top; cheap math only (no allocs in 120 Hz path).
+    const activePlayer = this.turnManager.getCurrentPlayer();
+    if (activePlayer && !activePlayer.tank.isDead && !this.turnManager.isInterRoundPaused()) {
+      const tx = activePlayer.tank.position.x;
+      const ty = activePlayer.tank.position.y;
+      const color = activePlayer.tank.color;
+
+      const bob = Math.sin(Date.now() / 200) * 5;
+      const indicatorBaseY = ty - 42; // above health bar (~y-24) and name (~y-34)
+      const indicatorY = indicatorBaseY - bob;
+
+      const size = 5.5;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      // Inverted triangle (point down) = flèche pointing at the active tank
+      ctx.moveTo(tx - size, indicatorY - size * 0.55);
+      ctx.lineTo(tx + size, indicatorY - size * 0.55);
+      ctx.lineTo(tx, indicatorY + size * 0.75);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
 
     // Feux d'artifice pour célébration (fin de manche avec gagnant de round, ou fin de match)

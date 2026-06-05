@@ -1,5 +1,7 @@
 # .antigravityrules
 
+**For agents using Antigravity (and similar tools):** Primary guidance is in [AGENTS.md](./AGENTS.md). Read it first. This file contains concise rules kept in sync with the project (mirrors .cursorrules).
+
 - Role: Senior Software Architect & Expert Game Developer
 - Stack: TypeScript, React, HTML5 Canvas 2D
 - Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency, no Tailwind)
@@ -14,24 +16,34 @@
 
 - Game loop: Standard `requestAnimationFrame` with performance tracking.
 - Terrain: Destructible 2D terrain using custom heightmap algorithms in `Terrain.ts`; circular craters with falloff.
-- Players: 2 to 4 dynamic players (Humans or AI).
+- Players: 2 to 4 dynamic players (Humans or AI). Full support in MainMenu for mixing Human + v1-random ("IA SIMPLE"), v2-heuristic ("IA OK"), v3-sniper ("IA SNIPER"), v4-smart ("IA EXPERT").
 - Palette: Use `VGA_PALETTE` from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors for tank visual redesign: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, ...).
-- Tank sprites: Pure procedural `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro TankWars style: textured chenilles/tracks, beveled primaryColor chassis, arc dome turret, independent cannon via save/translate/rotate/restore). Fully integrated into the 120Hz loop (scaled up to 24x15 with matching hitboxes) with dynamic terrain slope-aware chassis tilt, supported by lobby color picking and live previews.
+- Tank sprites: Pure procedural `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro TankWars style: textured chenilles/tracks, beveled primaryColor chassis, arc dome turret, independent cannon via save/translate/rotate/restore). Fully integrated into the 120Hz loop (scaled up to 24x15 with matching hitboxes) with dynamic terrain slope-aware chassis tilt. Complete visual redesign + Step 4 arcade polish (lobby ColorPicker + TankPreview with mutual exclusion, active turn floating colored indicator, owner-colored projectiles, micro chassis recoil on fire).
 - State Machine: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (CELEBRATION for round-winner fireworks before SUMMARY; types in `src/types/game.ts`).
 - Weapons & Economy: Multiple weapons via `WEAPON_REGISTRY` in `src/types/weapon.ts` (Missile is unlimited and removed from shop; others have limited inventory that decrements on use). Shop between rounds. Includes advanced weapons like Thermonuclear Bomb (destroys ~1/4 map, inner kill zone, outer tanks fall, huge red-orange VFX + sounds in GameEngine).
+
+## Visual Polish (Step 4 — Arcade Feedback)
+
+- Active Player Indicator: Small inverted floating triangle (flèche) drawn in `GameEngine.render` above the current turn's tank (via `turnManager.getCurrentPlayer()`). Filled with the active player's primary tank color for instant recognition. Vertical oscillation: exactly `Math.sin(Date.now() / 200) * 5`.
+- Harmonized Projectiles: `Projectile` carries `ownerColor`. Set from the firing tank at `fireProjectile` time in GameEngine. Used in `PhysicsEngine.draw` (shells + cluster sub-munitions inherit the tank color instead of generic weapon/white).
+- Micro Recoil: On every shot, the tank chassis receives a small temporary world-space offset in the direction opposite the cannon (`TankManager.triggerRecoil`). Decayed per physics step (`decayRecoil`). Applied only to the sprite draw position in `draw` (health bars and names stay anchored). Short duration (~9 frames @120Hz). Cleared during SUMMARY/SHOP transitions.
+- All effects are pure CanvasRenderingContext2D, extremely cheap (no allocations in render loops, small fixed Maps), fully retro/VGA style.
 
 ## AI Implementation Rule
 
 - All tank AI must implement the `AIEngine` interface (`src/game/entities/ai/AIEngine.ts`).
 - `AIByProfileStrategy` (wired in `GameCanvas.tsx` via `engine.setAIEngine(...)`) dispatches per-player based on `player.aiProfile` (supports mixed Human + AI types):
   - `v1-random`: `AISimpleStrategy` ("IA SIMPLE" / "Mr. Simple") — deliberately naive.
-  - `v2-heuristic`: `AIHeuristicStrategy` ("IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection. Not a one-shot sniper.
-- Keep strategies pluggable and isolated; do not entangle AI logic inside `TankManager` or `GameEngine` internals. New strategies go in `game/entities/ai/`.
+  - `v2-heuristic`: `AIHeuristicStrategy` ("IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection.
+  - `v3-sniper`: `AISniperStrategy` ("IA SNIPER") — high-precision aiming.
+  - `v4-smart`: `AISmartStrategy` ("IA EXPERT") — adaptive.
+- Keep strategies pluggable and isolated; do not entangle AI logic inside `TankManager` or `GameEngine` internals. New strategies go in `game/entities/ai/`. Register in the profile dispatcher.
 
 ## Response Strategy
 
 - Provide dry, concise, and production-ready code.
 - No introductory fluff. Focus on file paths, explicit types, and clean architectural patterns.
+- Before finishing any substantive change: run `npm run lint && npm run build` (must pass). See AGENTS.md verification checklist.
 
 ## Commit style
 

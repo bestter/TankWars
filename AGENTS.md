@@ -1,6 +1,6 @@
 # AGENTS.md — TankWars
 
-Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankwars`). Read this file first. Human-oriented overview: [README.md](./README.md). Overlapping rules also appear in [CLAUDE.md](./CLAUDE.md) and [.cursorrules](./.cursorrules).
+Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankwars`). Read this file first. Human-oriented overview: [README.md](./README.md). Overlapping rules also appear in [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), and [.cursorrules](./.cursorrules).
 
 ## Project summary
 
@@ -27,26 +27,31 @@ src/
 ├── main.tsx
 ├── types/                  # Single source of truth (game, player, weapon) — zero `any`
 ├── components/
-│   ├── MainMenu.tsx        # Player count, names, Human / IA Simple / IA OK
+│   ├── MainMenu.tsx        # Player count, names, Human / IA Simple / IA OK / IA SNIPER / IA EXPERT (v1-v4 profiles)
 │   ├── GameCanvas.tsx      # Canvas ref + GameEngine lifecycle + React phase overlays
 │   ├── GameHUD.tsx
 │   ├── WeaponShop.tsx
-│   └── RoundSummary.tsx
+│   ├── RoundSummary.tsx
+│   ├── ColorPicker.tsx     # Pre-game color selection (mutual exclusion)
+│   ├── TankPreview.tsx     # Live tank sprite preview in lobby
+│   └── WindBanner.tsx
 └── game/
     ├── engine/
-    │   ├── GameEngine.ts   # 120Hz loop: physics, render, terrain, projectiles
+    │   ├── GameEngine.ts   # 120Hz loop: physics, render, terrain, projectiles, active indicator, recoil
     │   ├── PhysicsEngine.ts
     │   ├── Terrain.ts      # Heightmap + crater destruction
     │   └── TurnManager.ts
     ├── rendering/
-    │   └── tankSprite.ts   # Pure `drawTankSprite()` (Canvas2D only) — chenilles, beveled chassis, dome turret, independent cannon (integrated visual tank redesign)
+    │   └── tankSprite.ts   # Pure `drawTankSprite()` (Canvas2D only) — chenilles, beveled chassis, dome turret, independent cannon (integrated visual tank redesign Step 1-4)
     └── entities/
-        ├── TankManager.ts
+        ├── TankManager.ts  # Tank state, draw (with recoil offsets), spawn, damage, gravity
         └── ai/
             ├── AIEngine.ts             # Strategy contract — implement this for new AI
-            ├── AIByProfileStrategy.ts  # Dispatcher selecting per-player aiProfile (v1/v2)
+            ├── AIByProfileStrategy.ts  # Dispatcher selecting per-player aiProfile (v1/v2/v3/v4)
             ├── AIHeuristicStrategy.ts  # Phase 2 "IA OK" (v2-heuristic) — wind/terrain aware, revenge, memory, precision
-            ├── AISimpleStrategy.ts     # Phase 1 naive (v1-random)
+            ├── AISimpleStrategy.ts     # Phase 1 naive (v1-random) "IA SIMPLE" / "Mr. Simple"
+            ├── AISniperStrategy.ts     # Phase 3 "IA SNIPER" (v3-sniper) — high precision
+            ├── AISmartStrategy.ts      # Phase 4 "IA EXPERT" (v4-smart) — adaptive
             ├── AIStrategy.ts
             └── RandomAIStrategy.ts
 ```
@@ -68,15 +73,19 @@ src/
 
 Types live in `src/types/game.ts`:
 
-`MENU` → `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER`
+`MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` (round winner fireworks) → `SUMMARY` → `SHOP` → … → `GAME_OVER`
 
 - `App.tsx`: `MENU` vs everything else (starts match with `Player[]` from `MainMenu`).
-- `GameCanvas.tsx`: in-match phases, shop, round summary, game over.
+- `GameCanvas.tsx`: in-match phases (incl. CELEBRATION), shop, round summary, game over.
 
 ### Visual & terrain rules
 
 - Use **`VGA_PALETTE`** from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, etc. for tank redesign).
 - Tank rendering: pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Fully integrated into the 120 Hz engine render loop (scaled up to 24x15 with matching hitboxes) with dynamic slope-aware chassis tilt.
+- **Visual polish (Step 4 complete)**: 
+  - Active Player Indicator in `GameEngine.render`: small inverted floating triangle (flèche) above the current turn's tank (from `turnManager.getCurrentPlayer()`), bobbing with `Math.sin(Date.now() / 200) * 5`, filled with the active player's primary tank color.
+  - Harmonized projectiles: shells (and cluster sub-munitions) in `PhysicsEngine.draw` inherit `ownerColor` (tank primary color) from the firing player instead of generic weapon/white. Color threaded via `Projectile.ownerColor` set at `fireProjectile` time.
+  - Micro recoil (arcade feel): `TankManager` maintains transient `recoilState` (per tankId, world dx/dy + frame remaining). Triggered in `GameEngine.fireProjectile` (opposite barrel direction, ~2.8px). Decayed in `update()`. Applied only to chassis sprite position in `draw` (UI bars/names anchored); cleared on round transitions.
 - Terrain: custom **heightmap** algorithms in `Terrain.ts`; circular craters with falloff. No Matter.js, Rapier, Phaser, etc.
 - Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency in repo).
 
@@ -96,27 +105,24 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 ```
 
 - **Phase 1:** `AISimpleStrategy` (menu `aiProfile: 'v1-random'`, "IA SIMPLE" / "Mr. Simple") — deliberately naive random-within-safe-ranges for architecture testing.
-- **Phase 2 (implemented):** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") as a new strategy class. Heuristic/predictive aiming using wind + gravity + terrain sampling. Key behaviours:
-  - Revenge: if damaged (`lastHitBy`), switch to attacker as next target; otherwise stick to previous target.
-  - New target: prefer weakest (lowest health), slight human bias.
-  - Per-turn precision ramp on the same target + per-round memory of successes/fails (health drop detection) to improve/adjust.
-  - Weapon selection (GRENADE on rough terrain, CLUSTER vs groups, etc.).
-  - Not a sniper: residual noise + coarse simulation so kills typically take 3+ shots.
-- A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types).
-- New strategies must be registered in `GameCanvas.tsx`; do not entangle AI logic inside `TankManager` or `GameEngine` internals.
+- **Phase 2:** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection (e.g. GRENADE on rough, CLUSTER vs groups). Not a one-shot sniper (kills typically take 3+ shots).
+- **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision, low-noise aiming.
+- **Phase 4:** `AISmartStrategy` (menu `aiProfile: 'v4-smart'`, "IA EXPERT") — adaptive / improved heuristic with bias learning.
+- A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types; falls back to v1).
+- New strategies must be registered in `GameCanvas.tsx` (via the profile dispatcher); do not entangle AI logic inside `TankManager` or `GameEngine` internals.
 - Supporting data: `aiProfile` on `Player`, `lastHitBy` on `Tank`, `windForce`/`gravity` on `GameState` snapshots for AI.
 
 ## Common tasks — where to edit
 
 | Goal | Primary files |
 |------|----------------|
-| Menu / player setup | `MainMenu.tsx`, `types/player.ts` (now supports IA SIMPLE + IA OK profile choice) |
+| Menu / player setup | `MainMenu.tsx`, `types/player.ts` (supports all: IA SIMPLE/v1, IA OK/v2, IA SNIPER/v3, IA EXPERT/v4) + ColorPicker / TankPreview |
 | New weapon | `types/weapon.ts`, GameEngine (sounds + VFX/particles for large weapons), PhysicsEngine/TankManager (special damage/projectile rules), HUD/shop, GameCanvas (AI buy lists) |
 | Turn / round flow | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physics / explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
 | Terrain generation / craters | `Terrain.ts` |
-| Tank visual / procedural sprite (Step 1) | `game/rendering/tankSprite.ts` (pure `drawTankSprite`), `types/game.ts` (VGA_PALETTE neon extensions) |
-| Smarter AI | New file under `game/entities/ai/`, implement `AIEngine` |
+| Tank visual / procedural sprite + Step 4 polish | `game/rendering/tankSprite.ts`, `TankManager.ts` (recoil + draw), `GameEngine.ts` (render indicator + fire recoil trigger + color lookup), `PhysicsEngine.ts` (ownerColor on projectiles) |
+| Smarter AI | New file under `game/entities/ai/`, implement `AIEngine`; register in `AIByProfileStrategy.ts` + `GameCanvas.tsx` |
 | Global match phase | `App.tsx`, `types/game.ts` |
 
 ## What agents must not do
@@ -151,10 +157,10 @@ After substantive changes:
 
 Do not block current architecture for these; implement incrementally when asked:
 
-- Visual tank redesign (Complete: Steps 1, 2, and 3 landed with procedural canvas drawing, pre-game color selection with mutual exclusion, live tank preview, and dynamic slope-aware chassis tilt)
+- Visual tank redesign (Complete: Steps 1-4: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator using `Math.sin(Date.now()/200)*5` in GameEngine.render, owner-colored projectiles in PhysicsEngine, micro chassis recoil on fire in TankManager)
 - Sound, particles, more weapons
 - Persistent scores / match history
-- Further AI improvements (beyond v2-heuristic "IA OK")
+- Further AI improvements (v3-sniper + v4-smart implemented; further tuning)
 
 ---
 

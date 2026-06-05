@@ -24,6 +24,8 @@ export interface Projectile {
   weaponId: WeaponId;
   /** Who fired this (player id) for kill/damage attribution at round end */
   ownerId?: string;
+  /** Owner tank primary color for harmonized projectile visuals (inherits from firer) */
+  ownerColor?: string;
   /** For cluster: mark sub-munitions so they don't re-split; also track apex */
   isSubmunition?: boolean;
   lastVy?: number;
@@ -61,6 +63,7 @@ export class PhysicsEngine {
     power: number,
     weaponId: WeaponId,
     ownerId?: string,
+    ownerColor?: string,
   ): void {
     const rad = (angle * Math.PI) / 180;
 
@@ -78,6 +81,7 @@ export class PhysicsEngine {
       vy,
       weaponId,
       ownerId,
+      ownerColor,
       initialAngle: angle,
       initialPower: power,
     });
@@ -243,6 +247,7 @@ export class PhysicsEngine {
         vy: subVy,
         weaponId: p.weaponId,
         ownerId: p.ownerId,
+        ownerColor: p.ownerColor,
         isSubmunition: true,
       });
     }
@@ -313,12 +318,10 @@ export class PhysicsEngine {
    * Style simple et performant (petit cercle blanc/rouge).
    */
   public draw(ctx: CanvasRenderingContext2D): void {
-    ctx.fillStyle = VGA_PALETTE.WHITE;
-
     for (const p of this.projectiles) {
       const weapon = WEAPON_REGISTRY[p.weaponId];
-      // Utilise la couleur de l'arme si disponible, sinon blanc
-      ctx.fillStyle = weapon?.color ?? VGA_PALETTE.WHITE;
+      // Inherit firer's tank color for visual harmonization (Step 4), fallback to weapon color or white
+      ctx.fillStyle = p.ownerColor ?? weapon?.color ?? VGA_PALETTE.WHITE;
 
       let r = 2.5;
       if (p.weaponId === 'CLUSTER' && !p.isSubmunition) {
@@ -334,7 +337,7 @@ export class PhysicsEngine {
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Petit point brillant au centre pour plus de lisibilité
+      // Petit point brillant au centre pour plus de lisibilité (keep high-contrast white)
       ctx.fillStyle = VGA_PALETTE.WHITE;
       ctx.fillRect(p.x - 0.5, p.y - 0.5, 1, 1);
     }

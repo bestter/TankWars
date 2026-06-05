@@ -41,6 +41,11 @@ export class TankManager {
   /** Map to track if a tank is falling in the void (versus sliding down a slope). */
   private isVoidFall: Map<string, boolean> = new Map();
 
+  /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
+   *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
+   */
+  private recoilState: Map<string, { dx: number; dy: number; remaining: number }> = new Map();
+
   /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
   public onPlayerDied?: (playerId: string, cause: 'explosion' | 'burial', details: string) => void;
 
@@ -56,6 +61,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -67,6 +73,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
   }
 
   public getPlayers(): ReadonlyArray<Player> {
@@ -152,6 +159,7 @@ export class TankManager {
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
+    this.recoilState.clear();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -560,10 +568,19 @@ export class TankManager {
         hullAngle = Math.max(-maxTiltDeg, Math.min(maxTiltDeg, (rawAngleRad * 180) / Math.PI));
       }
 
+      // Apply transient recoil offset (only to chassis sprite for "kick" feel; bars/names stay anchored)
+      let spriteX = x;
+      let spriteY = y - 8;
+      const rec = this.recoilState.get(tank.id);
+      if (rec) {
+        spriteX += rec.dx;
+        spriteY += rec.dy;
+      }
+
       // Dessine le sprite de tank détaillé de l'Étape 1
       // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
       // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
-      drawTankSprite(ctx, x, y - 8, tankWidth, tankHeight, hullAngle, -tank.angle, color);
+      drawTankSprite(ctx, spriteX, spriteY, tankWidth, tankHeight, hullAngle, -tank.angle, color);
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
@@ -595,5 +612,42 @@ export class TankManager {
         ctx.fillText(player.name, x, nameY);
       }
     }
+  }
+
+  /**
+   * Trigger a short visual recoil kick on the tank chassis (Step 4 arcade polish).
+   * Called at fire time from GameEngine. Direction = opposite to barrel.
+   * Offset is world-space pixels; applied during draw for the sprite only.
+   */
+  public triggerRecoil(tankId: string, angle: number): void {
+    const rad = (angle * Math.PI) / 180;
+    const dist = 2.8; // micro displacement (few pixels) — feels punchy at 120 Hz
+    // Opposite to launch vector (cos for x, -sin for y in world). Recoil "pushes tank back".
+    const dx = -Math.cos(rad) * dist;
+    const dy = Math.sin(rad) * dist;
+    this.recoilState.set(tankId, { dx, dy, remaining: 9 }); // ~75 ms at 120 Hz physics steps
+  }
+
+  /**
+   * Decay active recoil states (called per physics dt in GameEngine.update).
+   * Frame-counter based (no heavy time math or allocs per frame).
+   */
+  public decayRecoil(): void {
+    // Collect to avoid any iterator mutation concerns (defensive, zero cost for N<=4)
+    const toRemove: string[] = [];
+    for (const [id, rec] of this.recoilState) {
+      rec.remaining -= 1;
+      if (rec.remaining <= 0) {
+        toRemove.push(id);
+      }
+    }
+    for (const id of toRemove) {
+      this.recoilState.delete(id);
+    }
+  }
+
+  /** Clear any active recoil (e.g. when entering SUMMARY/SHOP or new round). */
+  public clearRecoil(): void {
+    this.recoilState.clear();
   }
 }
