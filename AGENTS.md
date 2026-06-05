@@ -150,10 +150,25 @@ After substantive changes:
 3. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
 4. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
 
-## Commits
+## Commit Rules and Documentation Update
 
 - **Imperative mood** commit messages (e.g. `Add cluster spread to PhysicsEngine`).
 - Per project convention: sign commit messages with agent name and **exact model name** when committing on behalf of the user.
+
+### At every commit, you MUST update the following documentation files
+
+- `AGENTS.md` (description of agents and project rules)
+- `readme.md` (overall project overview)
+- `CLAUDE.md`, `GROK.md`, `CURSOR.md` (depending on the AI tools being used)
+- `.cursorrules` (Cursor / AI rules)
+
+Before each git commit:
+
+Analyze the changes made to the code and files.
+Update the relevant sections in the documentation files above so they remain consistent and up-to-date.
+Provide a clear and concise summary of the modifications in both the commit message and the documentation.
+
+Goal: Keep the project documentation alive, accurate, and always synchronized with the codebase.
 
 ## Skills in this repo
 
