@@ -279,6 +279,7 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       engineRef.current = null;
       ctxRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync gamePhaseRef to avoid stale values inside onTurnChange / engine callbacks (registered once in mount effect)
@@ -420,7 +421,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   // === Boutique handlers (mutation on the live Player objects, consistent with previous money awards) ===
 
   /** Achat / vente d'une arme pour le joueur courant de la boutique */
-  /* eslint-disable react-hooks/immutability */
   const handleShopBuySell = (weaponId: WeaponId, delta: 1 | -1): void => {
     if (shopPlayers.length === 0) return;
 
@@ -461,7 +461,6 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
   };
 
   /** Le joueur humain courant a cliqué "Prêt" */
-  /* eslint-disable react-hooks/immutability */
   const handleShopReady = (): void => {
     advanceToNextShopper();
   };
