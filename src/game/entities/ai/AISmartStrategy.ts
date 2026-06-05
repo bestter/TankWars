@@ -220,7 +220,21 @@ export class AISmartStrategy implements AIEngine {
 
         const xErr = Math.abs(res.landX - tx);
         const yErr = Math.abs(res.landY - ty) * 0.35;
-        const err = xErr + yErr + (res.hitTerrainEarly ? 20 : 0) + selfHarmPenalty;
+
+        // Detect intermediate terrain obstacle between shooter and target
+        let obstaclePenalty = 0;
+        if (res.hitTerrainEarly) {
+          const isBetween = isRight 
+            ? (res.landX > sx + 20 && res.landX < tx - 35)
+            : (res.landX < sx - 20 && res.landX > tx + 35);
+          if (isBetween) {
+            obstaclePenalty = 10000;
+          } else {
+            obstaclePenalty = 20; // standard early landing penalty
+          }
+        }
+
+        const err = xErr + yErr + obstaclePenalty + selfHarmPenalty;
 
         if (err < best.err) {
           best = { angle: a, power: p, err };

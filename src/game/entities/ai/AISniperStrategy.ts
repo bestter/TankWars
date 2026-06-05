@@ -151,7 +151,19 @@ export class AISniperStrategy implements AIEngine {
 
         const xErr = Math.abs(res.landX - tx);
         const yErr = Math.abs(res.landY - ty) * 0.35;
-        const err = xErr + yErr;
+
+        // Detect intermediate terrain obstacle between shooter and target
+        let obstaclePenalty = 0;
+        if (res.hitTerrainEarly) {
+          const isBetween = isRight 
+            ? (res.landX > sx + 20 && res.landX < tx - 35)
+            : (res.landX < sx - 20 && res.landX > tx + 35);
+          if (isBetween) {
+            obstaclePenalty = 10000;
+          }
+        }
+
+        const err = xErr + yErr + obstaclePenalty;
 
         if (err < best.err) {
           best = { angle: a, power: p, err };
