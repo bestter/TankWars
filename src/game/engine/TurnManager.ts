@@ -285,7 +285,9 @@ export class TurnManager {
   /** Resume after returning from SHOP to COMBAT */
   public resumeForCombat(): void {
     this.interRoundPaused = false;
-    this.isInputLocked = false;
+    const player = this.getCurrentPlayer();
+    this.isInputLocked = player ? !player.isHuman : false;
+    console.log('[TurnManager] resumeForCombat: player=' + player?.name + ', isInputLocked=' + this.isInputLocked);
     this.clearAwaitingStabilization();
     this.setupInputListeners();
   }
@@ -553,6 +555,7 @@ export class TurnManager {
 
   /** Démarre le premier tour (appelé après setPlayers) */
   public startFirstTurn(): void {
+    console.log('[TurnManager] startFirstTurn: entering');
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
     this.isInputLocked = false;
@@ -585,6 +588,7 @@ export class TurnManager {
       return;
     }
 
+    console.log('[TurnManager] startFirstTurn: firstPlayer=' + firstPlayer.name);
     this.onTurnChange?.(firstPlayer, this.turnNumber);
     this.notifyHudUpdate();
     this.handleAITurnIfNeeded(firstPlayer);
@@ -613,6 +617,7 @@ export class TurnManager {
    * Ne bloque pas le rendu du Canvas grâce à l'utilisation de setTimeout + Promise.
    */
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
+    console.log('[TurnManager] handleAITurnIfNeeded: player=' + player.name + ', isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
     if (!this.aiEngine) {
       console.warn(`[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`);
@@ -644,14 +649,17 @@ export class TurnManager {
         gravity: this.currentGravity,
       };
 
+      console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');
       const decision = await this.aiEngine.executeTurn(
         player.tank.id,
         gameState,
         this.terrainManager,
       );
+      console.log('[TurnManager] handleAITurnIfNeeded: AI strategy decided:', decision);
 
       // Abort if the game moved on (SUMMARY/SHOP) while we were awaiting the strategy.
       if (this.aiTurnGeneration !== turnGeneration) {
+        console.log('[TurnManager] handleAITurnIfNeeded: aborted after executeTurn due to generation mismatch');
         this.isProcessingAI = false;
         return;
       }
@@ -664,14 +672,18 @@ export class TurnManager {
       this.notifyHudUpdate();
 
       // Artificial thinking delay
+      console.log('[TurnManager] handleAITurnIfNeeded: starting thinking delay...');
       await new Promise((resolve) => setTimeout(resolve, 1500));
+      console.log('[TurnManager] handleAITurnIfNeeded: thinking delay done');
 
       // Abort before firing if we have been paused for inter-round in the meantime.
       if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked) {
+        console.log('[TurnManager] handleAITurnIfNeeded: aborted before firing (gen mismatch or input unlocked)');
         this.isProcessingAI = false;
         return;
       }
 
+      console.log('[TurnManager] handleAITurnIfNeeded: firing projectile!');
       const command: FireCommand = {
         angle: player.tank.angle,
         power: player.tank.power,

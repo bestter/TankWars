@@ -30,7 +30,7 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 - Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire strategies in `GameCanvas.tsx` via `engine.setAIEngine(...)` (uses `AIByProfileStrategy` router).
 - **Phase 1:** `AISimpleStrategy` — deliberately naive ("IA SIMPLE" / "Mr. Simple"). Menu/profile label: `aiProfile: 'v1-random'`.
 - **Phase 2:** `AIHeuristicStrategy` ("IA OK"). Heuristic aiming (wind, terrain sampling, ballistic search), revenge targeting (`lastHitBy`), per-round memory + precision improvement on targets, smart weapon selection. Menu/profile label: `aiProfile: 'v2-heuristic'`.
-- **Phase 3:** `AISniperStrategy` ("IA SNIPER") — high-precision sniper using exact ballistic trajectory equations for optimal angle calculations (Step 7 complete). First shot features random noise error modulation; second shot corrected to 0 noise. Menu/profile label: `aiProfile: 'v3-sniper'`.
+- **Phase 3:** `AISniperStrategy` ("IA SNIPER") — high-precision sniper using numerical trajectory search under drag and wind (Step 7 complete). First shot features deliberate coordinate-shifting miss; second shot targets tank directly with 0 noise. Menu/profile label: `aiProfile: 'v3-sniper'`.
 - **Phase 4:** `AISmartStrategy` ("IA EXPERT"). Adaptive. `aiProfile: 'v4-smart'`.
 - Full support for mixed profiles in one match. Do not entangle AI inside `TankManager` or `GameEngine`.
 - **Legacy:** `AIStrategy` / `RandomAIStrategy` are an older contract and are not wired at runtime unless explicitly revived.
@@ -39,6 +39,13 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 
 - Never modify HTML5 canvas properties directly inside a React render cycle; always pass updates through refs or dedicated game engine methods.
 - Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
+
+## Recent Updates & Bug Fixes
+
+- **New Weapon BULLET:** Added the `BULLET` weapon ($150, 10px blast radius) which inflicts a 3x damage multiplier in case of a direct hit on a tank hitbox. Auto-buy is restricted to the `AISniperStrategy` (Sniper v3) profile only.
+- **Round Transition Hang:** Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
+- **AI Aiming/Trajectory Simulation Origin:** Fixed a bug where all AI strategies (Sniper, Heuristic, Smart) simulated their shots starting at the center of the tank `(sx, sy)` instead of the actual barrel tip `(launchX, launchY)`. This created a vertical/horizontal offset discrepancy that caused the Sniper AIs to overshoot and miss perpetually in mutual combat. The simulation coordinates in `AISniperStrategy.ts`, `AIHeuristicStrategy.ts`, and `AISmartStrategy.ts` have been aligned with the engine's launch formulas.
+- **AI Terrain Obstacle Avoidance:** Implemented a new search penalty (10,000 points) in all ballistic trajectory search loops (`AISniperStrategy`, `AIHeuristicStrategy`, `AISmartStrategy`) when an early collision with the heightmap terrain is detected between the shooter and the target tank. This forces the AI to select high arcing trajectories to clear mountains and obstacles rather than blindly firing directly into intervening hills.
 
 ## Commit style
 

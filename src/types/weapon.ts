@@ -17,7 +17,8 @@ export type WeaponId =
   | 'CLUSTER'
   | 'NUKE'
   | 'THERMONUCLEAR'
-  | 'DRILLER';
+  | 'DRILLER'
+  | 'BULLET';
 
 /** Static definition for a weapon type. */
 export interface Weapon {
@@ -98,6 +99,16 @@ export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
     physicsType: 'projectile',
     color: VGA_PALETTE.GREEN,
     defaultAmmo: 2,
+  },
+  BULLET: {
+    id: 'BULLET',
+    name: 'Bullet',
+    price: 150,
+    damage: 25,
+    blastRadius: 10,
+    physicsType: 'projectile',
+    color: VGA_PALETTE.WHITE,
+    defaultAmmo: 3,
   },
 } as const;
 

@@ -22,7 +22,7 @@ export interface GameHUDProps {
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
 
-const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER'] as const;
+const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER', 'BULLET'] as const;
 
 function getShortLabel(id: WeaponId): string {
   switch (id) {
@@ -32,6 +32,7 @@ function getShortLabel(id: WeaponId): string {
     case 'NUKE': return 'NUK';
     case 'THERMONUCLEAR': return 'THM';
     case 'DRILLER': return 'DRL';
+    case 'BULLET': return 'BLT';
   }
 }
 
