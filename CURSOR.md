@@ -29,7 +29,7 @@
   - Recoil: small temporary chassis displacement opposite firing angle on every shot.
   - Step 5 Tank Spawn Positioning: Randomized X coordinates at each round via `spawnTanks` (100px minimum separation safety, 13% width margins, snapped vertically to `Y = groundY`).
   - Step 6 Shell-Tank Collision: Direct AABB collision check in `PhysicsEngine.updateProjectiles` checking against active tank bounding boxes (24x15) with self-sabotage protection at launch (ignores owner's hitbox until it exits it).
-  - Step 7 Sniper AI Optimization: Solves exact ballistic trajectory equations for optimal angle calculations in `AISniperStrategy.ts`. Introduces random angle noise (error margin 3.5 deg) for the first shot and 0-noise perfect hits for subsequent shots.
+  - Step 7 Sniper AI Optimization: Uses a highly accurate numerical trajectory search in `AISniperStrategy.ts` replacing the vacuum trajectory equations. Features deliberate coordinate-shifting miss for the first shot (landing safely ~36px away) and 0-noise perfect hits for subsequent shots.
 
 ## AI Implementation Rule (Cursor must respect)
 

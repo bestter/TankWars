@@ -187,13 +187,13 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       ? snapshotPlayers.map((p) => ({ ...p })) // clone shallow (objets Player mutés par l'engine ensuite)
       : demoPlayers;
 
-    // Initialize players (this also calls setupInputListeners + starts first turn)
-    engine.setPlayers(players);
-    setUiPlayers(players);
-
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
     // Supports mixed human + different AI types in one match. Demos without aiProfile fall back to v1.
     engine.setAIEngine(new AIByProfileStrategy());
+
+    // Initialize players (this also calls setupInputListeners + starts first turn)
+    engine.setPlayers(players);
+    setUiPlayers(players);
     engine.onWindChange = setWind;
 
     // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
@@ -642,8 +642,8 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
       },
     ];
 
-    engine.setPlayers(newPlayers);
     engine.setAIEngine(new AIByProfileStrategy());
+    engine.setPlayers(newPlayers);
 
     // Reset local UI state + round tracking refs (for clean new match)
     setWinner(null);

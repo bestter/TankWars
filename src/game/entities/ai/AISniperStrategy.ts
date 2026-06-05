@@ -19,7 +19,7 @@ interface SniperMemory {
   currentTargetId?: string;
   /** Attempts per target player ID this round */
   targetAttempts: Record<string, number>;
-  lastRoundIndex?: number; // 👈 Remplacement de la santé par l'index de la manche
+  lastSelfHealth?: number;
 }
 
 export class AISniperStrategy implements AIEngine {
@@ -34,10 +34,9 @@ export class AISniperStrategy implements AIEngine {
     return this.memories.get(playerId)!;
   }
 
-  private resetForNewRound(mem: SniperMemory, roundIndex: number): void {
+  private resetForNewRound(mem: SniperMemory): void {
     mem.currentTargetId = undefined;
     mem.targetAttempts = {};
-    mem.lastRoundIndex = roundIndex;
   }
 
   async executeTurn(
@@ -52,11 +51,11 @@ export class AISniperStrategy implements AIEngine {
 
     const mem = this.getMem(self.id);
 
-    // 👈 Détection propre du changement de manche via l'index global du jeu
-    if (mem.lastRoundIndex !== undefined && gameState.currentRoundIndex > mem.lastRoundIndex) {
-      this.resetForNewRound(mem, gameState.currentRoundIndex);
+    // Detect round respawn (health reset to full) and clear per-round memory
+    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
+      this.resetForNewRound(mem);
     }
-    mem.lastRoundIndex = gameState.currentRoundIndex;
+    mem.lastSelfHealth = self.tank.health;
 
     // Find living enemies
     const enemies = gameState.players.filter(
@@ -96,13 +95,22 @@ export class AISniperStrategy implements AIEngine {
     self.tank.currentWeapon = chosenWeapon;
 
     // Compute the shot solution
+    // If it is the first attempt on this target, deliberately miss by a safe horizontal margin.
+    let targetX = target!.tank.position.x;
+    if (attempts === 1) {
+      const spaceToLeft = targetX;
+      const spaceToRight = terrainManager.width - targetX;
+      const offsetDir = spaceToLeft > spaceToRight ? -1 : 1;
+      targetX += offsetDir * 36;
+    }
+
     const { angle, power } = this.computePrecisionShot(
       self,
-      target!,
+      targetX,
+      target!.tank.position.y - 6,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
-      attempts,
     );
 
     return {
@@ -114,90 +122,52 @@ export class AISniperStrategy implements AIEngine {
 
   private computePrecisionShot(
     self: Player,
-    target: Player,
+    tx: number,
+    ty: number,
     wind: number,
     gravity: number,
     terrain: TerrainManager,
-    attempts: number,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x;
-    const ty = target.tank.position.y - 6;
     const dx = tx - sx;
-    const dy = sy - ty;
     const isRight = dx > 0;
+
+    const aMin = isRight ? 15 : 95;
+    const aMax = isRight ? 85 : 165;
 
     const BASE_SPEED = 4.2;
     const DT = 1 / 120;
     const MAX_STEPS = 420;
 
-    const x = Math.abs(dx);
-    const y = dy;
-    const g = gravity;
+    let best = { angle: isRight ? 55 : 125, power: 60, err: 999999 };
 
-    const minVSq = g * (y + Math.sqrt(x * x + y * y));
-    const minV = Math.sqrt(Math.max(0.1, minVSq));
-    const minPower = minV / BASE_SPEED;
+    for (let a = aMin; a <= aMax; a += 1.0) {
+      let lo = 20;
+      let hi = 95;
+      for (let iter = 0; iter < 10; iter++) {
+        const p = (lo + hi) / 2;
+        const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
 
-    let power = Math.max(50, Math.ceil(minPower * 1.06));
-    power = Math.min(95, power);
+        const xErr = Math.abs(res.landX - tx);
+        const yErr = Math.abs(res.landY - ty) * 0.35;
+        const err = xErr + yErr;
 
-    let bestAngle = isRight ? 55 : 125;
-    let bestPower = power;
-    let foundSolution = false;
+        if (err < best.err) {
+          best = { angle: a, power: p, err };
+        }
 
-    for (let p = power; p <= 95; p += 5) {
-      const v = p * BASE_SPEED;
-      const vSq = v * v;
-      const discriminant = vSq * vSq - g * (g * x * x + 2 * y * vSq);
-
-      if (discriminant >= 0) {
-        const tanTheta = (vSq + Math.sqrt(discriminant)) / (g * x);
-        const thetaRad = Math.atan(tanTheta);
-        const thetaDeg = (thetaRad * 180) / Math.PI;
-
-        const calculatedAngle = isRight ? thetaDeg : 180 - thetaDeg;
-
-        const sim = this.simulateShot(sx, sy, calculatedAngle, p, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
-        const distanceToTarget = Math.hypot(sim.landX - tx, sim.landY - ty);
-
-        if (!sim.hitTerrainEarly || distanceToTarget < 35) {
-          bestAngle = calculatedAngle;
-          bestPower = p;
-          foundSolution = true;
-          break;
+        if (res.landX < tx) {
+          if (isRight) lo = p;
+          else hi = p;
         } else {
-          const currentBestSim = this.simulateShot(sx, sy, bestAngle, bestPower, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
-          if (distanceToTarget < Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)) {
-            bestAngle = calculatedAngle;
-            bestPower = p;
-          }
+          if (isRight) hi = p;
+          else lo = p;
         }
       }
     }
 
-    if (!foundSolution) {
-      bestPower = 90;
-      bestAngle = isRight ? 65 : 115;
-    }
-
-    let finalAngle = bestAngle;
-
-    // 👈 La modulation ne s'applique STRICTEMENT qu'au premier essai de la manche
-    if (attempts === 1) {
-      const errorMargin = 3.5;
-      const noise = (Math.random() - 0.5) * errorMargin;
-      finalAngle += noise;
-    }
-
-    if (isRight) {
-      finalAngle = Math.max(15, Math.min(85, finalAngle));
-    } else {
-      finalAngle = Math.max(95, Math.min(165, finalAngle));
-    }
-
-    return { angle: finalAngle, power: bestPower };
+    return { angle: best.angle, power: best.power };
   }
 
   private simulateShot(

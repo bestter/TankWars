@@ -116,7 +116,7 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 
 - **Phase 1:** `AISimpleStrategy` (menu `aiProfile: 'v1-random'`, "IA SIMPLE" / "Mr. Simple") — deliberately naive random-within-safe-ranges for architecture testing.
 - **Phase 2:** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection (e.g. GRENADE on rough, CLUSTER vs groups). Not a one-shot sniper (kills typically take 3+ shots).
-- **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision, low-noise aiming.
+- **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision aiming using numerical trajectory search under drag/wind, with a deliberate coordinate-shifting first-shot miss and perfect subsequent shots.
 - **Phase 4:** `AISmartStrategy` (menu `aiProfile: 'v4-smart'`, "IA EXPERT") — adaptive / improved heuristic with bias learning.
 - A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types; falls back to v1).
 - New strategies must be registered in `GameCanvas.tsx` (via the profile dispatcher); do not entangle AI logic inside `TankManager` or `GameEngine` internals.
@@ -185,7 +185,7 @@ Do not block current architecture for these; implement incrementally when asked:
 - Visual tank redesign (Complete: Steps 1-6: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator, owner-colored projectiles, micro chassis recoil on fire; **Step 5**: random position with minimum distance and safety margin constraints on terrain; **Step 6**: direct AABB shell-to-tank collision with self-sabotage protection at launch)
 - Sound, particles, more weapons
 - Persistent scores / match history
-- Further AI improvements (v3-sniper optimized with predictive ballistic trajectory equations and error modulation (Step 7 complete); v4-smart implemented)
+- Further AI improvements (v3-sniper optimized with highly accurate numerical trajectory search that handles drag and wind, and coordinate-shifting deliberate first-shot miss (Step 7 complete); v4-smart implemented)
 
 ---
 
