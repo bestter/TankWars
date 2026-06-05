@@ -96,7 +96,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
           name: getDefaultName(idx, defaultIsHuman),
           isHuman: defaultIsHuman,
           color: newColor,
-          id: `p-${Date.now()}-${idx}`,
+          id: `p-${crypto.randomUUID()}-${idx}`,
         };
         if (!defaultIsHuman) {
           newCfg.aiProfile = "v1-random"; // default IA SIMPLE
