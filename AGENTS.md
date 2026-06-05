@@ -2,6 +2,14 @@
 
 Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankwars`). Read this file first. Human-oriented overview: [README.md](./README.md). Overlapping rules also appear in [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), and [.cursorrules](./.cursorrules).
 
+## GOLDEN RULES
+
+- You must always answer in French (FR). If you can speak in Canadian-French (fr-CA, québécois) it's even better!
+-- If the user paste some code or text in english, answer in french (or québécois).
+- IF ANY DOUBT, ASK THE DEVELOPER BEFORE DOING ANYTHING; NEVER GUESS!!!
+- DO NOT MODIFY THIS FILE, UNLESS YOU HAVE AN EXPLICIT INSTRUCTION FROM THE DEVELOPER TO DO SO.
+-
+
 ## Project summary
 
 Browser-based artillery game (Scorched Earth / Worms style): destructible terrain, turn-based combat, weapon shop economy, 2–4 players (human or AI). **React 19 + TypeScript (strict) + HTML5 Canvas 2D**. No game frameworks, no external physics engines.
@@ -11,7 +19,7 @@ Browser-based artillery game (Scorched Earth / Worms style): destructible terrai
 | Task | Command |
 |------|---------|
 | Install | `npm install` |
-| Dev server | `npm run dev` → http://localhost:5173 |
+| Dev server | `npm run dev` → <http://localhost:5173> |
 | Production build | `npm run build` |
 | Lint | `npm run lint` |
 | Preview build | `npm run preview` |
@@ -82,7 +90,7 @@ Types live in `src/types/game.ts`:
 
 - Use **`VGA_PALETTE`** from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, etc. for tank redesign).
 - Tank rendering: pure procedural helper `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro style, textured tracks/chenilles, beveled chassis using primaryColor, arc dome turret, thick cannon with independent turretAngle rotation via save/translate/rotate/restore). Fully integrated into the 120 Hz engine render loop (scaled up to 24x15 with matching hitboxes) with dynamic slope-aware chassis tilt.
-- **Visual polish (Step 4 complete)**: 
+- **Visual polish (Step 4 complete)**:
   - Active Player Indicator in `GameEngine.render`: small inverted floating triangle (flèche) above the current turn's tank (from `turnManager.getCurrentPlayer()`), bobbing with `Math.sin(Date.now() / 200) * 5`, filled with the active player's primary tank color.
   - Harmonized projectiles: shells (and cluster sub-munitions) in `PhysicsEngine.draw` inherit `ownerColor` (tank primary color) from the firing player instead of generic weapon/white. Color threaded via `Projectile.ownerColor` set at `fireProjectile` time.
   - Micro recoil (arcade feel): `TankManager` maintains transient `recoilState` (per tankId, world dx/dy + frame remaining). Triggered in `GameEngine.fireProjectile` (opposite barrel direction, ~2.8px). Decayed in `update()`. Applied only to chassis sprite position in `draw` (UI bars/names anchored); cleared on round transitions.
