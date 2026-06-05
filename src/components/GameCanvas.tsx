@@ -183,9 +183,26 @@ export function GameCanvas({ initialPlayers, onReturnToMenu }: GameCanvasProps =
     ];
 
     const snapshotPlayers = initialPlayersRef.current;
-    const players: Player[] = snapshotPlayers && snapshotPlayers.length >= 2
-      ? snapshotPlayers.map((p) => ({ ...p })) // clone shallow (objets Player mutés par l'engine ensuite)
-      : demoPlayers;
+    let players: Player[];
+
+    if (snapshotPlayers && snapshotPlayers.length >= 2) {
+      const len = snapshotPlayers.length;
+      players = new Array(len);
+      for (let i = 0; i < len; i++) {
+        const p = snapshotPlayers[i];
+        players[i] = {
+          id: p.id,
+          name: p.name,
+          isHuman: p.isHuman,
+          tank: p.tank,
+          money: p.money,
+          inventory: p.inventory,
+          aiProfile: p.aiProfile,
+        };
+      }
+    } else {
+      players = demoPlayers;
+    }
 
     // Initialize players (this also calls setupInputListeners + starts first turn)
     engine.setPlayers(players);
