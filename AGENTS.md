@@ -190,3 +190,6 @@ Do not block current architecture for these; implement incrementally when asked:
 ---
 
 When unsure about a design constraint, prefer **strict React/Canvas separation** and **pluggable AI via `AIEngine`** over shortcuts.
+
+
+- Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.

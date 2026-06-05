@@ -51,3 +51,6 @@ When in doubt on architecture: **strict React vs Canvas ownership** + **pluggabl
 ---
 
 Happy tanking. Sign your work.
+
+
+- Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.
