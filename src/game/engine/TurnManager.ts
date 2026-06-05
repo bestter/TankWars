@@ -5,14 +5,14 @@
  * Respecte l'architecture : découplé de React, communication via callbacks.
  */
 
-import type { Player } from '../../types/player';
-import type { TankManager } from '../entities/TankManager';
-import type { PhysicsEngine } from './PhysicsEngine';
-import type { FireCommand, Color } from '../../types/game';
-import type { AIEngine } from '../entities/ai/AIEngine';
-import type { TerrainManager } from './Terrain';
-import type { GameState } from '../../types/game';
-import { type WeaponId, ALL_WEAPON_IDS } from '../../types/weapon';
+import type { Player } from "../../types/player";
+import type { TankManager } from "../entities/TankManager";
+import type { PhysicsEngine } from "./PhysicsEngine";
+import type { FireCommand, Color } from "../../types/game";
+import type { AIEngine } from "../entities/ai/AIEngine";
+import type { TerrainManager } from "./Terrain";
+import type { GameState } from "../../types/game";
+import { type WeaponId, ALL_WEAPON_IDS } from "../../types/weapon";
 
 export interface CurrentTurnInfo {
   playerName: string;
@@ -33,7 +33,11 @@ export interface CurrentTurnInfo {
 export class TurnManager {
   private tankManager: TankManager;
   private terrainManager: TerrainManager;
-  private fireCallback: (from: { x: number; y: number }, command: FireCommand, ownerId?: string) => void;
+  private fireCallback: (
+    from: { x: number; y: number },
+    command: FireCommand,
+    ownerId?: string,
+  ) => void;
   private aiEngine?: AIEngine;
 
   private currentPlayerIndex = 0;
@@ -80,7 +84,8 @@ export class TurnManager {
 
   // Settlement timeout (120ms physics delay for tank falling and damage logic)
   // Driven by real-time setTimeout because it is a very short rendering transition delay
-  private physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | null =
+    null;
 
   /**
    * When true after projectiles settle, we defer nextTurn() until !tankManager.anyTankIsFalling().
@@ -110,7 +115,11 @@ export class TurnManager {
   constructor(
     tankManager: TankManager,
     terrainManager: TerrainManager,
-    fireCallback: (from: { x: number; y: number }, command: FireCommand, ownerId?: string) => void,
+    fireCallback: (
+      from: { x: number; y: number },
+      command: FireCommand,
+      ownerId?: string,
+    ) => void,
     aiEngine?: AIEngine,
   ) {
     this.tankManager = tankManager;
@@ -136,12 +145,17 @@ export class TurnManager {
    */
   public update(dt: number): void {
     // 1. Watchdog général du verrouillage du tour
-    if (this.isTurnLockWatchdogArmed && this.isInputLocked && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
+    if (
+      this.isTurnLockWatchdogArmed &&
+      this.isInputLocked &&
+      !this.awaitingTankStabilization &&
+      !this.tankManager.anyTankIsFalling()
+    ) {
       this.turnLockAccumulatedTime += dt;
       if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
         const stillCurrent = this.getCurrentPlayer();
         console.warn(
-          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? 'unknown'} — forcing nextTurn (missed settlement?)`
+          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? "unknown"} — forcing nextTurn (missed settlement?)`,
         );
         this.isInputLocked = false;
         this.clearAwaitingStabilization();
@@ -154,11 +168,19 @@ export class TurnManager {
     }
 
     // 2. Sécurité de résolution de l'IA (si l'IA prend trop de temps à décider)
-    if (this.isResolutionSafetyArmed && this.isInputLocked && this.resolutionPlayer && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
+    if (
+      this.isResolutionSafetyArmed &&
+      this.isInputLocked &&
+      this.resolutionPlayer &&
+      !this.awaitingTankStabilization &&
+      !this.tankManager.anyTankIsFalling()
+    ) {
       this.resolutionAccumulatedTime += dt;
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
         const player = this.resolutionPlayer;
-        console.warn(`[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`);
+        console.warn(
+          `[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`,
+        );
 
         let fallback: { angle: number; power: number } | null = null;
 
@@ -179,7 +201,9 @@ export class TurnManager {
           this.fireCallback(player.tank.position, command, player.id);
           this.consumeAmmo(player, player.tank.currentWeapon);
         } else {
-          console.warn(`[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`);
+          console.warn(
+            `[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`,
+          );
           this.isInputLocked = false;
           this.clearAwaitingStabilization();
           this.clearResolutionTimeout();
@@ -191,13 +215,24 @@ export class TurnManager {
     }
 
     // 3. Sécurité de stabilisation du tir de l'IA
-    if (this.isSettlementSafetyArmed && this.isInputLocked && this.settlementPlayerId && !this.awaitingTankStabilization && !this.tankManager.anyTankIsFalling()) {
+    if (
+      this.isSettlementSafetyArmed &&
+      this.isInputLocked &&
+      this.settlementPlayerId &&
+      !this.awaitingTankStabilization &&
+      !this.tankManager.anyTankIsFalling()
+    ) {
       this.settlementAccumulatedTime += dt;
       if (this.settlementAccumulatedTime >= this.SETTLEMENT_SAFETY_LIMIT) {
         if (this.aiTurnGeneration === this.settlementGeneration) {
           const stillCurrent = this.getCurrentPlayer();
-          if (stillCurrent?.id === this.settlementPlayerId && this.isInputLocked) {
-            console.warn(`[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing nextTurn as safety net`);
+          if (
+            stillCurrent?.id === this.settlementPlayerId &&
+            this.isInputLocked
+          ) {
+            console.warn(
+              `[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing nextTurn as safety net`,
+            );
             this.isInputLocked = false;
             this.clearAwaitingStabilization();
             this.clearResolutionTimeout();
@@ -227,7 +262,8 @@ export class TurnManager {
     }
 
     // Detect falling state changes to refresh HUD indicator (e.g. craters during resolution)
-    const isFallingNow = this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization;
+    const isFallingNow =
+      this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization;
     if (isFallingNow !== this.wasFallingForHud) {
       this.wasFallingForHud = isFallingNow;
       this.notifyHudUpdate();
@@ -251,14 +287,14 @@ export class TurnManager {
   public setupInputListeners(): void {
     if (this.listenersAttached) return;
 
-    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener("keydown", this.handleKeyDown);
     this.listenersAttached = true;
   }
 
   /** Désactive les écouteurs clavier */
   public removeInputListeners(): void {
     if (!this.listenersAttached) return;
-    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener("keydown", this.handleKeyDown);
     this.listenersAttached = false;
   }
 
@@ -301,41 +337,41 @@ export class TurnManager {
     if (this.isInputLocked || this.tankManager.anyTankIsFalling()) return;
 
     switch (event.key) {
-      case 'ArrowLeft':
+      case "ArrowLeft":
         this.adjustAngle(-1);
         event.preventDefault();
         break;
 
-      case 'ArrowRight':
+      case "ArrowRight":
         this.adjustAngle(+1);
         event.preventDefault();
         break;
 
-      case 'ArrowUp':
+      case "ArrowUp":
         this.adjustPower(+1);
         event.preventDefault();
         break;
 
-      case 'ArrowDown':
+      case "ArrowDown":
         this.adjustPower(-1);
         event.preventDefault();
         break;
 
-      case ' ':
-      case 'Spacebar':
+      case " ":
+      case "Spacebar":
         this.tryFire();
         event.preventDefault();
         break;
 
       // Weapon cycling for human player (A = prev, E = next)
-      case 'a':
-      case 'A':
+      case "a":
+      case "A":
         this.cycleWeapon(-1);
         event.preventDefault();
         break;
 
-      case 'e':
-      case 'E':
+      case "e":
+      case "E":
         this.cycleWeapon(1);
         event.preventDefault();
         break;
@@ -378,7 +414,12 @@ export class TurnManager {
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return false;
     if (!player.isHuman) return false;
-    if (this.isInputLocked || this.interRoundPaused || this.tankManager.anyTankIsFalling()) return false;
+    if (
+      this.isInputLocked ||
+      this.interRoundPaused ||
+      this.tankManager.anyTankIsFalling()
+    )
+      return false;
     this.fire();
     return true;
   }
@@ -386,7 +427,8 @@ export class TurnManager {
   /** Déclenche le tir du joueur actuel (après validation tryFire). */
   private fire(): void {
     const player = this.getCurrentPlayer();
-    if (!player || this.isInputLocked || this.tankManager.anyTankIsFalling()) return;
+    if (!player || this.isInputLocked || this.tankManager.anyTankIsFalling())
+      return;
 
     const tank = player.tank;
 
@@ -417,7 +459,7 @@ export class TurnManager {
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
     const ammo = player.inventory[weaponId] ?? 0;
-    if (weaponId !== 'MISSILE' && ammo <= 0) return false;
+    if (weaponId !== "MISSILE" && ammo <= 0) return false;
     if (player.tank.currentWeapon === weaponId) return false;
 
     player.tank.currentWeapon = weaponId;
@@ -430,7 +472,9 @@ export class TurnManager {
     const player = this.getCurrentPlayer();
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
-    const available = ALL_WEAPON_IDS.filter((id) => id === 'MISSILE' || (player.inventory[id] ?? 0) > 0);
+    const available = ALL_WEAPON_IDS.filter(
+      (id) => id === "MISSILE" || (player.inventory[id] ?? 0) > 0,
+    );
     if (available.length === 0) return false;
 
     const current = player.tank.currentWeapon;
@@ -454,13 +498,15 @@ export class TurnManager {
    * Mutates the live player (consistent with shop mutations) and notifies HUD.
    */
   private consumeAmmo(player: Player, weaponId: WeaponId): void {
-    if (weaponId === 'MISSILE') return;
+    if (weaponId === "MISSILE") return;
     const cur = player.inventory[weaponId] ?? 0;
     if (cur <= 0) return;
     const next = cur - 1;
     player.inventory = { ...player.inventory, [weaponId]: next };
     if (next === 0 && player.tank.currentWeapon === weaponId) {
-      const available = ALL_WEAPON_IDS.filter((id) => id === 'MISSILE' || (player.inventory[id] ?? 0) > 0);
+      const available = ALL_WEAPON_IDS.filter(
+        (id) => id === "MISSILE" || (player.inventory[id] ?? 0) > 0,
+      );
       if (available.length > 0) {
         player.tank.currentWeapon = available[0];
       }
@@ -542,7 +588,8 @@ export class TurnManager {
       inventory: { ...player.inventory },
       turn: this.turnNumber,
       isInputLocked: this.isInputLocked,
-      tanksAreFalling: this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
+      tanksAreFalling:
+        this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
     };
   }
 
@@ -562,7 +609,7 @@ export class TurnManager {
 
     const players = this.tankManager.getPlayers();
     if (players.length === 0) {
-      console.warn('[TurnManager] startFirstTurn: no players');
+      console.warn("[TurnManager] startFirstTurn: no players");
       return;
     }
 
@@ -620,7 +667,9 @@ export class TurnManager {
     console.log('[TurnManager] handleAITurnIfNeeded: player=' + player.name + ', isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
     if (!this.aiEngine) {
-      console.warn(`[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`);
+      console.warn(
+        `[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`,
+      );
       setTimeout(() => this.nextTurn(), 800);
       return;
     }
@@ -641,7 +690,7 @@ export class TurnManager {
 
     try {
       const gameState: GameState = {
-        phase: 'COMBAT',
+        phase: "COMBAT",
         players: [...this.tankManager.getPlayers()],
         currentPlayerIndex: this.currentPlayerIndex,
         turn: this.turnNumber,
@@ -711,7 +760,7 @@ export class TurnManager {
       this.settlementGeneration = this.aiTurnGeneration;
       this.isSettlementSafetyArmed = true;
     } catch (error) {
-      console.error('[TurnManager] AI turn failed:', error);
+      console.error("[TurnManager] AI turn failed:", error);
       this.clearResolutionTimeout();
       this.clearSettlementSafetyTimeout();
       setTimeout(() => this.nextTurn(), 1000);

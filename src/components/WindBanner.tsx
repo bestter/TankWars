@@ -2,8 +2,8 @@
  * Top-of-canvas wind readout (direction + strength).
  */
 
-import { formatWindDisplay } from '../game/wind';
-import { VGA_PALETTE } from '../types/game';
+import { formatWindDisplay } from "../game/wind";
+import { VGA_PALETTE } from "../types/game";
 
 export interface WindBannerProps {
   windForce: number;
@@ -12,36 +12,38 @@ export interface WindBannerProps {
 export function WindBanner({ windForce }: WindBannerProps) {
   const info = formatWindDisplay(windForce);
   const barMax = 52;
-  const fill = info.direction === 'CALM' ? 0 : Math.min(1, info.strength / barMax);
+  const fill =
+    info.direction === "CALM" ? 0 : Math.min(1, info.strength / barMax);
   const barWidth = Math.round(fill * 120);
 
   return (
     <div
       aria-label={`Wind ${info.label} strength ${info.strength}`}
       style={{
-        position: 'absolute',
+        position: "absolute",
         top: 0,
         left: 0,
         right: 0,
         zIndex: 6,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         gap: 10,
-        padding: '5px 12px',
-        background: 'rgba(0, 0, 0, 0.72)',
+        padding: "5px 12px",
+        background: "rgba(0, 0, 0, 0.72)",
         borderBottom: `2px solid ${VGA_PALETTE.CYAN}`,
-        fontFamily: 'monospace',
+        fontFamily: "monospace",
         fontSize: 13,
-        fontWeight: 'bold',
-        pointerEvents: 'none',
-        letterSpacing: '0.06em',
+        fontWeight: "bold",
+        pointerEvents: "none",
+        letterSpacing: "0.06em",
       }}
     >
       <span style={{ color: VGA_PALETTE.CYAN }}>WIND</span>
       <span
         style={{
-          color: info.direction === 'CALM' ? VGA_PALETTE.GRAY : VGA_PALETTE.YELLOW,
+          color:
+            info.direction === "CALM" ? VGA_PALETTE.GRAY : VGA_PALETTE.YELLOW,
           minWidth: 28,
           fontSize: 18,
           lineHeight: 1,
@@ -50,7 +52,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
         {info.arrow}
       </span>
       <span style={{ color: VGA_PALETTE.WHITE }}>{info.label}</span>
-      {info.direction !== 'CALM' && (
+      {info.direction !== "CALM" && (
         <>
           <span style={{ color: VGA_PALETTE.GREEN }}>{info.strength}</span>
           <div
@@ -64,7 +66,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
             <div
               style={{
                 width: barWidth,
-                height: '100%',
+                height: "100%",
                 background:
                   info.strength > 36
                     ? VGA_PALETTE.RED
@@ -76,7 +78,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
           </div>
         </>
       )}
-      {info.direction === 'CALM' && (
+      {info.direction === "CALM" && (
         <span style={{ color: VGA_PALETTE.GRAY, fontSize: 12 }}>no drift</span>
       )}
     </div>

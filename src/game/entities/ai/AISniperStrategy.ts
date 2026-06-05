@@ -9,11 +9,11 @@
  * - Second shot onwards targets the tank directly with zero aiming noise.
  */
 
-import type { AIEngine } from './AIEngine';
-import type { GameState } from '../../../types/game';
-import type { Player } from '../../../types/player';
-import type { TerrainManager } from '../../engine/Terrain';
-import { type WeaponId } from '../../../types/weapon';
+import type { AIEngine } from "./AIEngine";
+import type { GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
+import type { TerrainManager } from "../../engine/Terrain";
+import { type WeaponId } from "../../../types/weapon";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -64,13 +64,16 @@ export class AISniperStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((p) => p.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
-    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
+    if (
+      mem.lastSelfHealth != null &&
+      self.tank.health > mem.lastSelfHealth + 5
+    ) {
       this.resetForNewRound(mem);
     }
     mem.lastSelfHealth = self.tank.health;
@@ -85,8 +88,51 @@ export class AISniperStrategy implements AIEngine {
 
     // Target selection
     let target: Player | undefined;
-    if (mem.currentTargetId) {
-      target = enemies.find((e) => e.id === mem.currentTargetId);
+    let hasEnemies = false;
+    let bestTarget: Player | undefined;
+    let bestIsAi = false;
+
+    // Single pass to find current target and best fallback target
+    for (let i = 0; i < gameState.players.length; i++) {
+      const p = gameState.players[i];
+      if (p.id !== self.id && !p.tank.isDead) {
+        hasEnemies = true;
+
+        // 1. Maintain focus on current target if still alive
+        if (mem.currentTargetId && p.id === mem.currentTargetId) {
+          target = p;
+          // Note: we don't break early here because we might need to know if there are enemies
+          // but actually if we found the target, we don't need to do the rest of the loop!
+          // We can break early if we just need the target. Wait, if target exists, we don't need bestTarget.
+          // Let's break early to save time if target is found.
+          break;
+        }
+
+        // 2. Otherwise pick the most dangerous AI (smartest/highest health), or nearest if only humans left
+        // (Wait, original comment says "most dangerous AI", but code implements "Prefer weakest target"
+        //  The code says: const h = a.tank.health - b.tank.health; which sorts ascending by health, picking weakest.)
+        const pIsAi = !p.isHuman;
+        if (!bestTarget) {
+          bestTarget = p;
+          bestIsAi = pIsAi;
+        } else {
+          // Tie-breaker: prefer AI over human
+          if (pIsAi && !bestIsAi) {
+            bestTarget = p;
+            bestIsAi = pIsAi;
+          }
+          // If both are AI or both are Human, prefer lower health
+          else if (pIsAi === bestIsAi) {
+            if (p.tank.health < bestTarget.tank.health) {
+              bestTarget = p;
+            }
+          }
+        }
+      }
+    }
+
+    if (!hasEnemies) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     if (!target) {
@@ -103,7 +149,13 @@ export class AISniperStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
+    if (isNewTarget) {
+      console.log(
+        `[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`,
+      );
+    }
 
     // 👈 Accumulation persistante des essais au sein de la même manche
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;

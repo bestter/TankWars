@@ -12,10 +12,10 @@ import { secureRandom } from '../../utils/random';
  * - Ballistic motion: gravity, horizontal wind acceleration, light air drag
  */
 
-import { WEAPON_REGISTRY, type WeaponId } from '../../types/weapon';
-import type { TerrainManager } from './Terrain';
-import { VGA_PALETTE } from '../../types/game';
-import type { TankManager } from '../entities/TankManager';
+import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
+import type { TerrainManager } from "./Terrain";
+import { VGA_PALETTE } from "../../types/game";
+import type { TankManager } from "../entities/TankManager";
 
 export interface Projectile {
   x: number;
@@ -139,7 +139,12 @@ export class PhysicsEngine {
       // Cluster bomb: split into sub-munitions in the air (at apex: transition from rising to falling)
       // Subs are released with spread velocities influenced by cannon power + direction (via initial + current vel)
       // They continue under wind/gravity and will blow on their own impacts (stronger multi-hit effect).
-      if (p.weaponId === 'CLUSTER' && !p.isSubmunition && prevVy < 0 && p.vy >= 0) {
+      if (
+        p.weaponId === "CLUSTER" &&
+        !p.isSubmunition &&
+        prevVy < 0 &&
+        p.vy >= 0
+      ) {
         this.splitCluster(i, p);
         continue;
       }
@@ -152,7 +157,9 @@ export class PhysicsEngine {
       if (tankManager) {
         let ignoreOwnerId: string | undefined = undefined;
         if (p.ownerId && !p.hasLeftOwnerHitbox) {
-          const ownerPlayer = tankManager.getPlayers().find((pl) => pl.id === p.ownerId);
+          const ownerPlayer = tankManager
+            .getPlayers()
+            .find((pl) => pl.id === p.ownerId);
           if (ownerPlayer) {
             const oTank = ownerPlayer.tank;
             const tankWidth = 24;
@@ -181,7 +188,7 @@ export class PhysicsEngine {
       // Collision avec le terrain
       if (terrainManager.checkCollision(p.x, p.y)) {
         const weapon = WEAPON_REGISTRY[p.weaponId];
-        if (weapon?.physicsType === 'grenade') {
+        if (weapon?.physicsType === "grenade") {
           this.bounceGrenade(i, p, terrainManager, tankManager);
           continue;
         } else {
@@ -212,7 +219,7 @@ export class PhysicsEngine {
     const maxDamage = weapon?.damage ?? 35;
 
     console.log(
-      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? 'unknown'}`
+      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
     );
 
     // 1. Détruire le terrain
@@ -244,10 +251,7 @@ export class PhysicsEngine {
    * CLUSTER's blast/damage rules for multiple spread-out hits, making it stronger).
    * Parent is removed without its own explosion.
    */
-  private splitCluster(
-    parentIndex: number,
-    p: Projectile,
-  ): void {
+  private splitCluster(parentIndex: number, p: Projectile): void {
     const numSubs = 5; // enough to make cluster noticeably stronger with spread
     const power = p.initialPower ?? 50;
     const maxSpreadRad = (Math.PI / 7) * (power / 70); // wider spread for higher power shots
@@ -312,7 +316,8 @@ export class PhysicsEngine {
     // 4 allows 3 visible bounces which feels good for "grenade à rebond" on rough maps.
     const speed = Math.hypot(p.vx, p.vy);
     const MAX_BOUNCES = 4;
-    const shouldExplode = bounceCount >= MAX_BOUNCES || speed < 3.2 || Math.abs(p.vy) < 2.0;
+    const shouldExplode =
+      bounceCount >= MAX_BOUNCES || speed < 3.2 || Math.abs(p.vy) < 2.0;
 
     if (shouldExplode) {
       // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
@@ -353,11 +358,11 @@ export class PhysicsEngine {
       ctx.fillStyle = p.ownerColor ?? weapon?.color ?? VGA_PALETTE.WHITE;
 
       let r = 2.5;
-      if (p.weaponId === 'CLUSTER' && !p.isSubmunition) {
+      if (p.weaponId === "CLUSTER" && !p.isSubmunition) {
         r = 4.5; // visibly larger "parent" shell for cluster (before it splits in air)
       } else if (p.isSubmunition) {
         r = 1.8; // slightly smaller bomblets
-      } else if (p.weaponId === 'GRENADE') {
+      } else if (p.weaponId === "GRENADE") {
         r = 3.2; // grenades are a bit chunkier to read during bounces
       }
 

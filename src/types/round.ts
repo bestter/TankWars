@@ -4,7 +4,7 @@
  * Distinct from TurnManager `turn` counter (individual shots within a round).
  */
 
-import type { Player } from './player';
+import type { Player } from "./player";
 
 export interface RoundEndPayload {
   /** Players still alive when the round ended */

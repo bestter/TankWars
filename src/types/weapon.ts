@@ -9,7 +9,7 @@
  * Other weapons have limited inventory that drops after each use (see TurnManager.consumeAmmo).
  */
 
-import { VGA_PALETTE, type Color } from './game';
+import { VGA_PALETTE, type Color } from "./game";
 
 export type WeaponId =
   | 'MISSILE'
@@ -31,7 +31,7 @@ export interface Weapon {
   /** Radius of terrain destruction + splash damage (world units). */
   blastRadius: number;
   /** Selects the trajectory / secondary behavior in the physics engine. */
-  physicsType: 'projectile' | 'grenade' | 'cluster_parent';
+  physicsType: "projectile" | "grenade" | "cluster_parent";
   /** Accent / tracer / explosion tint. Must come from VGA_PALETTE. */
   color: Color;
   /** How many rounds granted when purchased (or initial loadout). */
@@ -41,62 +41,62 @@ export interface Weapon {
 /** Master registry. All weapon behavior is derived from these values. */
 export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
   MISSILE: {
-    id: 'MISSILE',
-    name: 'Missile',
+    id: "MISSILE",
+    name: "Missile",
     price: 50,
     damage: 35,
     blastRadius: 28,
-    physicsType: 'projectile',
+    physicsType: "projectile",
     color: VGA_PALETTE.CYAN,
     defaultAmmo: 3,
   },
   GRENADE: {
-    id: 'GRENADE',
-    name: 'Grenade',
+    id: "GRENADE",
+    name: "Grenade",
     price: 75,
     damage: 28,
     blastRadius: 24,
-    physicsType: 'grenade',
+    physicsType: "grenade",
     color: VGA_PALETTE.YELLOW,
     defaultAmmo: 2,
   },
   CLUSTER: {
-    id: 'CLUSTER',
-    name: 'Cluster Bomb',
+    id: "CLUSTER",
+    name: "Cluster Bomb",
     price: 135,
     damage: 16,
     blastRadius: 16,
-    physicsType: 'cluster_parent',
+    physicsType: "cluster_parent",
     color: VGA_PALETTE.MAGENTA,
     defaultAmmo: 1,
   },
   NUKE: {
-    id: 'NUKE',
-    name: 'Baby Nuke',
+    id: "NUKE",
+    name: "Baby Nuke",
     price: 210,
     damage: 75,
     blastRadius: 62,
-    physicsType: 'projectile',
+    physicsType: "projectile",
     color: VGA_PALETTE.RED,
     defaultAmmo: 1,
   },
   THERMONUCLEAR: {
-    id: 'THERMONUCLEAR',
-    name: 'Thermonuclear Bomb',
+    id: "THERMONUCLEAR",
+    name: "Thermonuclear Bomb",
     price: 2500,
     damage: 120,
     blastRadius: 160,
-    physicsType: 'projectile',
+    physicsType: "projectile",
     color: VGA_PALETTE.RED,
     defaultAmmo: 1,
   },
   DRILLER: {
-    id: 'DRILLER',
-    name: 'Driller',
+    id: "DRILLER",
+    name: "Driller",
     price: 90,
     damage: 42,
     blastRadius: 14,
-    physicsType: 'projectile',
+    physicsType: "projectile",
     color: VGA_PALETTE.GREEN,
     defaultAmmo: 2,
   },
@@ -134,5 +134,5 @@ export const ALL_WEAPON_IDS: readonly WeaponId[] = Object.keys(
  * MISSILE is unlimited and not sold — it is always available to every tank.
  */
 export const SHOP_WEAPON_IDS: readonly WeaponId[] = ALL_WEAPON_IDS.filter(
-  (id) => id !== 'MISSILE',
+  (id) => id !== "MISSILE",
 );

@@ -13,9 +13,13 @@
  * (humains + IA auto) et la transition finale vers COMBAT sont gérées par le parent (GameCanvas).
  */
 
-import type { Player } from '../types/player';
-import { WEAPON_REGISTRY, type WeaponId, SHOP_WEAPON_IDS } from '../types/weapon';
-import { VGA_PALETTE } from '../types/game';
+import type { Player } from "../types/player";
+import {
+  WEAPON_REGISTRY,
+  type WeaponId,
+  SHOP_WEAPON_IDS,
+} from "../types/weapon";
+import { VGA_PALETTE } from "../types/game";
 
 export interface WeaponShopProps {
   /** Le joueur dont c'est le tour d'acheter (humain) */
@@ -55,43 +59,65 @@ export function WeaponShop({
       className="retro-modal"
       style={{
         border: `4px solid ${VGA_PALETTE.MAGENTA}`,
-        width: 'min(520px, 92%)',
-        padding: '16px 20px 20px',
-        backgroundColor: 'rgba(0, 0, 0, 0.94)',
+        width: "min(520px, 92%)",
+        padding: "16px 20px 20px",
+        backgroundColor: "rgba(0, 0, 0, 0.94)",
       }}
     >
       {/* Header */}
       <div style={{ marginBottom: 8 }}>
-        <span style={{ color: VGA_PALETTE.CYAN, fontSize: '13px' }}>
+        <span style={{ color: VGA_PALETTE.CYAN, fontSize: "13px" }}>
           BOUTIQUE: MANCHE {shopIndex + 1} / {totalShoppers}
         </span>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
         <span
           style={{
-            display: 'inline-block',
+            display: "inline-block",
             width: 14,
             height: 14,
             backgroundColor: player.tank.color,
             border: `2px solid ${VGA_PALETTE.WHITE}`,
-            verticalAlign: 'middle',
+            verticalAlign: "middle",
           }}
         />
-        <span style={{ color: player.tank.color, fontWeight: 'bold', fontSize: '18px' }}>
+        <span
+          style={{
+            color: player.tank.color,
+            fontWeight: "bold",
+            fontSize: "18px",
+          }}
+        >
           {player.name}
         </span>
-        <span style={{ color: VGA_PALETTE.YELLOW, fontSize: '20px', marginLeft: 12 }}>
+        <span
+          style={{
+            color: VGA_PALETTE.YELLOW,
+            fontSize: "20px",
+            marginLeft: 12,
+          }}
+        >
           {money}$
         </span>
       </div>
 
-      <div style={{ fontSize: '12px', color: VGA_PALETTE.GRAY, marginBottom: 10 }}>
+      <div
+        style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginBottom: 10 }}
+      >
         Utilisez + pour acheter, − pour vendre (remboursement intégral)
       </div>
 
       {/* Weapon list */}
-      <div style={{ textAlign: 'left', marginBottom: 16 }}>
+      <div style={{ textAlign: "left", marginBottom: 16 }}>
         {SHOP_WEAPON_IDS.map((wid) => {
           const def = WEAPON_REGISTRY[wid];
           const currentStock = inventory[wid] ?? 0;
@@ -102,43 +128,64 @@ export function WeaponShop({
             <div
               key={wid}
               style={{
-                display: 'flex',
-                alignItems: 'center',
+                display: "flex",
+                alignItems: "center",
                 gap: 8,
-                padding: '6px 8px',
+                padding: "6px 8px",
                 marginBottom: 5,
-                backgroundColor: '#111',
+                backgroundColor: "#111",
                 border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
               }}
             >
               {/* Weapon info */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: def.color, fontWeight: 'bold' }}>{def.name}</span>
-                  <span style={{ color: VGA_PALETTE.YELLOW }}>{def.price}$</span>
+                <div
+                  style={{ display: "flex", justifyContent: "space-between" }}
+                >
+                  <span style={{ color: def.color, fontWeight: "bold" }}>
+                    {def.name}
+                  </span>
+                  <span style={{ color: VGA_PALETTE.YELLOW }}>
+                    {def.price}$
+                  </span>
                 </div>
-                <div style={{ fontSize: '12px', color: VGA_PALETTE.GRAY, lineHeight: 1.2 }}>
-                  {WEAPON_DESCRIPTIONS[wid] ?? 'Arme tactique'}
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: VGA_PALETTE.GRAY,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {WEAPON_DESCRIPTIONS[wid] ?? "Arme tactique"}
                 </div>
               </div>
 
               {/* Stock */}
-              <div style={{ textAlign: 'center', minWidth: 42, color: VGA_PALETTE.CYAN }}>
-                Stock<br />
-                <strong style={{ fontSize: '13px' }}>{currentStock}</strong>
+              <div
+                style={{
+                  textAlign: "center",
+                  minWidth: 42,
+                  color: VGA_PALETTE.CYAN,
+                }}
+              >
+                Stock
+                <br />
+                <strong style={{ fontSize: "13px" }}>{currentStock}</strong>
               </div>
 
               {/* +/- buttons */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <button
                   onClick={() => onBuySell(wid, 1)}
                   disabled={!canAfford}
                   className="retro-inc-btn"
                   style={{
-                    background: canAfford ? '#003300' : '#222',
-                    color: canAfford ? VGA_PALETTE.GREEN : '#555',
-                    borderColor: canAfford ? VGA_PALETTE.GREEN : VGA_PALETTE.DARK_GRAY,
-                    cursor: canAfford ? 'pointer' : 'not-allowed',
+                    background: canAfford ? "#003300" : "#222",
+                    color: canAfford ? VGA_PALETTE.GREEN : "#555",
+                    borderColor: canAfford
+                      ? VGA_PALETTE.GREEN
+                      : VGA_PALETTE.DARK_GRAY,
+                    cursor: canAfford ? "pointer" : "not-allowed",
                   }}
                   title="Acheter 1"
                 >
@@ -149,10 +196,12 @@ export function WeaponShop({
                   disabled={!canSell}
                   className="retro-inc-btn"
                   style={{
-                    background: canSell ? '#330000' : '#222',
-                    color: canSell ? VGA_PALETTE.RED : '#555',
-                    borderColor: canSell ? VGA_PALETTE.RED : VGA_PALETTE.DARK_GRAY,
-                    cursor: canSell ? 'pointer' : 'not-allowed',
+                    background: canSell ? "#330000" : "#222",
+                    color: canSell ? VGA_PALETTE.RED : "#555",
+                    borderColor: canSell
+                      ? VGA_PALETTE.RED
+                      : VGA_PALETTE.DARK_GRAY,
+                    cursor: canSell ? "pointer" : "not-allowed",
                   }}
                   title="Vendre 1"
                 >
@@ -168,12 +217,14 @@ export function WeaponShop({
       <button
         onClick={onReady}
         className="retro-btn"
-        style={{ padding: '10px 36px' }}
+        style={{ padding: "10px 36px" }}
       >
         PRÊT → Joueur suivant
       </button>
 
-      <div style={{ fontSize: '12px', color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}>
+      <div
+        style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}
+      >
         Les IA achètent automatiquement
       </div>
     </div>

@@ -14,7 +14,7 @@
  *   - Tout point avec y >= heights[x] est considéré comme solide
  */
 
-import { VGA_PALETTE } from '../../types/game';
+import { VGA_PALETTE } from "../../types/game";
 
 /** Margin from canvas bottom for the lava "floor" level. When terrain is destroyed to/beyond this, lava is exposed visually and tanks touching it die instantly. */
 const LAVA_TOP_MARGIN = 6;
@@ -28,7 +28,7 @@ export class TerrainManager {
 
   constructor(width: number, height: number) {
     if (width <= 0 || height <= 0) {
-      throw new Error('TerrainManager: width and height must be positive');
+      throw new Error("TerrainManager: width and height must be positive");
     }
 
     this.width = Math.floor(width);
@@ -41,13 +41,13 @@ export class TerrainManager {
    * Ajoute un offset vertical pour positionner correctement le terrain.
    */
   public generate(): void {
-    const base = this.height * 0.62;           // offset vertical principal
-    const amp1 = this.height * 0.11;           // grandes collines
-    const amp2 = this.height * 0.065;          // collines moyennes
-    const amp3 = this.height * 0.032;          // détails fins
+    const base = this.height * 0.62; // offset vertical principal
+    const amp1 = this.height * 0.11; // grandes collines
+    const amp2 = this.height * 0.065; // collines moyennes
+    const amp3 = this.height * 0.032; // détails fins
 
     for (let x = 0; x < this.width; x++) {
-      const nx = x * 0.012;                    // fréquence de base
+      const nx = x * 0.012; // fréquence de base
 
       // Ondes sinusoïdales cumulées (superposition)
       let h =
@@ -85,7 +85,7 @@ export class TerrainManager {
     // Simple pixel-art lava texture / bubbles (static for perf + retro feel)
     ctx.fillStyle = VGA_PALETTE.RED;
     for (let x = 0; x < this.width; x += 3) {
-      const offset = (x % 5);
+      const offset = x % 5;
       ctx.fillRect(x, lavaTop + 1 + offset, 2, 2 + (x % 2));
     }
     ctx.fillStyle = VGA_PALETTE.YELLOW;
@@ -140,7 +140,11 @@ export class TerrainManager {
    * Creuse un cratère circulaire parfait dans le terrain.
    * Utilise la formule de Pythagore : Δy = √(radius² - (x - impactX)²)
    */
-  public destroyTerrain(impactX: number, impactY: number, radius: number): void {
+  public destroyTerrain(
+    impactX: number,
+    impactY: number,
+    radius: number,
+  ): void {
     if (radius <= 0) return;
 
     const r = radius;
@@ -228,4 +232,3 @@ export class TerrainManager {
     }
   }
 }
-

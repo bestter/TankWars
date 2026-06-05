@@ -1,4 +1,4 @@
-import { VGA_PALETTE, type Color } from '../types/game';
+import { VGA_PALETTE, type Color } from "../types/game";
 
 export interface ColorPickerProps {
   /** The currently selected color for this player */
@@ -20,10 +20,10 @@ export function ColorPicker({
   return (
     <div
       style={{
-        display: 'flex',
-        gap: '4px',
-        alignItems: 'center',
-        flexWrap: 'wrap',
+        display: "flex",
+        gap: "4px",
+        alignItems: "center",
+        flexWrap: "wrap",
       }}
     >
       {colorPool.map((color) => {
@@ -43,21 +43,21 @@ export function ColorPicker({
             }}
             style={{
               backgroundColor: color,
-              width: isSelected ? '16px' : '12px',
-              height: isSelected ? '14px' : '10px',
+              width: isSelected ? "16px" : "12px",
+              height: isSelected ? "14px" : "10px",
               border: isSelected
                 ? `2px solid ${VGA_PALETTE.WHITE}`
                 : isUnavailable
-                ? '1px dashed #333333'
-                : '1px solid #555555',
-              cursor: isUnavailable ? 'not-allowed' : 'pointer',
+                  ? "1px dashed #333333"
+                  : "1px solid #555555",
+              cursor: isUnavailable ? "not-allowed" : "pointer",
               opacity: isUnavailable ? 0.2 : isSelected ? 1.0 : 0.7,
-              boxShadow: isSelected ? `0 0 5px ${color}` : 'none',
-              transform: isSelected ? 'scale(1.15)' : 'none',
+              boxShadow: isSelected ? `0 0 5px ${color}` : "none",
+              transform: isSelected ? "scale(1.15)" : "none",
             }}
             title={
               isUnavailable
-                ? 'Couleur déjà sélectionnée par un autre joueur'
+                ? "Couleur déjà sélectionnée par un autre joueur"
                 : `Choisir la couleur ${color}`
             }
             aria-label={
@@ -69,16 +69,16 @@ export function ColorPicker({
             {isUnavailable && (
               <span
                 style={{
-                  position: 'absolute',
+                  position: "absolute",
                   inset: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#FF3333',
-                  fontSize: '9px',
-                  lineHeight: '9px',
-                  fontWeight: 'bold',
-                  pointerEvents: 'none',
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#FF3333",
+                  fontSize: "9px",
+                  lineHeight: "9px",
+                  fontWeight: "bold",
+                  pointerEvents: "none",
                 }}
               >
                 ✕

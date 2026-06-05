@@ -5,26 +5,26 @@
  * Gère le spawn, la physique de chute après explosions, les dégâts et le rendu rétro.
  */
 
-import type { Player } from '../../types/player';
-import type { TerrainManager } from '../engine/Terrain';
-import { VGA_PALETTE } from '../../types/game';
-import type { WeaponId } from '../../types/weapon';
-import { drawTankSprite } from '../rendering/tankSprite';
+import type { Player } from "../../types/player";
+import type { TerrainManager } from "../engine/Terrain";
+import { VGA_PALETTE } from "../../types/game";
+import type { WeaponId } from "../../types/weapon";
+import { drawTankSprite } from "../rendering/tankSprite";
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
 
 /** Falling damage constants: pixels of downward travel per 1 HP of damage. */
 const FALL_DAMAGE_LEVEL_HEIGHT_NORMAL = 2; // normal/slope fall
-const FALL_DAMAGE_LEVEL_HEIGHT_VOID = 1;   // void fall (accelerated damage)
+const FALL_DAMAGE_LEVEL_HEIGHT_VOID = 1; // void fall (accelerated damage)
 
 /** Falling gravity constants. */
 const TANK_GRAVITY_NORMAL = 850; // px/s² — original/slope gravity
-const TANK_GRAVITY_VOID = 1200;   // px/s² — accelerated gravity for void fall
+const TANK_GRAVITY_VOID = 1200; // px/s² — accelerated gravity for void fall
 
 /** Falling terminal velocity constants. */
-const TERMINAL_V_NORMAL = 16.0;  // original terminal velocity
-const TERMINAL_V_VOID = 24.0;    // accelerated terminal velocity for void fall
+const TERMINAL_V_NORMAL = 16.0; // original terminal velocity
+const TERMINAL_V_VOID = 24.0; // accelerated terminal velocity for void fall
 
 /** Vertical gap threshold (in pixels) to distinguish falling in the void from sliding down a slope. */
 const VOID_FALL_THRESHOLD = 12;
@@ -44,10 +44,17 @@ export class TankManager {
   /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
    *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
    */
-  private recoilState: Map<string, { dx: number; dy: number; remaining: number }> = new Map();
+  private recoilState: Map<
+    string,
+    { dx: number; dy: number; remaining: number }
+  > = new Map();
 
   /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
-  public onPlayerDied?: (playerId: string, cause: 'explosion' | 'burial', details: string) => void;
+  public onPlayerDied?: (
+    playerId: string,
+    cause: "explosion" | "burial",
+    details: string,
+  ) => void;
 
   /** Called (throttled by caller) while a tank has downward velocity after losing ground support (for scrape/slide SFX). */
   public onTankSliding?: (playerId: string) => void;
@@ -116,7 +123,7 @@ export class TankManager {
 
     const count = players.length;
     if (count < 2 || count > 4) {
-      console.warn('TankManager: recommended player count is between 2 and 4');
+      console.warn("TankManager: recommended player count is between 2 and 4");
     }
 
     const margin = terrain.width * 0.13;
@@ -149,7 +156,7 @@ export class TankManager {
 
       // Defaults for the new round (power + MISSILE as the always-available unlimited default)
       tank.power = 50;
-      tank.currentWeapon = 'MISSILE';
+      tank.currentWeapon = "MISSILE";
 
       // Clear per-round AI revenge data
       tank.lastHitBy = undefined;
@@ -295,7 +302,9 @@ export class TankManager {
 
         const gravity = isVoid ? TANK_GRAVITY_VOID : TANK_GRAVITY_NORMAL;
         const terminalV = isVoid ? TERMINAL_V_VOID : TERMINAL_V_NORMAL;
-        const damageLevelHeight = isVoid ? FALL_DAMAGE_LEVEL_HEIGHT_VOID : FALL_DAMAGE_LEVEL_HEIGHT_NORMAL;
+        const damageLevelHeight = isVoid
+          ? FALL_DAMAGE_LEVEL_HEIGHT_VOID
+          : FALL_DAMAGE_LEVEL_HEIGHT_NORMAL;
 
         vy = Math.min(vy + gravity * dt, terminalV);
         const prevY = tank.position.y;
@@ -308,9 +317,9 @@ export class TankManager {
           tank.isDead = true;
           const details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
           console.log(
-            `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
+            `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`,
           );
-          this.onPlayerDied?.(player.id, 'burial', details);
+          this.onPlayerDied?.(player.id, "burial", details);
           this.velocities.delete(id);
           this.fallenDistances.delete(id);
           this.isVoidFall.delete(id);
@@ -334,17 +343,20 @@ export class TankManager {
             this.fallenDistances.set(id, fallen);
 
             console.log(
-              `[FALL DMG] ${player.name} ${isVoid ? '(VOID)' : '(SLOPE)'} +${deltaFall.toFixed(1)}px (accum ${(fallen + levelsCrossed * damageLevelHeight).toFixed(1)}) -> ${dmg} dmg, health=${tank.health}`
+              `[FALL DMG] ${player.name} ${isVoid ? "(VOID)" : "(SLOPE)"} +${deltaFall.toFixed(1)}px (accum ${(fallen + levelsCrossed * damageLevelHeight).toFixed(1)}) -> ${dmg} dmg, health=${tank.health}`,
             );
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;
-              const totalFallen = (fallen + levelsCrossed * damageLevelHeight).toFixed(0);
+              const totalFallen = (
+                fallen +
+                levelsCrossed * damageLevelHeight
+              ).toFixed(0);
               const details = `fall damage (${dmg} pts after ~${totalFallen}px)`;
               console.log(
-                `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`
+                `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`,
               );
-              this.onPlayerDied?.(player.id, 'burial', details);
+              this.onPlayerDied?.(player.id, "burial", details);
             }
           }
         }
@@ -402,7 +414,7 @@ export class TankManager {
 
       if (unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
-        const cause = 'burial';
+        const cause = "burial";
         let details: string;
         if (touchedLava) {
           details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
@@ -412,9 +424,9 @@ export class TankManager {
           details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         }
         console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=${cause} pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) ${details}`
+          `[DEATH] player=${player.name} (id=${player.id}) cause=${cause} pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) ${details}`,
         );
-        this.onPlayerDied?.(player.id, 'burial', details);
+        this.onPlayerDied?.(player.id, "burial", details);
       }
     }
   }
@@ -425,7 +437,11 @@ export class TankManager {
    * immediately (per weapon rules: blast radius, damage, special kill zones, etc.)
    * instead of only triggering on terrain.
    */
-  public checkTankCollision(x: number, y: number, ignoreOwnerId?: string): boolean {
+  public checkTankCollision(
+    x: number,
+    y: number,
+    ignoreOwnerId?: string,
+  ): boolean {
     const tankWidth = 24;
     const tankHeight = 15;
 
@@ -501,7 +517,7 @@ export class TankManager {
 
       // Nuke direct hit rule (per request): one direct hit kills the tank outright.
       // Threshold ~10px is slightly > tank half-extent (body 14px wide); near-center impact counts.
-      if (weaponId === 'NUKE' && distance <= 10) {
+      if (weaponId === "NUKE" && distance <= 10) {
         tank.shield = 0;
         tank.health = 0;
         damage = 0; // avoid double-subtract in the generic path below
@@ -510,7 +526,7 @@ export class TankManager {
       // Thermonuclear inner kill zone (user request): all tanks within this distance are instantly destroyed
       // (the huge crater + outer splash + fall mechanics will handle "others might fall like actually").
       // 75px chosen as ~blastRadius * 0.47 for 160px thermo blast (tuneable; produces 1/4-map scale wipe + pit).
-      if (weaponId === 'THERMONUCLEAR' && distance <= 75) {
+      if (weaponId === "THERMONUCLEAR" && distance <= 75) {
         tank.shield = 0;
         tank.health = 0;
         damage = 0;
@@ -538,11 +554,11 @@ export class TankManager {
 
       if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
-        const details = `explosion by ${killerId ?? 'unknown'} (damage=${damage.toFixed(1)})`;
+        const details = `explosion by ${killerId ?? "unknown"} (damage=${damage.toFixed(1)})`;
         console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? 'unknown'}`
+          `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? "unknown"}`,
         );
-        this.onPlayerDied?.(player.id, 'explosion', details);
+        this.onPlayerDied?.(player.id, "explosion", details);
         if (killerId) {
           killsThisExplosion++;
         }
@@ -559,7 +575,7 @@ export class TankManager {
   public draw(
     ctx: CanvasRenderingContext2D,
     showPlayerNames: boolean = true,
-    terrain?: TerrainManager
+    terrain?: TerrainManager,
   ): void {
     const tankWidth = 24;
     const tankHeight = 15;
@@ -581,7 +597,10 @@ export class TankManager {
         const dy = yRight - yLeft;
         const rawAngleRad = Math.atan2(dy, dx);
         const maxTiltDeg = 35; // inclinaison max pour garder le rendu propre
-        hullAngle = Math.max(-maxTiltDeg, Math.min(maxTiltDeg, (rawAngleRad * 180) / Math.PI));
+        hullAngle = Math.max(
+          -maxTiltDeg,
+          Math.min(maxTiltDeg, (rawAngleRad * 180) / Math.PI),
+        );
       }
 
       // Apply transient recoil offset (only to chassis sprite for "kick" feel; bars/names stay anchored)
@@ -596,7 +615,16 @@ export class TankManager {
       // Dessine le sprite de tank détaillé de l'Étape 1
       // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
       // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
-      drawTankSprite(ctx, spriteX, spriteY, tankWidth, tankHeight, hullAngle, -tank.angle, color);
+      drawTankSprite(
+        ctx,
+        spriteX,
+        spriteY,
+        tankWidth,
+        tankHeight,
+        hullAngle,
+        -tank.angle,
+        color,
+      );
 
       // === Jauge de vie miniature ===
       const barWidth = 16;
@@ -621,9 +649,9 @@ export class TankManager {
 
       // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
       if (showPlayerNames) {
-        ctx.font = '12px monospace';
+        ctx.font = "12px monospace";
         ctx.fillStyle = color;
-        ctx.textAlign = 'center';
+        ctx.textAlign = "center";
         const nameY = y - 34; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
