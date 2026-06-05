@@ -19,7 +19,7 @@ interface SniperMemory {
   currentTargetId?: string;
   /** Attempts per target player ID this round */
   targetAttempts: Record<string, number>;
-  lastSelfHealth?: number;
+  lastRoundIndex?: number; // 👈 Remplacement de la santé par l'index de la manche
 }
 
 export class AISniperStrategy implements AIEngine {
@@ -34,9 +34,10 @@ export class AISniperStrategy implements AIEngine {
     return this.memories.get(playerId)!;
   }
 
-  private resetForNewRound(mem: SniperMemory): void {
+  private resetForNewRound(mem: SniperMemory, roundIndex: number): void {
     mem.currentTargetId = undefined;
     mem.targetAttempts = {};
+    mem.lastRoundIndex = roundIndex;
   }
 
   async executeTurn(
@@ -51,11 +52,11 @@ export class AISniperStrategy implements AIEngine {
 
     const mem = this.getMem(self.id);
 
-    // Detect round respawn (health reset to full) and clear per-round memory
-    if (mem.lastSelfHealth != null && self.tank.health > mem.lastSelfHealth + 5) {
-      this.resetForNewRound(mem);
+    // 👈 Détection propre du changement de manche via l'index global du jeu
+    if (mem.lastRoundIndex !== undefined && gameState.currentRoundIndex > mem.lastRoundIndex) {
+      this.resetForNewRound(mem, gameState.currentRoundIndex);
     }
-    mem.lastSelfHealth = self.tank.health;
+    mem.lastRoundIndex = gameState.currentRoundIndex;
 
     // Find living enemies
     const enemies = gameState.players.filter(
@@ -65,8 +66,7 @@ export class AISniperStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: 'MISSILE' };
     }
 
-    // Target selection:
-    // Sniper is cold and sticks to its target until they are dead, then switches to the weakest.
+    // Target selection
     let target: Player | undefined;
     if (mem.currentTargetId) {
       target = enemies.find((e) => e.id === mem.currentTargetId);
@@ -77,31 +77,23 @@ export class AISniperStrategy implements AIEngine {
       const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
 
       const sorted = [...candidates].sort((a, b) => {
-        // Prefer weakest target
         const h = a.tank.health - b.tank.health;
         if (h !== 0) return h;
-        // Tie-breaker: prefer AI over human (Human Privilege)
         const ha = a.isHuman ? 1 : 0;
         const hb = b.isHuman ? 1 : 0;
-        return ha - hb; // AI (0) comes before human (1)
+        return ha - hb;
       });
       target = sorted[0];
     }
 
-    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
-    if (isNewTarget) {
-      console.log(`[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`);
-    }
 
-    // Increment attempt counter for this target
+    // 👈 Accumulation persistante des essais au sein de la même manche
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    // Weapon selection:
-    // Sniper ONLY uses precise kinetic weapons. Driller if available, otherwise Missile.
     const chosenWeapon: WeaponId = (self.inventory?.DRILLER ?? 0) > 0 ? 'DRILLER' : 'MISSILE';
-    self.tank.currentWeapon = chosenWeapon; // Update live roster snap for HUD display
+    self.tank.currentWeapon = chosenWeapon;
 
     // Compute the shot solution
     const { angle, power } = this.computePrecisionShot(
@@ -131,9 +123,9 @@ export class AISniperStrategy implements AIEngine {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
     const tx = target.tank.position.x;
-    const ty = target.tank.position.y - 6; // Aim at center body of tank
+    const ty = target.tank.position.y - 6;
     const dx = tx - sx;
-    const dy = sy - ty; // Altitude relative to self (Y is inverted in canvas, so sy - ty > 0 means target is higher)
+    const dy = sy - ty;
     const isRight = dx > 0;
 
     const BASE_SPEED = 4.2;
@@ -144,13 +136,10 @@ export class AISniperStrategy implements AIEngine {
     const y = dy;
     const g = gravity;
 
-    // 1. Calculate minimum required initial speed v_min for a valid ballistic path
-    // Formula: v^2_min = g * (y + sqrt(x^2 + y^2))
     const minVSq = g * (y + Math.sqrt(x * x + y * y));
     const minV = Math.sqrt(Math.max(0.1, minVSq));
     const minPower = minV / BASE_SPEED;
 
-    // Start with a safety margin (e.g. +6%) to counteract drag/wind resistance
     let power = Math.max(50, Math.ceil(minPower * 1.06));
     power = Math.min(95, power);
 
@@ -158,21 +147,18 @@ export class AISniperStrategy implements AIEngine {
     let bestPower = power;
     let foundSolution = false;
 
-    // Try finding the optimal lob angle, increasing power if terrain obstacles are met
     for (let p = power; p <= 95; p += 5) {
       const v = p * BASE_SPEED;
       const vSq = v * v;
       const discriminant = vSq * vSq - g * (g * x * x + 2 * y * vSq);
 
       if (discriminant >= 0) {
-        // High lob trajectory (positive root +)
         const tanTheta = (vSq + Math.sqrt(discriminant)) / (g * x);
         const thetaRad = Math.atan(tanTheta);
         const thetaDeg = (thetaRad * 180) / Math.PI;
 
         const calculatedAngle = isRight ? thetaDeg : 180 - thetaDeg;
 
-        // Verify with actual physics simulation (including wind and drag)
         const sim = this.simulateShot(sx, sy, calculatedAngle, p, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
         const distanceToTarget = Math.hypot(sim.landX - tx, sim.landY - ty);
 
@@ -182,7 +168,6 @@ export class AISniperStrategy implements AIEngine {
           foundSolution = true;
           break;
         } else {
-          // If blocked by terrain, keep it as fallback in case higher powers don't work
           const currentBestSim = this.simulateShot(sx, sy, bestAngle, bestPower, wind, g, BASE_SPEED, DT, MAX_STEPS, terrain);
           if (distanceToTarget < Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)) {
             bestAngle = calculatedAngle;
@@ -193,24 +178,19 @@ export class AISniperStrategy implements AIEngine {
     }
 
     if (!foundSolution) {
-      console.log(`[AI SNIPER] No direct mathematical solution found. Applying default lob path.`);
       bestPower = 90;
       bestAngle = isRight ? 65 : 115;
     }
 
     let finalAngle = bestAngle;
 
-    // 3. Add precision modulator (Tâche 3)
+    // 👈 La modulation ne s'applique STRICTEMENT qu'au premier essai de la manche
     if (attempts === 1) {
-      const errorMargin = 3.5; // slight angle noise (in degrees) for the first shot
+      const errorMargin = 3.5;
       const noise = (Math.random() - 0.5) * errorMargin;
       finalAngle += noise;
-      console.log(`[AI SNIPER] Shot 1 error modulation applied: noise=${noise.toFixed(2)} deg (margin=${errorMargin} deg)`);
-    } else {
-      console.log(`[AI SNIPER] Shot ${attempts} corrected perfectly (0 noise)`);
     }
 
-    // Keep angle within safe cones to prevent shooting backward
     if (isRight) {
       finalAngle = Math.max(15, Math.min(85, finalAngle));
     } else {
@@ -272,12 +252,8 @@ export class AISniperStrategy implements AIEngine {
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
-    console.log("Sniper fallback called");
     const angle = 45 + Math.random() * 90;
     const power = 55 + Math.random() * 20;
-    return {
-      angle: Math.round(angle),
-      power: Math.round(power),
-    };
+    return { angle: Math.round(angle), power: Math.round(power) };
   }
 }
