@@ -26,6 +26,11 @@ export class TerrainManager {
   /** Tableau privé des hauteurs de surface (taille = width) */
   private readonly heights: number[];
 
+  // === Performance Optimization: Offscreen Canvas Caching ===
+  private offscreenCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private offscreenCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
+  private isDirty: boolean = true;
+
   constructor(width: number, height: number) {
     if (width <= 0 || height <= 0) {
       throw new Error("TerrainManager: width and height must be positive");
@@ -41,6 +46,7 @@ export class TerrainManager {
    * Ajoute un offset vertical pour positionner correctement le terrain.
    */
   public generate(): void {
+    this.isDirty = true;
     const base = this.height * 0.62; // offset vertical principal
     const amp1 = this.height * 0.11; // grandes collines
     const amp2 = this.height * 0.065; // collines moyennes
@@ -71,10 +77,123 @@ export class TerrainManager {
   }
 
   /**
+   * Initializes the offscreen canvas for caching if it doesn't exist yet.
+   */
+  private initOffscreenCanvas(): void {
+    if (this.offscreenCanvas) return;
+
+    if (typeof OffscreenCanvas !== "undefined") {
+      this.offscreenCanvas = new OffscreenCanvas(this.width, this.height);
+      this.offscreenCtx = this.offscreenCanvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+    } else if (typeof document !== "undefined") {
+      this.offscreenCanvas = document.createElement("canvas");
+      this.offscreenCanvas.width = this.width;
+      this.offscreenCanvas.height = this.height;
+      this.offscreenCtx = this.offscreenCanvas.getContext("2d") as CanvasRenderingContext2D;
+    } else {
+      // Fallback for tests environments without canvas
+      return;
+    }
+  }
+
+  /**
+   * Renders the terrain to the offscreen canvas.
+   */
+  private renderToOffscreen(): void {
+    this.initOffscreenCanvas();
+    const ctx = this.offscreenCtx;
+    if (!ctx) return;
+
+    // Clear background to sky color (or transparent) if needed.
+    // Wait, the GameEngine draws sky before terrain. Since alpha is false, we might overwrite.
+    // Actually, offscreen canvas doesn't need alpha:false if we want transparency, but terrain is fully opaque at the bottom?
+    // Let's set alpha: true by removing it, just in case.
+
+    // Clear
+    ctx.clearRect(0, 0, this.width, this.height);
+
+    const lavaTop = this.lavaTop;
+
+    // Draw lava at the absolute bottom (the "floor level" when all ground is destroyed)
+    // Retro VGA-style lava using DARK_RED base + RED/YELLOW accents for bubbly look
+    ctx.fillStyle = VGA_PALETTE.DARK_RED;
+    ctx.fillRect(0, lavaTop, this.width, this.height - lavaTop);
+
+    // Simple pixel-art lava texture / bubbles (static for perf + retro feel)
+    ctx.fillStyle = VGA_PALETTE.RED;
+    for (let x = 0; x < this.width; x += 3) {
+      const offset = x % 5;
+      ctx.fillRect(x, lavaTop + 1 + offset, 2, 2 + (x % 2));
+    }
+    ctx.fillStyle = VGA_PALETTE.YELLOW;
+    for (let x = 2; x < this.width; x += 5) {
+      ctx.fillRect(x, lavaTop + 3 + (x % 3), 1, 1);
+    }
+
+    // Brown terrain fill, but clamped so it never goes below lavaTop.
+    // When heights[x] >= lavaTop (fully dug out), that column shows pure lava (no ground left).
+    ctx.fillStyle = VGA_PALETTE.BROWN;
+    ctx.beginPath();
+    ctx.moveTo(0, lavaTop);
+
+    for (let x = 0; x < this.width; x++) {
+      // Clamp surface to lavaTop: brown ground "thickness" goes to zero when dug to lava
+      const h = Math.min(this.heights[x], lavaTop);
+      ctx.lineTo(x, h);
+    }
+
+    ctx.lineTo(this.width, lavaTop);
+    ctx.closePath();
+    ctx.fill();
+
+    // Green grass edge line: only on terrain surfaces that haven't reached the lava floor.
+    // Deep craters/pits will have their floor as lava (no grass line on lava).
+    ctx.strokeStyle = VGA_PALETTE.GREEN;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    let drawingEdge = false;
+    for (let x = 0; x < this.width; x++) {
+      const h = this.heights[x];
+      if (h < lavaTop) {
+        if (!drawingEdge) {
+          ctx.moveTo(x, h);
+          drawingEdge = true;
+        } else {
+          ctx.lineTo(x, h);
+        }
+      } else if (drawingEdge) {
+        ctx.stroke();
+        ctx.beginPath();
+        drawingEdge = false;
+      }
+    }
+    if (drawingEdge) {
+      ctx.stroke();
+    }
+    ctx.lineWidth = 1;
+
+    this.isDirty = false;
+  }
+
+  /**
    * Dessine le terrain sur le contexte canvas en utilisant une couleur unie
    * de la palette VGA.
    */
   public draw(ctx: CanvasRenderingContext2D): void {
+    if (this.isDirty) {
+      this.renderToOffscreen();
+    }
+
+    if (this.offscreenCanvas) {
+      // Fast path: draw from cached offscreen canvas
+      ctx.drawImage(this.offscreenCanvas as CanvasImageSource, 0, 0);
+    } else {
+      // Fallback path (e.g. some node test environments that mock things poorly)
+      this.drawFallback(ctx);
+    }
+  }
+
+  private drawFallback(ctx: CanvasRenderingContext2D): void {
     const lavaTop = this.lavaTop;
 
     // Draw lava at the absolute bottom (the "floor level" when all ground is destroyed)
@@ -146,6 +265,7 @@ export class TerrainManager {
     radius: number,
   ): void {
     if (radius <= 0) return;
+    this.isDirty = true;
 
     const r = radius;
     const r2 = r * r;
