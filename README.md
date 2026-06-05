@@ -109,11 +109,11 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human + IA SIMPLE / IA OK / IA SNIPER / IA EXPERT) on a fully interactive destructible battlefield with Step 4 & 5 gameplay and visual polish.
+**Playable Prototype** — Full retro title screen + configurable 2–4 player matches (any mix of Human + IA SIMPLE / IA OK / IA SNIPER / IA EXPERT) on a fully interactive destructible battlefield with Step 4, 5 & 6 gameplay and visual polish.
 
 Fully working:
 - **Main Menu** (`MENU` phase): Retro DOS/VGA with player count (2-4), names, Human/IA profiles (v1-v4), ColorPicker (mutual exclusion) + live TankPreview, auto VGA colors.
-- **Visual tank redesign & positioning (Steps 1-5 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margin and minimum distance constraints.
+- **Visual tank redesign, positioning & collision (Steps 1-6 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margins and minimum distance constraints; **Step 6** direct AABB shell-to-tank collision detection with launch-time self-sabotage protection.
 - Terrain generation + real-time cratering
 - Projectile physics + wind + owner color inheritance
 - Turn system + AI turns (v1-v4 via `AIByProfileStrategy`)

@@ -95,6 +95,7 @@ Types live in `src/types/game.ts`:
   - Harmonized projectiles: shells (and cluster sub-munitions) in `PhysicsEngine.draw` inherit `ownerColor` (tank primary color) from the firing player instead of generic weapon/white. Color threaded via `Projectile.ownerColor` set at `fireProjectile` time.
   - Micro recoil (arcade feel): `TankManager` maintains transient `recoilState` (per tankId, world dx/dy + frame remaining). Triggered in `GameEngine.fireProjectile` (opposite barrel direction, ~2.8px). Decayed in `update()`. Applied only to chassis sprite position in `draw` (UI bars/names anchored); cleared on round transitions.
 - **Tank positioning (Step 5 complete)**: Tank positions are fully randomized at each new round via `spawnTanks` using rejection sampling (`generateRandomPositions` with 100px minimum distance and 13% width safety margins from the screen edges). Vertical positions are snapped exactly to the heightmap terrain surface (`Y = groundY`), maintaining correct physical alignment at spawn.
+- **Shell-Tank Collision (Step 6 complete)**: Implemented direct AABB (Axis-Aligned Bounding Box) shell-to-tank collision detection in `PhysicsEngine.updateProjectiles` checking against active tank bounding boxes (`24x15` scaled, offset by `height` from terrain ground pivot). Features launch-time self-sabotage protection (projectile ignores own tank's hitbox until it exits it). Triggers terrain cratering, damage application, and projectile removal.
 - Terrain: custom **heightmap** algorithms in `Terrain.ts`; circular craters with falloff. No Matter.js, Rapier, Phaser, etc.
 - Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency in repo).
 
@@ -181,7 +182,7 @@ Goal: Keep the project documentation alive, accurate, and always synchronized wi
 
 Do not block current architecture for these; implement incrementally when asked:
 
-- Visual tank redesign (Complete: Steps 1-5: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator, owner-colored projectiles, micro chassis recoil on fire; **Step 5**: random position with minimum distance and safety margin constraints on terrain)
+- Visual tank redesign (Complete: Steps 1-6: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator, owner-colored projectiles, micro chassis recoil on fire; **Step 5**: random position with minimum distance and safety margin constraints on terrain; **Step 6**: direct AABB shell-to-tank collision with self-sabotage protection at launch)
 - Sound, particles, more weapons
 - Persistent scores / match history
 - Further AI improvements (v3-sniper + v4-smart implemented; further tuning)

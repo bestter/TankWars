@@ -34,6 +34,8 @@ export interface Projectile {
   initialPower?: number;
   /** Number of terrain bounces so far (only used by GRENADE physicsType) */
   bounceCount?: number;
+  /** Flag showing if projectile has exited its owner tank's hitbox to avoid self-sabotage */
+  hasLeftOwnerHitbox?: boolean;
 }
 
 export interface ProjectileHitEvent {
@@ -145,7 +147,32 @@ export class PhysicsEngine {
       // Check tanks BEFORE terrain so a low trajectory that clips a tank explodes on the tank
       // (not buried in ground). The impact uses the projectile's current position and the
       // weapon's own rules (blastRadius, damage, special direct-kill zones like nuke/thermo, etc.).
-      if (tankManager && tankManager.checkTankCollision(p.x, p.y)) {
+      let collision = false;
+      if (tankManager) {
+        let ignoreOwnerId: string | undefined = undefined;
+        if (p.ownerId && !p.hasLeftOwnerHitbox) {
+          const ownerPlayer = tankManager.getPlayers().find((pl) => pl.id === p.ownerId);
+          if (ownerPlayer) {
+            const oTank = ownerPlayer.tank;
+            const tankWidth = 24;
+            const tankHeight = 15;
+            const insideOwner =
+              p.x >= oTank.position.x - tankWidth / 2 &&
+              p.x <= oTank.position.x + tankWidth / 2 &&
+              p.y >= oTank.position.y - tankHeight &&
+              p.y <= oTank.position.y;
+
+            if (insideOwner) {
+              ignoreOwnerId = p.ownerId;
+            } else {
+              p.hasLeftOwnerHitbox = true;
+            }
+          }
+        }
+        collision = tankManager.checkTankCollision(p.x, p.y, ignoreOwnerId);
+      }
+
+      if (collision) {
         this.handleImpact(i, p, terrainManager, tankManager);
         continue;
       }

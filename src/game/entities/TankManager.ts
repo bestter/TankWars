@@ -425,13 +425,14 @@ export class TankManager {
    * immediately (per weapon rules: blast radius, damage, special kill zones, etc.)
    * instead of only triggering on terrain.
    */
-  public checkTankCollision(x: number, y: number): boolean {
+  public checkTankCollision(x: number, y: number, ignoreOwnerId?: string): boolean {
     const tankWidth = 24;
     const tankHeight = 15;
 
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
+      if (ignoreOwnerId && player.id === ignoreOwnerId) continue;
 
       const { x: tx, y: ty } = tank.position;
       if (
