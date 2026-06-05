@@ -298,8 +298,12 @@ export class AIHeuristicStrategy implements AIEngine {
     const rad = (angleDeg * Math.PI) / 180;
     let vx = Math.cos(rad) * power * baseSpeed;
     let vy = -Math.sin(rad) * power * baseSpeed;
-    let x = sx;
-    let y = sy;
+    
+    // Calculate barrel tip position to match GameEngine's launch coordinates
+    const barrelLength = 20;
+    const barrelStartY = sy - 13;
+    let x = sx + Math.cos(rad) * barrelLength;
+    let y = barrelStartY - Math.sin(rad) * barrelLength;
     let landX = x;
     let landY = y;
     let hitEarly = false;
