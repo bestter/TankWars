@@ -39,6 +39,24 @@ export class AISniperStrategy implements AIEngine {
     mem.targetAttempts = {};
   }
 
+  /**
+   * Logique d'achat exclusive au Sniper (à appeler durant la phase de boutique du jeu)
+   * Seul le Sniper dépense 150$ pour cette arme secrète.
+   */
+  public shopDecision(player: Player): WeaponId[] {
+    const purchases: WeaponId[] = [];
+    let currentMoney = player.money ?? 0;
+    const BULLET_COST = 150;
+
+    // Le sniper achète autant de BULLET que ses finances le lui permettent
+    while (currentMoney >= BULLET_COST) {
+      purchases.push('BULLET');
+      currentMoney -= BULLET_COST;
+    }
+
+    return purchases;
+  }
+
   async executeTurn(
     tankId: string,
     gameState: GameState,
@@ -60,8 +78,15 @@ export class AISniperStrategy implements AIEngine {
     }
     mem.lastSelfHealth = self.tank.health;
 
-    // Target selection:
-    // Sniper is cold and sticks to its target until they are dead, then switches to the weakest.
+    // Find living enemies
+    const enemies = gameState.players.filter(
+      (p) => p.id !== self.id && !p.tank.isDead,
+    );
+    if (enemies.length === 0) {
+      return { angle: 45, power: 50, weaponId: 'MISSILE' };
+    }
+
+    // Target selection
     let target: Player | undefined;
     let hasEnemies = false;
     let bestTarget: Player | undefined;
@@ -111,10 +136,19 @@ export class AISniperStrategy implements AIEngine {
     }
 
     if (!target) {
-      target = bestTarget;
+      const aiEnemies = enemies.filter((e) => !e.isHuman);
+      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+
+      const sorted = [...candidates].sort((a, b) => {
+        const h = a.tank.health - b.tank.health;
+        if (h !== 0) return h;
+        const ha = a.isHuman ? 1 : 0;
+        const hb = b.isHuman ? 1 : 0;
+        return ha - hb;
+      });
+      target = sorted[0];
     }
 
-    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget) {
       console.log(
@@ -122,24 +156,35 @@ export class AISniperStrategy implements AIEngine {
       );
     }
 
-    // Increment attempt counter for this target
+    // 👈 Accumulation persistante des essais au sein de la même manche
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    // Weapon selection:
-    // Sniper ONLY uses precise kinetic weapons. Driller if available, otherwise Missile.
-    const chosenWeapon: WeaponId =
-      (self.inventory?.DRILLER ?? 0) > 0 ? "DRILLER" : "MISSILE";
-    self.tank.currentWeapon = chosenWeapon; // Update live roster snap for HUD display
+    let chosenWeapon: WeaponId = 'MISSILE';
+    if ((self.inventory?.BULLET ?? 0) > 0) {
+      chosenWeapon = 'BULLET';
+    } else if ((self.inventory?.DRILLER ?? 0) > 0) {
+      chosenWeapon = 'DRILLER';
+    }
+    self.tank.currentWeapon = chosenWeapon;
 
     // Compute the shot solution
+    // If it is the first attempt on this target, deliberately miss by a safe horizontal margin.
+    let targetX = target!.tank.position.x;
+    if (attempts === 1) {
+      const spaceToLeft = targetX;
+      const spaceToRight = terrainManager.width - targetX;
+      const offsetDir = spaceToLeft > spaceToRight ? -1 : 1;
+      targetX += offsetDir * 36;
+    }
+
     const { angle, power } = this.computePrecisionShot(
       self,
-      target!,
+      targetX,
+      target!.tank.position.y - 6,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
-      attempts,
     );
 
     return {
@@ -151,131 +196,64 @@ export class AISniperStrategy implements AIEngine {
 
   private computePrecisionShot(
     self: Player,
-    target: Player,
+    tx: number,
+    ty: number,
     wind: number,
     gravity: number,
     terrain: TerrainManager,
-    attempts: number,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x;
-    const ty = target.tank.position.y - 6; // Aim at center body of tank
     const dx = tx - sx;
-    const dy = sy - ty; // Altitude relative to self (Y is inverted in canvas, so sy - ty > 0 means target is higher)
     const isRight = dx > 0;
+
+    const aMin = isRight ? 15 : 95;
+    const aMax = isRight ? 85 : 165;
 
     const BASE_SPEED = 4.2;
     const DT = 1 / 120;
     const MAX_STEPS = 420;
 
-    const x = Math.abs(dx);
-    const y = dy;
-    const g = gravity;
+    let best = { angle: isRight ? 55 : 125, power: 60, err: 999999 };
 
-    // 1. Calculate minimum required initial speed v_min for a valid ballistic path
-    // Formula: v^2_min = g * (y + sqrt(x^2 + y^2))
-    const minVSq = g * (y + Math.sqrt(x * x + y * y));
-    const minV = Math.sqrt(Math.max(0.1, minVSq));
-    const minPower = minV / BASE_SPEED;
+    for (let a = aMin; a <= aMax; a += 1.0) {
+      let lo = 20;
+      let hi = 95;
+      for (let iter = 0; iter < 10; iter++) {
+        const p = (lo + hi) / 2;
+        const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
 
-    // Start with a safety margin (e.g. +6%) to counteract drag/wind resistance
-    let power = Math.max(50, Math.ceil(minPower * 1.06));
-    power = Math.min(95, power);
+        const xErr = Math.abs(res.landX - tx);
+        const yErr = Math.abs(res.landY - ty) * 0.35;
 
-    let bestAngle = isRight ? 55 : 125;
-    let bestPower = power;
-    let foundSolution = false;
-
-    // Try finding the optimal lob angle, increasing power if terrain obstacles are met
-    for (let p = power; p <= 95; p += 5) {
-      const v = p * BASE_SPEED;
-      const vSq = v * v;
-      const discriminant = vSq * vSq - g * (g * x * x + 2 * y * vSq);
-
-      if (discriminant >= 0) {
-        // High lob trajectory (positive root +)
-        const tanTheta = (vSq + Math.sqrt(discriminant)) / (g * x);
-        const thetaRad = Math.atan(tanTheta);
-        const thetaDeg = (thetaRad * 180) / Math.PI;
-
-        const calculatedAngle = isRight ? thetaDeg : 180 - thetaDeg;
-
-        // Verify with actual physics simulation (including wind and drag)
-        const sim = this.simulateShot(
-          sx,
-          sy,
-          calculatedAngle,
-          p,
-          wind,
-          g,
-          BASE_SPEED,
-          DT,
-          MAX_STEPS,
-          terrain,
-        );
-        const distanceToTarget = Math.hypot(sim.landX - tx, sim.landY - ty);
-
-        if (!sim.hitTerrainEarly || distanceToTarget < 35) {
-          bestAngle = calculatedAngle;
-          bestPower = p;
-          foundSolution = true;
-          break;
-        } else {
-          // If blocked by terrain, keep it as fallback in case higher powers don't work
-          const currentBestSim = this.simulateShot(
-            sx,
-            sy,
-            bestAngle,
-            bestPower,
-            wind,
-            g,
-            BASE_SPEED,
-            DT,
-            MAX_STEPS,
-            terrain,
-          );
-          if (
-            distanceToTarget <
-            Math.hypot(currentBestSim.landX - tx, currentBestSim.landY - ty)
-          ) {
-            bestAngle = calculatedAngle;
-            bestPower = p;
+        // Detect intermediate terrain obstacle between shooter and target
+        let obstaclePenalty = 0;
+        if (res.hitTerrainEarly) {
+          const isBetween = isRight 
+            ? (res.landX > sx + 20 && res.landX < tx - 35)
+            : (res.landX < sx - 20 && res.landX > tx + 35);
+          if (isBetween) {
+            obstaclePenalty = 10000;
           }
+        }
+
+        const err = xErr + yErr + obstaclePenalty;
+
+        if (err < best.err) {
+          best = { angle: a, power: p, err };
+        }
+
+        if (res.landX < tx) {
+          if (isRight) lo = p;
+          else hi = p;
+        } else {
+          if (isRight) hi = p;
+          else lo = p;
         }
       }
     }
 
-    if (!foundSolution) {
-      console.log(
-        `[AI SNIPER] No direct mathematical solution found. Applying default lob path.`,
-      );
-      bestPower = 90;
-      bestAngle = isRight ? 65 : 115;
-    }
-
-    let finalAngle = bestAngle;
-
-    // 3. Add precision modulator (Tâche 3)
-    if (attempts === 1) {
-      const errorMargin = 3.5; // slight angle noise (in degrees) for the first shot
-      const noise = (Math.random() - 0.5) * errorMargin;
-      finalAngle += noise;
-      console.log(
-        `[AI SNIPER] Shot 1 error modulation applied: noise=${noise.toFixed(2)} deg (margin=${errorMargin} deg)`,
-      );
-    } else {
-      console.log(`[AI SNIPER] Shot ${attempts} corrected perfectly (0 noise)`);
-    }
-
-    // Keep angle within safe cones to prevent shooting backward
-    if (isRight) {
-      finalAngle = Math.max(15, Math.min(85, finalAngle));
-    } else {
-      finalAngle = Math.max(95, Math.min(165, finalAngle));
-    }
-
-    return { angle: finalAngle, power: bestPower };
+    return { angle: best.angle, power: best.power };
   }
 
   private simulateShot(
@@ -293,8 +271,12 @@ export class AISniperStrategy implements AIEngine {
     const rad = (angleDeg * Math.PI) / 180;
     let vx = Math.cos(rad) * power * baseSpeed;
     let vy = -Math.sin(rad) * power * baseSpeed;
-    let x = sx;
-    let y = sy;
+    
+    // Calculate barrel tip position to match GameEngine's launch coordinates
+    const barrelLength = 20;
+    const barrelStartY = sy - 13;
+    let x = sx + Math.cos(rad) * barrelLength;
+    let y = barrelStartY - Math.sin(rad) * barrelLength;
     let landX = x;
     let landY = y;
     let hitEarly = false;
@@ -330,12 +312,8 @@ export class AISniperStrategy implements AIEngine {
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
-    console.log("Sniper fallback called");
     const angle = 45 + Math.random() * 90;
     const power = 55 + Math.random() * 20;
-    return {
-      angle: Math.round(angle),
-      power: Math.round(power),
-    };
+    return { angle: Math.round(angle), power: Math.round(power) };
   }
 }

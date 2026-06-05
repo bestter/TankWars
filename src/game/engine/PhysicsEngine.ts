@@ -1,3 +1,4 @@
+import { secureRandom } from '../../utils/random';
 /**
  * TankWars - PhysicsEngine
  *
@@ -180,7 +181,7 @@ export class PhysicsEngine {
       }
 
       if (collision) {
-        this.handleImpact(i, p, terrainManager, tankManager);
+        this.handleImpact(i, p, terrainManager, tankManager, true);
         continue;
       }
 
@@ -191,7 +192,7 @@ export class PhysicsEngine {
           this.bounceGrenade(i, p, terrainManager, tankManager);
           continue;
         } else {
-          this.handleImpact(i, p, terrainManager, tankManager);
+          this.handleImpact(i, p, terrainManager, tankManager, false);
         }
       }
     }
@@ -211,6 +212,7 @@ export class PhysicsEngine {
     p: Projectile,
     terrainManager: TerrainManager,
     tankManager?: TankManager,
+    isDirectHit: boolean = false,
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
@@ -225,14 +227,7 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(
-        p.x,
-        p.y,
-        blastRadius,
-        maxDamage,
-        p.ownerId,
-        p.weaponId,
-      );
+      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId, isDirectHit);
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }
@@ -265,14 +260,11 @@ export class PhysicsEngine {
 
     for (let k = 0; k < numSubs; k++) {
       const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
-      const spread = frac * maxSpreadRad * (0.7 + Math.random() * 0.6);
+      const spread = frac * maxSpreadRad * (0.7 + secureRandom() * 0.6);
       const subDir = dir + spread;
 
       // subs get a fraction of current speed + variation; higher power gives more energetic subs
-      const subSpeed =
-        currentSpeed *
-        (0.5 + Math.random() * 0.4) *
-        (0.65 + (power / 100) * 0.6);
+      const subSpeed = currentSpeed * (0.5 + secureRandom() * 0.4) * (0.65 + (power / 100) * 0.6);
       const subVx = Math.cos(subDir) * subSpeed;
       const subVy = Math.sin(subDir) * subSpeed;
 
@@ -335,18 +327,18 @@ export class PhysicsEngine {
 
     // Apply bounce physics (retro artillery feel with lossy bounces).
     // Vertical restitution: controls how high it bounces back up.
-    const restitution = 0.58 + Math.random() * 0.12; // 0.58–0.70, slight natural variance
+    const restitution = 0.58 + secureRandom() * 0.12; // 0.58–0.70, slight natural variance
     p.vy = -p.vy * restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= 0.78 + (Math.random() - 0.5) * 0.06;
+    p.vx *= 0.78 + (secureRandom() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
-    p.vy += (Math.random() - 0.5) * 0.5;
+    p.vy += (secureRandom() - 0.5) * 0.5;
 
     // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
     if (p.vy > -1.0) {
-      p.vy = -1.0 - Math.random() * 1.2;
+      p.vy = -1.0 - secureRandom() * 1.2;
     }
 
     // Clamp absurd horizontal speeds after many skids (safety).

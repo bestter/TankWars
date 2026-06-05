@@ -116,7 +116,7 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 
 - **Phase 1:** `AISimpleStrategy` (menu `aiProfile: 'v1-random'`, "IA SIMPLE" / "Mr. Simple") — deliberately naive random-within-safe-ranges for architecture testing.
 - **Phase 2:** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection (e.g. GRENADE on rough, CLUSTER vs groups). Not a one-shot sniper (kills typically take 3+ shots).
-- **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision, low-noise aiming.
+- **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision aiming using numerical trajectory search under drag/wind, with a deliberate coordinate-shifting first-shot miss and perfect subsequent shots.
 - **Phase 4:** `AISmartStrategy` (menu `aiProfile: 'v4-smart'`, "IA EXPERT") — adaptive / improved heuristic with bias learning.
 - A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types; falls back to v1).
 - New strategies must be registered in `GameCanvas.tsx` (via the profile dispatcher); do not entangle AI logic inside `TankManager` or `GameEngine` internals.
@@ -185,8 +185,18 @@ Do not block current architecture for these; implement incrementally when asked:
 - Visual tank redesign (Complete: Steps 1-6: procedural canvas drawing + lobby color picker + live preview + slope tilt + **Step 4 polish**: floating active-player colored triangle indicator, owner-colored projectiles, micro chassis recoil on fire; **Step 5**: random position with minimum distance and safety margin constraints on terrain; **Step 6**: direct AABB shell-to-tank collision with self-sabotage protection at launch)
 - Sound, particles, more weapons
 - Persistent scores / match history
-- Further AI improvements (v3-sniper optimized with predictive ballistic trajectory equations and error modulation (Step 7 complete); v4-smart implemented)
+- Further AI improvements (v3-sniper optimized with highly accurate numerical trajectory search that handles drag and wind, and coordinate-shifting deliberate first-shot miss (Step 7 complete); v4-smart implemented)
+
+## Recent Updates & Bug Fixes
+
+- **New Weapon BULLET:** Added the `BULLET` weapon ($150, 10px blast radius) which inflicts a 3x damage multiplier in case of a direct hit on a tank hitbox. Auto-buy is restricted to the `AISniperStrategy` (Sniper v3) profile only.
+- **Round Transition Hang:** Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
+- **AI Aiming/Trajectory Simulation Origin:** Fixed a bug where all AI strategies (Sniper, Heuristic, Smart) simulated their shots starting at the center of the tank `(sx, sy)` instead of the actual barrel tip `(launchX, launchY)`. This created a vertical/horizontal offset discrepancy that caused the Sniper AIs to overshoot and miss perpetually in mutual combat. The simulation coordinates in `AISniperStrategy.ts`, `AIHeuristicStrategy.ts`, and `AISmartStrategy.ts` have been aligned with the engine's launch formulas.
+- **AI Terrain Obstacle Avoidance:** Implemented a new search penalty (10,000 points) in all ballistic trajectory search loops (`AISniperStrategy`, `AIHeuristicStrategy`, `AISmartStrategy`) when an early collision with the heightmap terrain is detected between the shooter and the target tank. This forces the AI to select high arcing trajectories to clear mountains and obstacles rather than blindly firing directly into intervening hills.
 
 ---
 
 When unsure about a design constraint, prefer **strict React/Canvas separation** and **pluggable AI via `AIEngine`** over shortcuts.
+
+
+- Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.

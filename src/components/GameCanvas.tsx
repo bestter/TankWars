@@ -200,6 +200,10 @@ export function GameCanvas({
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
     // Supports mixed human + different AI types in one match. Demos without aiProfile fall back to v1.
     engine.setAIEngine(new AIByProfileStrategy());
+
+    // Initialize players (this also calls setupInputListeners + starts first turn)
+    engine.setPlayers(players);
+    setUiPlayers(players);
     engine.onWindChange = setWind;
 
     // Wire callbacks (keep only what's actually useful; the "settled" log was firing every frame
@@ -501,9 +505,10 @@ export function GameCanvas({
     ];
     let budgetRatio = 0.7; // default 70% budget spending
 
-    if (profile === "v3-sniper") {
-      // Sniper only wants precise kinetic weapon: Driller
-      preferredOrder = ["DRILLER"];
+    if (profile === 'v3-sniper') {
+      // Sniper only wants precise kinetic weapons: Driller, Bullet
+      preferredOrder = ['BULLET', 'DRILLER'];      // Sniper only wants precise kinetic weapon: Driller
+      
       budgetRatio = 0.7;
     } else if (profile === "v4-smart") {
       // Smart AI spends more aggressively (85% budget) on its tools
@@ -521,6 +526,9 @@ export function GameCanvas({
     const budget = Math.floor((aiPlayer.money ?? 0) * budgetRatio);
 
     for (const wid of preferredOrder) {
+      if (wid === 'BULLET' && profile !== 'v3-sniper') {
+        continue;
+      }
       const def = WEAPON_REGISTRY[wid];
       if (!def) continue;
 
@@ -674,8 +682,8 @@ export function GameCanvas({
       },
     ];
 
-    engine.setPlayers(newPlayers);
     engine.setAIEngine(new AIByProfileStrategy());
+    engine.setPlayers(newPlayers);
 
     // Reset local UI state + round tracking refs (for clean new match)
     setWinner(null);

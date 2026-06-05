@@ -199,9 +199,13 @@ export class GameEngine {
           (this.roundDamageDealt[firer] ?? 0) + (weapon?.damage ?? 0);
 
         // Attribute any players who died due to *this* impact (splash + direct, works for chains)
-        const nowAlive = new Set(
-          this.tankManager.getAlivePlayers().map((p) => p.id),
-        );
+        // We avoid array mapping overhead but must maintain the Set for newly spawned/resurrected players
+        const nowAlive = new Set<string>();
+        for (const player of this.tankManager.getPlayers()) {
+          if (!player.tank.isDead) {
+            nowAlive.add(player.id);
+          }
+        }
         for (const id of this.aliveAtLastShot) {
           if (!nowAlive.has(id)) {
             this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
@@ -383,21 +387,22 @@ export class GameEngine {
    */
   public awardEndOfRoundEarnings(): RoundResult {
     const players = this.tankManager.getPlayers();
-    const survivors = players.filter((p) => !p.tank.isDead).map((p) => p.id);
+    const survivors: string[] = [];
+
+    // Apply earnings (base + kill bonus) only to survivors
+    for (const p of players) {
+      if (p.tank.isDead) continue;
+      survivors.push(p.id);
+      const kills = this.roundKills[p.id] ?? 0;
+      const earnings = 500 + kills * 300;
+      p.money = (p.money ?? 0) + earnings;
+    }
 
     const result: RoundResult = {
       damageDealt: { ...this.roundDamageDealt },
       terrainDestroyed: this.roundTerrainDestroyed,
       survivors,
     };
-
-    // Apply earnings (base + kill bonus) only to survivors
-    for (const p of players) {
-      if (p.tank.isDead) continue;
-      const kills = this.roundKills[p.id] ?? 0;
-      const earnings = 500 + kills * 300;
-      p.money = (p.money ?? 0) + earnings;
-    }
 
     // Reset for next round
     this.roundDamageDealt = {};

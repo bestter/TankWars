@@ -22,6 +22,7 @@
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast)
   - Driller (penetrating)
+  - Bullet (precision shot, x3 direct hit damage multiplier)
   - Thermonuclear Bomb (devastating, destroys ~1/4 of the map with inner instant-kill zone; outer tanks fall into giant crater; huge red-orange explosion VFX and deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Dedicated retro Main Menu lets you set player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT before each battle. Unique VGA colors assigned automatically with live previews and mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Supports any combination up to 4 participants.
@@ -116,7 +117,7 @@ Fully working:
 - **Visual tank redesign, positioning & collision (Steps 1-6 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margins and minimum distance constraints; **Step 6** direct AABB shell-to-tank collision detection with launch-time self-sabotage protection.
 - Terrain generation + real-time cratering
 - Projectile physics + wind + owner color inheritance
-- Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations + noise error modulator)
+- Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations, barrel tip launch origin aligned, terrain obstacle avoidance added, + noise error modulator)
 - Keyboard + HUD (WindBanner)
 - Multiple weapons + limited ammo + shop economy
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart
