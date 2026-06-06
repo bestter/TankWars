@@ -23,4 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 deploy-staging.ps1
+deploy-cloudflare.ps1
 /src/Temp
