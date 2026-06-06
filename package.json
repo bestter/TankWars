@@ -9,11 +9,16 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "doctor": "npx react-doctor@latest",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postbuild": "node scripts/ping-indexnow.js"
   },
   "dependencies": {
+    "i18next": "^26.3.1",
+    "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "react-helmet-async": "^3.0.0",
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

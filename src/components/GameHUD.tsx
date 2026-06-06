@@ -1,16 +1,4 @@
-/**
- * TankWars - GameHUD React Component (src/components/GameHUD.tsx)
- *
- * Retro VGA-style overlay HUD that sits on top of the game Canvas.
- * Displays live turn/player info from TurnManager via props (decoupled).
- *
- * - Thick borders, monospace, high-contrast VGA palette accents (Cyan/Magenta/Green/Yellow)
- * - Player name + color swatch
- * - Angle + Power
- * - Current weapon + remaining ammo
- * - Clickable weapon selector (small retro buttons) + keyboard support (A/E) handled upstream in TurnManager
- */
-
+import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import type { WeaponId } from "../types/weapon";
 import { WEAPON_REGISTRY } from "../types/weapon";
@@ -36,7 +24,18 @@ function getShortLabel(id: WeaponId): string {
   }
 }
 
+const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET"> = {
+  MISSILE: "weapons.MISSILE",
+  GRENADE: "weapons.GRENADE",
+  CLUSTER: "weapons.CLUSTER",
+  NUKE: "weapons.NUKE",
+  THERMONUCLEAR: "weapons.THERMONUCLEAR",
+  DRILLER: "weapons.DRILLER",
+  BULLET: "weapons.BULLET",
+};
+
 export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
+  const { t } = useTranslation();
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
   const canInteract = isHumanTurn && !isLocked;
@@ -120,7 +119,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
 
       {/* === TURN (within current combat round) === */}
       <div style={{ color: VGA_PALETTE.GRAY, pointerEvents: "none" }}>
-        TRN{" "}
+        {t("hud_turn")}{" "}
         <span style={{ color: VGA_PALETTE.WHITE }}>
           {turnInfo ? turnInfo.turn : "-"}
         </span>
@@ -136,7 +135,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
           pointerEvents: "auto",
         }}
       >
-        <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>WEP</span>
+        <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
 
         {WEAPON_ORDER.map((wid) => {
           const def = WEAPON_REGISTRY[wid];
@@ -175,7 +174,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
                 cursor: selectable ? "pointer" : "default",
                 opacity: hasAmmo ? 1 : 0.55,
               }}
-              title={def.name}
+              title={t(WEAPON_KEYS[wid])}
             >
               {getShortLabel(wid)}:{wid === "MISSILE" ? "∞" : ammo}
             </button>
@@ -193,7 +192,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
               fontWeight: "bold",
             }}
           >
-            [TANKS FALLING]
+            {t("status_tanks_falling")}
           </span>
         )}
         {turnInfo && isLocked && !turnInfo.tanksAreFalling && (
@@ -205,7 +204,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
               pointerEvents: "none",
             }}
           >
-            [RESOLVING]
+            {t("status_resolving")}
           </span>
         )}
         {turnInfo && !isHumanTurn && !isLocked && !turnInfo.tanksAreFalling && (
@@ -217,7 +216,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
               pointerEvents: "none",
             }}
           >
-            [AI TURN]
+            {t("status_ai_turn")}
           </span>
         )}
       </div>
@@ -232,7 +231,7 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
             minWidth: 52,
           }}
         >
-          {WEAPON_REGISTRY[currentWeapon!]?.name ?? currentWeapon}
+          {currentWeapon ? t(WEAPON_KEYS[currentWeapon]) : ""}
         </div>
       )}
     </div>

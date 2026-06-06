@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { drawTankSprite } from "../game/rendering/tankSprite";
 import type { Color } from "../types/game";
 
@@ -7,6 +8,7 @@ interface TankPreviewProps {
 }
 
 export function TankPreview({ color }: TankPreviewProps) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -38,7 +40,7 @@ export function TankPreview({ color }: TankPreviewProps) {
         boxShadow: "inset 0 0 3px rgba(0,0,0,0.8)",
         flexShrink: 0,
       }}
-      title="Aperçu du tank"
+      title={t("tank_preview_title")}
     >
       <canvas
         ref={canvasRef}
