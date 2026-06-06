@@ -19,10 +19,11 @@ export function LanguageSwitcher() {
         background: "#000000",
         border: `1px solid ${VGA_PALETTE.GRAY}`,
         fontFamily: "monospace",
-        fontSize: "11px",
+        fontSize: "12px",
       }}
     >
       <button
+        type="button"
         onClick={() => toggleLang("fr")}
         style={{
           background: currentLang.startsWith("fr") ? VGA_PALETTE.GREEN : "#111",
@@ -31,12 +32,13 @@ export function LanguageSwitcher() {
           padding: "2px 6px",
           cursor: "pointer",
           fontWeight: "bold",
-          fontSize: "10px",
+          fontSize: "12px",
         }}
       >
         FR
       </button>
       <button
+        type="button"
         onClick={() => toggleLang("en")}
         style={{
           background: currentLang.startsWith("en") ? VGA_PALETTE.GREEN : "#111",
@@ -45,7 +47,7 @@ export function LanguageSwitcher() {
           padding: "2px 6px",
           cursor: "pointer",
           fontWeight: "bold",
-          fontSize: "10px",
+          fontSize: "12px",
         }}
       >
         EN
