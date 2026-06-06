@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
 import { MainMenu } from "./components/MainMenu";
+import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { GamePhase } from "./types/game";
 import type { Player } from "./types/player";
 
@@ -41,8 +42,14 @@ function App() {
         fontFamily: "monospace",
         // Padding seulement hors menu (le menu gère son propre centrage full black)
         padding: showMenu ? 0 : "12px",
+        position: "relative",
       }}
     >
+      {/* Sélecteur de langue disponible partout */}
+      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 100 }}>
+        <LanguageSwitcher />
+      </div>
+
       {showMenu ? (
         <MainMenu onStartGame={handleStartGame} />
       ) : (

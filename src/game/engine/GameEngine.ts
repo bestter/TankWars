@@ -23,6 +23,7 @@ import type { Vector2, FireCommand, RoundResult } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
 import type { AIStrategy } from "../entities/ai/AIStrategy";
 import type { AIEngine } from "../entities/ai/AIEngine";
+import i18n from "../../i18n";
 import { rollRoundWind } from "../wind";
 
 export interface GameConfig {
@@ -756,7 +757,7 @@ export class GameEngine {
       ctx.fillStyle = this.winner.tank.color;
       ctx.font = "bold 28px monospace";
       ctx.textAlign = "center";
-      ctx.fillText(`${this.winner.name} WINS!`, this.width / 2, 80);
+      ctx.fillText(i18n.t("winner_wins", { name: this.winner.name }), this.width / 2, 80);
     }
   }
 

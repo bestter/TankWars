@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { VGA_PALETTE, type Color } from "../types/game";
 
 export interface ColorPickerProps {
@@ -17,6 +18,8 @@ export function ColorPicker({
   unavailableColors,
   colorPool,
 }: ColorPickerProps) {
+  const { t } = useTranslation();
+
   return (
     <div
       style={{
@@ -57,13 +60,13 @@ export function ColorPicker({
             }}
             title={
               isUnavailable
-                ? "Couleur déjà sélectionnée par un autre joueur"
-                : `Choisir la couleur ${color}`
+                ? t("color_unavailable_title")
+                : t("color_select_title", { color })
             }
             aria-label={
               isUnavailable
-                ? `Couleur ${color} indisponible`
-                : `Choisir la couleur ${color}`
+                ? t("color_unavailable_label", { color })
+                : t("color_select_label", { color })
             }
           >
             {isUnavailable && (

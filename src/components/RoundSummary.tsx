@@ -1,13 +1,4 @@
-/**
- * TankWars - RoundSummary React Component (src/components/RoundSummary.tsx)
- *
- * Retro VGA-style centered overlay shown when GamePhase === 'SUMMARY' (fin de manche).
- * Displays earnings, round outcome, and cumulative money.
- *
- * After every round: SUMMARY → SHOP → new manche (new terrain, all tanks respawn).
- * A round ends only when last man standing (0 or 1 alive). Whole-match Game Over is only via "New Game (Revenir au menu)".
- */
-
+import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import type { RoundResult } from "../types/game";
 import { VGA_PALETTE } from "../types/game";
@@ -35,15 +26,16 @@ export function RoundSummary({
   onNextRound,
   onNewGame,
 }: RoundSummaryProps) {
+  const { t } = useTranslation();
   const alivePlayers = players.filter((p) => !p.tank.isDead);
   const sorted = [...players].sort((a, b) => (b.money ?? 0) - (a.money ?? 0));
   const canContinue = players.length >= 2;
 
-  let outcomeLine = "Manche terminée";
+  let outcomeLine = t("outcome_round_ended");
   if (roundOutcome?.isDraw) {
-    outcomeLine = "Manche nulle — tous les tanks détruits";
+    outcomeLine = t("outcome_draw");
   } else if (roundOutcome?.winner) {
-    outcomeLine = `Vainqueur de la manche : ${roundOutcome.winner.name}`;
+    outcomeLine = t("outcome_winner", { name: roundOutcome.winner.name });
   }
 
   return (
@@ -66,7 +58,7 @@ export function RoundSummary({
           letterSpacing: 1,
         }}
       >
-        FIN DE MANCHE {round}
+        {t("round_summary_title", { round })}
       </div>
       <div
         style={{
@@ -82,8 +74,7 @@ export function RoundSummary({
       <div
         style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginBottom: 12 }}
       >
-        Survivants cette manche : {alivePlayers.length} / {players.length} •
-        Boutique ensuite
+        {t("round_survivors", { alive: alivePlayers.length, total: players.length })}
       </div>
 
       <div style={{ marginBottom: 14, textAlign: "left" }}>
@@ -122,13 +113,13 @@ export function RoundSummary({
                 }}
               >
                 {p.name}
-                {eliminated ? " (KO)" : ""}
+                {eliminated ? t("ko_indicator") : ""}
               </span>
               <span style={{ color: VGA_PALETTE.GREEN, marginLeft: "auto" }}>
                 {currentMoney}$
               </span>
               <span style={{ color: VGA_PALETTE.CYAN, fontSize: 12 }}>
-                (base 500 + 300/kill si vivant)
+                {t("earnings_detail")}
               </span>
             </div>
           );
@@ -143,13 +134,13 @@ export function RoundSummary({
           lineHeight: 1.3,
         }}
       >
-        Dégâts infligés cette manche :{" "}
-        {result
-          ? Object.values(result.damageDealt).reduce((a, b) => a + b, 0)
-          : 0}{" "}
-        pts
+        {t("damage_inflicted", {
+          damage: result
+            ? Object.values(result.damageDealt).reduce((a, b) => a + b, 0)
+            : 0,
+        })}
         <br />
-        Terrain détruit : ~{result?.terrainDestroyed ?? 0} unités
+        {t("terrain_destroyed", { destroyed: result?.terrainDestroyed ?? 0 })}
       </div>
 
       <button
@@ -164,7 +155,7 @@ export function RoundSummary({
           cursor: canContinue ? "pointer" : "not-allowed",
         }}
       >
-        Aller à la boutique → manche suivante
+        {t("btn_go_to_shop")}
       </button>
 
       <button
@@ -180,13 +171,13 @@ export function RoundSummary({
           letterSpacing: 0.5,
         }}
       >
-        New Game (Revenir au menu)
+        {t("btn_return_to_menu")}
       </button>
 
       <div
         style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}
       >
-        Prochaine manche : nouveau terrain et nouvelles positions
+        {t("next_round_note")}
       </div>
     </div>
   );

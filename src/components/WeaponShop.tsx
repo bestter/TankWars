@@ -1,18 +1,4 @@
-/**
- * TankWars - WeaponShop React Component (src/components/WeaponShop.tsx)
- *
- * Écran de boutique d'armes rétro VGA.
- * Gère les achats tour par tour (humains un par un + IA auto).
- *
- * - Affiche l'argent du joueur courant
- * - Liste toutes les armes du WEAPON_REGISTRY avec prix, description et stock
- * - Boutons + / - pour acheter / vendre (vérification d'argent)
- * - Bouton "Prêt" pour passer au joueur suivant
- *
- * Le composant est purement présentational. La logique de séquence
- * (humains + IA auto) et la transition finale vers COMBAT sont gérées par le parent (GameCanvas).
- */
-
+import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import {
   WEAPON_REGISTRY,
@@ -20,6 +6,26 @@ import {
   SHOP_WEAPON_IDS,
 } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+
+const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET"> = {
+  MISSILE: "weapons.MISSILE",
+  GRENADE: "weapons.GRENADE",
+  CLUSTER: "weapons.CLUSTER",
+  NUKE: "weapons.NUKE",
+  THERMONUCLEAR: "weapons.THERMONUCLEAR",
+  DRILLER: "weapons.DRILLER",
+  BULLET: "weapons.BULLET",
+};
+
+const WEAPON_DESC_KEYS: Record<WeaponId, "weapons.desc.MISSILE" | "weapons.desc.GRENADE" | "weapons.desc.CLUSTER" | "weapons.desc.NUKE" | "weapons.desc.THERMONUCLEAR" | "weapons.desc.DRILLER" | "weapons.desc.BULLET"> = {
+  MISSILE: "weapons.desc.MISSILE",
+  GRENADE: "weapons.desc.GRENADE",
+  CLUSTER: "weapons.desc.CLUSTER",
+  NUKE: "weapons.desc.NUKE",
+  THERMONUCLEAR: "weapons.desc.THERMONUCLEAR",
+  DRILLER: "weapons.desc.DRILLER",
+  BULLET: "weapons.desc.BULLET",
+};
 
 export interface WeaponShopProps {
   /** Le joueur dont c'est le tour d'acheter (humain) */
@@ -34,16 +40,6 @@ export interface WeaponShopProps {
   onReady: () => void;
 }
 
-const WEAPON_DESCRIPTIONS: Partial<Record<WeaponId, string>> = {
-  MISSILE: 'Missile standard - trajectoire précise',
-  GRENADE: 'Grenade à rebond - utile en terrain accidenté',
-  CLUSTER: 'MIRV / Sous-munitions - multiple impacts',
-  NUKE: 'Mini-Nuke - gros dégâts + large cratère',
-  THERMONUCLEAR: 'Bombe thermonucléaire - détruit ~1/4 de la carte, mort instantanée au centre + énorme cratère',
-  DRILLER: 'Foreur - perce le sol en profondeur',
-  BULLET: 'Balle de précision - dégâts x3 en cas d\'impact direct',
-};
-
 export function WeaponShop({
   player,
   shopIndex,
@@ -51,6 +47,7 @@ export function WeaponShop({
   onBuySell,
   onReady,
 }: WeaponShopProps) {
+  const { t } = useTranslation();
   const money = player.money ?? 0;
   const inventory = player.inventory ?? {};
 
@@ -67,7 +64,7 @@ export function WeaponShop({
       {/* Header */}
       <div style={{ marginBottom: 8 }}>
         <span style={{ color: VGA_PALETTE.CYAN, fontSize: "13px" }}>
-          BOUTIQUE: MANCHE {shopIndex + 1} / {totalShoppers}
+          {t("shop_header", { current: shopIndex + 1, total: totalShoppers })}
         </span>
       </div>
 
@@ -113,7 +110,7 @@ export function WeaponShop({
       <div
         style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginBottom: 10 }}
       >
-        Utilisez + pour acheter, − pour vendre (remboursement intégral)
+        {t("shop_instructions")}
       </div>
 
       {/* Weapon list */}
@@ -143,7 +140,7 @@ export function WeaponShop({
                   style={{ display: "flex", justifyContent: "space-between" }}
                 >
                   <span style={{ color: def.color, fontWeight: "bold" }}>
-                    {def.name}
+                    {t(WEAPON_KEYS[wid])}
                   </span>
                   <span style={{ color: VGA_PALETTE.YELLOW }}>
                     {def.price}$
@@ -156,7 +153,7 @@ export function WeaponShop({
                     lineHeight: 1.2,
                   }}
                 >
-                  {WEAPON_DESCRIPTIONS[wid] ?? "Arme tactique"}
+                  {t(WEAPON_DESC_KEYS[wid])}
                 </div>
               </div>
 
@@ -168,7 +165,7 @@ export function WeaponShop({
                   color: VGA_PALETTE.CYAN,
                 }}
               >
-                Stock
+                {t("shop_stock")}
                 <br />
                 <strong style={{ fontSize: "13px" }}>{currentStock}</strong>
               </div>
@@ -187,7 +184,7 @@ export function WeaponShop({
                       : VGA_PALETTE.DARK_GRAY,
                     cursor: canAfford ? "pointer" : "not-allowed",
                   }}
-                  title="Acheter 1"
+                  title={t("title_buy")}
                 >
                   +
                 </button>
@@ -203,7 +200,7 @@ export function WeaponShop({
                       : VGA_PALETTE.DARK_GRAY,
                     cursor: canSell ? "pointer" : "not-allowed",
                   }}
-                  title="Vendre 1"
+                  title={t("title_sell")}
                 >
                   −
                 </button>
@@ -219,13 +216,13 @@ export function WeaponShop({
         className="retro-btn"
         style={{ padding: "10px 36px" }}
       >
-        PRÊT → Joueur suivant
+        {t("btn_ready_next_player")}
       </button>
 
       <div
         style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}
       >
-        Les IA achètent automatiquement
+        {t("ai_auto_buy_note")}
       </div>
     </div>
   );

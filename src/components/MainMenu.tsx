@@ -17,6 +17,7 @@
  */
 
 import { useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import { VGA_PALETTE, type Color } from "../types/game";
 import { DEFAULT_INVENTORY } from "../types/weapon";
@@ -52,17 +53,19 @@ const TANK_COLOR_POOL: readonly Color[] = [
   VGA_PALETTE.VOLT_PURPLE, // #B300FF
 ] as const;
 
-function getDefaultName(index: number, isHuman: boolean): string {
-  if (index === 0) return isHuman ? "Player-1" : "CPU-1";
-  return isHuman ? `Player ${index + 1}` : `CPU-${index + 1}`;
-}
-
 export function MainMenu({ onStartGame }: MainMenuProps) {
+  const { t } = useTranslation();
+
+  const getDefaultName = (index: number, isHuman: boolean): string => {
+    if (index === 0) return isHuman ? t("default_player_name_1") : t("default_cpu_name_1");
+    return isHuman ? t("default_player_name_n", { num: index + 1 }) : t("default_cpu_name_n", { num: index + 1 });
+  };
+
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
-  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([
-    { name: "Player-1", isHuman: true, color: TANK_COLOR_POOL[0], id: "p-1" },
+  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => [
+    { name: t("default_player_name_1"), isHuman: true, color: TANK_COLOR_POOL[0], id: "p-1" },
     {
-      name: "CPU-1",
+      name: t("default_cpu_name_1"),
       isHuman: false,
       color: TANK_COLOR_POOL[1],
       id: "p-2",
@@ -197,21 +200,20 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
       <div className="retro-menu-frame">
         <div className="retro-menu-inner">
           {/* === TITRE PRINCIPAL FLASHY === */}
-          <h1 className="retro-title">Bestter's TankWars</h1>
+          <h1 className="retro-title">{t("main_title")}</h1>
 
           {/* Sous-titre / description rapide */}
-          <p className="retro-subtitle">
-            Combat d'artillerie • Terrain 100% destructible (heightmap custom)
-            <br />2 à 4 joueurs • Humains ou IA • Palette VGA 16 couleurs
+          <p className="retro-subtitle" style={{ whiteSpace: "pre-line" }}>
+            {t("retro_subtitle")}
           </p>
 
           {/* === CONFIGURATION JOUEURS === */}
-          <div className="retro-section">CONFIGURATION DE LA BATAILLE</div>
+          <div className="retro-section">{t("battle_configuration")}</div>
 
           {/* Sélecteur nombre de joueurs (boutons style rétro) */}
           <div style={{ marginBottom: 10 }}>
             <span style={{ color: "#AAAAAA", fontSize: 11, marginRight: 8 }}>
-              NOMBRE DE JOUEURS :
+              {t("num_players")}
             </span>
             {[2, 3, 4].map((n) => (
               <button
@@ -255,8 +257,8 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     value={cfg.name}
                     maxLength={16}
                     onChange={(e) => handleNameChange(index, e.target.value)}
-                    placeholder={`Player ${index + 1}`}
-                    aria-label={`Nom du joueur ${index + 1}`}
+                    placeholder={t("player_name_placeholder", { num: index + 1 })}
+                    aria-label={t("player_name_aria_label", { num: index + 1 })}
                   />
 
                   {/* Sélecteur de couleur avec exclusion mutuelle */}
@@ -298,37 +300,37 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                         });
                       }
                     }}
-                    aria-label={`Type de contrôleur pour joueur ${index + 1}`}
+                    aria-label={t("controller_type_aria_label", { num: index + 1 })}
                   >
                     <option
                       value="human"
                       style={{ color: "#55FF55", background: "#000000" }}
                     >
-                      HUMAIN
+                      {t("controller_human")}
                     </option>
                     <option
                       value="v1-random"
                       style={{ color: "#FFAA00", background: "#000000" }}
                     >
-                      IA SIMPLE
+                      {t("controller_ai_simple")}
                     </option>
                     <option
                       value="v2-heuristic"
                       style={{ color: "#FFAA00", background: "#000000" }}
                     >
-                      IA OK
+                      {t("controller_ai_ok")}
                     </option>
                     <option
                       value="v3-sniper"
                       style={{ color: "#FFAA00", background: "#000000" }}
                     >
-                      IA SNIPER
+                      {t("controller_ai_sniper")}
                     </option>
                     <option
                       value="v4-smart"
                       style={{ color: "#FFAA00", background: "#000000" }}
                     >
-                      IA EXPERT
+                      {t("controller_ai_expert")}
                     </option>
                   </select>
 
@@ -366,12 +368,9 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
               lineHeight: "1.4",
             }}
           >
-            Sélectionnez la couleur de chaque tank. Les pastilles avec une croix
-            rouge (✕) et atténuées sont déjà choisies par d'autres joueurs
-            (exclusion mutuelle).
+            {t("color_picker_help_1")}
             <br />
-            Un aperçu miniature en temps réel du tank s'affiche à gauche de
-            chaque joueur.
+            {t("color_picker_help_2")}
           </div>
 
           {/* === GROS BOUTON D'ACTION === */}
@@ -386,13 +385,13 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                 cursor: canStart ? "pointer" : "not-allowed",
               }}
             >
-              COMMENCER LA BATAILLE
+              {t("start_battle_button")}
             </button>
           </div>
 
           {/* Mentions légales en bas */}
           <div className="retro-legal">
-            © 2026 Bestter. All Rights Reserved. Released under MIT License.
+            {t("legal_footer")}
           </div>
         </div>
       </div>

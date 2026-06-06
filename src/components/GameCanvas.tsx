@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { GameEngine } from "../game/engine/GameEngine";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { VGA_PALETTE } from "../types/game";
@@ -39,6 +40,7 @@ export function GameCanvas({
   initialPlayers,
   onReturnToMenu,
 }: GameCanvasProps = {}) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -721,9 +723,9 @@ export function GameCanvas({
           <button
             onClick={onReturnToMenu}
             style={{ fontSize: 11, padding: "3px 9px" }}
-            title="Retour à l'écran d'accueil et configuration des joueurs"
+            title={t("btn_menu_title")}
           >
-            MENU
+            {t("btn_menu")}
           </button>
         </div>
       )}
@@ -810,7 +812,7 @@ export function GameCanvas({
               textShadow: "0 0 4px #000",
             }}
           >
-            CELEBRATION — Appuyez sur ESPACE (ou cliquez) pour continuer
+            {t("celebration_banner")}
           </div>
         )}
 
@@ -839,9 +841,9 @@ export function GameCanvas({
                 marginBottom: "12px",
               }}
             >
-              {winner.name} WINS!
+              {t("winner_wins", { name: winner.name })}
             </div>
-            <div style={{ fontSize: "24px", color: "#AAAAAA" }}>Game Over</div>
+            <div style={{ fontSize: "24px", color: "#AAAAAA" }}>{t("game_over")}</div>
           </div>
         )}
       </div>
@@ -849,18 +851,16 @@ export function GameCanvas({
       {/* New Game Button - appears after delay */}
       {showNewGameButton && (
         <button onClick={handleNewGame} className="retro-newgame-btn">
-          New Game ?
+          {t("btn_new_game")}
         </button>
       )}
 
       <div
         style={{ color: VGA_PALETTE.GRAY, fontSize: 12, textAlign: "center" }}
       >
-        <strong>Controls:</strong> ← → angle • ↑ ↓ power • SPACE or click to
-        fire • A/E switch weapon
+        <strong>{t("controls_title")}</strong> {t("controls_body")}
         <br />
-        Each round is last-man-standing (continues until only one remains); shop
-        opens after each round
+        {t("controls_explanation")}
       </div>
     </div>
   );
