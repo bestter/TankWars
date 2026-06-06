@@ -83,5 +83,7 @@
   "wind_dir_west": "OUEST",
   "wind_no_drift": "pas de dérive",
   "wind_title": "VENT",
-  "winner_wins": "{{name}} GAGNE !"
+  "winner_wins": "{{name}} GAGNE !",
+  "seo_title": "TankWars - Jeu de Combat de Tanks Multijoueur en Ligne",
+  "seo_description": "Jouez à TankWars, le jeu de guerre de chars ultime sur navigateur. Rejoignez des batailles multijoueurs épiques, améliorez votre blindé et dominez le champ de bataille."
 }

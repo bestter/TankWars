@@ -5,6 +5,7 @@ import { MainMenu } from "./components/MainMenu";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { GamePhase } from "./types/game";
 import type { Player } from "./types/player";
+import { SEO } from './components/SEO';
 
 /**
  * Bestter's TankWars - Root App (src/App.tsx)
@@ -45,6 +46,7 @@ function App() {
         position: "relative",
       }}
     >
+      <SEO titleKey="seo_title" descriptionKey="seo_description" />
       {/* Sélecteur de langue disponible partout */}
       <div style={{ position: "absolute", top: 12, right: 12, zIndex: 100 }}>
         <LanguageSwitcher />

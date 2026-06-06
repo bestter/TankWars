@@ -163,6 +163,7 @@ After substantive changes:
 - `readme.md` (overall project overview)
 - `CLAUDE.md`, `GROK.md`, `CURSOR.md` (depending on the AI tools being used)
 - `.cursorrules` (Cursor / AI rules)
+- `public/sitemap.xml` (last modification date)
 
 Before each git commit:
 
@@ -199,6 +200,5 @@ Do not block current architecture for these; implement incrementally when asked:
 ---
 
 When unsure about a design constraint, prefer **strict React/Canvas separation** and **pluggable AI via `AIEngine`** over shortcuts.
-
 
 - Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.

@@ -82,5 +82,7 @@
   "wind_dir_west": "WEST",
   "wind_no_drift": "no drift",
   "wind_title": "WIND",
-  "winner_wins": "{{name}} WINS!"
+  "winner_wins": "{{name}} WINS!",
+  "seo_title": "TankWars - Online Multiplayer Tank Combat Game",
+  "seo_description": "Play TankWars, the ultimate browser-based tank warfare game. Join epic multiplayer battles, upgrade your armored vehicle, and dominate the battlefield."
 }
