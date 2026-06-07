@@ -59,7 +59,7 @@ describe('PhysicsEngine', () => {
       engine.getProjectiles()[0].x = 10000;
 
       // Update logic will remove the out-of-bounds projectile
-      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as import("../Terrain").TerrainManager);
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       // Still one active projectile left
       expect(engine.hasActiveProjectiles()).toBe(true);
@@ -76,7 +76,7 @@ describe('PhysicsEngine', () => {
       engine.getProjectiles()[1].y = 10000;
 
       // Update will remove all
-      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as import("../Terrain").TerrainManager);
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       // No active projectiles left
       expect(engine.hasActiveProjectiles()).toBe(false);
@@ -95,7 +95,7 @@ describe('PhysicsEngine', () => {
       expect(engine.hasActiveProjectiles()).toBe(true);
 
       // Update will process impact and remove the projectile
-      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as import("../Terrain").TerrainManager);
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       expect(engine.hasActiveProjectiles()).toBe(false);
     });

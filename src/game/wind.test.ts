@@ -1,5 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { formatWindDisplay, rollRoundWind, WIND_ACCEL_MIN, WIND_ACCEL_MAX } from './wind';
+import { secureRandom } from '../utils/random';
+
+vi.mock('../utils/random', () => ({
+  secureRandom: vi.fn(),
+}));
 
 describe('formatWindDisplay', () => {
   it('formats CALM wind correctly (force < 0.5)', () => {
@@ -34,20 +39,16 @@ describe('formatWindDisplay', () => {
 
 describe('rollRoundWind', () => {
   beforeEach(() => {
-    vi.spyOn(Math, 'random');
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
+    vi.mocked(secureRandom).mockReset();
   });
 
   it('returns 0 when calm chance is met', () => {
-    vi.mocked(Math.random).mockReturnValueOnce(0.05);
+    vi.mocked(secureRandom).mockReturnValueOnce(0.05);
     expect(rollRoundWind()).toBe(0);
   });
 
   it('calculates west wind correctly (sign < 0.5)', () => {
-    vi.mocked(Math.random)
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.5)
       .mockReturnValueOnce(0.4)
       .mockReturnValueOnce(0.5);
@@ -56,7 +57,7 @@ describe('rollRoundWind', () => {
   });
 
   it('calculates east wind correctly (sign >= 0.5)', () => {
-    vi.mocked(Math.random)
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.5)
       .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(1);
@@ -64,3 +65,4 @@ describe('rollRoundWind', () => {
     expect(rollRoundWind()).toBe(52);
   });
 });
+
