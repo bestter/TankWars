@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { formatWindDisplay, rollRoundWind, WIND_ACCEL_MIN, WIND_ACCEL_MAX } from './wind';
 import { secureRandom } from '../utils/random';
 
@@ -42,54 +42,20 @@ describe('rollRoundWind', () => {
     vi.mocked(secureRandom).mockReset();
   });
 
-  it('returns 0 when calm chance is met', () => {
-    vi.mocked(secureRandom).mockReturnValueOnce(0.05);
-    expect(rollRoundWind()).toBe(0);
-  });
-
-  it('calculates west wind correctly (sign < 0.5)', () => {
-    vi.mocked(secureRandom)
-      .mockReturnValueOnce(0.5)
-      .mockReturnValueOnce(0.4)
-      .mockReturnValueOnce(0.5);
-
-    expect(rollRoundWind()).toBe(-20.5);
-  });
-
-  it('calculates east wind correctly (sign >= 0.5)', () => {
-    vi.mocked(secureRandom)
-      .mockReturnValueOnce(0.5)
-      .mockReturnValueOnce(0.6)
-      .mockReturnValueOnce(1);
-
-    expect(rollRoundWind()).toBe(52);
-  });
-});
-
-describe('rollRoundWind', () => {
-  let mathRandomSpy: MockInstance;
-
-  beforeEach(() => {
-    mathRandomSpy = vi.spyOn(Math, 'random');
-  });
-
-  afterEach(() => {
-    mathRandomSpy.mockRestore();
-  });
-
-  it('returns 0 for calm wind (random < 0.1)', () => {
-    mathRandomSpy.mockReturnValue(0.05); // < CALM_CHANCE
+  it('returns 0 when calm chance is met (random < 0.1)', () => {
+    vi.mocked(secureRandom).mockReturnValueOnce(0.05); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
 
-    mathRandomSpy.mockReturnValue(0.099); // < CALM_CHANCE
+    vi.mocked(secureRandom).mockReset();
+    vi.mocked(secureRandom).mockReturnValueOnce(0.099); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
   });
 
   it('returns positive wind (EAST)', () => {
     // 1st call: 0.15 (not calm)
-    // 2nd call: 0.6 (positive sign)
+    // 2nd call: 0.6 (positive sign >= 0.5)
     // 3rd call: 0.5 (magnitude modifier)
-    mathRandomSpy
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(0.5);
@@ -100,9 +66,9 @@ describe('rollRoundWind', () => {
 
   it('returns negative wind (WEST)', () => {
     // 1st call: 0.15 (not calm)
-    // 2nd call: 0.4 (negative sign)
+    // 2nd call: 0.4 (negative sign < 0.5)
     // 3rd call: 0.5 (magnitude modifier)
-    mathRandomSpy
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.4)
       .mockReturnValueOnce(0.5);
@@ -113,9 +79,9 @@ describe('rollRoundWind', () => {
 
   it('returns max positive wind', () => {
     // 1st call: 0.15 (not calm)
-    // 2nd call: 0.6 (positive sign)
+    // 2nd call: 0.6 (positive sign >= 0.5)
     // 3rd call: 1.0 (magnitude modifier)
-    mathRandomSpy
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(1.0);
@@ -126,9 +92,9 @@ describe('rollRoundWind', () => {
 
   it('returns max negative wind', () => {
     // 1st call: 0.15 (not calm)
-    // 2nd call: 0.4 (negative sign)
+    // 2nd call: 0.4 (negative sign < 0.5)
     // 3rd call: 1.0 (magnitude modifier)
-    mathRandomSpy
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.4)
       .mockReturnValueOnce(1.0);
@@ -139,9 +105,9 @@ describe('rollRoundWind', () => {
 
   it('returns minimum non-zero magnitude', () => {
     // 1st call: 0.15 (not calm)
-    // 2nd call: 0.6 (positive sign)
+    // 2nd call: 0.6 (positive sign >= 0.5)
     // 3rd call: 0.0 (magnitude modifier)
-    mathRandomSpy
+    vi.mocked(secureRandom)
       .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(0.0);
