@@ -1,3 +1,4 @@
+import { secureRandom } from "../../../utils/random";
 /**
  * TankWars - Phase 1 AI Strategy (src/game/entities/ai/RandomAIStrategy.ts)
  *
@@ -21,10 +22,10 @@ export class RandomAIStrategy implements AIStrategy {
 
   decideShot(self: Player /* _world: AIWorldView */): FireCommand | null {
     // Very naive: pick a random angle in a safe upward-ish cone
-    const angle: AngleDegrees = -30 + Math.random() * 120; // -30° (slightly down right) to +90° (straight up)
+    const angle: AngleDegrees = -30 + secureRandom() * 120; // -30° (slightly down right) to +90° (straight up)
 
     // Random power in a reasonable range
-    const power: Power = 35 + Math.random() * 55;
+    const power: Power = 35 + secureRandom() * 55;
 
     // Prefer weapons the AI actually has ammo for.
     // MISSILE is unlimited (may be absent from inventory map) and is always available.
@@ -36,7 +37,7 @@ export class RandomAIStrategy implements AIStrategy {
 
     if (availableWeapons.length > 0 && !availableWeapons.includes(weaponId)) {
       weaponId =
-        availableWeapons[Math.floor(Math.random() * availableWeapons.length)];
+        availableWeapons[Math.floor(secureRandom() * availableWeapons.length)];
     }
 
     // Safety: fall back to MISSILE if nothing available

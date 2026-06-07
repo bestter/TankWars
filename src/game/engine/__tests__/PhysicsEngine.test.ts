@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PhysicsEngine } from '../PhysicsEngine';
+import { TerrainManager } from '../Terrain';
 
 describe('PhysicsEngine', () => {
   let engine: PhysicsEngine;
@@ -19,6 +20,13 @@ describe('PhysicsEngine', () => {
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
 
       // Verify hasActiveProjectiles is now true
+      expect(engine.hasActiveProjectiles()).toBe(true);
+    });
+
+    it('should return true after launching multiple projectiles', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.launchProjectile(10, 10, 45, 100, 'MISSILE');
+
       expect(engine.hasActiveProjectiles()).toBe(true);
     });
 
