@@ -1,3 +1,4 @@
+import { secureRandom } from "../../../utils/random";
 /**
  * TankWars - AISmartStrategy (v4 "Expert/Smart" AI)
  *
@@ -307,8 +308,8 @@ export class AISmartStrategy implements AIEngine {
     if (attempts === 2) maxNoise = 0.5;
     else if (attempts >= 3) maxNoise = 0.05;
 
-    const angleNoise = (Math.random() - 0.5) * maxNoise;
-    const powerNoise = (Math.random() - 0.5) * (maxNoise * 0.6);
+    const angleNoise = (secureRandom() - 0.5) * maxNoise;
+    const powerNoise = (secureRandom() - 0.5) * (maxNoise * 0.6);
 
     angle += angleNoise;
     power += powerNoise;
@@ -411,8 +412,8 @@ export class AISmartStrategy implements AIEngine {
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 45 + Math.random() * 90;
-    const power = 60 + Math.random() * 20;
+    const angle = 45 + secureRandom() * 90;
+    const power = 60 + secureRandom() * 20;
     return {
       angle: Math.round(angle),
       power: Math.round(power),
