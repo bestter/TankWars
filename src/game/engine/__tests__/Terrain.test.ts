@@ -1,0 +1,77 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { TerrainManager } from '../Terrain';
+
+describe('TerrainManager', () => {
+  describe('checkCollision', () => {
+    let terrain: TerrainManager;
+    const width = 100;
+    const height = 200;
+
+    beforeEach(() => {
+      terrain = new TerrainManager(width, height);
+      // constructor sets all heights to height * 0.7 = 140
+      // So surfaceY is 140 for all x in 0..99
+    });
+
+    it('should return false for out-of-bounds x coordinates', () => {
+      // Negative x
+      expect(terrain.checkCollision(-1, 150)).toBe(false);
+      expect(terrain.checkCollision(-10, 150)).toBe(false);
+
+      // x >= width
+      expect(terrain.checkCollision(100, 150)).toBe(false);
+      expect(terrain.checkCollision(105, 150)).toBe(false);
+    });
+
+    it('should return false for points above the surface', () => {
+      // Surface is at y = 140. Above surface means y < 140
+      expect(terrain.checkCollision(50, 0)).toBe(false);
+      expect(terrain.checkCollision(50, 139)).toBe(false);
+      expect(terrain.checkCollision(0, 50)).toBe(false);
+      expect(terrain.checkCollision(99, 139)).toBe(false);
+    });
+
+    it('should return true for points exactly on the surface', () => {
+      // Surface is at y = 140.
+      expect(terrain.checkCollision(50, 140)).toBe(true);
+      expect(terrain.checkCollision(0, 140)).toBe(true);
+      expect(terrain.checkCollision(99, 140)).toBe(true);
+    });
+
+    it('should return true for points below the surface', () => {
+      // Surface is at y = 140. Below surface means y > 140
+      expect(terrain.checkCollision(50, 141)).toBe(true);
+      expect(terrain.checkCollision(50, 199)).toBe(true);
+      expect(terrain.checkCollision(0, 150)).toBe(true);
+      expect(terrain.checkCollision(99, 200)).toBe(true);
+    });
+
+    it('should correctly evaluate collision with non-integer x coordinates', () => {
+      // Math.floor(x) is used internally
+      expect(terrain.checkCollision(50.5, 140)).toBe(true);
+      expect(terrain.checkCollision(50.5, 139)).toBe(false);
+      expect(terrain.checkCollision(99.9, 140)).toBe(true);
+      expect(terrain.checkCollision(-0.1, 150)).toBe(false); // Math.floor(-0.1) is -1, out of bounds
+    });
+
+    it('should evaluate collision correctly after terrain destruction', () => {
+      // Create a crater at x=50, radius=10, impact at y=140
+      terrain.destroyTerrain(50, 140, 10);
+
+      // The surface should be deeper around x=50 now.
+      const newHeightAt50 = terrain.getHeightAt(50);
+
+      // Points that were previously colliding (e.g. y=140) might not collide now if crater is deeper than that
+      // Assuming destruction formula dy = sqrt(100 - 0) = 10 -> depth = 140 + 10 = 150
+      // So new surface at x=50 should be close to 150 (depends on smoothing, but deeper than 140)
+      expect(newHeightAt50).toBeGreaterThan(140);
+
+      // Collision should be false at the old surface point
+      expect(terrain.checkCollision(50, 140)).toBe(false);
+
+      // Collision should be true below the new surface point
+      expect(terrain.checkCollision(50, newHeightAt50)).toBe(true);
+      expect(terrain.checkCollision(50, newHeightAt50 + 5)).toBe(true);
+    });
+  });
+});
