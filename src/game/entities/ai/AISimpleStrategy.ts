@@ -1,3 +1,4 @@
+import { secureRandom } from "../../../utils/random";
 /**
  * TankWars - AISimpleStrategy (V1 - "Stupid" AI)
  *
@@ -34,7 +35,7 @@ export class AISimpleStrategy implements AIEngine {
     const aiEnemies = enemies.filter((e) => !e.isHuman);
     const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
     const target: Player =
-      candidates[Math.floor(Math.random() * candidates.length)];
+      candidates[Math.floor(secureRandom() * candidates.length)];
 
     console.log(
       `[AI TARGET] ${currentPlayer.name} (Simple V1) targeted ${target.name}`,
@@ -50,12 +51,12 @@ export class AISimpleStrategy implements AIEngine {
     // Safer trajectories (higher arc, more power) to reduce risk of self-damage
     // while remaining simple/stupid as per Phase 1 requirements.
     if (isTargetToTheRight) {
-      angle = 45 + Math.random() * 30; // 45° → 75° (more upward)
+      angle = 45 + secureRandom() * 30; // 45° → 75° (more upward)
     } else {
-      angle = 105 + Math.random() * 45; // 105° → 150° (more upward from the right side)
+      angle = 105 + secureRandom() * 45; // 105° → 150° (more upward from the right side)
     }
 
-    const power = 60 + Math.random() * 30; // 60 → 90 (stronger shots for better range)
+    const power = 60 + secureRandom() * 30; // 60 → 90 (stronger shots for better range)
 
     const weaponId = currentPlayer.tank.currentWeapon || "MISSILE";
     return {
@@ -70,8 +71,8 @@ export class AISimpleStrategy implements AIEngine {
    * SimpleStrategy just fires a completely random safe shot.
    */
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 40 + Math.random() * 100; // 40° → 140°
-    const power = 55 + Math.random() * 30; // 55-85 (safer)
+    const angle = 40 + secureRandom() * 100; // 40° → 140°
+    const power = 55 + secureRandom() * 30; // 55-85 (safer)
     return {
       angle: Math.round(angle),
       power: Math.round(power),

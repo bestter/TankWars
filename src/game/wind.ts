@@ -1,3 +1,4 @@
+import { secureRandom } from "../utils/random";
 /**
  * Round wind: horizontal acceleration on projectiles (px/s²).
  * Positive = pushes projectiles toward the right (east on screen).
@@ -18,12 +19,12 @@ export interface WindDisplay {
 
 /** Rolls a new wind value for the start of a combat round. */
 export function rollRoundWind(): number {
-  if (Math.random() < CALM_CHANCE) {
+  if (secureRandom() < CALM_CHANCE) {
     return 0;
   }
 
-  const sign = Math.random() < 0.5 ? -1 : 1;
-  const t = Math.random();
+  const sign = secureRandom() < 0.5 ? -1 : 1;
+  const t = secureRandom();
   const magnitude = 10 + t * t * (WIND_ACCEL_MAX - 10);
   return Math.round(sign * magnitude * 10) / 10;
 }

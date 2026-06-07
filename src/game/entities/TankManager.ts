@@ -1,3 +1,4 @@
+import { secureRandom } from "../../utils/random";
 /**
  * TankWars - TankManager
  *
@@ -204,7 +205,7 @@ export class TankManager {
       for (let i = 0; i < count; i++) {
         let placed = false;
         for (let t = 0; t < perPosAttempts; t++) {
-          const candidate = minX + Math.random() * range;
+          const candidate = minX + secureRandom() * range;
           if (positions.every((p) => Math.abs(p - candidate) >= minDist)) {
             positions.push(candidate);
             placed = true;

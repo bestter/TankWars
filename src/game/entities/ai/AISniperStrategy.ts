@@ -1,3 +1,4 @@
+import { secureRandom } from "../../../utils/random";
 /**
  * TankWars - AISniperStrategy (v3 "Sniper" AI)
  *
@@ -313,8 +314,8 @@ export class AISniperStrategy implements AIEngine {
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 45 + Math.random() * 90;
-    const power = 55 + Math.random() * 20;
+    const angle = 45 + secureRandom() * 90;
+    const power = 55 + secureRandom() * 20;
     return { angle: Math.round(angle), power: Math.round(power) };
   }
 }
