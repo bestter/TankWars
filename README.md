@@ -119,6 +119,7 @@ Fully working:
 - Terrain generation + real-time cratering
 - Projectile physics + wind + owner color inheritance
 - Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations, barrel tip launch origin aligned, terrain obstacle avoidance added, + noise error modulator)
+- Post-Merge Fixes: Fixed test failures and lint warnings in `wind.test.ts` by correcting duplicate test suites and properly mocking `secureRandom` instead of `Math.random`.
 - Keyboard + HUD (WindBanner)
 - Multiple weapons + limited ammo + shop economy
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart

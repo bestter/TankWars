@@ -42,27 +42,77 @@ describe('rollRoundWind', () => {
     vi.mocked(secureRandom).mockReset();
   });
 
-  it('returns 0 when calm chance is met', () => {
-    vi.mocked(secureRandom).mockReturnValueOnce(0.05);
+  it('returns 0 when calm chance is met (random < 0.1)', () => {
+    vi.mocked(secureRandom).mockReturnValueOnce(0.05); // < CALM_CHANCE
+    expect(rollRoundWind()).toBe(0);
+
+    vi.mocked(secureRandom).mockReset();
+    vi.mocked(secureRandom).mockReturnValueOnce(0.099); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
   });
 
-  it('calculates west wind correctly (sign < 0.5)', () => {
+  it('returns positive wind (EAST)', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 0.5 (magnitude modifier)
     vi.mocked(secureRandom)
-      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.6)
+      .mockReturnValueOnce(0.5);
+
+    // magnitude calculation: 10 + 0.5 * 0.5 * (52 - 10) = 10 + 0.25 * 42 = 10 + 10.5 = 20.5
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('returns negative wind (WEST)', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.4 (negative sign < 0.5)
+    // 3rd call: 0.5 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.4)
       .mockReturnValueOnce(0.5);
 
+    // magnitude calculation: 10 + 0.5 * 0.5 * (52 - 10) = 10 + 0.25 * 42 = 10 + 10.5 = 20.5
     expect(rollRoundWind()).toBe(-20.5);
   });
 
-  it('calculates east wind correctly (sign >= 0.5)', () => {
+  it('returns max positive wind', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 1.0 (magnitude modifier)
     vi.mocked(secureRandom)
-      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.6)
-      .mockReturnValueOnce(1);
+      .mockReturnValueOnce(1.0);
 
+    // magnitude calculation: 10 + 1.0 * 1.0 * (52 - 10) = 52
     expect(rollRoundWind()).toBe(52);
   });
-});
 
+  it('returns max negative wind', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.4 (negative sign < 0.5)
+    // 3rd call: 1.0 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.4)
+      .mockReturnValueOnce(1.0);
+
+    // magnitude calculation: 10 + 1.0 * 1.0 * (52 - 10) = 52
+    expect(rollRoundWind()).toBe(-52);
+  });
+
+  it('returns minimum non-zero magnitude', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 0.0 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.6)
+      .mockReturnValueOnce(0.0);
+
+    // magnitude calculation: 10 + 0.0 * 0.0 * (52 - 10) = 10
+    expect(rollRoundWind()).toBe(10);
+  });
+});
