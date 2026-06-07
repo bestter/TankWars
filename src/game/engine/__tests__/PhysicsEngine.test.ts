@@ -41,27 +41,61 @@ describe('PhysicsEngine', () => {
       expect(engine.hasActiveProjectiles()).toBe(false);
     });
 
-    it('should return false after projectile goes out of bounds', () => {
-      // Launch projectile that will immediately go out of bounds
-      // X out of bounds is < -60
-      engine.launchProjectile(-100, 0, 180, 10, 'MISSILE');
+    it('should return true when multiple projectiles are launched', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.launchProjectile(10, 10, 60, 50, 'MISSILE');
+      expect(engine.hasActiveProjectiles()).toBe(true);
+    });
 
-      const terrain = new TerrainManager(800, 600);
-      // Update engine to simulate tick
-      engine.updateProjectiles(1/60, 100, 0, terrain);
+    it('should return true when some but not all projectiles are removed via out of bounds', () => {
+      // Create a fake terrain manager
+      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
 
+      // Launch two projectiles.
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+
+      // Manually set the first one to be out of bounds
+      engine.getProjectiles()[0].x = 10000;
+
+      // Update logic will remove the out-of-bounds projectile
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
+
+      // Still one active projectile left
+      expect(engine.hasActiveProjectiles()).toBe(true);
+    });
+
+    it('should return false when all projectiles are removed via out of bounds', () => {
+      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
+
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+
+      // Set all to be out of bounds
+      engine.getProjectiles()[0].x = 10000;
+      engine.getProjectiles()[1].y = 10000;
+
+      // Update will remove all
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
+
+      // No active projectiles left
       expect(engine.hasActiveProjectiles()).toBe(false);
     });
 
-    it('should return false after projectile hits the terrain', () => {
-      // Launch projectile directly into terrain
-      engine.launchProjectile(400, 400, 90, 10, 'MISSILE');
+    it('should accurately report status when a projectile impacts terrain', () => {
+      const terrainManager = {
+        width: 800,
+        height: 600,
+        checkCollision: () => true, // simulate hitting terrain
+        destroyTerrain: () => {}
+      };
 
-      const terrain = new TerrainManager(800, 600);
-      terrain.generate(); // Initialize heightmap
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
 
-      // Update engine to simulate tick
-      engine.updateProjectiles(1/60, 100, 0, terrain);
+      expect(engine.hasActiveProjectiles()).toBe(true);
+
+      // Update will process impact and remove the projectile
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       expect(engine.hasActiveProjectiles()).toBe(false);
     });

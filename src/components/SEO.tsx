@@ -23,8 +23,8 @@ export const SEO: React.FC<SEOProps> = ({ titleKey, descriptionKey, path = '' })
         <Helmet>
             <html lang={currentLang} />
             {/* On force le casting en string car le retour de ParseKeys peut déstabiliser certains types natifs de Helmet */}
-            <title>{t(titleKey as any)}</title>
-            <meta name="description" content={t(descriptionKey as any)} />
+            <title>{t(titleKey)}</title>
+            <meta name="description" content={t(descriptionKey)} />
             <link rel="canonical" href={currentUrl} />
 
             <link rel="alternate" hrefLang="en" href={`${baseUrl}`} />
@@ -33,14 +33,14 @@ export const SEO: React.FC<SEOProps> = ({ titleKey, descriptionKey, path = '' })
 
             <meta property="og:type" content="website" />
             <meta property="og:url" content={currentUrl} />
-            <meta property="og:title" content={t(titleKey as any)} />
-            <meta property="og:description" content={t(descriptionKey as any)} />
+            <meta property="og:title" content={t(titleKey)} />
+            <meta property="og:description" content={t(descriptionKey)} />
             <meta property="og:image" content={`${baseUrl}/og-image.jpg`} />
 
             <meta name="twitter:card" content="summary_large_image" />
             <meta name="twitter:url" content={currentUrl} />
-            <meta name="twitter:title" content={t(titleKey as any)} />
-            <meta name="twitter:description" content={t(descriptionKey as any)} />
+            <meta name="twitter:title" content={t(titleKey)} />
+            <meta name="twitter:description" content={t(descriptionKey)} />
             <meta name="twitter:image" content={`${baseUrl}/og-image.jpg`} />
         </Helmet>
     );
