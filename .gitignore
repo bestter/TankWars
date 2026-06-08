@@ -25,3 +25,4 @@ dist-ssr
 deploy-staging.ps1
 deploy-cloudflare.ps1
 /src/Temp
+coverage/
