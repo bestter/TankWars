@@ -2,23 +2,50 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { TerrainManager } from '../Terrain';
 
 describe('TerrainManager', () => {
-  let terrain: TerrainManager;
-  const WIDTH = 100;
-  const HEIGHT = 100;
-
-  beforeEach(() => {
-    terrain = new TerrainManager(WIDTH, HEIGHT);
-    // Initialize terrain. By default, heights are filled with height * 0.7 = 70.
-    // Let's set some specific heights to test clamping correctly.
-    const heights = (terrain as unknown as { heights: number[] }).heights;
-    for (let i = 0; i < WIDTH; i++) {
-      heights[i] = i; // heights[0] = 0, heights[1] = 1, ... heights[99] = 99
-    }
-  });
-
   describe('getHeightAt', () => {
+    let terrain: TerrainManager;
+    const WIDTH = 100;
+    const HEIGHT = 100;
+
+    beforeEach(() => {
+      terrain = new TerrainManager(WIDTH, HEIGHT);
+      // Initialize terrain. By default, heights are filled with height * 0.7 = 70.
+      // Let's set some specific heights to test clamping correctly.
+      const heights = (terrain as unknown as { heights: number[] }).heights;
+      for (let i = 0; i < WIDTH; i++) {
+        heights[i] = i; // heights[0] = 0, heights[1] = 1, ... heights[99] = 99
+      }
+    });
+
     it('should return correct height for in-bounds coordinate', () => {
       expect(terrain.getHeightAt(50)).toBe(50);
+    });
+
+    it('should clamp negative coordinates to 0', () => {
+      expect(terrain.getHeightAt(-10)).toBe(0);
+      expect(terrain.getHeightAt(-1)).toBe(0);
+    });
+
+    it('should clamp out-of-bounds coordinates to width - 1', () => {
+      expect(terrain.getHeightAt(WIDTH)).toBe(WIDTH - 1);
+      expect(terrain.getHeightAt(WIDTH + 50)).toBe(WIDTH - 1);
+    });
+
+    it('should floor non-integer coordinates', () => {
+      expect(terrain.getHeightAt(5.7)).toBe(5);
+      expect(terrain.getHeightAt(5.1)).toBe(5);
+    });
+  });
+
+  describe('checkCollision', () => {
+    let terrain: TerrainManager;
+    const width = 100;
+    const height = 200;
+
+    beforeEach(() => {
+      terrain = new TerrainManager(width, height);
+      // constructor sets all heights to height * 0.7 = 140
+      // So surfaceY is 140 for all x in 0..99
     });
 
     it('should return false for out-of-bounds x coordinates', () => {
@@ -29,10 +56,6 @@ describe('TerrainManager', () => {
       // x >= width
       expect(terrain.checkCollision(100, 150)).toBe(false);
       expect(terrain.checkCollision(105, 150)).toBe(false);
-    });
-    it('should clamp negative coordinates to 0', () => {
-      expect(terrain.getHeightAt(-10)).toBe(0);
-      expect(terrain.getHeightAt(-1)).toBe(0);
     });
 
     it('should return false for points above the surface', () => {
@@ -50,21 +73,20 @@ describe('TerrainManager', () => {
       expect(terrain.checkCollision(99, 140)).toBe(true);
     });
 
+    it('should return true for points below the surface', () => {
+      // Surface is at y = 140. Below surface means y > 140
+      expect(terrain.checkCollision(50, 141)).toBe(true);
+      expect(terrain.checkCollision(50, 199)).toBe(true);
+      expect(terrain.checkCollision(0, 150)).toBe(true);
+      expect(terrain.checkCollision(99, 200)).toBe(true);
+    });
+
     it('should correctly evaluate collision with non-integer x coordinates', () => {
       // Math.floor(x) is used internally
       expect(terrain.checkCollision(50.5, 140)).toBe(true);
       expect(terrain.checkCollision(50.5, 139)).toBe(false);
       expect(terrain.checkCollision(99.9, 140)).toBe(true);
       expect(terrain.checkCollision(-0.1, 150)).toBe(false); // Math.floor(-0.1) is -1, out of bounds
-    });
-    it('should clamp out-of-bounds coordinates to width - 1', () => {
-      expect(terrain.getHeightAt(WIDTH)).toBe(WIDTH - 1);
-      expect(terrain.getHeightAt(WIDTH + 50)).toBe(WIDTH - 1);
-    });
-
-    it('should floor non-integer coordinates', () => {
-      expect(terrain.getHeightAt(5.7)).toBe(5);
-      expect(terrain.getHeightAt(5.1)).toBe(5);
     });
 
     it('should evaluate collision correctly after terrain destruction', () => {
