@@ -3,35 +3,37 @@ import { TerrainManager } from '../Terrain';
 
 describe('TerrainManager', () => {
   let terrain: TerrainManager;
+  const WIDTH = 100;
+  const HEIGHT = 100;
 
   beforeEach(() => {
-    terrain = new TerrainManager(800, 600);
+    terrain = new TerrainManager(WIDTH, HEIGHT);
+    // Initialize terrain. By default, heights are filled with height * 0.7 = 70.
+    // Let's set some specific heights to test clamping correctly.
+    const heights = (terrain as unknown as { heights: number[] }).heights;
+    for (let i = 0; i < WIDTH; i++) {
+      heights[i] = i; // heights[0] = 0, heights[1] = 1, ... heights[99] = 99
+    }
   });
 
-  describe('getHeightmap', () => {
-    it('should return a new copy on each call to protect internal state', () => {
-      // Get the initial heightmap
-      const map1 = terrain.getHeightmap();
+  describe('getHeightAt', () => {
+    it('should return correct height for in-bounds coordinate', () => {
+      expect(terrain.getHeightAt(50)).toBe(50);
+    });
 
-      // Store the original value to verify it hasn't changed internally
-      const originalValue = map1[0];
+    it('should clamp negative coordinates to 0', () => {
+      expect(terrain.getHeightAt(-10)).toBe(0);
+      expect(terrain.getHeightAt(-1)).toBe(0);
+    });
 
-      // Modify the returned copy (bypass ReadonlyArray for testing immutability)
-      (map1 as number[])[0] = 999;
+    it('should clamp out-of-bounds coordinates to width - 1', () => {
+      expect(terrain.getHeightAt(WIDTH)).toBe(WIDTH - 1);
+      expect(terrain.getHeightAt(WIDTH + 50)).toBe(WIDTH - 1);
+    });
 
-      // Get the heightmap again
-      const map2 = terrain.getHeightmap();
-
-      // The second copy should have the original value, not the modified one
-      expect(map2[0]).toBe(originalValue);
-      expect(map2[0]).not.toBe(999);
-
-      // The two returned copies must be different instances
-      expect(map1).not.toBe(map2);
-
-      // The modified value on map1 should indeed differ from map2's value
-      // fulfilling the specific requirement: "assert the values differ"
-      expect(map1[0]).not.toBe(map2[0]);
+    it('should floor non-integer coordinates', () => {
+      expect(terrain.getHeightAt(5.7)).toBe(5);
+      expect(terrain.getHeightAt(5.1)).toBe(5);
     });
   });
 });

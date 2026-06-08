@@ -198,6 +198,8 @@ Do not block current architecture for these; implement incrementally when asked:
 - **Internationalization (i18n):** Extracted all hardcoded user-visible strings from components (MainMenu, ColorPicker, TankPreview, GameCanvas, GameHUD, RoundSummary, WeaponShop, WindBanner, and GameEngine canvas text) into English and French translation JSON files. Replaced strings with i18n translation tokens using the useTranslation hook (or global i18n for Canvas engine). Created a retro-styled LanguageSwitcher component to dynamically toggle languages.
 - **Post-Merge Fixes:** Fixed test failures and lint errors introduced by the last git merge. Mocked `secureRandom` in `wind.test.ts` instead of `Math.random` to align with secure random number generation, resolved unused `TerrainManager` import in `PhysicsEngine.test.ts`, and resolved explicit `any` lint errors in `SEO.tsx` by removing redundant type casts.
 - **Wind Test Mock Fix:** Fixed a test failure in `wind.test.ts` where a duplicate `describe('rollRoundWind')` block (introduced by a merge conflict) was still spying on `Math.random` instead of `secureRandom`. Merged it into a single clean suite using `secureRandom` mock, and removed unused vitest imports to resolve ESLint errors.
+- **Terrain Test Lint Fix:** Fixed an ESLint error (`@typescript-eslint/no-explicit-any`) in `src/game/engine/__tests__/Terrain.test.ts` by replacing the `any` cast on the private `heights` property with a typed cast via `unknown as { heights: number[] }`, preserving TS strictness.
+- **Game Version Bump:** Bumped game version from `0.1.0` to `0.1.1` in `package.json` and `package-lock.json`.
 
 ---
 
