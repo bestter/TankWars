@@ -313,8 +313,13 @@ export class AIHeuristicStrategy implements AIEngine {
         if (err < best.err) {
           best = { angle: a, power: p, err };
         }
-        if (res.landX < tx - 4) lo = p;
-        else hi = p;
+        if (res.landX < tx) {
+          if (isRight) lo = p;
+          else hi = p;
+        } else {
+          if (isRight) hi = p;
+          else lo = p;
+        }
       }
     }
 
