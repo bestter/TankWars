@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { VGA_PALETTE, type Color } from "../types/game";
+import type { Color } from "../types/game";
 
 export interface ColorPickerProps {
   /** The currently selected color for this player */
@@ -32,13 +32,14 @@ export function ColorPicker({
       {colorPool.map((color) => {
         const isSelected = color === selectedColor;
         const isUnavailable = unavailableColors.has(color);
+        const btnClass = `retro-color-swatch-btn${isSelected ? " selected" : ""}${isUnavailable ? " unavailable" : ""}`;
 
         return (
           <button
             key={color}
             type="button"
             disabled={isUnavailable}
-            className="retro-color-swatch-btn"
+            className={btnClass}
             onClick={() => {
               if (!isUnavailable) {
                 onColorSelect(color);
@@ -46,17 +47,7 @@ export function ColorPicker({
             }}
             style={{
               backgroundColor: color,
-              width: isSelected ? "16px" : "12px",
-              height: isSelected ? "14px" : "10px",
-              border: isSelected
-                ? `2px solid ${VGA_PALETTE.WHITE}`
-                : isUnavailable
-                  ? "1px dashed #333333"
-                  : "1px solid #555555",
-              cursor: isUnavailable ? "not-allowed" : "pointer",
-              opacity: isUnavailable ? 0.2 : isSelected ? 1.0 : 0.7,
               boxShadow: isSelected ? `0 0 5px ${color}` : "none",
-              transform: isSelected ? "scale(1.15)" : "none",
             }}
             title={
               isUnavailable
@@ -70,20 +61,7 @@ export function ColorPicker({
             }
           >
             {isUnavailable && (
-              <span
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#FF3333",
-                  fontSize: "9px",
-                  lineHeight: "9px",
-                  fontWeight: "bold",
-                  pointerEvents: "none",
-                }}
-              >
+              <span className="retro-color-swatch-unavailable-mark">
                 ✕
               </span>
             )}

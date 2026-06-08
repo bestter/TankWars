@@ -103,6 +103,10 @@ export class PhysicsEngine {
     terrainManager: TerrainManager,
     tankManager?: TankManager,
   ): void {
+    const playerMap = tankManager
+      ? new Map(tankManager.getPlayers().map((pl) => [pl.id, pl]))
+      : null;
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
 
@@ -156,10 +160,8 @@ export class PhysicsEngine {
       let collision = false;
       if (tankManager) {
         let ignoreOwnerId: string | undefined = undefined;
-        if (p.ownerId && !p.hasLeftOwnerHitbox) {
-          const ownerPlayer = tankManager
-            .getPlayers()
-            .find((pl) => pl.id === p.ownerId);
+        if (p.ownerId && !p.hasLeftOwnerHitbox && playerMap) {
+          const ownerPlayer = playerMap.get(p.ownerId);
           if (ownerPlayer) {
             const oTank = ownerPlayer.tank;
             const tankWidth = 24;

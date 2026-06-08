@@ -28,7 +28,7 @@ export function RoundSummary({
 }: RoundSummaryProps) {
   const { t } = useTranslation();
   const alivePlayers = players.filter((p) => !p.tank.isDead);
-  const sorted = [...players].sort((a, b) => (b.money ?? 0) - (a.money ?? 0));
+  const sorted = players.toSorted((a, b) => (b.money ?? 0) - (a.money ?? 0));
   const canContinue = players.length >= 2;
 
   let outcomeLine = t("outcome_round_ended");
@@ -84,14 +84,8 @@ export function RoundSummary({
           return (
             <div
               key={p.id}
+              className="round-summary-row"
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "4px 8px",
-                marginBottom: 4,
-                backgroundColor: "#111",
-                border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
                 opacity: eliminated ? 0.55 : 1,
               }}
             >
@@ -144,6 +138,7 @@ export function RoundSummary({
       </div>
 
       <button
+        type="button"
         onClick={onNextRound}
         disabled={!canContinue}
         className="retro-btn"
@@ -159,17 +154,9 @@ export function RoundSummary({
       </button>
 
       <button
+        type="button"
         onClick={onNewGame}
-        style={{
-          marginTop: 10,
-          fontSize: "10px",
-          padding: "3px 10px",
-          backgroundColor: "transparent",
-          border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
-          color: VGA_PALETTE.GRAY,
-          cursor: "pointer",
-          letterSpacing: 0.5,
-        }}
+        className="round-summary-menu-btn"
       >
         {t("btn_return_to_menu")}
       </button>
