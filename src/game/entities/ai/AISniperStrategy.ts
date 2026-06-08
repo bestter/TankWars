@@ -212,7 +212,7 @@ export class AISniperStrategy implements AIEngine {
     const aMin = isRight ? 15 : 95;
     const aMax = isRight ? 85 : 165;
 
-    const BASE_SPEED = 4.2;
+    const BASE_SPEED = 6.0;
     const DT = 1 / 120;
     const MAX_STEPS = 420;
 

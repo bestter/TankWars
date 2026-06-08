@@ -269,7 +269,7 @@ export class AIHeuristicStrategy implements AIEngine {
     const aMin = isRight ? 22 : 98;
     const aMax = isRight ? 82 : 158;
 
-    const BASE_SPEED = 4.2;
+    const BASE_SPEED = 6.0;
     const DT = 1 / 120;
     const MAX_STEPS = 420;
 
