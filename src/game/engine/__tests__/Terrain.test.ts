@@ -10,7 +10,7 @@ describe('TerrainManager', () => {
     terrain = new TerrainManager(WIDTH, HEIGHT);
     // Initialize terrain. By default, heights are filled with height * 0.7 = 70.
     // Let's set some specific heights to test clamping correctly.
-    const heights = (terrain as any).heights;
+    const heights = (terrain as unknown as { heights: number[] }).heights;
     for (let i = 0; i < WIDTH; i++) {
       heights[i] = i; // heights[0] = 0, heights[1] = 1, ... heights[99] = 99
     }
