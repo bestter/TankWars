@@ -173,6 +173,7 @@ export function WeaponShop({
               {/* +/- buttons */}
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <button
+                  type="button"
                   onClick={() => onBuySell(wid, 1)}
                   disabled={!canAfford}
                   className="retro-inc-btn"
@@ -189,6 +190,7 @@ export function WeaponShop({
                   +
                 </button>
                 <button
+                  type="button"
                   onClick={() => onBuySell(wid, -1)}
                   disabled={!canSell}
                   className="retro-inc-btn"
@@ -212,6 +214,7 @@ export function WeaponShop({
 
       {/* Ready button */}
       <button
+        type="button"
         onClick={onReady}
         className="retro-btn"
         style={{ padding: "10px 36px" }}

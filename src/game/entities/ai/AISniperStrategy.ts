@@ -140,7 +140,7 @@ export class AISniperStrategy implements AIEngine {
       const aiEnemies = enemies.filter((e) => !e.isHuman);
       const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
 
-      const sorted = [...candidates].sort((a, b) => {
+      const sorted = candidates.toSorted((a, b) => {
         const h = a.tank.health - b.tank.health;
         if (h !== 0) return h;
         const ha = a.isHuman ? 1 : 0;

@@ -21,15 +21,16 @@ import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import { VGA_PALETTE, type Color } from "../types/game";
 import { DEFAULT_INVENTORY } from "../types/weapon";
-import { ColorPicker } from "./ColorPicker";
-import { TankPreview } from "./TankPreview";
+
+
+import { PlayerConfigRow } from "./PlayerConfigRow";
 
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
   onStartGame: (players: Player[]) => void;
 }
 
-interface PlayerConfig {
+export interface PlayerConfig {
   name: string;
   isHuman: boolean;
   color: Color;
@@ -203,7 +204,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
           {/* Sélecteur nombre de joueurs (boutons style rétro) */}
           <div style={{ marginBottom: 10 }}>
-            <span style={{ color: "#AAAAAA", fontSize: 11, marginRight: 8 }}>
+            <span style={{ color: "#AAAAAA", fontSize: 12, marginRight: 8 }}>
               {t("num_players")}
             </span>
             {[2, 3, 4].map((n) => (
@@ -221,132 +222,35 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
           {/* Liste des joueurs configurables */}
           <div style={{ marginBottom: 6 }}>
             {playerConfigs.map((cfg, index) => {
-              const color = cfg.color;
-              const isHuman = cfg.isHuman;
-              const unavailableColors = new Set(
-                playerConfigs
-                  .filter((_, pi) => pi !== index)
-                  .map((pc) => pc.color),
-              );
+              const unavailableColors = new Set<Color>();
+              for (let pi = 0; pi < playerConfigs.length; pi++) {
+                if (pi !== index) {
+                  unavailableColors.add(playerConfigs[pi].color);
+                }
+              }
 
               return (
-                <div
+                <PlayerConfigRow
                   key={cfg.id}
-                  className="retro-player-row"
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
-                  {/* Aperçu miniature du tank */}
-                  <TankPreview color={color} />
-
-                  {/* Nom du joueur (éditable) */}
-                  <input
-                    ref={(el) => {
-                      nameInputRefs.current[index] = el;
-                    }}
-                    type="text"
-                    className="retro-input"
-                    value={cfg.name}
-                    maxLength={16}
-                    onChange={(e) => handleNameChange(index, e.target.value)}
-                    placeholder={t("player_name_placeholder", { num: index + 1 })}
-                    aria-label={t("player_name_aria_label", { num: index + 1 })}
-                  />
-
-                  {/* Sélecteur de couleur avec exclusion mutuelle */}
-                  <ColorPicker
-                    selectedColor={color}
-                    onColorSelect={(newColor) =>
-                      handleColorSelect(index, newColor)
-                    }
-                    unavailableColors={unavailableColors}
-                    colorPool={TANK_COLOR_POOL}
-                  />
-
-                  {/* Select Controller Type (Humain, IA Simple, IA OK, IA Sniper, IA Expert) */}
-                  <select
-                    className="retro-input retro-player-select"
-                    style={{
-                      color: isHuman ? "#55FF55" : "#FFAA00",
-                      border: `1px solid ${isHuman ? "#55FF55" : "#FFAA00"}`,
-                    }}
-                    value={isHuman ? "human" : (cfg.aiProfile ?? "v1-random")}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "human") {
-                        handleTypeChange(index, true);
-                      } else {
-                        updatePlayer(index, {
-                          isHuman: false,
-                          aiProfile: val as
-                            | "v1-random"
-                            | "v2-heuristic"
-                            | "v3-sniper"
-                            | "v4-smart",
-                        });
-                      }
-                    }}
-                    aria-label={t("controller_type_aria_label", { num: index + 1 })}
-                  >
-                    <option
-                      value="human"
-                      style={{ color: "#55FF55", background: "#000000" }}
-                    >
-                      {t("controller_human")}
-                    </option>
-                    <option
-                      value="v1-random"
-                      style={{ color: "#FFAA00", background: "#000000" }}
-                    >
-                      {t("controller_ai_simple")}
-                    </option>
-                    <option
-                      value="v2-heuristic"
-                      style={{ color: "#FFAA00", background: "#000000" }}
-                    >
-                      {t("controller_ai_ok")}
-                    </option>
-                    <option
-                      value="v3-sniper"
-                      style={{ color: "#FFAA00", background: "#000000" }}
-                    >
-                      {t("controller_ai_sniper")}
-                    </option>
-                    <option
-                      value="v4-smart"
-                      style={{ color: "#FFAA00", background: "#000000" }}
-                    >
-                      {t("controller_ai_expert")}
-                    </option>
-                  </select>
-
-                  {/* Compact Status Indicator */}
-                  <span
-                    style={{
-                      fontSize: 9,
-                      color: isHuman ? "#55FF55" : "#FFAA00",
-                      marginLeft: 2,
-                      minWidth: 32,
-                      textAlign: "center",
-                    }}
-                  >
-                    {isHuman
-                      ? "P"
-                      : cfg.aiProfile === "v2-heuristic"
-                        ? "OK"
-                        : cfg.aiProfile === "v3-sniper"
-                          ? "SNIP"
-                          : cfg.aiProfile === "v4-smart"
-                            ? "EXPT"
-                            : "CPU"}
-                  </span>
-                </div>
+                  cfg={cfg}
+                  index={index}
+                  unavailableColors={unavailableColors}
+                  colorPool={TANK_COLOR_POOL}
+                  nameInputRef={(el) => {
+                    nameInputRefs.current[index] = el;
+                  }}
+                  onNameChange={handleNameChange}
+                  onColorSelect={handleColorSelect}
+                  onTypeChange={handleTypeChange}
+                  onUpdatePlayer={updatePlayer}
+                />
               );
             })}
           </div>
 
           <div
             style={{
-              fontSize: 10,
+              fontSize: 12,
               color: "#666666",
               marginTop: -2,
               marginBottom: 8,
