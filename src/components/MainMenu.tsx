@@ -186,16 +186,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
   return (
     <div
-      style={{
-        minHeight: "100vh",
-        background: "#000000",
-        color: "#FFFFFF",
-        fontFamily: "monospace",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "12px",
-      }}
+      className="retro-menu-container"
     >
       <div className="retro-menu-frame">
         <div className="retro-menu-inner">
@@ -273,16 +264,10 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
                   {/* Select Controller Type (Humain, IA Simple, IA OK, IA Sniper, IA Expert) */}
                   <select
-                    className="retro-input"
+                    className="retro-input retro-player-select"
                     style={{
-                      width: "120px",
-                      flex: "none",
-                      fontSize: "11px",
-                      padding: "2px 4px",
-                      cursor: "pointer",
                       color: isHuman ? "#55FF55" : "#FFAA00",
                       border: `1px solid ${isHuman ? "#55FF55" : "#FFAA00"}`,
-                      background: "#000000",
                     }}
                     value={isHuman ? "human" : (cfg.aiProfile ?? "v1-random")}
                     onChange={(e) => {

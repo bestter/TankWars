@@ -23,25 +23,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
   return (
     <div
       aria-label={t("wind_aria_label", { label: t(WIND_DIR_KEYS[info.label.toLowerCase()] || "wind_dir_calm"), strength: info.strength })}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 6,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        padding: "5px 12px",
-        background: "rgba(0, 0, 0, 0.72)",
-        borderBottom: `2px solid ${VGA_PALETTE.CYAN}`,
-        fontFamily: "monospace",
-        fontSize: 13,
-        fontWeight: "bold",
-        pointerEvents: "none",
-        letterSpacing: "0.06em",
-      }}
+      className="wind-banner"
     >
       <span style={{ color: VGA_PALETTE.CYAN }}>{t("wind_title")}</span>
       <span

@@ -797,20 +797,7 @@ export function GameCanvas({
         {/* Celebration banner during pre-SUMMARY fireworks (from winning tank) */}
         {gamePhase === "CELEBRATION" && (
           <div
-            style={{
-              position: "absolute",
-              top: 12,
-              left: "50%",
-              transform: "translateX(-50%)",
-              background: "rgba(0,0,0,0.7)",
-              color: VGA_PALETTE.YELLOW,
-              font: "bold 14px monospace",
-              padding: "4px 12px",
-              border: `2px solid ${VGA_PALETTE.YELLOW}`,
-              zIndex: 20,
-              pointerEvents: "none",
-              textShadow: "0 0 4px #000",
-            }}
+            className="celebration-banner"
           >
             {t("celebration_banner")}
           </div>

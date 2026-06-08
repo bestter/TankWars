@@ -119,8 +119,11 @@ Fully working:
 - Terrain generation + real-time cratering
 - Projectile physics + wind + owner color inheritance
 - Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations, barrel tip launch origin aligned, terrain obstacle avoidance added, + noise error modulator)
-- Post-Merge Fixes: Fixed test failures and lint warnings in `wind.test.ts` by correcting duplicate test suites and properly mocking `secureRandom` instead of `Math.random`.
-- Terrain Test Restoration: Restored checkCollision test suite and beforeEach configurations in Terrain.test.ts that were corrupted during a manual merge conflict resolution.
+- React Doctor Performance & Styling Fixes: Fixed the top 3 React Doctor warning types in the project:
+  - Caching `tank.position` to local references `pos` inside loops in `TankManager.ts` to prevent repeated prototype member access (`js-cache-property-access`).
+  - Pre-building a Player `Map` once outside the projectile update loop in `PhysicsEngine.ts` to replace nested `.find()` searches with O(1) key lookups (`js-index-maps`).
+  - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
+  - Configured React Doctor in CI with a GitHub Actions workflow.
 - Keyboard + HUD (WindBanner)
 - Multiple weapons + limited ammo + shop economy
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart

@@ -234,7 +234,8 @@ export class TankManager {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      const groundY = terrain.getHeightAt(tank.position.x);
+      const pos = tank.position;
+      const groundY = terrain.getHeightAt(pos.x);
       const pitFloorY = terrain.height - BOTTOM_SUPPORT_MARGIN;
       const id = tank.id;
 
@@ -246,7 +247,7 @@ export class TankManager {
         const cur = this.velocities.get(id) ?? 0;
         this.velocities.set(id, Math.max(cur, 5.5));
         this.isVoidFall.set(id, true);
-      } else if (tank.position.y + 0.5 < groundY) {
+      } else if (pos.y + 0.5 < groundY) {
         // Normal crater under tank: give kick so it falls gradually (was instant before)
         if ((this.velocities.get(id) ?? 0) <= 0) {
           this.fallenDistances.set(id, 0);
@@ -255,12 +256,12 @@ export class TankManager {
         this.velocities.set(id, Math.max(cur + 2.5, 3.5));
 
         // Determine if falling in the void based on height gap
-        const gap = groundY - tank.position.y;
+        const gap = groundY - pos.y;
         this.isVoidFall.set(id, gap >= VOID_FALL_THRESHOLD);
       } else {
         // Resting or very close: snap exactly + zero vel (prevents float)
-        if (Math.abs(tank.position.y - groundY) < 3) {
-          tank.position.y = groundY;
+        if (Math.abs(pos.y - groundY) < 3) {
+          pos.y = groundY;
           this.velocities.set(id, 0);
         }
         this.isVoidFall.set(id, false);
@@ -289,14 +290,15 @@ export class TankManager {
       const id = tank.id;
       let vy = this.velocities.get(id) ?? 0;
 
-      const groundY = terrain.getHeightAt(tank.position.x);
-      const inPit = groundY >= pitFloorY || tank.position.y > pitFloorY;
+      const pos = tank.position;
+      const groundY = terrain.getHeightAt(pos.x);
+      const inPit = groundY >= pitFloorY || pos.y > pitFloorY;
 
-      if (tank.position.y < groundY || inPit) {
+      if (pos.y < groundY || inPit) {
         // Falling (normal crater or pit)
         // Initialize void fall flag if not already set
         if (!this.isVoidFall.has(id)) {
-          const gap = groundY - tank.position.y;
+          const gap = groundY - pos.y;
           this.isVoidFall.set(id, gap >= VOID_FALL_THRESHOLD || inPit);
         }
         const isVoid = this.isVoidFall.get(id) ?? false;
@@ -308,17 +310,17 @@ export class TankManager {
           : FALL_DAMAGE_LEVEL_HEIGHT_NORMAL;
 
         vy = Math.min(vy + gravity * dt, terminalV);
-        const prevY = tank.position.y;
-        tank.position.y += vy * dt;
+        const prevY = pos.y;
+        pos.y += vy * dt;
         this.velocities.set(id, vy);
 
         // Instant death on touching lava (the exposed floor when no ground left)
         const lavaY = terrain.lavaTop;
-        if (tank.position.y >= lavaY && !tank.isDead) {
+        if (pos.y >= lavaY && !tank.isDead) {
           tank.isDead = true;
-          const details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
+          const details = `touched lava (y=${pos.y.toFixed(1)} >= lavaTop=${lavaY})`;
           console.log(
-            `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`,
+            `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)})`,
           );
           this.onPlayerDied?.(player.id, "burial", details);
           this.velocities.delete(id);
@@ -328,7 +330,7 @@ export class TankManager {
         }
 
         // === Fall damage: 1 point per damageLevelHeight pixels of downward travel ===
-        const deltaFall = tank.position.y - prevY;
+        const deltaFall = pos.y - prevY;
         if (deltaFall > 0) {
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
@@ -355,7 +357,7 @@ export class TankManager {
               ).toFixed(0);
               const details = `fall damage (${dmg} pts after ~${totalFallen}px)`;
               console.log(
-                `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)})`,
+                `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)})`,
               );
               this.onPlayerDied?.(player.id, "burial", details);
             }
@@ -369,18 +371,18 @@ export class TankManager {
 
         // Touch lowest floor (pit bottom) — one-shot per crossing
         const lowest = terrain.height - 6;
-        if (prevY < lowest && tank.position.y >= lowest) {
+        if (prevY < lowest && pos.y >= lowest) {
           this.onTankTouchedFloor?.(player.id);
         }
 
         // Safety clamp
-        if (tank.position.y > terrain.height + 80) {
-          tank.position.y = terrain.height + 80;
+        if (pos.y > terrain.height + 80) {
+          pos.y = terrain.height + 80;
         }
       } else {
         // Landed on normal terrain
-        if (tank.position.y > groundY) {
-          tank.position.y = groundY;
+        if (pos.y > groundY) {
+          pos.y = groundY;
         }
         // Damp velocity on land
         if (Math.abs(vy) > 0.3) {
@@ -491,8 +493,9 @@ export class TankManager {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      const dx = tank.position.x - explosionX;
-      const dy = tank.position.y - explosionY;
+      const pos = tank.position;
+      const dx = pos.x - explosionX;
+      const dy = pos.y - explosionY;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance > radius) continue;
@@ -507,10 +510,10 @@ export class TankManager {
         const tankWidth = 24;
         const tankHeight = 15;
         const isDirectHitOnThisTank = 
-          explosionX >= tank.position.x - tankWidth / 2 &&
-          explosionX <= tank.position.x + tankWidth / 2 &&
-          explosionY >= tank.position.y - tankHeight &&
-          explosionY <= tank.position.y;
+          explosionX >= pos.x - tankWidth / 2 &&
+          explosionX <= pos.x + tankWidth / 2 &&
+          explosionY >= pos.y - tankHeight &&
+          explosionY <= pos.y;
         if (isDirectHitOnThisTank) {
           damage *= 3;
         }

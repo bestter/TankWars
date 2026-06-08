@@ -84,14 +84,8 @@ export function RoundSummary({
           return (
             <div
               key={p.id}
+              className="round-summary-row"
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "4px 8px",
-                marginBottom: 4,
-                backgroundColor: "#111",
-                border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
                 opacity: eliminated ? 0.55 : 1,
               }}
             >
@@ -160,16 +154,7 @@ export function RoundSummary({
 
       <button
         onClick={onNewGame}
-        style={{
-          marginTop: 10,
-          fontSize: "10px",
-          padding: "3px 10px",
-          backgroundColor: "transparent",
-          border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
-          color: VGA_PALETTE.GRAY,
-          cursor: "pointer",
-          letterSpacing: 0.5,
-        }}
+        className="round-summary-menu-btn"
       >
         {t("btn_return_to_menu")}
       </button>

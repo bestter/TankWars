@@ -29,17 +29,7 @@ export function TankPreview({ color }: TankPreviewProps) {
 
   return (
     <div
-      style={{
-        border: "1px solid #333333",
-        borderRadius: "2px",
-        background: "#080808",
-        padding: "2px",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        boxShadow: "inset 0 0 3px rgba(0,0,0,0.8)",
-        flexShrink: 0,
-      }}
+      className="tank-preview-container"
       title={t("tank_preview_title")}
     >
       <canvas
