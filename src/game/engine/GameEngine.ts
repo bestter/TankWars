@@ -1,3 +1,4 @@
+import { secureRandom } from "../../utils/random";
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
  *
@@ -781,13 +782,13 @@ export class GameEngine {
     // Create more initial big rockets for a joyful start
     for (let i = 0; i < 9; i++) {
       this.fireworks.push({
-        x: centerX + (Math.random() - 0.5) * 90,
-        y: centerY + Math.random() * 50,
-        vx: (Math.random() - 0.5) * 2.8,
-        vy: -4.2 - Math.random() * 2.2,
-        life: 48 + Math.random() * 22,
+        x: centerX + (secureRandom() - 0.5) * 90,
+        y: centerY + secureRandom() * 50,
+        vx: (secureRandom() - 0.5) * 2.8,
+        vy: -4.2 - secureRandom() * 2.2,
+        life: 48 + secureRandom() * 22,
         color: this.celebrationColor,
-        size: 3 + Math.random() * 1.5,
+        size: 3 + secureRandom() * 1.5,
       });
     }
   }
@@ -916,7 +917,7 @@ export class GameEngine {
       }
 
       // Shoot a firework from the cannon tip at the current angle (with some spread)
-      if (Math.random() < 0.28) {
+      if (secureRandom() < 0.28) {
         const winnerP = this.tankManager
           .getPlayers()
           .find((p) => p.tank.id === this.celebrationWinnerTankId);
@@ -927,16 +928,16 @@ export class GameEngine {
           const barrelStartY = tank.position.y - 13;
           const tipX = tank.position.x + Math.cos(rad) * barrelLength;
           const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
-          const speed = 3.2 + Math.random() * 2.8;
-          const spread = (Math.random() - 0.5) * 1.0;
+          const speed = 3.2 + secureRandom() * 2.8;
+          const spread = (secureRandom() - 0.5) * 1.0;
           this.fireworks.push({
             x: tipX,
             y: tipY,
             vx: Math.cos(rad) * speed + spread,
             vy: -Math.sin(rad) * speed - 0.8 + spread * 0.4,
-            life: 32 + Math.random() * 16,
+            life: 32 + secureRandom() * 16,
             color: this.celebrationColor,
-            size: 2.2 + Math.random() * 1.3,
+            size: 2.2 + secureRandom() * 1.3,
           });
         }
       }
@@ -954,18 +955,18 @@ export class GameEngine {
 
       if (p.life > 0) {
         // Big, joyful explosions
-        if (p.life % 8 === 0 && Math.random() > 0.35) {
-          const explosionCount = 22 + Math.floor(Math.random() * 14);
+        if (p.life % 8 === 0 && secureRandom() > 0.35) {
+          const explosionCount = 22 + Math.floor(secureRandom() * 14);
           for (let i = 0; i < explosionCount; i++) {
-            const spread = 4.8 + Math.random() * 3.2;
+            const spread = 4.8 + secureRandom() * 3.2;
             newFireworks.push({
               x: p.x,
               y: p.y,
-              vx: (Math.random() - 0.5) * spread,
-              vy: (Math.random() - 0.5) * spread - 0.8,
-              life: 28 + Math.random() * 20,
+              vx: (secureRandom() - 0.5) * spread,
+              vy: (secureRandom() - 0.5) * spread - 0.8,
+              life: 28 + secureRandom() * 20,
               color: p.color,
-              size: 2.4 + Math.random() * 2.2,
+              size: 2.4 + secureRandom() * 2.2,
             });
           }
         }
@@ -976,7 +977,7 @@ export class GameEngine {
     this.fireworks = newFireworks;
 
     // Keep spawning lots of big rockets while celebrating (game over match win OR round win fireworks)
-    if (this.fireworks.length < 22 && Math.random() < 0.42) {
+    if (this.fireworks.length < 22 && secureRandom() < 0.42) {
       const winnerX =
         this.winner?.tank.position.x ??
         this.celebrationCenterX ??
@@ -984,13 +985,13 @@ export class GameEngine {
       const spawnColor =
         this.winner?.tank.color ?? this.celebrationColor ?? "#FFFFFF";
       this.fireworks.push({
-        x: winnerX + (Math.random() - 0.5) * 130,
-        y: 50 + Math.random() * 80,
-        vx: (Math.random() - 0.5) * 2.6,
-        vy: -4.5 - Math.random() * 2.8,
-        life: 46 + Math.random() * 20,
+        x: winnerX + (secureRandom() - 0.5) * 130,
+        y: 50 + secureRandom() * 80,
+        vx: (secureRandom() - 0.5) * 2.6,
+        vy: -4.5 - secureRandom() * 2.8,
+        life: 46 + secureRandom() * 20,
         color: spawnColor,
-        size: 4 + Math.random() * 2.5,
+        size: 4 + secureRandom() * 2.5,
       });
     }
   }
@@ -1028,13 +1029,13 @@ export class GameEngine {
       VGA_PALETTE.BROWN,
     ];
     for (let i = 0; i < 42; i++) {
-      const spread = 38 + Math.random() * 18;
+      const spread = 38 + secureRandom() * 18;
       this.impactExplosions.push({
-        x: x + (Math.random() - 0.5) * spread,
-        y: y + (Math.random() - 0.5) * (spread * 0.7),
-        life: 42 + Math.random() * 28,
+        x: x + (secureRandom() - 0.5) * spread,
+        y: y + (secureRandom() - 0.5) * (spread * 0.7),
+        life: 42 + secureRandom() * 28,
         maxLife: 70,
-        size: 2.5 + Math.random() * 8.5,
+        size: 2.5 + secureRandom() * 8.5,
         color: colors[i % colors.length],
       });
     }

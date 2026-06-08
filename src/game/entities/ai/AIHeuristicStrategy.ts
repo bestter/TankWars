@@ -1,3 +1,4 @@
+import { secureRandom } from "../../../utils/random";
 /**
  * TankWars - AIHeuristicStrategy (v2 "OK" / heuristic AI)
  *
@@ -117,7 +118,7 @@ export class AIHeuristicStrategy implements AIEngine {
           } else {
             // Miss!
             mem.roundFails += 1;
-            mem.lastPowerBias += (Math.random() - 0.5) * 1.2;
+            mem.lastPowerBias += (secureRandom() - 0.5) * 1.2;
             console.log(
               `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
             );
@@ -322,10 +323,10 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // "Always more precise": noise shrinks with attempts on this target
     const precision = Math.min(0.88, attempts * 0.13);
-    const noise = (1 - precision) * (7.5 + Math.random() * 5.5);
+    const noise = (1 - precision) * (7.5 + secureRandom() * 5.5);
 
-    angle += (Math.random() - 0.5) * noise;
-    power += (Math.random() - 0.5) * (noise * 0.65);
+    angle += (secureRandom() - 0.5) * noise;
+    power += (secureRandom() - 0.5) * (noise * 0.65);
 
     // clamps (never suicidal extremes)
     angle = Math.max(8, Math.min(172, angle));
@@ -393,8 +394,8 @@ export class AIHeuristicStrategy implements AIEngine {
    * Sync bailout. Uses simple safe random (could be enhanced with last target from mem).
    */
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 30 + Math.random() * 120;
-    const power = 48 + Math.random() * 28;
+    const angle = 30 + secureRandom() * 120;
+    const power = 48 + secureRandom() * 28;
     return {
       angle: Math.round(angle),
       power: Math.round(power),
