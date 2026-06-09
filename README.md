@@ -35,7 +35,7 @@
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
-- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned from damage and survival.
+- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned instantly from tank destructions ($300 standard, $600 for the last standing tank) and base survival ($500).
 - **Internationalization (i18n)** — Complete French (FR) and English (EN) translations for all UI text, settings, weapon descriptions, and game status messages. Features a retro-styled LanguageSwitcher component to toggle language on the fly.
 
 ---
@@ -50,7 +50,7 @@
 | `A` / `E` | Switch weapon                   |
 | Mouse     | Click weapon buttons in HUD     |
 
-The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks play before SUMMARY.
+The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks (featuring multicolored trails, circular/rainbow patterns, falling confetti, and chiptune spatialized pops) play before SUMMARY.
 
 ---
 
@@ -132,8 +132,10 @@ Fully working:
   - Pre-building a Player `Map` once outside the projectile update loop in `PhysicsEngine.ts` to replace nested `.find()` searches with O(1) key lookups (`js-index-maps`).
   - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
   - Configured React Doctor in CI with a GitHub Actions workflow.
+- **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
+- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.0`) in the footer of the retro Main Menu next to the license statement.
 - Keyboard + HUD (WindBanner)
-- Multiple weapons + limited ammo + shop economy
+- Multiple weapons + limited ammo + shop economy (including **Weapon Shop State Mutation Fix & Unit Tests**: resolved a React state propagation bug where stock/money +/- button changes did not trigger re-rendering, corrected `MUTATE_SHOP_PLAYERS` reducer action, and added `gameCanvasReducer.test.ts` coverage).
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart
 
 In progress / planned:

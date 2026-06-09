@@ -81,15 +81,23 @@ export class GameEngine {
   /** True while tanks are fighting within a single combat round (until <= 1 alive: last man standing). */
   private roundCombatActive = true;
 
-  // Simple fireworks for winner celebration
+  // Enriched fireworks for winner celebration
   private fireworks: Array<{
     x: number;
     y: number;
     vx: number;
     vy: number;
     life: number;
+    maxLife: number;
     color: string;
     size: number;
+    type: "rocket" | "particle" | "confetti";
+    trail?: Array<{ x: number; y: number; alpha: number }>;
+    swaySpeed?: number;
+    swayOffset?: number;
+    swayWidth?: number;
+    rotation?: number;
+    rotationSpeed?: number;
   }> = [];
 
   // Impact explosion VFX for huge weapons (e.g. THERMONUCLEAR). Separate from celebration fireworks.
@@ -156,14 +164,15 @@ export class GameEngine {
     this.tankManager = new TankManager();
 
     // Wire debug death recorder so we can produce a rich summary at game end.
-    // Also branch to play distinct death SFX (explosion vs sad burial).
-    this.tankManager.onPlayerDied = (playerId, cause, details) => {
+    // Also branch to play distinct death SFX (explosion vs sad burial) and handle instant earnings.
+    this.tankManager.onPlayerDied = (playerId, cause, details, killerId) => {
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion") {
         this.playTankDestroyedByExplosionSound();
       } else if (cause === "burial") {
         this.playTankSadBurialSound();
       }
+      this.handlePlayerDeathGains(playerId, killerId);
     };
 
     // Wire tank movement / pit SFX (consumed by applyGravity in TankManager)
@@ -383,7 +392,6 @@ export class GameEngine {
   /**
    * Awards money at end of a manche per spec:
    * - 500$ base to every surviving tank
-   * - +300$ per enemy destroyed (tracked via ownerId threading + alive-diff during the round)
    * Mutates the live Player.money (shared refs) and returns RoundResult for UI.
    * Resets accumulators for the next round.
    */
@@ -391,12 +399,11 @@ export class GameEngine {
     const players = this.tankManager.getPlayers();
     const survivors: string[] = [];
 
-    // Apply earnings (base + kill bonus) only to survivors
+    // Apply earnings (base survival bonus only) to survivors
     for (const p of players) {
       if (p.tank.isDead) continue;
       survivors.push(p.id);
-      const kills = this.roundKills[p.id] ?? 0;
-      const earnings = 500 + kills * 300;
+      const earnings = 500;
       p.money = (p.money ?? 0) + earnings;
     }
 
@@ -779,16 +786,52 @@ export class GameEngine {
     this.celebrationColor = color ?? this.winner?.tank.color ?? "#FFFFFF";
     this.playVictoryFanfare();
 
-    // Create more initial big rockets for a joyful start
+    const festiveColors = [
+      VGA_PALETTE.ELECTRIC_CYAN,
+      VGA_PALETTE.FLASH_GREEN,
+      VGA_PALETTE.NEON_PINK,
+      VGA_PALETTE.CYBER_YELLOW,
+      VGA_PALETTE.FLUO_ORANGE,
+      VGA_PALETTE.VOLT_PURPLE,
+      VGA_PALETTE.CYAN,
+      VGA_PALETTE.MAGENTA,
+      VGA_PALETTE.YELLOW,
+    ];
+
+    // Create initial big rockets (multicolored!) launching from the bottom
     for (let i = 0; i < 9; i++) {
+      const rocketColor = secureRandom() < 0.4 ? this.celebrationColor : festiveColors[i % festiveColors.length];
       this.fireworks.push({
-        x: centerX + (secureRandom() - 0.5) * 90,
-        y: centerY + secureRandom() * 50,
-        vx: (secureRandom() - 0.5) * 2.8,
-        vy: -4.2 - secureRandom() * 2.2,
-        life: 48 + secureRandom() * 22,
-        color: this.celebrationColor,
-        size: 3 + secureRandom() * 1.5,
+        type: "rocket",
+        x: centerX + (secureRandom() - 0.5) * 180,
+        y: this.height - 20,
+        vx: (secureRandom() - 0.5) * 2.5,
+        vy: -5.8 - secureRandom() * 3.2,
+        life: 42 + secureRandom() * 26,
+        maxLife: 68,
+        color: rocketColor,
+        size: 3.5 + secureRandom() * 2.0,
+        trail: [],
+      });
+    }
+
+    // Add some initial floating confetti for instant festivity
+    for (let i = 0; i < 32; i++) {
+      this.fireworks.push({
+        type: "confetti",
+        x: secureRandom() * this.width,
+        y: secureRandom() * Math.max(80, centerY),
+        vx: (secureRandom() - 0.5) * 1.2,
+        vy: 0.2 + secureRandom() * 0.6,
+        life: 120 + secureRandom() * 100,
+        maxLife: 220,
+        color: festiveColors[i % festiveColors.length],
+        size: 4.0 + secureRandom() * 4.0,
+        swaySpeed: 0.03 + secureRandom() * 0.04,
+        swayOffset: secureRandom() * Math.PI * 2,
+        swayWidth: 1.2 + secureRandom() * 1.8,
+        rotation: secureRandom() * Math.PI * 2,
+        rotationSpeed: (secureRandom() - 0.5) * 0.12,
       });
     }
   }
@@ -902,6 +945,72 @@ export class GameEngine {
     this.victoryOscillators = [];
   }
 
+  /** Plays a short chiptune firework explosion pop sound, spatialized left-to-right based on x position. */
+  private playFireworkPop(x: number): void {
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return;
+
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      let panner: StereoPannerNode | null = null;
+      if (typeof ctx.createStereoPanner === "function") {
+        panner = ctx.createStereoPanner();
+        const panValue = Math.max(-1, Math.min(1, (x / this.width) * 2 - 1));
+        panner.pan.value = panValue;
+      }
+
+      // Base explosion thud using a triangle wave with rapid pitch decay
+      osc.type = "triangle";
+      const baseFreq = 120 + secureRandom() * 50;
+      osc.frequency.setValueAtTime(baseFreq, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.12);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(350, ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+
+      osc.connect(filter);
+      if (panner) {
+        filter.connect(panner);
+        panner.connect(gain);
+      } else {
+        filter.connect(gain);
+      }
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.16);
+
+      // Micro crackle pop (high pitch white-noise simulation with sawtooth) for sparkle feel
+      if (secureRandom() < 0.38) {
+        const crackleOsc = ctx.createOscillator();
+        const crackleGain = ctx.createGain();
+
+        crackleOsc.type = "sawtooth";
+        crackleOsc.frequency.setValueAtTime(900 + secureRandom() * 1100, ctx.currentTime);
+        crackleGain.gain.setValueAtTime(0.015, ctx.currentTime);
+        crackleGain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+
+        if (panner) {
+          crackleOsc.connect(panner);
+        } else {
+          crackleOsc.connect(crackleGain);
+        }
+        crackleGain.connect(ctx.destination);
+
+        crackleOsc.start();
+        crackleOsc.stop(ctx.currentTime + 0.05);
+      }
+    } catch {
+      // Audio failed or blocked - silently ignore
+    }
+  }
+
   private updateFireworks(): void {
     if (this.celebrationWinnerTankId) {
       // Animate the winning tank's cannon sweeping back and forth during celebration
@@ -916,8 +1025,8 @@ export class GameEngine {
         this.celebrationAngleDir = 1;
       }
 
-      // Shoot a firework from the cannon tip at the current angle (with some spread)
-      if (secureRandom() < 0.28) {
+      // Shoot a firework rocket from the cannon tip at the current angle (with some spread)
+      if (secureRandom() < 0.18) {
         const winnerP = this.tankManager
           .getPlayers()
           .find((p) => p.tank.id === this.celebrationWinnerTankId);
@@ -928,16 +1037,19 @@ export class GameEngine {
           const barrelStartY = tank.position.y - 13;
           const tipX = tank.position.x + Math.cos(rad) * barrelLength;
           const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
-          const speed = 3.2 + secureRandom() * 2.8;
-          const spread = (secureRandom() - 0.5) * 1.0;
+          const speed = 4.2 + secureRandom() * 2.8;
+          const spread = (secureRandom() - 0.5) * 0.8;
           this.fireworks.push({
+            type: "rocket",
             x: tipX,
             y: tipY,
             vx: Math.cos(rad) * speed + spread,
             vy: -Math.sin(rad) * speed - 0.8 + spread * 0.4,
-            life: 32 + secureRandom() * 16,
+            life: 35 + secureRandom() * 20,
+            maxLife: 55,
             color: this.celebrationColor,
-            size: 2.2 + secureRandom() * 1.3,
+            size: 2.5 + secureRandom() * 1.5,
+            trail: [],
           });
         }
       }
@@ -946,52 +1058,234 @@ export class GameEngine {
     if (this.fireworks.length === 0) return;
 
     const newFireworks: typeof this.fireworks = [];
+    const festiveColors = [
+      VGA_PALETTE.ELECTRIC_CYAN,
+      VGA_PALETTE.FLASH_GREEN,
+      VGA_PALETTE.NEON_PINK,
+      VGA_PALETTE.CYBER_YELLOW,
+      VGA_PALETTE.FLUO_ORANGE,
+      VGA_PALETTE.VOLT_PURPLE,
+      VGA_PALETTE.CYAN,
+      VGA_PALETTE.MAGENTA,
+      VGA_PALETTE.YELLOW,
+      VGA_PALETTE.GREEN,
+      VGA_PALETTE.BLUE,
+      VGA_PALETTE.WHITE,
+    ];
 
     for (const p of this.fireworks) {
       p.x += p.vx;
       p.y += p.vy;
-      p.vy += 0.1; // gravity
-      p.life -= 1;
 
-      if (p.life > 0) {
-        // Big, joyful explosions
-        if (p.life % 8 === 0 && secureRandom() > 0.35) {
-          const explosionCount = 22 + Math.floor(secureRandom() * 14);
-          for (let i = 0; i < explosionCount; i++) {
-            const spread = 4.8 + secureRandom() * 3.2;
+      if (p.type === "rocket") {
+        p.vy += 0.045; // gravity for rockets (flatter arc)
+        p.life -= 1;
+
+        // Maintain trail
+        if (!p.trail) p.trail = [];
+        p.trail.push({ x: p.x, y: p.y, alpha: 1.0 });
+        if (p.trail.length > 7) p.trail.shift();
+        for (const pt of p.trail) {
+          pt.alpha -= 0.12;
+        }
+
+        // Rocket spark trails
+        if (secureRandom() < 0.22) {
+          newFireworks.push({
+            type: "particle",
+            x: p.x - p.vx * 0.5,
+            y: p.y - p.vy * 0.5,
+            vx: (secureRandom() - 0.5) * 0.5,
+            vy: 0.2 + secureRandom() * 0.6,
+            life: 8 + secureRandom() * 8,
+            maxLife: 16,
+            color: secureRandom() < 0.5 ? VGA_PALETTE.CYBER_YELLOW : VGA_PALETTE.WHITE,
+            size: 1.2 + secureRandom() * 0.8,
+            trail: [],
+          });
+        }
+
+        // Explode when life ends
+        if (p.life <= 0) {
+          this.playFireworkPop(p.x);
+
+          const explosionPattern = Math.floor(secureRandom() * 4);
+
+          if (explosionPattern === 0) {
+            // Ring Burst
+            const count = 22 + Math.floor(secureRandom() * 10);
+            const baseSpeed = 2.4 + secureRandom() * 1.6;
+            const burstColor = secureRandom() < 0.4 ? festiveColors[Math.floor(secureRandom() * festiveColors.length)] : p.color;
+            for (let i = 0; i < count; i++) {
+              const angle = (i * 2 * Math.PI) / count;
+              newFireworks.push({
+                type: "particle",
+                x: p.x,
+                y: p.y,
+                vx: Math.cos(angle) * baseSpeed + (secureRandom() - 0.5) * 0.3,
+                vy: Math.sin(angle) * baseSpeed + (secureRandom() - 0.5) * 0.3,
+                life: 25 + secureRandom() * 18,
+                maxLife: 43,
+                color: burstColor,
+                size: 2.0 + secureRandom() * 1.8,
+                trail: [],
+              });
+            }
+          } else if (explosionPattern === 1) {
+            // Rainbow Star Burst
+            const count = 28 + Math.floor(secureRandom() * 12);
+            for (let i = 0; i < count; i++) {
+              const angle = secureRandom() * Math.PI * 2;
+              const speed = 1.0 + secureRandom() * 3.8;
+              newFireworks.push({
+                type: "particle",
+                x: p.x,
+                y: p.y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 20 + secureRandom() * 22,
+                maxLife: 42,
+                color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+                size: 1.8 + secureRandom() * 2.2,
+                trail: [],
+              });
+            }
+          } else if (explosionPattern === 2) {
+            // Fountain Cascade
+            const count = 18 + Math.floor(secureRandom() * 10);
+            const burstColor = secureRandom() < 0.3 ? VGA_PALETTE.CYBER_YELLOW : p.color;
+            for (let i = 0; i < count; i++) {
+              newFireworks.push({
+                type: "particle",
+                x: p.x,
+                y: p.y,
+                vx: (secureRandom() - 0.5) * 2.2,
+                vy: -2.0 - secureRandom() * 3.5,
+                life: 30 + secureRandom() * 25,
+                maxLife: 55,
+                color: burstColor,
+                size: 1.5 + secureRandom() * 1.5,
+                trail: [],
+              });
+            }
+          } else {
+            // Crackling Willow
+            const count = 24 + Math.floor(secureRandom() * 8);
+            for (let i = 0; i < count; i++) {
+              const angle = secureRandom() * Math.PI * 2;
+              const speed = 1.8 + secureRandom() * 2.8;
+              newFireworks.push({
+                type: "particle",
+                x: p.x,
+                y: p.y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 0.4,
+                life: 28 + secureRandom() * 22,
+                maxLife: 50,
+                color: secureRandom() < 0.5 ? VGA_PALETTE.CYBER_YELLOW : VGA_PALETTE.WHITE,
+                size: 1.5 + secureRandom() * 1.0,
+                trail: [],
+              });
+            }
+          }
+
+          // Spawn a burst of falling confetti at each rocket explosion
+          const confettiCount = 6 + Math.floor(secureRandom() * 6);
+          for (let i = 0; i < confettiCount; i++) {
             newFireworks.push({
+              type: "confetti",
               x: p.x,
               y: p.y,
-              vx: (secureRandom() - 0.5) * spread,
-              vy: (secureRandom() - 0.5) * spread - 0.8,
-              life: 28 + secureRandom() * 20,
-              color: p.color,
-              size: 2.4 + secureRandom() * 2.2,
+              vx: (secureRandom() - 0.5) * 3.5,
+              vy: -1.0 - secureRandom() * 2.0,
+              life: 110 + secureRandom() * 80,
+              maxLife: 190,
+              color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+              size: 4 + secureRandom() * 4,
+              swaySpeed: 0.04 + secureRandom() * 0.05,
+              swayOffset: secureRandom() * Math.PI * 2,
+              swayWidth: 1.2 + secureRandom() * 1.8,
+              rotation: secureRandom() * Math.PI * 2,
+              rotationSpeed: (secureRandom() - 0.5) * 0.15,
             });
           }
+        } else {
+          newFireworks.push(p);
         }
-        newFireworks.push(p);
+      } else if (p.type === "particle") {
+        p.vy += 0.075; // gravity for explosion particles
+        p.vx *= 0.95; // air resistance
+        p.vy *= 0.95;
+        p.life -= 1;
+
+        // Particle trail
+        if (!p.trail) p.trail = [];
+        p.trail.push({ x: p.x, y: p.y, alpha: 1.0 });
+        if (p.trail.length > 3) p.trail.shift();
+
+        // Shrink particle when near end of life
+        if (p.life < 8) {
+          p.size *= 0.82;
+        }
+
+        if (p.life > 0) {
+          newFireworks.push(p);
+        }
+      } else if (p.type === "confetti") {
+        // Slow descent confetti physics
+        p.vy = Math.min(1.0, p.vy + 0.025); // cap vertical speed
+        p.vx = Math.sin((p.life * p.swaySpeed!) + p.swayOffset!) * p.swayWidth!;
+        p.rotation! += p.rotationSpeed!;
+        p.life -= 1;
+
+        // Check ground height to avoid drawing confetti underground
+        const groundY = this.terrain.getHeightAt(Math.max(0, Math.min(this.width - 1, Math.floor(p.x))));
+
+        if (p.life > 0 && p.y < groundY) {
+          newFireworks.push(p);
+        }
       }
     }
 
     this.fireworks = newFireworks;
 
-    // Keep spawning lots of big rockets while celebrating (game over match win OR round win fireworks)
-    if (this.fireworks.length < 22 && secureRandom() < 0.42) {
-      const winnerX =
-        this.winner?.tank.position.x ??
-        this.celebrationCenterX ??
-        this.width / 2;
-      const spawnColor =
-        this.winner?.tank.color ?? this.celebrationColor ?? "#FFFFFF";
+    // Keep spawning lots of big rockets from the bottom of the screen while celebrating
+    const activeRockets = this.fireworks.filter((f) => f.type === "rocket").length;
+    if (activeRockets < 5 && secureRandom() < 0.07) {
+      const spawnX = Math.max(40, Math.min(this.width - 40, this.celebrationCenterX + (secureRandom() - 0.5) * 260));
+      const spawnColor = festiveColors[Math.floor(secureRandom() * festiveColors.length)];
       this.fireworks.push({
-        x: winnerX + (secureRandom() - 0.5) * 130,
-        y: 50 + secureRandom() * 80,
-        vx: (secureRandom() - 0.5) * 2.6,
-        vy: -4.5 - secureRandom() * 2.8,
-        life: 46 + secureRandom() * 20,
+        type: "rocket",
+        x: spawnX,
+        y: this.height - 15,
+        vx: (secureRandom() - 0.5) * 1.8,
+        vy: -5.5 - secureRandom() * 3.0,
+        life: 45 + secureRandom() * 22,
+        maxLife: 67,
         color: spawnColor,
-        size: 4 + secureRandom() * 2.5,
+        size: 3.5 + secureRandom() * 2.0,
+        trail: [],
+      });
+    }
+
+    // Add extra random confetti rain during high celebration
+    const activeConfetti = this.fireworks.filter((f) => f.type === "confetti").length;
+    if (activeConfetti < 40 && secureRandom() < 0.15) {
+      this.fireworks.push({
+        type: "confetti",
+        x: secureRandom() * this.width,
+        y: -10,
+        vx: (secureRandom() - 0.5) * 1.0,
+        vy: 0.3 + secureRandom() * 0.5,
+        life: 130 + secureRandom() * 90,
+        maxLife: 220,
+        color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+        size: 4 + secureRandom() * 3.5,
+        swaySpeed: 0.03 + secureRandom() * 0.04,
+        swayOffset: secureRandom() * Math.PI * 2,
+        swayWidth: 1.0 + secureRandom() * 1.8,
+        rotation: secureRandom() * Math.PI * 2,
+        rotationSpeed: (secureRandom() - 0.5) * 0.1,
       });
     }
   }
@@ -999,20 +1293,39 @@ export class GameEngine {
   /** Draws celebration fireworks (game over match win or pre-SUMMARY round winner celebration) */
   private drawFireworks(ctx: CanvasRenderingContext2D): void {
     for (const p of this.fireworks) {
-      const alpha = Math.max(0.15, p.life / 45);
-      ctx.fillStyle = p.color;
+      const alpha = Math.max(0.1, p.life / p.maxLife);
       ctx.globalAlpha = alpha;
 
-      const s = p.size;
-      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+      // Draw trails if any (for rockets and explosion particles)
+      if (p.trail && p.trail.length > 0) {
+        for (const pt of p.trail) {
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = pt.alpha * alpha * 0.38;
+          ctx.fillRect(pt.x - p.size / 3, pt.y - p.size / 3, p.size / 1.5, p.size / 1.5);
+        }
+      }
 
-      // Extra glow for bigger, happier look
-      if (s > 3.5) {
-        ctx.globalAlpha = alpha * 0.35;
-        ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+
+      if (p.type === "confetti") {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation || 0);
+        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+        ctx.restore();
+      } else {
+        const s = p.size;
+        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+
+        // Extra glow halo for bigger particles or rockets
+        if (s > 3.0) {
+          ctx.globalAlpha = alpha * 0.28;
+          ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
+        }
       }
     }
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 1.0;
   }
 
   /**
@@ -1083,6 +1396,43 @@ export class GameEngine {
 
   public getWinner(): import("../../types/player").Player | null {
     return this.winner;
+  }
+
+  /** Awards money immediately when a player is destroyed:
+   *  - $300 to the killer (unless suicide)
+   *  - Sinks the second-to-last player, meaning only 1 remains, awarding $600 (double) to the last standing tank
+   */
+  private handlePlayerDeathGains(victimId: string, killerId?: string): void {
+    const actualKiller = killerId ?? this.currentFirerId ?? "unknown";
+    const aliveTanks = this.tankManager.getAlivePlayers();
+
+    // Check if this was the second-to-last tank's destruction (exactly 1 survivor left)
+    if (aliveTanks.length === 1) {
+      const lastTank = aliveTanks[0];
+      // The last tank receives the double ($600) upon the second-to-last tank's death
+      lastTank.money = (lastTank.money ?? 0) + 600;
+      console.log(`[EARNINGS] Last tank standing ${lastTank.name} (id=${lastTank.id}) receives double reward: +$600`);
+
+      // If the last tank was also the killer, it already receives $600 total.
+      // If the killer was someone else (different from victim and lastTank), they receive standard $300.
+      if (actualKiller !== "unknown" && actualKiller !== victimId && actualKiller !== lastTank.id) {
+        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+        if (killerPlayer) {
+          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
+          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+        }
+      }
+    } else if (aliveTanks.length > 1) {
+      // Standard death (not the end of the round yet)
+      // Standard reward ($300) to the killer (unless suicide)
+      if (actualKiller !== "unknown" && actualKiller !== victimId) {
+        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+        if (killerPlayer) {
+          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
+          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+        }
+      }
+    }
   }
 
   /** Record why a player died (used for end-of-game summary, especially for "partie nulle") */

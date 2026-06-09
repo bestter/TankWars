@@ -24,6 +24,8 @@
 
 ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
+- **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.3.0`).
+- **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve console security violations.
 - Active Player Indicator: Small inverted floating triangle (flèche) drawn in `GameEngine.render` above the current turn's tank (via `turnManager.getCurrentPlayer()`). Filled with the active player's primary tank color for instant recognition. Vertical oscillation: exactly `Math.sin(Date.now() / 200) * 5`.
 - Harmonized Projectiles: `Projectile` carries `ownerColor`. Set from the firing tank at `fireProjectile` time in GameEngine. Used in `PhysicsEngine.draw` (shells + cluster sub-munitions inherit the tank color instead of generic weapon/white).
 - Micro Recoil: On every shot, the tank chassis receives a small temporary world-space offset in the direction opposite the cannon (`TankManager.triggerRecoil`). Decayed per physics step (`decayRecoil`). Applied only to the sprite draw position in `draw` (health bars and names stay anchored). Short duration (~9 frames @120Hz). Cleared during SUMMARY/SHOP transitions.
@@ -52,8 +54,11 @@
     - Button Types (`button-has-type`): Added explicit `type="button"` attribute to 7 interactive buttons across `GameCanvas.tsx`, `RoundSummary.tsx`, and `WeaponShop.tsx` to prevent default form submission behaviors.
     - Array Sorting (`js-tosorted-immutable`): Optimized sorting performance and syntax by replacing `[...array].sort()` with the native ES2023 `array.toSorted()` in `RoundSummary.tsx`, `AISniperStrategy.ts`, and `AIHeuristicStrategy.ts`.
     - Chained Array Iterations (`js-combine-iterations`): Combined a chained `.filter().map()` call inside `MainMenu.tsx` into a single, high-performance loop to collect unavailable colors in a single pass.
-    - Unused Files Removal (`unused-file`): Removed orphaned legacy files `run_benchmark.js` and `RandomAIStrategy.ts` to clean the codebase graph.
     - Font Size Accessibility (`no-tiny-text`): Increased compact font sizes (9px, 10px, 11px) to 12px in `PlayerConfigRow.tsx`, `GameCanvas.tsx`, and `MainMenu.tsx` to meet standard accessibility requirements.
+- Enhanced Fireworks Celebration: Completely redesigned the end-of-round and match-winning celebrations to launch multicolored rockets from the bottom of the screen alongside the winning tank's barrel shots. Added circular, rainbow, cascade, and crackling willow explosion patterns, trailing smoke paths, and falling swaying confetti. Integrated spatialized chiptune explosion sound effects mapped to horizontal coordinates. Enabled celebration fireworks on every combat round completion.
+- Tank Destruction Money Rewards: Added a real-time money reward of $300 immediately given to a player when they destroy another tank. Upon the destruction of the second-to-last tank (leaving exactly one survivor), the last tank standing receives a double reward of $600. The post-round earnings method is simplified to award base survival money only, and translations are updated accordingly.
+- Weapon Shop State Mutation Fix & Unit Tests: Fixed a bug in the weapon shop overlay where clicking `+` (buy) or `-` (sell) did not update the stock or money display. The `MUTATE_SHOP_PLAYERS` action in `gameCanvasReducer.ts` was corrected to accept and assign the updated player payload, ensuring proper React state propagation and re-rendering. Added a comprehensive test suite in `src/components/__tests__/gameCanvasReducer.test.ts` to cover all reducer action transitions.
+
 - All effects are pure CanvasRenderingContext2D, extremely cheap (no allocations in render loops, small fixed Maps), fully retro/VGA style.
 
 ## AI Implementation Rule

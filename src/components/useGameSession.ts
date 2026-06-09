@@ -209,6 +209,9 @@ export function useGameSession({
       const res = engine.awardEndOfRoundEarnings();
       const nextPlayers = [...engine.getTankManager().getPlayers()];
 
+      // Trigger the engine-level fireworks celebration
+      engine.triggerRoundCelebration(payload.roundWinner || undefined);
+
       dispatch({
         type: "START_CELEBRATION",
         payload: {
@@ -416,7 +419,7 @@ export function useGameSession({
     // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable
     engine.getTankManager().setPlayers(updatedPlayers);
 
-    dispatch({ type: "MUTATE_SHOP_PLAYERS" });
+    dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
   };
 
   const handleShopReady = (): void => {

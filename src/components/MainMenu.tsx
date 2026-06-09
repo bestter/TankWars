@@ -21,6 +21,8 @@ import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import { VGA_PALETTE, type Color } from "../types/game";
 import { DEFAULT_INVENTORY } from "../types/weapon";
+import { version } from "../../package.json";
+
 
 
 import { PlayerConfigRow } from "./PlayerConfigRow";
@@ -280,7 +282,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
           {/* Mentions légales en bas */}
           <div className="retro-legal">
-            {t("legal_footer")}
+            {t("legal_footer")} | v{version}
           </div>
         </div>
       </div>

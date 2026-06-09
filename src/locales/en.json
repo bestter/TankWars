@@ -29,7 +29,7 @@
   "default_cpu_name_n": "CPU-{{num}}",
   "default_player_name_1": "Player-1",
   "default_player_name_n": "Player {{num}}",
-  "earnings_detail": "(base 500 + 300/kill if alive)",
+  "earnings_detail": " (base 500 if alive, +300/kill, double for winner)",
   "game_over": "Game Over",
   "hud_turn": "TRN",
   "hud_weapon": "WEP",
