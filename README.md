@@ -135,7 +135,7 @@ Fully working:
 - **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
 - **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.0`) in the footer of the retro Main Menu next to the license statement.
 - Keyboard + HUD (WindBanner)
-- Multiple weapons + limited ammo + shop economy
+- Multiple weapons + limited ammo + shop economy (including **Weapon Shop State Mutation Fix & Unit Tests**: resolved a React state propagation bug where stock/money +/- button changes did not trigger re-rendering, corrected `MUTATE_SHOP_PLAYERS` reducer action, and added `gameCanvasReducer.test.ts` coverage).
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart
 
 In progress / planned:

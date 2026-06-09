@@ -419,7 +419,7 @@ export function useGameSession({
     // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable
     engine.getTankManager().setPlayers(updatedPlayers);
 
-    dispatch({ type: "MUTATE_SHOP_PLAYERS" });
+    dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
   };
 
   const handleShopReady = (): void => {

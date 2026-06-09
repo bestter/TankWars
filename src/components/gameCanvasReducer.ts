@@ -24,7 +24,7 @@ export type GameCanvasAction =
   | { type: "GO_TO_SUMMARY" }
   | { type: "START_SHOP"; roster: Player[] }
   | { type: "ADVANCE_SHOPPER"; nextIndex: number }
-  | { type: "MUTATE_SHOP_PLAYERS" }
+  | { type: "MUTATE_SHOP_PLAYERS"; players: Player[] }
   | { type: "FINISH_SHOP"; uiPlayers: Player[] }
   | { type: "END_MATCH_FROM_SHOP"; winner: Player | null }
   | { type: "SHOW_NEW_GAME_BUTTON"; show: boolean }
@@ -90,7 +90,8 @@ export function gameCanvasReducer(
     case "MUTATE_SHOP_PLAYERS":
       return {
         ...state,
-        shopPlayers: [...state.shopPlayers],
+        shopPlayers: action.players,
+        uiPlayers: action.players,
       };
     case "FINISH_SHOP":
       return {
