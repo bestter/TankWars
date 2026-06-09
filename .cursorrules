@@ -24,7 +24,7 @@
 
 ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
-- **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.2.0`).
+- **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.3.0`).
 - **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve console security violations.
 - Active Player Indicator: Small inverted floating triangle (flèche) drawn in `GameEngine.render` above the current turn's tank (via `turnManager.getCurrentPlayer()`). Filled with the active player's primary tank color for instant recognition. Vertical oscillation: exactly `Math.sin(Date.now() / 200) * 5`.
 - Harmonized Projectiles: `Projectile` carries `ownerColor`. Set from the firing tank at `fireProjectile` time in GameEngine. Used in `PhysicsEngine.draw` (shells + cluster sub-munitions inherit the tank color instead of generic weapon/white).
