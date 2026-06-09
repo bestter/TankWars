@@ -164,14 +164,15 @@ export class GameEngine {
     this.tankManager = new TankManager();
 
     // Wire debug death recorder so we can produce a rich summary at game end.
-    // Also branch to play distinct death SFX (explosion vs sad burial).
-    this.tankManager.onPlayerDied = (playerId, cause, details) => {
+    // Also branch to play distinct death SFX (explosion vs sad burial) and handle instant earnings.
+    this.tankManager.onPlayerDied = (playerId, cause, details, killerId) => {
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion") {
         this.playTankDestroyedByExplosionSound();
       } else if (cause === "burial") {
         this.playTankSadBurialSound();
       }
+      this.handlePlayerDeathGains(playerId, killerId);
     };
 
     // Wire tank movement / pit SFX (consumed by applyGravity in TankManager)
@@ -391,7 +392,6 @@ export class GameEngine {
   /**
    * Awards money at end of a manche per spec:
    * - 500$ base to every surviving tank
-   * - +300$ per enemy destroyed (tracked via ownerId threading + alive-diff during the round)
    * Mutates the live Player.money (shared refs) and returns RoundResult for UI.
    * Resets accumulators for the next round.
    */
@@ -399,12 +399,11 @@ export class GameEngine {
     const players = this.tankManager.getPlayers();
     const survivors: string[] = [];
 
-    // Apply earnings (base + kill bonus) only to survivors
+    // Apply earnings (base survival bonus only) to survivors
     for (const p of players) {
       if (p.tank.isDead) continue;
       survivors.push(p.id);
-      const kills = this.roundKills[p.id] ?? 0;
-      const earnings = 500 + kills * 300;
+      const earnings = 500;
       p.money = (p.money ?? 0) + earnings;
     }
 
@@ -1397,6 +1396,43 @@ export class GameEngine {
 
   public getWinner(): import("../../types/player").Player | null {
     return this.winner;
+  }
+
+  /** Awards money immediately when a player is destroyed:
+   *  - $300 to the killer (unless suicide)
+   *  - Sinks the second-to-last player, meaning only 1 remains, awarding $600 (double) to the last standing tank
+   */
+  private handlePlayerDeathGains(victimId: string, killerId?: string): void {
+    const actualKiller = killerId ?? this.currentFirerId ?? "unknown";
+    const aliveTanks = this.tankManager.getAlivePlayers();
+
+    // Check if this was the second-to-last tank's destruction (exactly 1 survivor left)
+    if (aliveTanks.length === 1) {
+      const lastTank = aliveTanks[0];
+      // The last tank receives the double ($600) upon the second-to-last tank's death
+      lastTank.money = (lastTank.money ?? 0) + 600;
+      console.log(`[EARNINGS] Last tank standing ${lastTank.name} (id=${lastTank.id}) receives double reward: +$600`);
+
+      // If the last tank was also the killer, it already receives $600 total.
+      // If the killer was someone else (different from victim and lastTank), they receive standard $300.
+      if (actualKiller !== "unknown" && actualKiller !== victimId && actualKiller !== lastTank.id) {
+        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+        if (killerPlayer) {
+          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
+          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+        }
+      }
+    } else if (aliveTanks.length > 1) {
+      // Standard death (not the end of the round yet)
+      // Standard reward ($300) to the killer (unless suicide)
+      if (actualKiller !== "unknown" && actualKiller !== victimId) {
+        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+        if (killerPlayer) {
+          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
+          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+        }
+      }
+    }
   }
 
   /** Record why a player died (used for end-of-game summary, especially for "partie nulle") */

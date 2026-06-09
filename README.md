@@ -35,7 +35,7 @@
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
-- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned from damage and survival.
+- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned instantly from tank destructions ($300 standard, $600 for the last standing tank) and base survival ($500).
 - **Internationalization (i18n)** — Complete French (FR) and English (EN) translations for all UI text, settings, weapon descriptions, and game status messages. Features a retro-styled LanguageSwitcher component to toggle language on the fly.
 
 ---

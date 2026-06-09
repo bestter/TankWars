@@ -55,6 +55,7 @@ export class TankManager {
     playerId: string,
     cause: "explosion" | "burial",
     details: string,
+    killerId?: string,
   ) => void;
 
   /** Called (throttled by caller) while a tank has downward velocity after losing ground support (for scrape/slide SFX). */
@@ -562,7 +563,7 @@ export class TankManager {
         console.log(
           `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? "unknown"}`,
         );
-        this.onPlayerDied?.(player.id, "explosion", details);
+        this.onPlayerDied?.(player.id, "explosion", details, killerId);
         if (killerId) {
           killsThisExplosion++;
         }
