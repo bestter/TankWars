@@ -132,6 +132,7 @@ Fully working:
   - Pre-building a Player `Map` once outside the projectile update loop in `PhysicsEngine.ts` to replace nested `.find()` searches with O(1) key lookups (`js-index-maps`).
   - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
   - Configured React Doctor in CI with a GitHub Actions workflow.
+- **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
 - Keyboard + HUD (WindBanner)
 - Multiple weapons + limited ammo + shop economy
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart

@@ -24,6 +24,7 @@
 
 ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
+- **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve console security violations.
 - Active Player Indicator: Small inverted floating triangle (flèche) drawn in `GameEngine.render` above the current turn's tank (via `turnManager.getCurrentPlayer()`). Filled with the active player's primary tank color for instant recognition. Vertical oscillation: exactly `Math.sin(Date.now() / 200) * 5`.
 - Harmonized Projectiles: `Projectile` carries `ownerColor`. Set from the firing tank at `fireProjectile` time in GameEngine. Used in `PhysicsEngine.draw` (shells + cluster sub-munitions inherit the tank color instead of generic weapon/white).
 - Micro Recoil: On every shot, the tank chassis receives a small temporary world-space offset in the direction opposite the cannon (`TankManager.triggerRecoil`). Decayed per physics step (`decayRecoil`). Applied only to the sprite draw position in `draw` (health bars and names stay anchored). Short duration (~9 frames @120Hz). Cleared during SUMMARY/SHOP transitions.
