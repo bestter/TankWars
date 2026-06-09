@@ -50,7 +50,7 @@
 | `A` / `E` | Switch weapon                   |
 | Mouse     | Click weapon buttons in HUD     |
 
-The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks play before SUMMARY.
+The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks (featuring multicolored trails, circular/rainbow patterns, falling confetti, and chiptune spatialized pops) play before SUMMARY.
 
 ---
 

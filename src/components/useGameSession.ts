@@ -209,6 +209,9 @@ export function useGameSession({
       const res = engine.awardEndOfRoundEarnings();
       const nextPlayers = [...engine.getTankManager().getPlayers()];
 
+      // Trigger the engine-level fireworks celebration
+      engine.triggerRoundCelebration(payload.roundWinner || undefined);
+
       dispatch({
         type: "START_CELEBRATION",
         payload: {
