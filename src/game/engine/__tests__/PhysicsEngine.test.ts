@@ -99,5 +99,36 @@ describe('PhysicsEngine', () => {
 
       expect(engine.hasActiveProjectiles()).toBe(false);
     });
+
+    it('should allow a projectile at maximum power (100) to travel across the screen width (800px)', () => {
+      // Simulate normal canvas conditions
+      // Gravity = 260, Wind = 0, dt = 1/120, terrain with no collision (always returns false)
+      const terrainManager = { width: 1200, height: 1000, checkCollision: () => false };
+      
+      // Launch a projectile from (0, 300) with 45 degrees angle and 100 power
+      engine.launchProjectile(0, 300, 45, 100, 'MISSILE');
+      
+      const dt = 1 / 120;
+      let steps = 0;
+      
+      // Run the simulation step by step
+      while (engine.hasActiveProjectiles() && steps < 1000) {
+        engine.updateProjectiles(dt, 260, 0, terrainManager as unknown as TerrainManager);
+        steps++;
+        
+        // Break if the projectile falls back below its launch height
+        const projectiles = engine.getProjectiles();
+        if (projectiles.length > 0 && projectiles[0].vy > 0 && projectiles[0].y >= 300) {
+          break;
+        }
+      }
+      
+      const projectiles = engine.getProjectiles();
+      expect(projectiles.length).toBeGreaterThan(0);
+      const finalX = projectiles[0].x;
+      
+      // Verify it traveled at least 800px (with baseSpeed = 6.0, it travels ~897px)
+      expect(finalX).toBeGreaterThan(800);
+    });
   });
 });

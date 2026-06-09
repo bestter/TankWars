@@ -71,7 +71,7 @@ export class PhysicsEngine {
     const rad = (angle * Math.PI) / 180;
 
     // Vitesse de base raisonnable pour un canvas ~800px
-    const baseSpeed = 4.2;
+    const baseSpeed = 6.0;
     const speed = power * baseSpeed;
 
     const vx = Math.cos(rad) * speed;
