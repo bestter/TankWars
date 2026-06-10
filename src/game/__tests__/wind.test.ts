@@ -141,6 +141,70 @@ describe('rollRoundWind', () => {
     // magnitude calculation: 10 + 0.0 * 0.0 * (52 - 10) = 10
     expect(rollRoundWind()).toBe(10);
   });
+
+  describe('deterministic distribution tests for rollRoundWind', () => {
+    const mockRandomValues = (v1: number, v2: number, v3: number) => {
+      vi.spyOn(Math, 'random')
+        .mockReturnValueOnce(v1)
+        .mockReturnValueOnce(v2)
+        .mockReturnValueOnce(v3);
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(v1)
+        .mockReturnValueOnce(v2)
+        .mockReturnValueOnce(v3);
+    };
+
+    it('always returns a value between WIND_ACCEL_MIN and WIND_ACCEL_MAX', () => {
+      for (let i = 0; i < 10; i++) {
+        for (let j = 0; j < 10; j++) {
+          vi.spyOn(Math, 'random').mockReset();
+          vi.mocked(secureRandom).mockReset();
+
+          const signRand = i / 10;
+          const tRand = j / 10;
+          mockRandomValues(0.15, signRand, tRand);
+          const wind = rollRoundWind();
+          expect(wind).toBeGreaterThanOrEqual(-52);
+          expect(wind).toBeLessThanOrEqual(52);
+        }
+      }
+    });
+
+    it('always returns a value with at most one decimal place', () => {
+      for (let i = 0; i < 10; i++) {
+        for (let j = 0; j < 10; j++) {
+          vi.spyOn(Math, 'random').mockReset();
+          vi.mocked(secureRandom).mockReset();
+
+          const signRand = i / 10;
+          const tRand = j / 10;
+          mockRandomValues(0.15, signRand, tRand);
+          const wind = rollRoundWind();
+
+          expect(Math.round(wind * 10) / 10).toBe(wind);
+
+          const decimalParts = wind.toString().split('.');
+          if (decimalParts.length > 1) {
+            expect(decimalParts[1].length).toBeLessThanOrEqual(1);
+          }
+        }
+      }
+    });
+
+    it('returns exact values for specific boundaries', () => {
+      vi.spyOn(Math, 'random').mockReset();
+      vi.mocked(secureRandom).mockReset();
+
+      mockRandomValues(0.15, 0.4, 0.5);
+      expect(rollRoundWind()).toBe(-20.5);
+
+      vi.spyOn(Math, 'random').mockReset();
+      vi.mocked(secureRandom).mockReset();
+
+      mockRandomValues(0.15, 0.6, 0.1);
+      expect(rollRoundWind()).toBe(10.4);
+    });
+  });
 });
 
   describe('extreme edge cases for secureRandom', () => {
