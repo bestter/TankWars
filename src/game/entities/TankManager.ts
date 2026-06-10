@@ -136,11 +136,20 @@ export class TankManager {
     // Génération de positions X aléatoires pour tous les joueurs
     const xs = this.generateRandomPositions(count, minX, maxX, minDist);
 
+    // Mélange des positions X pour que la répartition des joueurs sur le terrain soit aléatoire à chaque manche
+    const shuffledXs = [...xs];
+    for (let i = shuffledXs.length - 1; i > 0; i--) {
+      const j = Math.floor(secureRandom() * (i + 1));
+      const temp = shuffledXs[i];
+      shuffledXs[i] = shuffledXs[j];
+      shuffledXs[j] = temp;
+    }
+
     players.forEach((player, index) => {
       const tank = player.tank;
 
-      // Position X aléatoire (triée pour cohérence gauche-droite)
-      const x = xs[index];
+      // Position X aléatoire et mélangée
+      const x = shuffledXs[index];
 
       // Ancrage vertical exact sur le terrain
       const groundY = terrain.getHeightAt(x);

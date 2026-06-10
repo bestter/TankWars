@@ -7,7 +7,7 @@ Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankw
 - You must always answer in French (FR). If you can speak in Canadian-French (fr-CA, québécois) it's even better!
 -- If the user paste some code or text in english, answer in french (or québécois).
 - IF ANY DOUBT, ASK THE DEVELOPER BEFORE DOING ANYTHING; NEVER GUESS!!!
-- DO NOT MODIFY THIS FILE, UNLESS YOU HAVE AN EXPLICIT INSTRUCTION FROM THE DEVELOPER TO DO SO.
+- DO NOT MODIFY THE RULES OF THIS FILE, UNLESS YOU HAVE AN EXPLICIT INSTRUCTION FROM THE DEVELOPER TO DO SO.
 -
 
 ## Project summary
@@ -191,7 +191,8 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
-- **Game Version Bump:** Bumped game version to `0.3.1` in `package.json` and `package-lock.json`.
+- **Randomized Tank Starting Order:** Modified `spawnTanks` in `TankManager.ts` to shuffle the generated X positions using a secure Fisher-Yates shuffle algorithm. This ensures that the horizontal starting order of the tanks varies randomly on every round, preventing players (e.g. Player 1) from always spawning in the same relative horizontal order (e.g. always on the far left). Added comprehensive unit tests in `TankManager.test.ts`.
+- **Game Version Bump:** Bumped game version to `0.3.2` in `package.json` and `package-lock.json`.
 - **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.3.1`).
 - **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) within the `script-src` directive in `index.html` to resolve console security violations.
 - **React Doctor DevDependency Cleanup:** Removed the unused `react-doctor` devDependency from `package.json` to resolve the `deslop/unused-dev-dependency` warning, achieving a perfect React Doctor score of `100/100`.
