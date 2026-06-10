@@ -11,7 +11,7 @@ interface PrivateTurnManager {
   isProcessingAI: boolean;
   interRoundPaused: boolean;
   aiTurnGeneration: number;
-  physicsSettlementTimeoutId: NodeJS.Timeout | number | null;
+  physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | number | null;
   isResolutionSafetyArmed: boolean;
   resolutionAccumulatedTime: number;
   resolutionPlayer: unknown;
@@ -62,8 +62,8 @@ describe('TurnManager', () => {
       const initialAiTurnGen = priv.aiTurnGeneration;
 
       // Also set some timeouts/flags that should be cleared
-      vi.spyOn(global, 'clearTimeout');
-      priv.physicsSettlementTimeoutId = 123 as unknown as NodeJS.Timeout;
+      vi.spyOn(globalThis, 'clearTimeout');
+      priv.physicsSettlementTimeoutId = 123 as unknown as ReturnType<typeof setTimeout>;
 
       priv.isResolutionSafetyArmed = true;
       priv.resolutionAccumulatedTime = 5;
@@ -93,7 +93,7 @@ describe('TurnManager', () => {
       expect(priv.aiTurnGeneration).toBe(initialAiTurnGen + 1);
 
       // Verify timeouts/flags cleared
-      expect(global.clearTimeout).toHaveBeenCalledWith(123);
+      expect(globalThis.clearTimeout).toHaveBeenCalledWith(123);
       expect(priv.physicsSettlementTimeoutId).toBeNull();
 
       expect(priv.isResolutionSafetyArmed).toBe(false);

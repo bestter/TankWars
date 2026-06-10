@@ -50,6 +50,7 @@ describe('rollRoundWind', () => {
     vi.mocked(secureRandom).mockReturnValueOnce(0.099); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
   });
+
   it('handles exact boundary for calm chance (random === 0.1)', () => {
     // 0.1 is not strictly < 0.1, so it shouldn't be calm
     vi.mocked(secureRandom)
@@ -75,8 +76,6 @@ describe('rollRoundWind', () => {
       .mockReturnValueOnce(0.9999); // near max
     expect(rollRoundWind()).toBe(52);
   });
-
-
 
   it('returns positive wind (EAST)', () => {
     // 1st call: 0.15 (not calm)
