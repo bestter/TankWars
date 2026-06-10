@@ -1,74 +1,144 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { formatWindDisplay, rollRoundWind } from '../wind';
-import * as randomUtils from '../../utils/random';
+import { formatWindDisplay, rollRoundWind, WIND_ACCEL_MIN, WIND_ACCEL_MAX } from '../wind';
+import { secureRandom } from '../../utils/random';
+
+vi.mock('../../utils/random', () => ({
+  secureRandom: vi.fn(),
+}));
 
 describe('formatWindDisplay', () => {
-  it('returns CALM when absolute force is less than 0.5', () => {
-    const expected = { direction: 'CALM', arrow: '—', strength: 0, label: 'CALM' };
-    expect(formatWindDisplay(0)).toEqual(expected);
-    expect(formatWindDisplay(0.49)).toEqual(expected);
-    expect(formatWindDisplay(-0.49)).toEqual(expected);
-    expect(formatWindDisplay(-0)).toEqual(expected);
+  it('formats CALM wind correctly (force < 0.5)', () => {
+    expect(formatWindDisplay(0)).toEqual({ direction: 'CALM', arrow: '—', strength: 0, label: 'CALM' });
+    expect(formatWindDisplay(-0)).toEqual({ direction: 'CALM', arrow: '—', strength: 0, label: 'CALM' });
+    expect(formatWindDisplay(0.49)).toEqual({ direction: 'CALM', arrow: '—', strength: 0, label: 'CALM' });
+    expect(formatWindDisplay(-0.49)).toEqual({ direction: 'CALM', arrow: '—', strength: 0, label: 'CALM' });
   });
 
-  it('returns EAST when force is positive and >= 0.5', () => {
+  it('formats EAST wind correctly (force >= 0.5)', () => {
     expect(formatWindDisplay(0.5)).toEqual({ direction: 'EAST', arrow: '→', strength: 1, label: 'EAST' });
-    expect(formatWindDisplay(1.2)).toEqual({ direction: 'EAST', arrow: '→', strength: 1, label: 'EAST' });
-    expect(formatWindDisplay(1.5)).toEqual({ direction: 'EAST', arrow: '→', strength: 2, label: 'EAST' });
-    expect(formatWindDisplay(10)).toEqual({ direction: 'EAST', arrow: '→', strength: 10, label: 'EAST' });
+    expect(formatWindDisplay(1)).toEqual({ direction: 'EAST', arrow: '→', strength: 1, label: 'EAST' });
+    expect(formatWindDisplay(10.2)).toEqual({ direction: 'EAST', arrow: '→', strength: 10, label: 'EAST' });
+    expect(formatWindDisplay(10.8)).toEqual({ direction: 'EAST', arrow: '→', strength: 11, label: 'EAST' });
+    expect(formatWindDisplay(WIND_ACCEL_MAX)).toEqual({ direction: 'EAST', arrow: '→', strength: WIND_ACCEL_MAX, label: 'EAST' });
     expect(formatWindDisplay(Infinity)).toEqual({ direction: 'EAST', arrow: '→', strength: Infinity, label: 'EAST' });
   });
 
-  it('returns WEST when force is negative and <= -0.5', () => {
+  it('formats WEST wind correctly (force <= -0.5)', () => {
     expect(formatWindDisplay(-0.5)).toEqual({ direction: 'WEST', arrow: '←', strength: 1, label: 'WEST' });
-    expect(formatWindDisplay(-1.2)).toEqual({ direction: 'WEST', arrow: '←', strength: 1, label: 'WEST' });
-    expect(formatWindDisplay(-1.5)).toEqual({ direction: 'WEST', arrow: '←', strength: 2, label: 'WEST' });
-    expect(formatWindDisplay(-10)).toEqual({ direction: 'WEST', arrow: '←', strength: 10, label: 'WEST' });
+    expect(formatWindDisplay(-1)).toEqual({ direction: 'WEST', arrow: '←', strength: 1, label: 'WEST' });
+    expect(formatWindDisplay(-10.2)).toEqual({ direction: 'WEST', arrow: '←', strength: 10, label: 'WEST' });
+    expect(formatWindDisplay(-10.8)).toEqual({ direction: 'WEST', arrow: '←', strength: 11, label: 'WEST' });
+    expect(formatWindDisplay(WIND_ACCEL_MIN)).toEqual({ direction: 'WEST', arrow: '←', strength: Math.abs(WIND_ACCEL_MIN), label: 'WEST' });
     expect(formatWindDisplay(-Infinity)).toEqual({ direction: 'WEST', arrow: '←', strength: Infinity, label: 'WEST' });
   });
 
-  it('handles NaN gracefully by defaulting to WEST', () => {
-    // NaN fails absolute check and > 0 check, so it goes to the default case
+  it('handles NaN gracefully', () => {
     expect(formatWindDisplay(NaN)).toEqual({ direction: 'WEST', arrow: '←', strength: NaN, label: 'WEST' });
   });
 });
 
 describe('rollRoundWind', () => {
-  let secureRandomSpy: any;
-
   beforeEach(() => {
-    secureRandomSpy = vi.spyOn(randomUtils, 'secureRandom');
+    vi.mocked(secureRandom).mockReset();
   });
 
-  it('returns 0 when calm chance hits (< 0.1)', () => {
-    secureRandomSpy.mockReturnValue(0.05); // < 0.1
+  it('returns 0 when calm chance is met (random < 0.1)', () => {
+    vi.mocked(secureRandom).mockReturnValueOnce(0.05); // < CALM_CHANCE
+    expect(rollRoundWind()).toBe(0);
+
+    vi.mocked(secureRandom).mockReset();
+    vi.mocked(secureRandom).mockReturnValueOnce(0.099); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
   });
 
-  it('generates negative wind when sign check < 0.5', () => {
-    // 1st call: < CALM_CHANCE ? No (e.g. 0.2)
-    // 2nd call: sign < 0.5 ? Yes -> -1 (e.g. 0.1)
-    // 3rd call: t (e.g. 0.5)
-    secureRandomSpy
-      .mockReturnValueOnce(0.2)
-      .mockReturnValueOnce(0.1)
+  it('handles exact boundary for calm chance (random === 0.1)', () => {
+    // 0.1 is not strictly < 0.1, so it shouldn't be calm
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.1) // not calm
+      .mockReturnValueOnce(0.6) // east
+      .mockReturnValueOnce(0.5); // magnitude
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('handles exact boundary for sign (random === 0.5)', () => {
+    // 0.5 is not < 0.5, so it should be positive (east)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.2) // not calm
+      .mockReturnValueOnce(0.5) // east
+      .mockReturnValueOnce(0.5); // magnitude
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('tests the boundary t close to 1.0', () => {
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.2) // not calm
+      .mockReturnValueOnce(0.6) // east
+      .mockReturnValueOnce(0.9999); // near max
+    expect(rollRoundWind()).toBe(52);
+  });
+
+  it('returns positive wind (EAST)', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 0.5 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(0.5);
 
-    // magnitude = 10 + (0.5 * 0.5 * (52 - 10)) = 10 + 0.25 * 42 = 10 + 10.5 = 20.5
-    // value = -1 * 20.5 = -20.5
+    // magnitude calculation: 10 + 0.5 * 0.5 * (52 - 10) = 10 + 0.25 * 42 = 10 + 10.5 = 20.5
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('returns negative wind (WEST)', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.4 (negative sign < 0.5)
+    // 3rd call: 0.5 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.4)
+      .mockReturnValueOnce(0.5);
+
+    // magnitude calculation: 10 + 0.5 * 0.5 * (52 - 10) = 10 + 0.25 * 42 = 10 + 10.5 = 20.5
     expect(rollRoundWind()).toBe(-20.5);
   });
 
-  it('generates positive wind when sign check >= 0.5', () => {
-    // 1st call: < CALM_CHANCE ? No (e.g. 0.2)
-    // 2nd call: sign < 0.5 ? No -> 1 (e.g. 0.6)
-    // 3rd call: t (e.g. 1.0)
-    secureRandomSpy
-      .mockReturnValueOnce(0.2)
+  it('returns max positive wind', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 1.0 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
       .mockReturnValueOnce(0.6)
       .mockReturnValueOnce(1.0);
 
-    // magnitude = 10 + (1.0 * 1.0 * 42) = 52
+    // magnitude calculation: 10 + 1.0 * 1.0 * (52 - 10) = 52
     expect(rollRoundWind()).toBe(52);
+  });
+
+  it('returns max negative wind', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.4 (negative sign < 0.5)
+    // 3rd call: 1.0 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.4)
+      .mockReturnValueOnce(1.0);
+
+    // magnitude calculation: 10 + 1.0 * 1.0 * (52 - 10) = 52
+    expect(rollRoundWind()).toBe(-52);
+  });
+
+  it('returns minimum non-zero magnitude', () => {
+    // 1st call: 0.15 (not calm)
+    // 2nd call: 0.6 (positive sign >= 0.5)
+    // 3rd call: 0.0 (magnitude modifier)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.15)
+      .mockReturnValueOnce(0.6)
+      .mockReturnValueOnce(0.0);
+
+    // magnitude calculation: 10 + 0.0 * 0.0 * (52 - 10) = 10
+    expect(rollRoundWind()).toBe(10);
   });
 });

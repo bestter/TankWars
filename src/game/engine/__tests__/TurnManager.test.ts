@@ -11,11 +11,17 @@ interface PrivateTurnManager {
   isProcessingAI: boolean;
   interRoundPaused: boolean;
   aiTurnGeneration: number;
-  physicsSettlementTimeoutId: number | null;
+  physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | number | null;
   isResolutionSafetyArmed: boolean;
+  resolutionAccumulatedTime: number;
+  resolutionPlayer: unknown;
   isSettlementSafetyArmed: boolean;
+  settlementAccumulatedTime: number;
+  settlementPlayerId: string | null;
   isTurnLockWatchdogArmed: boolean;
+  turnLockAccumulatedTime: number;
   awaitingTankStabilization: boolean;
+  wasFallingForHud: boolean;
 }
 
 describe('TurnManager', () => {
@@ -56,11 +62,22 @@ describe('TurnManager', () => {
       const initialAiTurnGen = priv.aiTurnGeneration;
 
       // Also set some timeouts/flags that should be cleared
-      priv.physicsSettlementTimeoutId = 123;
+      vi.spyOn(globalThis, 'clearTimeout');
+      priv.physicsSettlementTimeoutId = 123 as unknown as ReturnType<typeof setTimeout>;
+
       priv.isResolutionSafetyArmed = true;
+      priv.resolutionAccumulatedTime = 5;
+      priv.resolutionPlayer = {} as unknown;
+
       priv.isSettlementSafetyArmed = true;
+      priv.settlementAccumulatedTime = 2.5;
+      priv.settlementPlayerId = "player1";
+
       priv.isTurnLockWatchdogArmed = true;
+      priv.turnLockAccumulatedTime = 10;
+
       priv.awaitingTankStabilization = true;
+      priv.wasFallingForHud = true;
 
       // Mock removeInputListeners since we don't have full DOM mock
       turnManager['removeInputListeners'] = vi.fn();
@@ -76,13 +93,26 @@ describe('TurnManager', () => {
       expect(priv.aiTurnGeneration).toBe(initialAiTurnGen + 1);
 
       // Verify timeouts/flags cleared
+      expect(globalThis.clearTimeout).toHaveBeenCalledWith(123);
       expect(priv.physicsSettlementTimeoutId).toBeNull();
+
       expect(priv.isResolutionSafetyArmed).toBe(false);
+      expect(priv.resolutionAccumulatedTime).toBe(0);
+      expect(priv.resolutionPlayer).toBeNull();
+
       expect(priv.isSettlementSafetyArmed).toBe(false);
+      expect(priv.settlementAccumulatedTime).toBe(0);
+      expect(priv.settlementPlayerId).toBeNull();
+
       expect(priv.isTurnLockWatchdogArmed).toBe(false);
+      expect(priv.turnLockAccumulatedTime).toBe(0);
+
       expect(priv.awaitingTankStabilization).toBe(false);
+      expect(priv.wasFallingForHud).toBe(false);
 
       expect(turnManager['removeInputListeners']).toHaveBeenCalled();
+
+      vi.restoreAllMocks();
     });
   });
 });
