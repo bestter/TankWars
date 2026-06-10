@@ -82,4 +82,3 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - Use IMPERATIVE mood for commit messages.
 
 - Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.
-
