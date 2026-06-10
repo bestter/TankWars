@@ -109,4 +109,36 @@ describe('TerrainManager', () => {
       expect(terrain.checkCollision(50, newHeightAt50 + 5)).toBe(true);
     });
   });
+
+
+
+  describe('checkCollision with extreme values', () => {
+    let terrain: TerrainManager;
+    const width = 100;
+    const height = 200;
+
+    beforeEach(() => {
+      terrain = new TerrainManager(width, height);
+      // constructor sets all heights to height * 0.7 = 140
+      // So surfaceY is 140 for all x in 0..99
+    });
+
+    it('should return false for NaN, Infinity, -Infinity coordinates', () => {
+      // For x
+      expect(terrain.checkCollision(NaN, 150)).toBe(false);
+      expect(terrain.checkCollision(Infinity, 150)).toBe(false);
+      expect(terrain.checkCollision(-Infinity, 150)).toBe(false);
+
+      // For y (assuming x is valid)
+      expect(terrain.checkCollision(50, NaN)).toBe(false); // NaN >= 140 is false
+      expect(terrain.checkCollision(50, -Infinity)).toBe(false); // -Infinity >= 140 is false
+      expect(terrain.checkCollision(50, Infinity)).toBe(true); // Infinity >= 140 is true
+    });
+
+    it('should handle -0 properly', () => {
+      expect(terrain.checkCollision(-0, 150)).toBe(true);
+      expect(terrain.checkCollision(50, -0)).toBe(false);
+    });
+  });
+
 });
