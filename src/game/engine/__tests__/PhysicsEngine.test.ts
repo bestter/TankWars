@@ -9,6 +9,37 @@ describe('PhysicsEngine', () => {
     engine = new PhysicsEngine();
   });
 
+  describe('hasActiveProjectiles', () => {
+    it('returns false when initialized with zero projectiles', () => {
+      expect(engine.hasActiveProjectiles()).toBe(false);
+    });
+
+    it('returns true when there is exactly one projectile', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      expect(engine.hasActiveProjectiles()).toBe(true);
+    });
+
+    it('returns true when there are multiple projectiles', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.launchProjectile(10, 10, 45, 100, 'MISSILE');
+      expect(engine.hasActiveProjectiles()).toBe(true);
+    });
+
+    it('returns false after projectiles are cleared', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.clear();
+      expect(engine.hasActiveProjectiles()).toBe(false);
+    });
+
+    it('returns false when the last active projectile is removed from bounds', () => {
+      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.getProjectiles()[0].x = 10000; // Force out of bounds
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
+      expect(engine.hasActiveProjectiles()).toBe(false);
+    });
+  });
+
   describe('State Queries', () => {
     it('should return false for hasActiveProjectiles and 0 for count initially', () => {
       expect(engine.hasActiveProjectiles()).toBe(false);
