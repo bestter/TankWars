@@ -4,6 +4,20 @@ import type { TankManager } from '../../entities/TankManager';
 import type { TerrainManager } from '../Terrain';
 import type { AIEngine } from '../../entities/ai/AIEngine';
 
+interface PrivateTurnManager {
+  currentPlayerIndex: number;
+  turnNumber: number;
+  isInputLocked: boolean;
+  isProcessingAI: boolean;
+  interRoundPaused: boolean;
+  aiTurnGeneration: number;
+  physicsSettlementTimeoutId: number | null;
+  isResolutionSafetyArmed: boolean;
+  isSettlementSafetyArmed: boolean;
+  isTurnLockWatchdogArmed: boolean;
+  awaitingTankStabilization: boolean;
+}
+
 describe('TurnManager', () => {
   let turnManager: TurnManager;
   let mockTankManager: Partial<TankManager>;
@@ -30,21 +44,23 @@ describe('TurnManager', () => {
 
   describe('reset', () => {
     it('should reset turn state variables to initial values', () => {
-      // Setup dirty state
-      (turnManager as any).currentPlayerIndex = 2;
-      (turnManager as any).turnNumber = 5;
-      (turnManager as any).isInputLocked = true;
-      (turnManager as any).isProcessingAI = true;
-      (turnManager as any).interRoundPaused = true;
+      const priv = turnManager as unknown as PrivateTurnManager;
 
-      const initialAiTurnGen = (turnManager as any).aiTurnGeneration;
+      // Setup dirty state
+      priv.currentPlayerIndex = 2;
+      priv.turnNumber = 5;
+      priv.isInputLocked = true;
+      priv.isProcessingAI = true;
+      priv.interRoundPaused = true;
+
+      const initialAiTurnGen = priv.aiTurnGeneration;
 
       // Also set some timeouts/flags that should be cleared
-      (turnManager as any).physicsSettlementTimeoutId = 123;
-      (turnManager as any).isResolutionSafetyArmed = true;
-      (turnManager as any).isSettlementSafetyArmed = true;
-      (turnManager as any).isTurnLockWatchdogArmed = true;
-      (turnManager as any).awaitingTankStabilization = true;
+      priv.physicsSettlementTimeoutId = 123;
+      priv.isResolutionSafetyArmed = true;
+      priv.isSettlementSafetyArmed = true;
+      priv.isTurnLockWatchdogArmed = true;
+      priv.awaitingTankStabilization = true;
 
       // Mock removeInputListeners since we don't have full DOM mock
       turnManager['removeInputListeners'] = vi.fn();
@@ -52,19 +68,19 @@ describe('TurnManager', () => {
       turnManager.reset();
 
       // Verify reset state
-      expect((turnManager as any).currentPlayerIndex).toBe(0);
-      expect((turnManager as any).turnNumber).toBe(1);
-      expect((turnManager as any).isInputLocked).toBe(false);
-      expect((turnManager as any).isProcessingAI).toBe(false);
-      expect((turnManager as any).interRoundPaused).toBe(false);
-      expect((turnManager as any).aiTurnGeneration).toBe(initialAiTurnGen + 1);
+      expect(priv.currentPlayerIndex).toBe(0);
+      expect(priv.turnNumber).toBe(1);
+      expect(priv.isInputLocked).toBe(false);
+      expect(priv.isProcessingAI).toBe(false);
+      expect(priv.interRoundPaused).toBe(false);
+      expect(priv.aiTurnGeneration).toBe(initialAiTurnGen + 1);
 
       // Verify timeouts/flags cleared
-      expect((turnManager as any).physicsSettlementTimeoutId).toBeNull();
-      expect((turnManager as any).isResolutionSafetyArmed).toBe(false);
-      expect((turnManager as any).isSettlementSafetyArmed).toBe(false);
-      expect((turnManager as any).isTurnLockWatchdogArmed).toBe(false);
-      expect((turnManager as any).awaitingTankStabilization).toBe(false);
+      expect(priv.physicsSettlementTimeoutId).toBeNull();
+      expect(priv.isResolutionSafetyArmed).toBe(false);
+      expect(priv.isSettlementSafetyArmed).toBe(false);
+      expect(priv.isTurnLockWatchdogArmed).toBe(false);
+      expect(priv.awaitingTankStabilization).toBe(false);
 
       expect(turnManager['removeInputListeners']).toHaveBeenCalled();
     });
