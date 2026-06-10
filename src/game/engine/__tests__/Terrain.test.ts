@@ -139,6 +139,33 @@ describe('TerrainManager', () => {
       expect(terrain.checkCollision(-0, 150)).toBe(true);
       expect(terrain.checkCollision(50, -0)).toBe(false);
     });
+
+    it('should handle extremely close boundary values for x', () => {
+      // Just inside left boundary
+      expect(terrain.checkCollision(Number.EPSILON, 150)).toBe(true);
+      // Just outside left boundary
+      expect(terrain.checkCollision(-Number.EPSILON, 150)).toBe(false);
+
+      // Just inside right boundary
+      expect(terrain.checkCollision(width - 0.0000001, 150)).toBe(true);
+      // Exactly on right boundary
+      expect(terrain.checkCollision(width, 150)).toBe(false);
+      // Just outside right boundary
+      expect(terrain.checkCollision(width + 0.0000001, 150)).toBe(false);
+    });
+
+    it('should handle extremely close boundary values for y surface', () => {
+      // Surface is at y = 140
+      expect(terrain.checkCollision(50, 140 - 0.0000001)).toBe(false);
+      expect(terrain.checkCollision(50, 140 + 0.0000001)).toBe(true);
+    });
+
+    it('should handle extremely large coordinates', () => {
+      expect(terrain.checkCollision(Number.MAX_VALUE, 150)).toBe(false);
+      expect(terrain.checkCollision(-Number.MAX_VALUE, 150)).toBe(false);
+      expect(terrain.checkCollision(50, Number.MAX_VALUE)).toBe(true);
+      expect(terrain.checkCollision(50, -Number.MAX_VALUE)).toBe(false);
+    });
   });
 
 });
