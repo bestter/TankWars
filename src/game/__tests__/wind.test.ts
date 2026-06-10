@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { formatWindDisplay, rollRoundWind, WIND_ACCEL_MIN, WIND_ACCEL_MAX } from './wind';
-import { secureRandom } from '../utils/random';
+import { formatWindDisplay, rollRoundWind, WIND_ACCEL_MIN, WIND_ACCEL_MAX } from '../wind';
+import { secureRandom } from '../../utils/random';
 
-vi.mock('../utils/random', () => ({
+vi.mock('../../utils/random', () => ({
   secureRandom: vi.fn(),
 }));
 
@@ -50,6 +50,33 @@ describe('rollRoundWind', () => {
     vi.mocked(secureRandom).mockReturnValueOnce(0.099); // < CALM_CHANCE
     expect(rollRoundWind()).toBe(0);
   });
+  it('handles exact boundary for calm chance (random === 0.1)', () => {
+    // 0.1 is not strictly < 0.1, so it shouldn't be calm
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.1) // not calm
+      .mockReturnValueOnce(0.6) // east
+      .mockReturnValueOnce(0.5); // magnitude
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('handles exact boundary for sign (random === 0.5)', () => {
+    // 0.5 is not < 0.5, so it should be positive (east)
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.2) // not calm
+      .mockReturnValueOnce(0.5) // east
+      .mockReturnValueOnce(0.5); // magnitude
+    expect(rollRoundWind()).toBe(20.5);
+  });
+
+  it('tests the boundary t close to 1.0', () => {
+    vi.mocked(secureRandom)
+      .mockReturnValueOnce(0.2) // not calm
+      .mockReturnValueOnce(0.6) // east
+      .mockReturnValueOnce(0.9999); // near max
+    expect(rollRoundWind()).toBe(52);
+  });
+
+
 
   it('returns positive wind (EAST)', () => {
     // 1st call: 0.15 (not calm)
