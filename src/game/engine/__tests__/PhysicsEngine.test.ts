@@ -38,6 +38,36 @@ describe('PhysicsEngine', () => {
       engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
       expect(engine.hasActiveProjectiles()).toBe(false);
     });
+
+    it('returns false and triggers settlement when a projectile goes out of bounds with active notification', () => {
+      let settlementCalled = false;
+      engine.onAllProjectilesSettled = () => {
+        settlementCalled = true;
+      };
+
+      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+
+      // Before update, projectile is active
+      expect(engine.hasActiveProjectiles()).toBe(true);
+
+      // Move projectile far out of bounds
+      engine.getProjectiles()[0].x = 10000;
+      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
+
+      expect(engine.hasActiveProjectiles()).toBe(false);
+      expect(settlementCalled).toBe(true);
+    });
+
+    it('returns false accurately if a projectile is directly removed', () => {
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      expect(engine.hasActiveProjectiles()).toBe(true);
+
+      // We simulate what could happen if we cleared without settlement
+      engine.clear(false);
+      expect(engine.hasActiveProjectiles()).toBe(false);
+    });
+
   });
 
   describe('State Queries', () => {
