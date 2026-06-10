@@ -37,6 +37,37 @@ describe('TerrainManager', () => {
     });
   });
 
+
+  describe('getHeightAt with extreme values', () => {
+    let terrain: TerrainManager;
+    const WIDTH = 100;
+    const HEIGHT = 100;
+
+    beforeEach(() => {
+      terrain = new TerrainManager(WIDTH, HEIGHT);
+      const heights = (terrain as unknown as { heights: number[] }).heights;
+      for (let i = 0; i < WIDTH; i++) {
+        heights[i] = i;
+      }
+    });
+
+    it('should handle Infinity and -Infinity', () => {
+      expect(terrain.getHeightAt(Infinity)).toBe(WIDTH - 1);
+      expect(terrain.getHeightAt(-Infinity)).toBe(0);
+    });
+
+    it('should handle NaN', () => {
+      // Because Math.max(0, Math.min(99, Math.floor(NaN))) is NaN, and heights[NaN] is undefined.
+      // But the return type is 'number', so returning undefined is technically an edge case
+      // which we should verify as it exposes the function's true behavior on NaN.
+      expect(terrain.getHeightAt(NaN)).toBeUndefined();
+    });
+
+    it('should handle -0', () => {
+      expect(terrain.getHeightAt(-0)).toBe(0);
+    });
+  });
+
   describe('checkCollision', () => {
     let terrain: TerrainManager;
     const width = 100;
