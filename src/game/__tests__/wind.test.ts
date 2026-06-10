@@ -142,3 +142,37 @@ describe('rollRoundWind', () => {
     expect(rollRoundWind()).toBe(10);
   });
 });
+
+  describe('extreme edge cases for secureRandom', () => {
+    it('handles NaN from secureRandom gracefully', () => {
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(NaN)
+        .mockReturnValueOnce(NaN)
+        .mockReturnValueOnce(NaN);
+      expect(rollRoundWind()).toBeNaN();
+    });
+
+    it('handles Infinity from secureRandom gracefully', () => {
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(Infinity)
+        .mockReturnValueOnce(Infinity)
+        .mockReturnValueOnce(Infinity);
+      expect(rollRoundWind()).toBe(Infinity);
+    });
+
+    it('handles -Infinity from secureRandom gracefully', () => {
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(-Infinity) // < 0.1, so it returns 0! Wait, -Infinity < 0.1 is true.
+        .mockReturnValueOnce(-Infinity)
+        .mockReturnValueOnce(-Infinity);
+      expect(rollRoundWind()).toBe(0);
+    });
+
+    it('handles -0 from secureRandom gracefully', () => {
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(-0) // < 0.1, so returns 0
+        .mockReturnValueOnce(-0)
+        .mockReturnValueOnce(-0);
+      expect(rollRoundWind()).toBe(0);
+    });
+  });
