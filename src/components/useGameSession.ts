@@ -9,6 +9,7 @@ import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from "../types/weapon";
 import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
+import { trackEvent } from "../utils/analytics";
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
@@ -109,6 +110,11 @@ export function useGameSession({
     currentShopIndexRef.current = currentShopIndex;
   }, [currentShopIndex]);
 
+  const currentMancheRef = useRef(1);
+  useEffect(() => {
+    currentMancheRef.current = state.currentManche;
+  }, [state.currentManche]);
+
   const clearShopAiTimeout = useCallback((): void => {
     if (shopAiTimeoutRef.current !== null) {
       clearTimeout(shopAiTimeoutRef.current);
@@ -175,6 +181,14 @@ export function useGameSession({
     engine.setPlayers(players);
     dispatch({ type: "SET_UI_PLAYERS", players });
 
+    // Track game start event with Cloudflare Zaraz
+    trackEvent("game_start", {
+      playerCount: players.length,
+      humanCount: players.filter((p) => p.isHuman).length,
+      aiCount: players.filter((p) => !p.isHuman).length,
+      aiProfiles: players.filter((p) => !p.isHuman).map((p) => p.aiProfile ?? "v1-random"),
+    });
+
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
     engine.setAIEngine(new AIByProfileStrategy());
 
@@ -208,6 +222,20 @@ export function useGameSession({
 
       const res = engine.awardEndOfRoundEarnings();
       const nextPlayers = [...engine.getTankManager().getPlayers()];
+
+      // Track round end event (custom Zaraz analytics)
+      const winner = payload.roundWinner;
+      const winnerType = winner ? (winner.isHuman ? "human" : "ai") : "none";
+      const winnerProfile = winner && !winner.isHuman ? (winner.aiProfile ?? "v1-random") : undefined;
+
+      trackEvent("round_end", {
+        roundNumber: currentMancheRef.current,
+        winnerId: winner ? winner.id : null,
+        winnerType,
+        winnerProfile,
+        humanCount: nextPlayers.filter((p) => p.isHuman).length,
+        aiCount: nextPlayers.filter((p) => !p.isHuman).length,
+      });
 
       // Trigger the engine-level fireworks celebration
       engine.triggerRoundCelebration(payload.roundWinner || undefined);
@@ -320,6 +348,18 @@ export function useGameSession({
     }
 
     dispatch({ type: "END_MATCH_FROM_SHOP", winner: matchWinner });
+
+    // Track game over event (custom Zaraz analytics)
+    const winnerType = matchWinner ? (matchWinner.isHuman ? "human" : "ai") : "draw";
+    const winnerProfile = matchWinner && !matchWinner.isHuman ? (matchWinner.aiProfile ?? "v1-random") : undefined;
+
+    trackEvent("game_over", {
+      winnerId: matchWinner ? matchWinner.id : null,
+      winnerType,
+      winnerProfile,
+      totalRounds: currentMancheRef.current,
+    });
+
     setTimeout(() => dispatch({ type: "SHOW_NEW_GAME_BUTTON", show: true }), 7000);
     shopFinishingRef.current = false;
   };

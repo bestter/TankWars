@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { TankManager } from '../TankManager';
 import type { Player } from '../../../types/player';
 import { VGA_PALETTE } from '../../../types/game';
+import { TerrainManager } from '../../engine/Terrain';
 
 function createDummyPlayer(id: string, isDead: boolean): Player {
   return {
@@ -160,6 +161,70 @@ describe('TankManager', () => {
 
       const winner = tankManager.getWinner();
       expect(winner).toBeNull();
+    });
+  });
+
+  describe('spawnTanks', () => {
+    it('places tanks with minimum distance and margin constraints on terrain ground level', () => {
+      const tankManager = new TankManager();
+      const terrain = new TerrainManager(800, 600);
+      // Remplir le terrain avec une hauteur fixe pour tester
+      const heights = (terrain as unknown as { heights: number[] }).heights;
+      heights.fill(300);
+
+      const p1 = createDummyPlayer('1', false);
+      const p2 = createDummyPlayer('2', false);
+      const p3 = createDummyPlayer('3', false);
+
+      tankManager.spawnTanks([p1, p2, p3], terrain);
+
+      const margin = 800 * 0.13; // 104
+      const minX = margin;
+      const maxX = 800 - margin; // 696
+
+      // Vérifier que chaque tank est bien positionné sur la hauteur du terrain (Y=300)
+      // et que ses coordonnées X respectent les limites et la distance minimale.
+      const positions = [p1.tank.position, p2.tank.position, p3.tank.position];
+
+      for (const pos of positions) {
+        expect(pos.y).toBe(300);
+        expect(pos.x).toBeGreaterThanOrEqual(minX);
+        expect(pos.x).toBeLessThanOrEqual(maxX);
+      }
+
+      // Vérifier la distance minimale
+      expect(Math.abs(p1.tank.position.x - p2.tank.position.x)).toBeGreaterThanOrEqual(100);
+      expect(Math.abs(p1.tank.position.x - p3.tank.position.x)).toBeGreaterThanOrEqual(100);
+      expect(Math.abs(p2.tank.position.x - p3.tank.position.x)).toBeGreaterThanOrEqual(100);
+    });
+
+    it('shuffles start positions randomly across multiple runs instead of keeping fixed player order', () => {
+      // Pour s'assurer du mélange, on appelle spawnTanks plusieurs fois et on vérifie
+      // que l'ordre des coordonnées X des joueurs n'est pas toujours trié par ID (ex. p1.x < p2.x < p3.x).
+      const tankManager = new TankManager();
+      const terrain = new TerrainManager(800, 600);
+      
+      let p1LeftOfP2Count = 0;
+      let p2LeftOfP1Count = 0;
+
+      const runs = 20;
+      for (let r = 0; r < runs; r++) {
+        const p1 = createDummyPlayer('1', false);
+        const p2 = createDummyPlayer('2', false);
+        
+        tankManager.spawnTanks([p1, p2], terrain);
+
+        if (p1.tank.position.x < p2.tank.position.x) {
+          p1LeftOfP2Count++;
+        } else {
+          p2LeftOfP1Count++;
+        }
+      }
+
+      // Avec 20 runs, la probabilité d'obtenir 20 fois le même ordre est (1/2)^20 ~= 1/1,000,000.
+      // Donc si le shuffle fonctionne, les deux compteurs doivent être strictement supérieurs à 0.
+      expect(p1LeftOfP2Count).toBeGreaterThan(0);
+      expect(p2LeftOfP1Count).toBeGreaterThan(0);
     });
   });
 });

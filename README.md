@@ -115,7 +115,7 @@ This project follows a strict separation of concerns:
 
 Fully working:
 - **Main Menu** (`MENU` phase): Retro DOS/VGA with player count (2-4), names, Human/IA profiles (v1-v4), ColorPicker (mutual exclusion) + live TankPreview, auto VGA colors.
-- **Visual tank redesign, positioning & collision (Steps 1-6 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margins and minimum distance constraints; **Step 6** direct AABB shell-to-tank collision detection with launch-time self-sabotage protection.
+- **Visual tank redesign, positioning & collision (Steps 1-6 complete)** — Complete: procedural `drawTankSprite`, slope tilt, lobby tools; **Step 4** active turn floating colored triangle indicator (sine bob), owner-colored projectiles, micro recoil on chassis; **Step 5** randomized tank spawn coordinates with safety margins, minimum distance constraints and shuffled starting order; **Step 6** direct AABB shell-to-tank collision detection with launch-time self-sabotage protection.
 - Terrain generation + real-time cratering
 - Projectile physics + wind + owner color inheritance + range scaling (baseSpeed increased from 4.2 to 6.0 for full screen coverage at POW=100)
 - Turn system + AI turns (v1-v4 via `AIByProfileStrategy`, Step 7 complete: Sniper v3 rewritten with exact trajectory equations, barrel tip launch origin aligned, terrain obstacle avoidance added, + noise error modulator; aiming corrected for left-side shots in Heuristic v2 and Expert v4)
@@ -133,7 +133,9 @@ Fully working:
   - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
   - Configured React Doctor in CI with a GitHub Actions workflow.
 - **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
-- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.1`) in the footer of the retro Main Menu next to the license statement.
+- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.2`) in the footer of the retro Main Menu next to the license statement.
+- **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
+- **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
 - Keyboard + HUD (WindBanner)
 - Multiple weapons + limited ammo + shop economy (including **Weapon Shop State Mutation Fix & Unit Tests**: resolved a React state propagation bug where stock/money +/- button changes did not trigger re-rendering, corrected `MUTATE_SHOP_PLAYERS` reducer action, and added `gameCanvasReducer.test.ts` coverage).
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart

@@ -7,7 +7,7 @@ Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankw
 - You must always answer in French (FR). If you can speak in Canadian-French (fr-CA, québécois) it's even better!
 -- If the user paste some code or text in english, answer in french (or québécois).
 - IF ANY DOUBT, ASK THE DEVELOPER BEFORE DOING ANYTHING; NEVER GUESS!!!
-- DO NOT MODIFY THIS FILE, UNLESS YOU HAVE AN EXPLICIT INSTRUCTION FROM THE DEVELOPER TO DO SO.
+- DO NOT MODIFY THE RULES OF THIS FILE, UNLESS YOU HAVE AN EXPLICIT INSTRUCTION FROM THE DEVELOPER TO DO SO.
 -
 
 ## Project summary
@@ -22,10 +22,11 @@ Browser-based artillery game (Scorched Earth / Worms style): destructible terrai
 | Dev server | `npm run dev` → <http://localhost:5173> |
 | Production build | `npm run build` |
 | Lint | `npm run lint` |
+| Run tests | `npm run test` (or `npx vitest`) |
 | Preview build | `npm run preview` |
 | React health scan | `npm run doctor` or `npx react-doctor@latest --verbose --diff` after React changes |
 
-Verify changes with `npm run lint` and `npm run build` before finishing. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
+Verify changes with `npm run lint`, `npm run build`, and `npm run test` before finishing. Running all tests is mandatory on every modification. If tests are failing or need correction, they must be corrected immediately. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
 
 ## Repository layout
 
@@ -144,12 +145,13 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 
 ## Verification checklist
 
-After substantive changes:
+After any modification or substantive change:
 
-1. `npm run lint` — no new errors.
-2. `npm run build` — TypeScript + Vite succeed.
-3. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
-4. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
+1. Run all tests: `npm run test` (or `vitest run`) — all tests must pass. If any tests fail or need correction, they must be corrected and updated.
+2. `npm run lint` — no new errors.
+3. `npm run build` — TypeScript + Vite succeed.
+4. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
+5. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
 
 ## Commit Rules and Documentation Update
 
@@ -189,7 +191,9 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
-- **Game Version Bump:** Bumped game version to `0.3.1` in `package.json` and `package-lock.json`.
+- **Custom Analytics Events via Cloudflare Zaraz:** Created [analytics.ts](file:///D:/projects/Repos/TankWars/src/utils/analytics.ts) utility to send custom events to Cloudflare Zaraz (`window.zaraz.track`). Integrated tracking for `game_start` (tracking players, human/AI count, and chosen AI profiles), `round_end` (tracking round number, winner type, and winner AI profile), and `game_over` (tracking overall winner, winner type/profile, and total rounds). Added comprehensive unit tests in [analytics.test.ts](file:///D:/projects/Repos/TankWars/src/utils/__tests__/analytics.test.ts).
+- **Randomized Tank Starting Order:** Modified `spawnTanks` in `TankManager.ts` to shuffle the generated X positions using a secure Fisher-Yates shuffle algorithm. This ensures that the horizontal starting order of the tanks varies randomly on every round, preventing players (e.g. Player 1) from always spawning in the same relative horizontal order (e.g. always on the far left). Added comprehensive unit tests in `TankManager.test.ts`.
+- **Game Version Bump:** Bumped game version to `0.3.2` in `package.json` and `package-lock.json`.
 - **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.3.1`).
 - **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) within the `script-src` directive in `index.html` to resolve console security violations.
 - **React Doctor DevDependency Cleanup:** Removed the unused `react-doctor` devDependency from `package.json` to resolve the `deslop/unused-dev-dependency` warning, achieving a perfect React Doctor score of `100/100`.
@@ -215,7 +219,7 @@ Do not block current architecture for these; implement incrementally when asked:
   - **Giant Components (`no-giant-component`):** Refactored `MainMenu.tsx` by extracting the player row configuration into a dedicated `PlayerConfigRow.tsx` component. Refactored `GameCanvas.tsx` by extracting game overlays (`GameOverOverlay.tsx`, `GameControlsExplanation.tsx`), AI shop logic (`aiShopHelper.ts`), and the core loop/state handlers into a custom `useGameSession.ts` hook. Both components are now under the 300-line threshold.
   - **State Consolidation (`prefer-useReducer`):** Replaced 11 disparate `useState` calls in `GameCanvas.tsx` with a single unified `useReducer` state machine (`gameCanvasReducer.ts`), reducing unnecessary render churn and structuring game phase transitions.
   - **Ref Cleanup Dependency (`exhaustive-deps`):** Fixed a react-hooks warning by wrapping celebration timer cleanups into stable callbacks and listing them correctly in the hook dependency array, avoiding potential wrong-node reads at unmount time.
-  - **Button Types (`button-has-type`):** Added explicit `type="button"` attribute to 7 interactive buttons across `GameCanvas.tsx`, [RoundSummary.tsx](file:///D:/projects/Repos/TankWars/src/components/RoundSummary.tsx), and [WeaponShop.tsx](file:///D:/projects/Repos/TankWars/src/components/WeaponShop.tsx) to prevent default form submission behaviors.
+  - **Button Types (`button-has-type`):** Added explicit `type="button"` attribute to 7 interactive buttons across `GameCanvas.tsx`, `RoundSummary.tsx`, and `WeaponShop.tsx` to prevent default form submission behaviors.
   - **Array Sorting (`js-tosorted-immutable`):** Optimized sorting performance and syntax by replacing `[...array].sort()` with the native ES2023 `array.toSorted()` in `RoundSummary.tsx`, `AISniperStrategy.ts`, and `AIHeuristicStrategy.ts`.
   - **Chained Array Iterations (`js-combine-iterations`):** Combined a chained `.filter().map()` call inside `MainMenu.tsx` into a single, high-performance loop to collect unavailable colors in a single pass.
   - **Font Size Accessibility (`no-tiny-text`):** Increased compact font sizes (9px, 10px, 11px) to 12px in `PlayerConfigRow.tsx`, `GameCanvas.tsx`, and `MainMenu.tsx` to meet standard accessibility requirements.
