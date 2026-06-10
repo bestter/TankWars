@@ -22,10 +22,11 @@ Browser-based artillery game (Scorched Earth / Worms style): destructible terrai
 | Dev server | `npm run dev` → <http://localhost:5173> |
 | Production build | `npm run build` |
 | Lint | `npm run lint` |
+| Run tests | `npm run test` (or `npx vitest`) |
 | Preview build | `npm run preview` |
 | React health scan | `npm run doctor` or `npx react-doctor@latest --verbose --diff` after React changes |
 
-Verify changes with `npm run lint` and `npm run build` before finishing. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
+Verify changes with `npm run lint`, `npm run build`, and `npm run test` before finishing. Running all tests is mandatory on every modification. If tests are failing or need correction, they must be corrected immediately. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
 
 ## Repository layout
 
@@ -144,12 +145,13 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 
 ## Verification checklist
 
-After substantive changes:
+After any modification or substantive change:
 
-1. `npm run lint` — no new errors.
-2. `npm run build` — TypeScript + Vite succeed.
-3. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
-4. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
+1. Run all tests: `npm run test` (or `vitest run`) — all tests must pass. If any tests fail or need correction, they must be corrected and updated.
+2. `npm run lint` — no new errors.
+3. `npm run build` — TypeScript + Vite succeed.
+4. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
+5. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
 
 ## Commit Rules and Documentation Update
 
