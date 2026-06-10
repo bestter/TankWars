@@ -9,9 +9,10 @@
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
+- Run tests: `npm run test` (or `vitest run`)
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
 
-Before finishing substantive work: `npm run lint` and `npm run build` must pass. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
+Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must pass on every modification. If tests fail or require correction, they must be fixed. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
 
 ## Architecture & Code Style Guidelines
 
@@ -81,4 +82,3 @@ Before finishing substantive work: `npm run lint` and `npm run build` must pass.
 - Use IMPERATIVE mood for commit messages.
 
 - Use `secureRandom` from `src/utils/random.ts` instead of `Math.random` for all random numbers.
-

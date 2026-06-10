@@ -76,7 +76,7 @@
 
 - Provide dry, concise, and production-ready code.
 - No introductory fluff. Focus on file paths, explicit types, and clean architectural patterns.
-- Before finishing any substantive change: run `npm run lint && npm run build` (must pass). See AGENTS.md verification checklist.
+- Before finishing any modification: run `npm run lint && npm run build && npm run test` (all must pass). If tests fail, they must be corrected immediately. See AGENTS.md verification checklist.
 
 ## Commit style
 
