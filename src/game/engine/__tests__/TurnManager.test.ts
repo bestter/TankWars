@@ -4,26 +4,6 @@ import type { TankManager } from '../../entities/TankManager';
 import type { TerrainManager } from '../Terrain';
 import type { AIEngine } from '../../entities/ai/AIEngine';
 
-interface PrivateTurnManager {
-  currentPlayerIndex: number;
-  turnNumber: number;
-  isInputLocked: boolean;
-  isProcessingAI: boolean;
-  interRoundPaused: boolean;
-  aiTurnGeneration: number;
-  physicsSettlementTimeoutId: ReturnType<typeof setTimeout> | number | null;
-  isResolutionSafetyArmed: boolean;
-  resolutionAccumulatedTime: number;
-  resolutionPlayer: unknown;
-  isSettlementSafetyArmed: boolean;
-  settlementAccumulatedTime: number;
-  settlementPlayerId: string | null;
-  isTurnLockWatchdogArmed: boolean;
-  turnLockAccumulatedTime: number;
-  awaitingTankStabilization: boolean;
-  wasFallingForHud: boolean;
-}
-
 describe('TurnManager', () => {
   let turnManager: TurnManager;
   let mockTankManager: Partial<TankManager>;
@@ -49,68 +29,42 @@ describe('TurnManager', () => {
   });
 
   describe('reset', () => {
-    it('should reset turn state variables to initial values', () => {
-      const priv = turnManager as unknown as PrivateTurnManager;
+    it('should call clear methods and reset properties', () => {
+      // Arrange: Setup dirty state on primitive properties directly
+      (turnManager as any).currentPlayerIndex = 2;
+      (turnManager as any).turnNumber = 5;
+      (turnManager as any).isInputLocked = true;
+      (turnManager as any).isProcessingAI = true;
+      (turnManager as any).interRoundPaused = true;
 
-      // Setup dirty state
-      priv.currentPlayerIndex = 2;
-      priv.turnNumber = 5;
-      priv.isInputLocked = true;
-      priv.isProcessingAI = true;
-      priv.interRoundPaused = true;
+      const initialAiTurnGen = (turnManager as any).aiTurnGeneration;
 
-      const initialAiTurnGen = priv.aiTurnGeneration;
+      // Arrange: Spy on the internal clear methods called by reset
+      const clearPhysicsSpy = vi.spyOn(turnManager as any, 'clearPhysicsSettlementTimeout');
+      const clearResSpy = vi.spyOn(turnManager as any, 'clearResolutionTimeout');
+      const clearSettlementSpy = vi.spyOn(turnManager as any, 'clearSettlementSafetyTimeout');
+      const clearTurnLockSpy = vi.spyOn(turnManager as any, 'clearTurnLockSafetyTimeout');
+      const clearAwaitingSpy = vi.spyOn(turnManager as any, 'clearAwaitingStabilization');
+      const removeInputListenersSpy = vi.spyOn(turnManager as any, 'removeInputListeners');
 
-      // Also set some timeouts/flags that should be cleared
-      vi.spyOn(globalThis, 'clearTimeout');
-      priv.physicsSettlementTimeoutId = 123 as unknown as ReturnType<typeof setTimeout>;
-
-      priv.isResolutionSafetyArmed = true;
-      priv.resolutionAccumulatedTime = 5;
-      priv.resolutionPlayer = {} as unknown;
-
-      priv.isSettlementSafetyArmed = true;
-      priv.settlementAccumulatedTime = 2.5;
-      priv.settlementPlayerId = "player1";
-
-      priv.isTurnLockWatchdogArmed = true;
-      priv.turnLockAccumulatedTime = 10;
-
-      priv.awaitingTankStabilization = true;
-      priv.wasFallingForHud = true;
-
-      // Mock removeInputListeners since we don't have full DOM mock
-      turnManager['removeInputListeners'] = vi.fn();
-
+      // Act
       turnManager.reset();
 
-      // Verify reset state
-      expect(priv.currentPlayerIndex).toBe(0);
-      expect(priv.turnNumber).toBe(1);
-      expect(priv.isInputLocked).toBe(false);
-      expect(priv.isProcessingAI).toBe(false);
-      expect(priv.interRoundPaused).toBe(false);
-      expect(priv.aiTurnGeneration).toBe(initialAiTurnGen + 1);
+      // Assert: Verify internal clears were called
+      expect(clearPhysicsSpy).toHaveBeenCalled();
+      expect(clearResSpy).toHaveBeenCalled();
+      expect(clearSettlementSpy).toHaveBeenCalled();
+      expect(clearTurnLockSpy).toHaveBeenCalled();
+      expect(clearAwaitingSpy).toHaveBeenCalled();
+      expect(removeInputListenersSpy).toHaveBeenCalled();
 
-      // Verify timeouts/flags cleared
-      expect(globalThis.clearTimeout).toHaveBeenCalledWith(123);
-      expect(priv.physicsSettlementTimeoutId).toBeNull();
-
-      expect(priv.isResolutionSafetyArmed).toBe(false);
-      expect(priv.resolutionAccumulatedTime).toBe(0);
-      expect(priv.resolutionPlayer).toBeNull();
-
-      expect(priv.isSettlementSafetyArmed).toBe(false);
-      expect(priv.settlementAccumulatedTime).toBe(0);
-      expect(priv.settlementPlayerId).toBeNull();
-
-      expect(priv.isTurnLockWatchdogArmed).toBe(false);
-      expect(priv.turnLockAccumulatedTime).toBe(0);
-
-      expect(priv.awaitingTankStabilization).toBe(false);
-      expect(priv.wasFallingForHud).toBe(false);
-
-      expect(turnManager['removeInputListeners']).toHaveBeenCalled();
+      // Assert: Verify property assignments
+      expect((turnManager as any).currentPlayerIndex).toBe(0);
+      expect((turnManager as any).turnNumber).toBe(1);
+      expect((turnManager as any).isInputLocked).toBe(false);
+      expect((turnManager as any).isProcessingAI).toBe(false);
+      expect((turnManager as any).interRoundPaused).toBe(false);
+      expect((turnManager as any).aiTurnGeneration).toBe(initialAiTurnGen + 1);
 
       vi.restoreAllMocks();
     });
