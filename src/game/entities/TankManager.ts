@@ -508,33 +508,34 @@ export class TankManager {
       const dy = pos.y - explosionY;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
-      if (distance > radius) continue;
+      let damage = 0;
+      let isDirectHitOnThisTank = false;
 
-      const healthBefore = tank.health;
-
-      // Dégâts dégressifs linéaires
-      let damage = maxDamage * Math.max(0, 1 - distance / radius);
-
-      // BULLET direct hit damage multiplier (x3)
-      if (weaponId === 'BULLET' && isDirectHit) {
+      if (isDirectHit) {
         const tankWidth = 24;
         const tankHeight = 15;
-        const isDirectHitOnThisTank = 
+        isDirectHitOnThisTank = 
           explosionX >= pos.x - tankWidth / 2 &&
           explosionX <= pos.x + tankWidth / 2 &&
           explosionY >= pos.y - tankHeight &&
           explosionY <= pos.y;
-        if (isDirectHitOnThisTank) {
-          damage *= 3;
-        }
       }
 
-      // Nuke direct hit rule (per request): one direct hit kills the tank outright.
-      // Threshold ~10px is slightly > tank half-extent (body 14px wide); near-center impact counts.
-      if (weaponId === "NUKE" && distance <= 10) {
+      const healthBefore = tank.health;
+
+      // Calcul des dégâts selon le type de projectile et l'impact direct
+      if (weaponId === 'BULLET' && isDirectHitOnThisTank) {
+        // Direct hit for BULLET deals 3x base damage directly, bypassing distance check and falloff
+        damage = maxDamage * 3;
+      } else if (weaponId === "NUKE" && isDirectHitOnThisTank) {
+        // Direct hit for NUKE instantly kills the tank, bypassing distance check
         tank.shield = 0;
         tank.health = 0;
-        damage = 0; // avoid double-subtract in the generic path below
+        damage = 0;
+      } else {
+        // Normal splash damage (linear falloff)
+        if (distance > radius) continue;
+        damage = maxDamage * Math.max(0, 1 - distance / radius);
       }
 
       // Thermonuclear inner kill zone (user request): all tanks within this distance are instantly destroyed
