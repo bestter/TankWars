@@ -31,21 +31,23 @@ describe('TurnManager', () => {
   describe('reset', () => {
     it('should call clear methods and reset properties', () => {
       // Arrange: Setup dirty state on primitive properties directly
-      (turnManager as any).currentPlayerIndex = 2;
-      (turnManager as any).turnNumber = 5;
-      (turnManager as any).isInputLocked = true;
-      (turnManager as any).isProcessingAI = true;
-      (turnManager as any).interRoundPaused = true;
+      Object.assign(turnManager, {
+        currentPlayerIndex: 2,
+        turnNumber: 5,
+        isInputLocked: true,
+        isProcessingAI: true,
+        interRoundPaused: true,
+      });
 
-      const initialAiTurnGen = (turnManager as any).aiTurnGeneration;
+      const initialAiTurnGen = Reflect.get(turnManager, 'aiTurnGeneration') as number;
 
       // Arrange: Spy on the internal clear methods called by reset
-      const clearPhysicsSpy = vi.spyOn(turnManager as any, 'clearPhysicsSettlementTimeout');
-      const clearResSpy = vi.spyOn(turnManager as any, 'clearResolutionTimeout');
-      const clearSettlementSpy = vi.spyOn(turnManager as any, 'clearSettlementSafetyTimeout');
-      const clearTurnLockSpy = vi.spyOn(turnManager as any, 'clearTurnLockSafetyTimeout');
-      const clearAwaitingSpy = vi.spyOn(turnManager as any, 'clearAwaitingStabilization');
-      const removeInputListenersSpy = vi.spyOn(turnManager as any, 'removeInputListeners');
+      const clearPhysicsSpy = vi.spyOn(turnManager as unknown as { clearPhysicsSettlementTimeout: () => void }, 'clearPhysicsSettlementTimeout');
+      const clearResSpy = vi.spyOn(turnManager as unknown as { clearResolutionTimeout: () => void }, 'clearResolutionTimeout');
+      const clearSettlementSpy = vi.spyOn(turnManager as unknown as { clearSettlementSafetyTimeout: () => void }, 'clearSettlementSafetyTimeout');
+      const clearTurnLockSpy = vi.spyOn(turnManager as unknown as { clearTurnLockSafetyTimeout: () => void }, 'clearTurnLockSafetyTimeout');
+      const clearAwaitingSpy = vi.spyOn(turnManager as unknown as { clearAwaitingStabilization: () => void }, 'clearAwaitingStabilization');
+      const removeInputListenersSpy = vi.spyOn(turnManager as unknown as { removeInputListeners: () => void }, 'removeInputListeners');
 
       // Act
       turnManager.reset();
@@ -59,12 +61,12 @@ describe('TurnManager', () => {
       expect(removeInputListenersSpy).toHaveBeenCalled();
 
       // Assert: Verify property assignments
-      expect((turnManager as any).currentPlayerIndex).toBe(0);
-      expect((turnManager as any).turnNumber).toBe(1);
-      expect((turnManager as any).isInputLocked).toBe(false);
-      expect((turnManager as any).isProcessingAI).toBe(false);
-      expect((turnManager as any).interRoundPaused).toBe(false);
-      expect((turnManager as any).aiTurnGeneration).toBe(initialAiTurnGen + 1);
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(0);
+      expect(Reflect.get(turnManager, 'turnNumber')).toBe(1);
+      expect(Reflect.get(turnManager, 'isInputLocked')).toBe(false);
+      expect(Reflect.get(turnManager, 'isProcessingAI')).toBe(false);
+      expect(Reflect.get(turnManager, 'interRoundPaused')).toBe(false);
+      expect(Reflect.get(turnManager, 'aiTurnGeneration')).toBe(initialAiTurnGen + 1);
 
       vi.restoreAllMocks();
     });

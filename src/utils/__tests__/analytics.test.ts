@@ -75,7 +75,7 @@ describe('analytics utility', () => {
 
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('[Analytics] Failed to track event "test_event" via Zaraz:'),
-      expect.any(Error)
+      "Zaraz network failure"
     );
   });
 });
