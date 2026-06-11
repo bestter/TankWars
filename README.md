@@ -133,7 +133,7 @@ Fully working:
   - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
   - Configured React Doctor in CI with a GitHub Actions workflow.
 - **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
-- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.2`) in the footer of the retro Main Menu next to the license statement.
+- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.3.3`) in the footer of the retro Main Menu next to the license statement.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
 - Keyboard + HUD (WindBanner)
@@ -173,7 +173,7 @@ This is an early-stage project focused on solid foundational architecture before
 
 To explore the codebase:
 
-- Start with `src/App.tsx` (top-level phase management) and `src/components/MainMenu.tsx`
+- Start with `src/main.tsx` (app entry point, handles production console suppression), `src/App.tsx` (top-level phase management), and `src/components/MainMenu.tsx`
 - Main game view + engine integration: `src/components/GameCanvas.tsx`
 - Core simulation lives in `src/game/engine/GameEngine.ts` (also hosts active turn indicator + recoil trigger + celebration)
 - Terrain destruction: `src/game/engine/Terrain.ts`
