@@ -191,12 +191,18 @@ export class AISmartStrategy implements AIEngine {
     const targetHeight = terrain.height - target.tank.position.y;
     const isHidden = maxTerrainHeight > Math.max(selfHeight, targetHeight) + 35;
 
-    // 1. Thermonuclear - only if target is far enough away to not kill ourselves
-    // (blast radius is 160px; so we want distance to target to be > 200px)
-    if (dist > 220 && has("THERMONUCLEAR")) return "THERMONUCLEAR";
+    const targetHealthTotal = target.tank.health + target.tank.shield;
 
-    // 2. Baby Nuke for long range
-    if (dist > 180 && has("NUKE")) return "NUKE";
+    // 1. Thermonuclear - only if target is far enough away to not kill ourselves,
+    // target has significant health, and passes a probability check (30%)
+    if (dist > 220 && has("THERMONUCLEAR") && targetHealthTotal >= 50 && secureRandom() < 0.30) {
+      return "THERMONUCLEAR";
+    }
+
+    // 2. Baby Nuke for long range - only if target has enough health and passes a probability check (35%)
+    if (dist > 180 && has("NUKE") && targetHealthTotal >= 40 && secureRandom() < 0.35) {
+      return "NUKE";
+    }
 
     // 3. Grenade if target is hidden behind a hill (to bounce over/down the hill)
     if (isHidden && has("GRENADE")) return "GRENADE";

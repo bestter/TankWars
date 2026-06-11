@@ -13,11 +13,11 @@ export function autoBuyForAI(aiPlayer: Player): void {
 
   // Configure budget and priorities depending on AI profile
   let preferredOrder: WeaponId[] = [
-    "THERMONUCLEAR",
-    "NUKE",
     "CLUSTER",
     "DRILLER",
     "GRENADE",
+    "NUKE",
+    "THERMONUCLEAR",
   ];
   let budgetRatio = 0.7; // default 70% budget spending
 
@@ -28,11 +28,11 @@ export function autoBuyForAI(aiPlayer: Player): void {
   } else if (profile === "v4-smart") {
     // Smart AI spends more aggressively (85% budget) on its tools
     preferredOrder = [
-      "THERMONUCLEAR",
-      "NUKE",
       "CLUSTER",
       "DRILLER",
       "GRENADE",
+      "NUKE",
+      "THERMONUCLEAR",
     ];
     budgetRatio = 0.85;
   }

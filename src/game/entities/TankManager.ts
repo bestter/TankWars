@@ -508,7 +508,7 @@ export class TankManager {
       const dy = pos.y - explosionY;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
-      let damage = 0;
+      let damage: number;
       let isDirectHitOnThisTank = false;
 
       if (isDirectHit) {
