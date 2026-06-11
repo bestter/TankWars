@@ -234,11 +234,15 @@ export class AIHeuristicStrategy implements AIEngine {
     ).length;
     if (nearby >= 1 && has("CLUSTER")) return "CLUSTER";
 
+    const targetHealthTotal = target.tank.health + target.tank.shield;
     if (
       Math.abs(target.tank.position.x - self.tank.position.x) > 380 &&
-      has("NUKE")
-    )
+      has("NUKE") &&
+      targetHealthTotal >= 40 &&
+      secureRandom() < 0.35
+    ) {
       return "NUKE";
+    }
 
     // default unlimited
     return "MISSILE";
