@@ -18,7 +18,8 @@ export function trackEvent(name: string, properties?: Record<string, unknown>): 
       window.zaraz.track(name, properties);
       console.log(`[Analytics] Tracked event: "${name}"`, properties);
     } catch (err) {
-      console.error(`[Analytics] Failed to track event "${name}" via Zaraz:`, err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[Analytics] Failed to track event "${name}" via Zaraz:`, errorMessage);
     }
   } else {
     // Fallback log en local ou si Zaraz n'est pas actif

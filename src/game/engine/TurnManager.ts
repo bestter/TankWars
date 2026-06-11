@@ -760,7 +760,8 @@ export class TurnManager {
       this.settlementGeneration = this.aiTurnGeneration;
       this.isSettlementSafetyArmed = true;
     } catch (error) {
-      console.error("[TurnManager] AI turn failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("[TurnManager] AI turn failed:", errorMessage);
       this.clearResolutionTimeout();
       this.clearSettlementSafetyTimeout();
       setTimeout(() => this.nextTurn(), 1000);
