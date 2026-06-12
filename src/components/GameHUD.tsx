@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import type { WeaponId } from "../types/weapon";
@@ -34,7 +35,7 @@ const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "wea
   BULLET: "weapons.BULLET",
 };
 
-export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
+export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
   const { t } = useTranslation();
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
@@ -236,4 +237,4 @@ export function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
       )}
     </div>
   );
-}
+});

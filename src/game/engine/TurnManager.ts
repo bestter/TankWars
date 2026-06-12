@@ -95,6 +95,16 @@ export class TurnManager {
 
   private wasFallingForHud = false;
 
+  /** Throttle angle/power HUD dispatches to ~15 Hz while keeping engine state immediate. */
+  private static readonly HUD_THROTTLE_MS = 66;
+  private lastHudNotifyMs = 0;
+  private hudThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastHudPlayerId: string | null = null;
+  private lastHudWeapon: WeaponId | null = null;
+  private lastHudLocked = false;
+  private lastHudFalling = false;
+  private lastHudTurn = 0;
+
   // Callbacks pour le HUD React
   public onHudUpdate?: (info: CurrentTurnInfo) => void;
   public onTurnChange?: (player: Player, round: number) => void;
@@ -293,6 +303,7 @@ export class TurnManager {
 
   /** Désactive les écouteurs clavier */
   public removeInputListeners(): void {
+    this.clearHudThrottleTimer();
     if (!this.listenersAttached) return;
     window.removeEventListener("keydown", this.handleKeyDown);
     this.listenersAttached = false;
@@ -593,11 +604,58 @@ export class TurnManager {
     };
   }
 
-  private notifyHudUpdate(): void {
-    const info = this.getCurrentTurnInfo();
-    if (info) {
-      this.onHudUpdate?.(info);
+  private isStructuralHudChange(info: CurrentTurnInfo): boolean {
+    return (
+      this.lastHudPlayerId !== info.playerId ||
+      this.lastHudWeapon !== info.currentWeapon ||
+      this.lastHudLocked !== info.isInputLocked ||
+      this.lastHudFalling !== info.tanksAreFalling ||
+      this.lastHudTurn !== info.turn
+    );
+  }
+
+  private flushHudUpdate(info: CurrentTurnInfo): void {
+    this.lastHudPlayerId = info.playerId;
+    this.lastHudWeapon = info.currentWeapon;
+    this.lastHudLocked = info.isInputLocked;
+    this.lastHudFalling = info.tanksAreFalling;
+    this.lastHudTurn = info.turn;
+    this.lastHudNotifyMs = performance.now();
+    this.onHudUpdate?.(info);
+  }
+
+  private clearHudThrottleTimer(): void {
+    if (this.hudThrottleTimer !== null) {
+      clearTimeout(this.hudThrottleTimer);
+      this.hudThrottleTimer = null;
     }
+  }
+
+  private notifyHudUpdate(immediate = false): void {
+    const info = this.getCurrentTurnInfo();
+    if (!info) return;
+
+    const structural = this.isStructuralHudChange(info);
+    if (immediate || structural) {
+      this.clearHudThrottleTimer();
+      this.flushHudUpdate(info);
+      return;
+    }
+
+    const now = performance.now();
+    if (now - this.lastHudNotifyMs >= TurnManager.HUD_THROTTLE_MS) {
+      this.flushHudUpdate(info);
+      return;
+    }
+
+    if (this.hudThrottleTimer !== null) return;
+
+    const delay = TurnManager.HUD_THROTTLE_MS - (now - this.lastHudNotifyMs);
+    this.hudThrottleTimer = setTimeout(() => {
+      this.hudThrottleTimer = null;
+      const latest = this.getCurrentTurnInfo();
+      if (latest) this.flushHudUpdate(latest);
+    }, delay);
   }
 
   /** Démarre le premier tour (appelé après setPlayers) */
