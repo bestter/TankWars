@@ -14,3 +14,6 @@
 **Vulnerability:** The Content-Security-Policy (CSP) in `index.html` included the `'unsafe-inline'` directive in `script-src`.
 **Learning:** This directive allows the execution of inline scripts (e.g., via `<script>...</script>` blocks or inline event handlers like `onclick="), which significantly increases the risk and impact of Cross-Site Scripting (XSS) attacks. In modern React/Vite applications, this is generally unnecessary for production environments.
 **Prevention:** Avoid using `'unsafe-inline'` in the `script-src` directive of the CSP. If inline scripts are absolutely necessary, use nonces or hashes to whitelist specific inline scripts.
+Added caching to `TankManager.getAlivePlayers()` to prevent array allocations inside game loop.
+Tested performance using a benchmark, verified functionality via test suite.
+No security impact, strictly an internal performance cache.

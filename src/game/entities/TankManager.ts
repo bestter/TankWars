@@ -67,6 +67,7 @@ export class TankManager {
   /** Remplace et prépare la liste des joueurs pour le combat */
   public setPlayers(players: Player[]): void {
     this.players = players;
+    this.invalidateAliveCache();
     this.velocities.clear();
     this.fallenDistances.clear();
     this.isVoidFall.clear();
@@ -89,8 +90,22 @@ export class TankManager {
     return this.players;
   }
 
+  private alivePlayersCache: Player[] | null = null;
+
   public getAlivePlayers(): Player[] {
-    return this.players.filter((p) => !p.tank.isDead);
+    if (this.alivePlayersCache === null) {
+      this.alivePlayersCache = [];
+      for (const p of this.players) {
+        if (!p.tank.isDead) {
+          this.alivePlayersCache.push(p);
+        }
+      }
+    }
+    return this.alivePlayersCache;
+  }
+
+  public invalidateAliveCache(): void {
+    this.alivePlayersCache = null;
   }
 
   /** Returns the winner if only one player is still alive, otherwise null */
@@ -122,6 +137,7 @@ export class TankManager {
    */
   public spawnTanks(players: Player[], terrain: TerrainManager): void {
     this.players = players;
+    this.invalidateAliveCache();
 
     const count = players.length;
     if (count < 2 || count > 4) {
@@ -161,6 +177,7 @@ export class TankManager {
       tank.shield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
       tank.maxShield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
       tank.isDead = false;
+      this.invalidateAliveCache();
 
       // Angle de départ par défaut (sensé pour le côté du terrain)
       tank.angle = x < terrain.width / 2 ? 45 : 135;
@@ -328,6 +345,7 @@ export class TankManager {
         const lavaY = terrain.lavaTop;
         if (pos.y >= lavaY && !tank.isDead) {
           tank.isDead = true;
+          this.invalidateAliveCache();
           const details = `touched lava (y=${pos.y.toFixed(1)} >= lavaTop=${lavaY})`;
           console.log(
             `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)})`,
@@ -361,6 +379,7 @@ export class TankManager {
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;
+              this.invalidateAliveCache();
               const totalFallen = (
                 fallen +
                 levelsCrossed * damageLevelHeight
@@ -427,6 +446,7 @@ export class TankManager {
 
       if (unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
+        this.invalidateAliveCache();
         const cause = "burial";
         let details: string;
         if (touchedLava) {
@@ -514,7 +534,7 @@ export class TankManager {
       if (isDirectHit) {
         const tankWidth = 24;
         const tankHeight = 15;
-        isDirectHitOnThisTank = 
+        isDirectHitOnThisTank =
           explosionX >= pos.x - tankWidth / 2 &&
           explosionX <= pos.x + tankWidth / 2 &&
           explosionY >= pos.y - tankHeight &&
@@ -524,7 +544,7 @@ export class TankManager {
       const healthBefore = tank.health;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct
-      if (weaponId === 'BULLET' && isDirectHitOnThisTank) {
+      if (weaponId === "BULLET" && isDirectHitOnThisTank) {
         // Direct hit for BULLET deals 3x base damage directly, bypassing distance check and falloff
         damage = maxDamage * 3;
       } else if (weaponId === "NUKE" && isDirectHitOnThisTank) {
@@ -569,6 +589,7 @@ export class TankManager {
 
       if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
+        this.invalidateAliveCache();
         const details = `explosion by ${killerId ?? "unknown"} (damage=${damage.toFixed(1)})`;
         console.log(
           `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? "unknown"}`,

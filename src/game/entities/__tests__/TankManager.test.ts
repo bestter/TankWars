@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { TankManager } from '../TankManager';
-import type { Player } from '../../../types/player';
-import { VGA_PALETTE } from '../../../types/game';
-import { TerrainManager } from '../../engine/Terrain';
+import { describe, it, expect } from "vitest";
+import { TankManager } from "../TankManager";
+import type { Player } from "../../../types/player";
+import { VGA_PALETTE } from "../../../types/game";
+import { TerrainManager } from "../../engine/Terrain";
 
 function createDummyPlayer(id: string, isDead: boolean): Player {
   return {
@@ -22,19 +22,19 @@ function createDummyPlayer(id: string, isDead: boolean): Player {
       maxShield: 0,
       isDead,
       color: VGA_PALETTE.RED,
-      currentWeapon: 'MISSILE'
-    }
+      currentWeapon: "MISSILE",
+    },
   };
 }
 
-describe('TankManager', () => {
-  describe('getAlivePlayers', () => {
-    it('returns only players with alive tanks', () => {
+describe("TankManager", () => {
+  describe("getAlivePlayers", () => {
+    it("returns only players with alive tanks", () => {
       const tankManager = new TankManager();
 
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', true);
-      const p3 = createDummyPlayer('3', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", true);
+      const p3 = createDummyPlayer("3", false);
 
       tankManager.setPlayers([p1, p2, p3]);
 
@@ -46,10 +46,10 @@ describe('TankManager', () => {
       expect(alivePlayers).not.toContainEqual(p2);
     });
 
-    it('returns all players when all are alive', () => {
+    it("returns all players when all are alive", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
       tankManager.setPlayers([p1, p2]);
 
       const alivePlayers = tankManager.getAlivePlayers();
@@ -58,30 +58,30 @@ describe('TankManager', () => {
       expect(alivePlayers).toContainEqual(p2);
     });
 
-    it('returns an empty array when all players are dead', () => {
+    it("returns an empty array when all players are dead", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', true);
-      const p2 = createDummyPlayer('2', true);
+      const p1 = createDummyPlayer("1", true);
+      const p2 = createDummyPlayer("2", true);
       tankManager.setPlayers([p1, p2]);
 
       const alivePlayers = tankManager.getAlivePlayers();
       expect(alivePlayers).toHaveLength(0);
     });
 
-    it('returns an empty array when there are no players', () => {
+    it("returns an empty array when there are no players", () => {
       const tankManager = new TankManager();
       tankManager.setPlayers([]);
       const alivePlayers = tankManager.getAlivePlayers();
       expect(alivePlayers).toHaveLength(0);
     });
 
-    it('preserves the original order of players', () => {
+    it("preserves the original order of players", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', true);
-      const p3 = createDummyPlayer('3', false);
-      const p4 = createDummyPlayer('4', true);
-      const p5 = createDummyPlayer('5', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", true);
+      const p3 = createDummyPlayer("3", false);
+      const p4 = createDummyPlayer("4", true);
+      const p5 = createDummyPlayer("5", false);
 
       tankManager.setPlayers([p1, p2, p3, p4, p5]);
 
@@ -89,10 +89,10 @@ describe('TankManager', () => {
       expect(alivePlayers).toEqual([p1, p3, p5]);
     });
 
-    it('returns a new array instance, not mutating the original', () => {
+    it("returns a new array instance, not mutating the original", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
 
       const originalPlayers = [p1, p2];
       tankManager.setPlayers(originalPlayers);
@@ -102,14 +102,14 @@ describe('TankManager', () => {
       expect(alivePlayers).toEqual(originalPlayers); // but contain same items
 
       // Mutating the returned array should not affect original
-      alivePlayers.push(createDummyPlayer('3', false));
+      alivePlayers.push(createDummyPlayer("3", false));
       expect(tankManager.getPlayers()).toHaveLength(2);
     });
 
-    it('reflects dynamic state changes in isDead', () => {
+    it("reflects dynamic state changes in isDead", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
 
       tankManager.setPlayers([p1, p2]);
 
@@ -117,6 +117,9 @@ describe('TankManager', () => {
 
       // Simulate tank dying during gameplay
       p1.tank.isDead = true;
+      (
+        tankManager as unknown as { invalidateAliveCache: () => void }
+      ).invalidateAliveCache();
 
       const aliveAfterDeath = tankManager.getAlivePlayers();
       expect(aliveAfterDeath).toHaveLength(1);
@@ -124,38 +127,38 @@ describe('TankManager', () => {
     });
   });
 
-  describe('getWinner', () => {
-    it('returns the winner when only one player is alive', () => {
+  describe("getWinner", () => {
+    it("returns the winner when only one player is alive", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', true);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", true);
       tankManager.setPlayers([p1, p2]);
 
       const winner = tankManager.getWinner();
       expect(winner).toEqual(p1);
     });
 
-    it('returns null when more than one player is alive', () => {
+    it("returns null when more than one player is alive", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
       tankManager.setPlayers([p1, p2]);
 
       const winner = tankManager.getWinner();
       expect(winner).toBeNull();
     });
 
-    it('returns null when all players are dead', () => {
+    it("returns null when all players are dead", () => {
       const tankManager = new TankManager();
-      const p1 = createDummyPlayer('1', true);
-      const p2 = createDummyPlayer('2', true);
+      const p1 = createDummyPlayer("1", true);
+      const p2 = createDummyPlayer("2", true);
       tankManager.setPlayers([p1, p2]);
 
       const winner = tankManager.getWinner();
       expect(winner).toBeNull();
     });
 
-    it('returns null when there are no players', () => {
+    it("returns null when there are no players", () => {
       const tankManager = new TankManager();
       tankManager.setPlayers([]);
 
@@ -164,17 +167,17 @@ describe('TankManager', () => {
     });
   });
 
-  describe('spawnTanks', () => {
-    it('places tanks with minimum distance and margin constraints on terrain ground level', () => {
+  describe("spawnTanks", () => {
+    it("places tanks with minimum distance and margin constraints on terrain ground level", () => {
       const tankManager = new TankManager();
       const terrain = new TerrainManager(800, 600);
       // Remplir le terrain avec une hauteur fixe pour tester
       const heights = (terrain as unknown as { heights: number[] }).heights;
       heights.fill(300);
 
-      const p1 = createDummyPlayer('1', false);
-      const p2 = createDummyPlayer('2', false);
-      const p3 = createDummyPlayer('3', false);
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
+      const p3 = createDummyPlayer("3", false);
 
       tankManager.spawnTanks([p1, p2, p3], terrain);
 
@@ -193,25 +196,31 @@ describe('TankManager', () => {
       }
 
       // Vérifier la distance minimale
-      expect(Math.abs(p1.tank.position.x - p2.tank.position.x)).toBeGreaterThanOrEqual(100);
-      expect(Math.abs(p1.tank.position.x - p3.tank.position.x)).toBeGreaterThanOrEqual(100);
-      expect(Math.abs(p2.tank.position.x - p3.tank.position.x)).toBeGreaterThanOrEqual(100);
+      expect(
+        Math.abs(p1.tank.position.x - p2.tank.position.x),
+      ).toBeGreaterThanOrEqual(100);
+      expect(
+        Math.abs(p1.tank.position.x - p3.tank.position.x),
+      ).toBeGreaterThanOrEqual(100);
+      expect(
+        Math.abs(p2.tank.position.x - p3.tank.position.x),
+      ).toBeGreaterThanOrEqual(100);
     });
 
-    it('shuffles start positions randomly across multiple runs instead of keeping fixed player order', () => {
+    it("shuffles start positions randomly across multiple runs instead of keeping fixed player order", () => {
       // Pour s'assurer du mélange, on appelle spawnTanks plusieurs fois et on vérifie
       // que l'ordre des coordonnées X des joueurs n'est pas toujours trié par ID (ex. p1.x < p2.x < p3.x).
       const tankManager = new TankManager();
       const terrain = new TerrainManager(800, 600);
-      
+
       let p1LeftOfP2Count = 0;
       let p2LeftOfP1Count = 0;
 
       const runs = 20;
       for (let r = 0; r < runs; r++) {
-        const p1 = createDummyPlayer('1', false);
-        const p2 = createDummyPlayer('2', false);
-        
+        const p1 = createDummyPlayer("1", false);
+        const p2 = createDummyPlayer("2", false);
+
         tankManager.spawnTanks([p1, p2], terrain);
 
         if (p1.tank.position.x < p2.tank.position.x) {
