@@ -379,7 +379,7 @@ export class TurnManager {
   };
 
   /** Modifie l'angle du canon du joueur actuel */
-  private adjustAngle(delta: number): void {
+  public adjustAngle(delta: number): void {
     const player = this.getCurrentPlayer();
     if (!player) return;
 
@@ -393,7 +393,7 @@ export class TurnManager {
   }
 
   /** Modifie la puissance du tir */
-  private adjustPower(delta: number): void {
+  public adjustPower(delta: number): void {
     const player = this.getCurrentPlayer();
     if (!player) return;
 

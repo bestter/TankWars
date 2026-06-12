@@ -552,6 +552,30 @@ export function useGameSession({
     clearCelebrationTimer();
   };
 
+  const handleAdjustAngle = (delta: number): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.getTurnManager().adjustAngle(delta);
+  };
+
+  const handleAdjustPower = (delta: number): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.getTurnManager().adjustPower(delta);
+  };
+
+  const handleCycleWeapon = (delta: 1 | -1): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.getTurnManager().cycleWeapon(delta);
+  };
+
+  const handleFire = (): void => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.getTurnManager().tryFire();
+  };
+
   return {
     canvasRef,
     state,
@@ -564,5 +588,9 @@ export function useGameSession({
     handleNextRound,
     handleNewGameFromSummary,
     handleNewGame,
+    handleAdjustAngle,
+    handleAdjustPower,
+    handleCycleWeapon,
+    handleFire,
   };
 }

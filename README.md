@@ -37,20 +37,22 @@
 - **Shields + Health** — Tanks have both health and shield layers.
 - **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned instantly from tank destructions ($300 standard, $600 for the last standing tank) and base survival ($500).
 - **Internationalization (i18n)** — Complete French (FR) and English (EN) translations for all UI text, settings, weapon descriptions, and game status messages. Features a retro-styled LanguageSwitcher component to toggle language on the fly.
+- **Mobile Playability & PWA Support** — Full touch controls (D-Pad for angle and power, fire, weapon cycling) with press & hold support. Progressive Web App (PWA) configuration (`manifest.json` + Service Worker `sw.js` for offline cache) enabling installability on iOS and Android home screens in fullscreen landscape mode.
 
 ---
 
 ## Controls
 
-| Key       | Action                          |
-|-----------|---------------------------------|
-| `←` `→`  | Adjust turret angle             |
-| `↑` `↓`   | Adjust firing power             |
-| `SPACE`   | Fire current weapon             |
-| `A` / `E` | Switch weapon                   |
-| Mouse     | Click weapon buttons in HUD     |
+| Key / Input  | Action                          |
+|--------------|---------------------------------|
+| `←` `→`      | Adjust turret angle             |
+| `↑` `↓`      | Adjust firing power             |
+| `SPACE`      | Fire current weapon             |
+| `A` / `E`    | Switch weapon                   |
+| Mouse        | Click weapon buttons in HUD     |
+| Touch Screen | On-screen retro controls (mobile) |
 
-The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks (featuring multicolored trails, circular/rainbow patterns, falling confetti, and chiptune spatialized pops) play before SUMMARY.
+The game now starts on a full retro Main Menu (with color picking + tank previews) where you configure 2-4 players (Human or any of 4 AI profiles) before entering combat. During a match the in-game HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round winner CELEBRATION fireworks (featuring multicolored trails, circular/rainbow patterns, falling confetti, and chiptune spatialized pops) play before SUMMARY. Plus, mobile touch controls display automatically on tactile devices.
 
 ---
 

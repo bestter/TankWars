@@ -582,3 +582,113 @@
   background: #000000;
 }
 
+/* Responsive canvas settings */
+canvas {
+  max-width: 100%;
+  height: auto !important;
+  box-sizing: border-box;
+}
+
+/* Mobile controls panel rules */
+.mobile-controls-panel {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  width: 100%;
+  max-width: 800px;
+  background-color: rgba(0, 0, 0, 0.9);
+  border: 3px dashed #55ffff; /* VGA CYAN */
+  padding: 10px 6px;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
+.mobile-control-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.mobile-group-label {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.mobile-button-row {
+  display: flex;
+  gap: 12px;
+}
+
+.retro-mobile-btn {
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 16px;
+  background-color: #222;
+  color: #fff;
+  border: 2px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.retro-mobile-btn:active:not(:disabled) {
+  background-color: #444;
+  border-color: #aaa;
+}
+
+.retro-mobile-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Boutons spécifiques */
+.btn-angle {
+  width: 48px;
+  height: 44px;
+  border-color: #55ffff; /* VGA CYAN */
+  color: #55ffff;
+}
+
+.btn-power {
+  width: 48px;
+  height: 44px;
+  border-color: #ffff55; /* VGA YELLOW */
+  color: #ffff55;
+}
+
+.mobile-actions-group {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-weapon {
+  padding: 0 10px;
+  height: 44px;
+  font-size: 12px;
+  border-color: #ff55ff; /* VGA NEON PINK / MAGENTA */
+  color: #ff55ff;
+}
+
+.btn-fire {
+  padding: 0 16px;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+/* Hide on desktop pointer-based devices with wider screens */
+@media (pointer: fine) and (min-width: 1025px) {
+  .mobile-controls-panel {
+    display: none !important;
+  }
+}
+
+

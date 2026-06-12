@@ -8,6 +8,7 @@ import { WeaponShop } from "./WeaponShop";
 import { GameControlsExplanation } from "./GameControlsExplanation";
 import { GameOverOverlay } from "./GameOverOverlay";
 import { useGameSession } from "./useGameSession";
+import { MobileControls } from "./MobileControls";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -33,6 +34,10 @@ export function GameCanvas({
     handleNextRound,
     handleNewGameFromSummary,
     handleNewGame,
+    handleAdjustAngle,
+    handleAdjustPower,
+    handleCycleWeapon,
+    handleFire,
   } = useGameSession({ initialPlayers, onReturnToMenu });
 
   const {
@@ -96,6 +101,17 @@ export function GameCanvas({
         {/* Retro VGA HUD overlay (superposed on canvas) — only during active combat */}
         {(gamePhase === "COMBAT" || gamePhase === "RESOLUTION") && (
           <GameHUD turnInfo={turnInfo} onWeaponSelect={handleWeaponSelect} />
+        )}
+
+        {/* Contrôles tactiles pour mobile — seulement en combat */}
+        {(gamePhase === "COMBAT" || gamePhase === "RESOLUTION") && (
+          <MobileControls
+            turnInfo={turnInfo}
+            onAdjustAngle={handleAdjustAngle}
+            onAdjustPower={handleAdjustPower}
+            onCycleWeapon={handleCycleWeapon}
+            onFire={handleFire}
+          />
         )}
 
         {/* Round Summary overlay (fin de manche) — keeps canvas + fireworks visible underneath */}
