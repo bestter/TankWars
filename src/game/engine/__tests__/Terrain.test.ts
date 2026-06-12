@@ -270,6 +270,20 @@ describe('TerrainManager', () => {
       expect(internal.dirtyEndX).toBeGreaterThan(150);
       expect(internal.needsFullRedraw).toBe(false);
     });
+
+    it('resets dirty band to full width after generate()', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      terrain.generate();
+      terrain.draw(mockCtx());
+      terrain.destroyTerrain(40, 140, 12);
+
+      terrain.generate();
+
+      expect(internal.dirtyStartX).toBe(0);
+      expect(internal.dirtyEndX).toBe(WIDTH - 1);
+      expect(internal.needsFullRedraw).toBe(true);
+    });
   });
 
 });

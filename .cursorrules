@@ -24,6 +24,7 @@
 
 - ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
+- **Terrain Partial Redraw Visual Fix (v0.4.1) :** Fixed blue vertical lines, cut grass on curves, and fuzzy brown/green fringe from partial offscreen crater redraw (`Terrain.ts` layered paint). **113 unit tests**.
 - **Game Version Bump :** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
 - **Performance Optimizations (v0.4.1) :** Shared `BallisticsSimulator.ts` + lazy AI chunks; terrain partial dirty redraw; HUD throttle + `React.memo`; fireworks 60 Hz optimization. **112 unit tests**.
 - **Game Version Bump :** Bumped game version to `0.4.0` in `package.json` and `package-lock.json`.

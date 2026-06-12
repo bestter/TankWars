@@ -43,6 +43,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, jagged grass on curves, and fuzzy brown/green fringe after partial offscreen crater redraws. Layered offscreen paint: opaque sky, brown columns below grass ribbon, smooth grass polygon, `clipSkyAboveSurface`. **113 unit tests**.
 - **Game Version Bump:** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
 - **Performance Optimizations (v0.4.1):** Shared `BallisticsSimulator.ts` (two-phase search, early exit, lazy-loaded v2–v4 AI chunks); terrain partial dirty-band offscreen redraw; HUD throttle (~15 Hz) + `React.memo` on `GameHUD`/`MobileControls` (fixed throttle timer cleanup in `removeInputListeners`); fireworks 60 Hz tick with in-place compaction and 250-particle cap.
 - **Expanded Test Coverage (112 tests):** Added ballistic, AI dispatcher, strategy smoke, fireworks, terrain dirty-band, and HUD throttle unit tests; shared helpers in `src/game/__tests__/helpers.ts`.

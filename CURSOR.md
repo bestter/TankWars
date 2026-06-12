@@ -23,6 +23,7 @@
 - Tank visuals: exclusively `drawTankSprite(...)` (see `src/game/rendering/tankSprite.ts`). Supports hull angle (slope) + independent turretAngle. Now includes Step 4: active indicator (GameEngine), owner-colored shells (PhysicsEngine), recoil (TankManager).
 - State machine (see `src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons & Economy: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited (never in shop). Others limited, decrement on use. Shop between rounds. Advanced weapons (Thermonuclear etc.) have special VFX/sounds in GameEngine.
+- **Terrain Partial Redraw Visual Fix (v0.4.1) :** Corrige les lignes bleues, le gazon coupé sur les courbes et l'effet flou brun/vert après les cratères (redraw partiel offscreen à calques opaques dans `Terrain.ts`). **113 tests**.
 - **Game Version Bump :** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
 - **Performance Optimizations (v0.4.1) :** `BallisticsSimulator.ts` (recherche balistique partagée, lazy-load v2–v4), redraw partiel du terrain, throttle HUD ~15 Hz + `React.memo`, feux d'artifice 60 Hz. Suite de tests portée à **112** tests.
 - **Game Version Bump :** Bumped game version to `0.4.0` in `package.json` and `package-lock.json`.
