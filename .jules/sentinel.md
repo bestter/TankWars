@@ -10,3 +10,7 @@
 **Vulnerability:** Use of raw error objects in `console.error` logs (e.g., in analytics and AI turn management) potentially leaking stack traces and structural details to client-side consoles.
 **Learning:** Exposing raw error objects in client-side code can aid attackers by revealing internal paths, module names, and structural logic through stack traces. This is considered an information leakage vulnerability.
 **Prevention:** When logging errors using `console.error`, explicitly extract and log the error message using `error instanceof Error ? error.message : String(error)` rather than logging the entire error object.
+## 2026-06-12 - [Remove unsafe-inline from CSP script-src]
+**Vulnerability:** The Content-Security-Policy (CSP) in `index.html` included the `'unsafe-inline'` directive in `script-src`.
+**Learning:** This directive allows the execution of inline scripts (e.g., via `<script>...</script>` blocks or inline event handlers like `onclick="), which significantly increases the risk and impact of Cross-Site Scripting (XSS) attacks. In modern React/Vite applications, this is generally unnecessary for production environments.
+**Prevention:** Avoid using `'unsafe-inline'` in the `script-src` directive of the CSP. If inline scripts are absolutely necessary, use nonces or hashes to whitelist specific inline scripts.
