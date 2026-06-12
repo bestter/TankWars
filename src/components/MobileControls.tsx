@@ -19,9 +19,17 @@ export function MobileControls({
   onFire,
 }: MobileControlsProps) {
   const { t } = useTranslation();
-  const [isTouch, setIsTouch] = useState(false);
+  const [isTouch, setIsTouch] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const mediaQuery = window.matchMedia("(pointer: coarse)");
+    return (
+      mediaQuery.matches ||
+      "ontouchstart" in window ||
+      navigator.maxTouchPoints > 0
+    );
+  });
 
-  // Détection des écrans tactiles / mobiles
+  // Détection des écrans tactiles / mobiles (écouteur de changements de configuration)
   useEffect(() => {
     const mediaQuery = window.matchMedia("(pointer: coarse)");
     const checkTouch = () => {
@@ -31,7 +39,6 @@ export function MobileControls({
           navigator.maxTouchPoints > 0
       );
     };
-    checkTouch();
     mediaQuery.addEventListener("change", checkTouch);
     return () => mediaQuery.removeEventListener("change", checkTouch);
   }, []);
