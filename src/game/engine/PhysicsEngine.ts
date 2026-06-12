@@ -50,6 +50,7 @@ const PROJECTILE_DRAG = 0.28;
 
 export class PhysicsEngine {
   private projectiles: Projectile[] = [];
+  private projectilePool: Projectile[] = [];
 
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
@@ -77,17 +78,35 @@ export class PhysicsEngine {
     const vx = Math.cos(rad) * speed;
     const vy = -Math.sin(rad) * speed; // négatif = vers le haut dans le canvas
 
-    this.projectiles.push({
-      x: startX,
-      y: startY,
-      vx,
-      vy,
-      weaponId,
-      ownerId,
-      ownerColor,
-      initialAngle: angle,
-      initialPower: power,
-    });
+    const p = this.projectilePool.pop();
+    if (p) {
+      p.x = startX;
+      p.y = startY;
+      p.vx = vx;
+      p.vy = vy;
+      p.weaponId = weaponId;
+      p.ownerId = ownerId;
+      p.ownerColor = ownerColor;
+      p.initialAngle = angle;
+      p.initialPower = power;
+      p.isSubmunition = undefined;
+      p.lastVy = undefined;
+      p.bounceCount = undefined;
+      p.hasLeftOwnerHitbox = undefined;
+      this.projectiles.push(p);
+    } else {
+      this.projectiles.push({
+        x: startX,
+        y: startY,
+        vx,
+        vy,
+        weaponId,
+        ownerId,
+        ownerColor,
+        initialAngle: angle,
+        initialPower: power,
+      });
+    }
 
     this.previousCount = this.projectiles.length;
   }
@@ -136,7 +155,8 @@ export class PhysicsEngine {
         p.y > terrainManager.height + 150;
 
       if (outOfBounds) {
-        this.projectiles.splice(i, 1);
+        const [removed] = this.projectiles.splice(i, 1);
+        this.projectilePool.push(removed);
         continue;
       }
 
@@ -242,7 +262,8 @@ export class PhysicsEngine {
     });
 
     // 4. Retirer le projectile
-    this.projectiles.splice(index, 1);
+    const [removed] = this.projectiles.splice(index, 1);
+    this.projectilePool.push(removed);
   }
 
   /**
@@ -275,20 +296,39 @@ export class PhysicsEngine {
       const relX = p.x + Math.cos(dir) * offset;
       const relY = p.y + Math.sin(dir) * offset;
 
-      this.projectiles.push({
-        x: relX,
-        y: relY,
-        vx: subVx,
-        vy: subVy,
-        weaponId: p.weaponId,
-        ownerId: p.ownerId,
-        ownerColor: p.ownerColor,
-        isSubmunition: true,
-      });
+      const sub = this.projectilePool.pop();
+      if (sub) {
+        sub.x = relX;
+        sub.y = relY;
+        sub.vx = subVx;
+        sub.vy = subVy;
+        sub.weaponId = p.weaponId;
+        sub.ownerId = p.ownerId;
+        sub.ownerColor = p.ownerColor;
+        sub.isSubmunition = true;
+        sub.lastVy = undefined;
+        sub.initialAngle = undefined;
+        sub.initialPower = undefined;
+        sub.bounceCount = undefined;
+        sub.hasLeftOwnerHitbox = undefined;
+        this.projectiles.push(sub);
+      } else {
+        this.projectiles.push({
+          x: relX,
+          y: relY,
+          vx: subVx,
+          vy: subVy,
+          weaponId: p.weaponId,
+          ownerId: p.ownerId,
+          ownerColor: p.ownerColor,
+          isSubmunition: true,
+        });
+      }
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
-    this.projectiles.splice(parentIndex, 1);
+    const [removedParent] = this.projectiles.splice(parentIndex, 1);
+    this.projectilePool.push(removedParent);
   }
 
   /**
@@ -390,6 +430,9 @@ export class PhysicsEngine {
    */
   public clear(notifySettlement = true): void {
     const hadProjectiles = this.projectiles.length > 0;
+    for (const p of this.projectiles) {
+      this.projectilePool.push(p);
+    }
     this.projectiles = [];
     this.previousCount = 0;
 
