@@ -44,6 +44,42 @@ interface HitEvent {
   blastRadius: number;
 }
 
+type FireworkParticle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  size: number;
+  type: "rocket" | "particle" | "confetti";
+  trail?: Array<{ x: number; y: number; alpha: number }>;
+  swaySpeed?: number;
+  swayOffset?: number;
+  swayWidth?: number;
+  rotation?: number;
+  rotationSpeed?: number;
+};
+
+const FESTIVE_COLORS: readonly string[] = [
+  VGA_PALETTE.ELECTRIC_CYAN,
+  VGA_PALETTE.FLASH_GREEN,
+  VGA_PALETTE.NEON_PINK,
+  VGA_PALETTE.CYBER_YELLOW,
+  VGA_PALETTE.FLUO_ORANGE,
+  VGA_PALETTE.VOLT_PURPLE,
+  VGA_PALETTE.CYAN,
+  VGA_PALETTE.MAGENTA,
+  VGA_PALETTE.YELLOW,
+  VGA_PALETTE.GREEN,
+  VGA_PALETTE.BLUE,
+  VGA_PALETTE.WHITE,
+];
+
+const FIREWORKS_TICK_DT = 1 / 60;
+const MAX_FIREWORKS = 250;
+
 export class GameEngine {
   public readonly width: number;
   public readonly height: number;
@@ -82,23 +118,9 @@ export class GameEngine {
   private roundCombatActive = true;
 
   // Enriched fireworks for winner celebration
-  private fireworks: Array<{
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    life: number;
-    maxLife: number;
-    color: string;
-    size: number;
-    type: "rocket" | "particle" | "confetti";
-    trail?: Array<{ x: number; y: number; alpha: number }>;
-    swaySpeed?: number;
-    swayOffset?: number;
-    swayWidth?: number;
-    rotation?: number;
-    rotationSpeed?: number;
-  }> = [];
+  private fireworks: FireworkParticle[] = [];
+  private readonly fireworkSpawnBuffer: FireworkParticle[] = [];
+  private fireworksUpdateAccum = 0;
 
   // Impact explosion VFX for huge weapons (e.g. THERMONUCLEAR). Separate from celebration fireworks.
   // Particles use red/orange VGA tones + alpha for "red-orange" blast + flash.
@@ -570,7 +592,7 @@ export class GameEngine {
   private update(dt: number): void {
     // SUMMARY / SHOP: freeze combat simulation (tanks were dying during boutique → false draws)
     if (this.turnManager.isInterRoundPaused()) {
-      this.updateFireworks();
+      this.updateFireworks(dt);
       this.updateImpactExplosions();
       this.tankManager.clearRecoil(); // ensure chassis is un-shifted for summary/shop renders
       return;
@@ -601,7 +623,7 @@ export class GameEngine {
     this.turnManager.update(dt);
 
     // Mise à jour des feux d'artifice (si partie terminée)
-    this.updateFireworks();
+    this.updateFireworks(dt);
     this.updateImpactExplosions();
 
     // Notification pour le layer React (interpolation, debug, etc.)
@@ -1011,7 +1033,29 @@ export class GameEngine {
     }
   }
 
-  private updateFireworks(): void {
+  private queueFireworkSpawn(p: FireworkParticle): void {
+    if (this.fireworks.length + this.fireworkSpawnBuffer.length < MAX_FIREWORKS) {
+      this.fireworkSpawnBuffer.push(p);
+    }
+  }
+
+  private flushFireworkSpawns(): void {
+    for (const spawn of this.fireworkSpawnBuffer) {
+      if (this.fireworks.length >= MAX_FIREWORKS) break;
+      this.fireworks.push(spawn);
+    }
+    this.fireworkSpawnBuffer.length = 0;
+  }
+
+  private updateFireworks(dt: number): void {
+    this.fireworksUpdateAccum += dt;
+    if (this.fireworksUpdateAccum < FIREWORKS_TICK_DT) return;
+    this.fireworksUpdateAccum -= FIREWORKS_TICK_DT;
+
+    this.tickFireworks();
+  }
+
+  private tickFireworks(): void {
     if (this.celebrationWinnerTankId) {
       // Animate the winning tank's cannon sweeping back and forth during celebration
       // and "shooting" fireworks from the barrel tip (so fireworks blow up from the tank).
@@ -1039,7 +1083,7 @@ export class GameEngine {
           const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
           const speed = 4.2 + secureRandom() * 2.8;
           const spread = (secureRandom() - 0.5) * 0.8;
-          this.fireworks.push({
+          this.queueFireworkSpawn({
             type: "rocket",
             x: tipX,
             y: tipY,
@@ -1055,25 +1099,14 @@ export class GameEngine {
       }
     }
 
-    if (this.fireworks.length === 0) return;
+    if (this.fireworks.length === 0 && this.fireworkSpawnBuffer.length === 0) {
+      return;
+    }
 
-    const newFireworks: typeof this.fireworks = [];
-    const festiveColors = [
-      VGA_PALETTE.ELECTRIC_CYAN,
-      VGA_PALETTE.FLASH_GREEN,
-      VGA_PALETTE.NEON_PINK,
-      VGA_PALETTE.CYBER_YELLOW,
-      VGA_PALETTE.FLUO_ORANGE,
-      VGA_PALETTE.VOLT_PURPLE,
-      VGA_PALETTE.CYAN,
-      VGA_PALETTE.MAGENTA,
-      VGA_PALETTE.YELLOW,
-      VGA_PALETTE.GREEN,
-      VGA_PALETTE.BLUE,
-      VGA_PALETTE.WHITE,
-    ];
+    let write = 0;
 
-    for (const p of this.fireworks) {
+    for (let read = 0; read < this.fireworks.length; read++) {
+      const p = this.fireworks[read];
       p.x += p.vx;
       p.y += p.vy;
 
@@ -1091,7 +1124,7 @@ export class GameEngine {
 
         // Rocket spark trails
         if (secureRandom() < 0.22) {
-          newFireworks.push({
+          this.queueFireworkSpawn({
             type: "particle",
             x: p.x - p.vx * 0.5,
             y: p.y - p.vy * 0.5,
@@ -1115,10 +1148,10 @@ export class GameEngine {
             // Ring Burst
             const count = 22 + Math.floor(secureRandom() * 10);
             const baseSpeed = 2.4 + secureRandom() * 1.6;
-            const burstColor = secureRandom() < 0.4 ? festiveColors[Math.floor(secureRandom() * festiveColors.length)] : p.color;
+            const burstColor = secureRandom() < 0.4 ? FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)] : p.color;
             for (let i = 0; i < count; i++) {
               const angle = (i * 2 * Math.PI) / count;
-              newFireworks.push({
+              this.queueFireworkSpawn({
                 type: "particle",
                 x: p.x,
                 y: p.y,
@@ -1137,7 +1170,7 @@ export class GameEngine {
             for (let i = 0; i < count; i++) {
               const angle = secureRandom() * Math.PI * 2;
               const speed = 1.0 + secureRandom() * 3.8;
-              newFireworks.push({
+              this.queueFireworkSpawn({
                 type: "particle",
                 x: p.x,
                 y: p.y,
@@ -1145,7 +1178,7 @@ export class GameEngine {
                 vy: Math.sin(angle) * speed,
                 life: 20 + secureRandom() * 22,
                 maxLife: 42,
-                color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+                color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
                 size: 1.8 + secureRandom() * 2.2,
                 trail: [],
               });
@@ -1155,7 +1188,7 @@ export class GameEngine {
             const count = 18 + Math.floor(secureRandom() * 10);
             const burstColor = secureRandom() < 0.3 ? VGA_PALETTE.CYBER_YELLOW : p.color;
             for (let i = 0; i < count; i++) {
-              newFireworks.push({
+              this.queueFireworkSpawn({
                 type: "particle",
                 x: p.x,
                 y: p.y,
@@ -1174,7 +1207,7 @@ export class GameEngine {
             for (let i = 0; i < count; i++) {
               const angle = secureRandom() * Math.PI * 2;
               const speed = 1.8 + secureRandom() * 2.8;
-              newFireworks.push({
+              this.queueFireworkSpawn({
                 type: "particle",
                 x: p.x,
                 y: p.y,
@@ -1192,7 +1225,7 @@ export class GameEngine {
           // Spawn a burst of falling confetti at each rocket explosion
           const confettiCount = 6 + Math.floor(secureRandom() * 6);
           for (let i = 0; i < confettiCount; i++) {
-            newFireworks.push({
+            this.queueFireworkSpawn({
               type: "confetti",
               x: p.x,
               y: p.y,
@@ -1200,7 +1233,7 @@ export class GameEngine {
               vy: -1.0 - secureRandom() * 2.0,
               life: 110 + secureRandom() * 80,
               maxLife: 190,
-              color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+              color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
               size: 4 + secureRandom() * 4,
               swaySpeed: 0.04 + secureRandom() * 0.05,
               swayOffset: secureRandom() * Math.PI * 2,
@@ -1210,7 +1243,7 @@ export class GameEngine {
             });
           }
         } else {
-          newFireworks.push(p);
+          this.fireworks[write++] = p;
         }
       } else if (p.type === "particle") {
         p.vy += 0.075; // gravity for explosion particles
@@ -1229,7 +1262,7 @@ export class GameEngine {
         }
 
         if (p.life > 0) {
-          newFireworks.push(p);
+          this.fireworks[write++] = p;
         }
       } else if (p.type === "confetti") {
         // Slow descent confetti physics
@@ -1242,19 +1275,26 @@ export class GameEngine {
         const groundY = this.terrain.getHeightAt(Math.max(0, Math.min(this.width - 1, Math.floor(p.x))));
 
         if (p.life > 0 && p.y < groundY) {
-          newFireworks.push(p);
+          this.fireworks[write++] = p;
         }
       }
     }
 
-    this.fireworks = newFireworks;
+    this.fireworks.length = write;
+    this.flushFireworkSpawns();
+
+    let activeRockets = 0;
+    let activeConfetti = 0;
+    for (const f of this.fireworks) {
+      if (f.type === "rocket") activeRockets++;
+      else if (f.type === "confetti") activeConfetti++;
+    }
 
     // Keep spawning lots of big rockets from the bottom of the screen while celebrating
-    const activeRockets = this.fireworks.filter((f) => f.type === "rocket").length;
     if (activeRockets < 5 && secureRandom() < 0.07) {
       const spawnX = Math.max(40, Math.min(this.width - 40, this.celebrationCenterX + (secureRandom() - 0.5) * 260));
-      const spawnColor = festiveColors[Math.floor(secureRandom() * festiveColors.length)];
-      this.fireworks.push({
+      const spawnColor = FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)];
+      this.queueFireworkSpawn({
         type: "rocket",
         x: spawnX,
         y: this.height - 15,
@@ -1269,9 +1309,8 @@ export class GameEngine {
     }
 
     // Add extra random confetti rain during high celebration
-    const activeConfetti = this.fireworks.filter((f) => f.type === "confetti").length;
     if (activeConfetti < 40 && secureRandom() < 0.15) {
-      this.fireworks.push({
+      this.queueFireworkSpawn({
         type: "confetti",
         x: secureRandom() * this.width,
         y: -10,
@@ -1279,7 +1318,7 @@ export class GameEngine {
         vy: 0.3 + secureRandom() * 0.5,
         life: 130 + secureRandom() * 90,
         maxLife: 220,
-        color: festiveColors[Math.floor(secureRandom() * festiveColors.length)],
+        color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
         size: 4 + secureRandom() * 3.5,
         swaySpeed: 0.03 + secureRandom() * 0.04,
         swayOffset: secureRandom() * Math.PI * 2,
@@ -1288,6 +1327,8 @@ export class GameEngine {
         rotationSpeed: (secureRandom() - 0.5) * 0.1,
       });
     }
+
+    this.flushFireworkSpawns();
   }
 
   /** Draws celebration fireworks (game over match win or pre-SUMMARY round winner celebration) */
