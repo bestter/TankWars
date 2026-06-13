@@ -56,7 +56,8 @@ src/
         ├── TankManager.ts  # Tank state, draw (with recoil offsets), spawn, damage, gravity
         └── ai/
             ├── AIEngine.ts             # Strategy contract — implement this for new AI
-            ├── AIByProfileStrategy.ts  # Dispatcher selecting per-player aiProfile (v1/v2/v3/v4)
+            ├── BallisticsSimulator.ts  # Shared trajectory simulation + two-phase ballistic search (v2–v4 aiming)
+            ├── AIByProfileStrategy.ts  # Dispatcher per aiProfile (v1/v2/v3/v4); v2–v4 lazy-loaded via dynamic import()
             ├── AIHeuristicStrategy.ts  # Phase 2 "IA OK" (v2-heuristic) — wind/terrain aware, revenge, memory, precision
             ├── AISimpleStrategy.ts     # Phase 1 naive (v1-random) "IA SIMPLE" / "Mr. Simple"
             ├── AISniperStrategy.ts     # Phase 3 "IA SNIPER" (v3-sniper) — high precision
@@ -118,7 +119,7 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 - **Phase 2:** `AIHeuristicStrategy` (menu `aiProfile: 'v2-heuristic'`, "IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection (e.g. GRENADE on rough, CLUSTER vs groups). Not a one-shot sniper (kills typically take 3+ shots).
 - **Phase 3:** `AISniperStrategy` (menu `aiProfile: 'v3-sniper'`, "IA SNIPER") — high-precision aiming using numerical trajectory search under drag/wind, with a deliberate coordinate-shifting first-shot miss and perfect subsequent shots.
 - **Phase 4:** `AISmartStrategy` (menu `aiProfile: 'v4-smart'`, "IA EXPERT") — adaptive / improved heuristic with bias learning.
-- A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types; falls back to v1).
+- A single `AIByProfileStrategy` (registered in `GameCanvas.tsx`) dispatches per-player based on `aiProfile` (supports mixed Human + different AI types; falls back to v1). Advanced profiles (v2–v4) are **lazy-loaded** on first use; ballistic aiming for v2–v4 goes through shared `BallisticsSimulator.ts` (coarse-to-fine search, early exit).
 - New strategies must be registered in `GameCanvas.tsx` (via the profile dispatcher); do not entangle AI logic inside `TankManager` or `GameEngine` internals.
 - Supporting data: `aiProfile` on `Player`, `lastHitBy` on `Tank`, `windForce`/`gravity` on `GameState` snapshots for AI.
 
@@ -130,9 +131,9 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 | New weapon | `types/weapon.ts`, GameEngine (sounds + VFX/particles for large weapons), PhysicsEngine/TankManager (special damage/projectile rules), HUD/shop, GameCanvas (AI buy lists) |
 | Turn / round flow | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physics / explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
-| Terrain generation / craters | `Terrain.ts` |
+| Terrain generation / craters / partial dirty redraw | `Terrain.ts` |
 | Tank visual / procedural sprite + Step 4 polish | `game/rendering/tankSprite.ts`, `TankManager.ts` (recoil + draw), `GameEngine.ts` (render indicator + fire recoil trigger + color lookup), `PhysicsEngine.ts` (ownerColor on projectiles) |
-| Smarter AI | New file under `game/entities/ai/`, implement `AIEngine`; register in `AIByProfileStrategy.ts` + `GameCanvas.tsx` |
+| Smarter AI | New file under `game/entities/ai/`, implement `AIEngine`; reuse `BallisticsSimulator.ts` for aiming; register in `AIByProfileStrategy.ts` + `GameCanvas.tsx` |
 | Global match phase | `App.tsx`, `types/game.ts` |
 
 ## What agents must not do
@@ -191,6 +192,14 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
+- **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, jagged/cut grass on curves, and fuzzy brown/green fringe after crater explosions from the partial offscreen optimization. `TerrainManager` uses opaque sky fill on an `alpha: false` offscreen buffer, per-column brown earth strictly below the grass ribbon, a smooth filled grass polygon on slopes, and `clipSkyAboveSurface` to remove antialiased fringe; wider dirty-band padding (±10/±8). Extended `Terrain.test.ts` (dirty band reset on `generate()`). **113 unit tests**.
+- **Game Version Bump:** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
+- **Performance Optimizations (v0.4.1):** Major runtime and React churn reductions across four areas:
+  - **Shared Ballistics Simulator:** New `BallisticsSimulator.ts` centralizes `simulateShot` / `simulateSmartShot` and a two-phase coarse-to-fine `searchBallisticSolution` (early exit on low error). `AIHeuristicStrategy`, `AISniperStrategy`, and `AISmartStrategy` delegate aiming to it (eliminates triplicate simulation loops). `AIByProfileStrategy` lazy-loads v2–v4 via dynamic `import()` — separate Rollup chunks, smaller initial bundle when only v1 AI is used.
+  - **Terrain Partial Dirty Redraw:** `TerrainManager` tracks a horizontal dirty band per crater (`dirtyStartX`/`dirtyEndX`); `renderPartialOffscreen` redraws only the affected columns instead of the full 800×480 offscreen buffer (opaque sky → lava → brown columns below grass → grass ribbon → sky clip). `smoothHeights` uses a reusable `smoothScratch` buffer (no per-crater `.slice()`).
+  - **HUD Update Throttling:** `TurnManager` throttles angle/power HUD callbacks to ~15 Hz (`HUD_THROTTLE_MS = 66`); structural changes (player, weapon, input lock, falling state, turn) dispatch immediately. `GameHUD` and `MobileControls` wrapped in `React.memo`. **Bug fix:** `removeInputListeners` now always clears the pending HUD throttle timer (previously skipped when keyboard listeners were never attached).
+  - **Fireworks VFX Optimization:** Celebration particles tick at 60 Hz (decoupled from 120 Hz physics), in-place compaction (no per-frame `newFireworks` array), reusable spawn buffer, `MAX_FIREWORKS = 250` cap, hoisted `FESTIVE_COLORS` module constant.
+- **Expanded Test Coverage (112 tests):** Added 27 unit tests across `BallisticsSimulator.test.ts`, `AIByProfileStrategy.test.ts`, `AIStrategies.test.ts`, `GameEngine.fireworks.test.ts`, extended `Terrain.test.ts` (partial dirty band) and `TurnManager.test.ts` (HUD throttle); shared fixtures in `src/game/__tests__/helpers.ts`.
 - **Game Version Bump:** Bumped game version to `0.4.0` in `package.json` and `package-lock.json`.
 - **Support Mobile et PWA :** Ajout de contrôles tactiles virtuels réactifs (D-Pad pour l'angle, D-Pad pour la puissance, tir direct, changement d'arme) avec support du maintien prolongé (press & hold) pour le défilement rapide sous le canvas de combat. Intégration PWA complète avec un manifeste (`manifest.json`) configuré pour le mode plein écran paysage (`standalone` + `landscape`) et un Service Worker (`sw.js`) gérant le cache hors-ligne et l'installabilité sur l'écran d'accueil mobile. Métadonnées Apple iOS intégrées dans `index.html` pour masquer les barres du navigateur Safari.
 - **AI Baby Nuke & Thermonuclear Usage Restriction:** Reduced the frequency and overuse of `NUKE` (Baby Nuke) and `THERMONUCLEAR` weapons by AI players. Lowered their purchase priorities in the automatic shop by moving them to the end of the preference list in [aiShopHelper.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/aiShopHelper.ts). Restricted their combat selection in [AISmartStrategy.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/AISmartStrategy.ts) and [AIHeuristicStrategy.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/AIHeuristicStrategy.ts) by requiring a minimum health threshold on targets (40 HP for Nuke, 50 HP for Thermonuclear) to prevent waste on near-dead tanks, and introducing a random probability hurdle (35% selection chance for Nuke, 30% for Thermonuclear).

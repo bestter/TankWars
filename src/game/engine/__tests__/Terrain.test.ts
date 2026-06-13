@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TerrainManager } from '../Terrain';
+import { terrainInternals } from '../../__tests__/helpers';
 
 describe('TerrainManager', () => {
   describe('getHeightAt', () => {
@@ -196,6 +197,92 @@ describe('TerrainManager', () => {
       expect(terrain.checkCollision(-Number.MAX_VALUE, 150)).toBe(false);
       expect(terrain.checkCollision(50, Number.MAX_VALUE)).toBe(true);
       expect(terrain.checkCollision(50, -Number.MAX_VALUE)).toBe(false);
+    });
+  });
+
+  describe('partial offscreen dirty band', () => {
+    const WIDTH = 200;
+    const HEIGHT = 200;
+
+    function mockCtx(): CanvasRenderingContext2D {
+      return {
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        fill: vi.fn(),
+        stroke: vi.fn(),
+        drawImage: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+    }
+
+    it('marks needsFullRedraw after generate()', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+
+      terrain.generate();
+
+      expect(internal.needsFullRedraw).toBe(true);
+      expect(internal.isDirty).toBe(true);
+    });
+
+    it('clears needsFullRedraw after first full draw', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      terrain.generate();
+
+      terrain.draw(mockCtx());
+
+      expect(internal.needsFullRedraw).toBe(false);
+      expect(internal.isDirty).toBe(false);
+    });
+
+    it('tracks dirty horizontal band after destroyTerrain without forcing full redraw', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      terrain.generate();
+      terrain.draw(mockCtx());
+
+      terrain.destroyTerrain(40, 140, 12);
+
+      expect(internal.isDirty).toBe(true);
+      expect(internal.needsFullRedraw).toBe(false);
+      expect(internal.dirtyStartX).toBeLessThanOrEqual(40);
+      expect(internal.dirtyEndX).toBeGreaterThanOrEqual(40);
+    });
+
+    it('merges dirty bands across multiple destroyTerrain calls', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      terrain.generate();
+      terrain.draw(mockCtx());
+
+      terrain.destroyTerrain(25, 140, 10);
+      const firstStart = internal.dirtyStartX;
+      const firstEnd = internal.dirtyEndX;
+
+      terrain.destroyTerrain(170, 140, 10);
+
+      expect(internal.dirtyStartX).toBeLessThanOrEqual(firstStart);
+      expect(internal.dirtyEndX).toBeGreaterThanOrEqual(firstEnd);
+      expect(internal.dirtyEndX).toBeGreaterThan(150);
+      expect(internal.needsFullRedraw).toBe(false);
+    });
+
+    it('resets dirty band to full width after generate()', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      terrain.generate();
+      terrain.draw(mockCtx());
+      terrain.destroyTerrain(40, 140, 12);
+
+      terrain.generate();
+
+      expect(internal.dirtyStartX).toBe(0);
+      expect(internal.dirtyEndX).toBe(WIDTH - 1);
+      expect(internal.needsFullRedraw).toBe(true);
     });
   });
 

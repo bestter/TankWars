@@ -66,12 +66,12 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => [
-    { name: t("default_player_name_1"), isHuman: true, color: TANK_COLOR_POOL[0], id: "p-1" },
+    { name: t("default_player_name_1"), isHuman: true, color: TANK_COLOR_POOL[0], id: crypto.randomUUID() },
     {
       name: t("default_cpu_name_1"),
       isHuman: false,
       color: TANK_COLOR_POOL[1],
-      id: "p-2",
+      id: crypto.randomUUID(),
       aiProfile: "v1-random",
     },
   ]);

@@ -9,14 +9,16 @@ import { secureRandom } from "../../../utils/random";
 import type { AIEngine } from "./AIEngine";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
+import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
 
 export class AISimpleStrategy implements AIEngine {
   async executeTurn(
     tankId: string,
     gameState: GameState,
-    /* _terrainManager: TerrainManager */ // Not heavily used in V1
+    _terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
+    void _terrainManager;
     const currentPlayer = gameState.players.find((p) => p.tank.id === tankId);
     if (!currentPlayer) {
       return { angle: 45, power: 50 };
