@@ -52,6 +52,7 @@ export class PhysicsEngine {
   private projectiles: Projectile[] = [];
   private projectilePool: Projectile[] = [];
 
+
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
 
@@ -60,6 +61,39 @@ export class PhysicsEngine {
    * L'angle est en degrés (0 = horizontal droite, positif = vers le haut).
    * L'axe Y est inversé pour correspondre au canvas (Y vers le bas).
    */
+
+  private getProjectile(x: number, y: number, vx: number, vy: number, weaponId: WeaponId, ownerId?: string, ownerColor?: string, isSubmunition?: boolean, bounceCount?: number): Projectile {
+    const p = this.projectilePool.pop();
+    if (p) {
+      p.x = x;
+      p.y = y;
+      p.vx = vx;
+      p.vy = vy;
+      p.weaponId = weaponId;
+      p.ownerId = ownerId;
+      p.ownerColor = ownerColor;
+      p.isSubmunition = isSubmunition;
+      p.initialPower = undefined;
+      p.initialAngle = undefined;
+      p.lastVy = undefined;
+      p.bounceCount = bounceCount;
+      p.hasLeftOwnerHitbox = false;
+      return p;
+    }
+    return {
+      x,
+      y,
+      vx,
+      vy,
+      weaponId,
+      ownerId,
+      ownerColor,
+      isSubmunition,
+      bounceCount,
+      hasLeftOwnerHitbox: false,
+    };
+  }
+
   public launchProjectile(
     startX: number,
     startY: number,
@@ -155,8 +189,8 @@ export class PhysicsEngine {
         p.y > terrainManager.height + 150;
 
       if (outOfBounds) {
-        const [removed] = this.projectiles.splice(i, 1);
-        this.projectilePool.push(removed);
+        this.freeProjectile(this.projectiles[i]);
+        this.projectiles.splice(i, 1);
         continue;
       }
 
@@ -229,6 +263,11 @@ export class PhysicsEngine {
    * - Mise à jour des positions des tanks (chute)
    * - Suppression du projectile
    */
+
+  private freeProjectile(p: Projectile): void {
+    this.projectilePool.push(p);
+  }
+
   private handleImpact(
     index: number,
     p: Projectile,
@@ -262,8 +301,8 @@ export class PhysicsEngine {
     });
 
     // 4. Retirer le projectile
-    const [removed] = this.projectiles.splice(index, 1);
-    this.projectilePool.push(removed);
+    this.freeProjectile(p);
+    this.projectiles.splice(index, 1);
   }
 
   /**
@@ -327,8 +366,8 @@ export class PhysicsEngine {
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
-    const [removedParent] = this.projectiles.splice(parentIndex, 1);
-    this.projectilePool.push(removedParent);
+    this.freeProjectile(this.projectiles[parentIndex]);
+    this.projectiles.splice(parentIndex, 1);
   }
 
   /**
@@ -431,9 +470,9 @@ export class PhysicsEngine {
   public clear(notifySettlement = true): void {
     const hadProjectiles = this.projectiles.length > 0;
     for (const p of this.projectiles) {
-      this.projectilePool.push(p);
+      this.freeProjectile(p);
     }
-    this.projectiles = [];
+    this.projectiles.length = 0;
     this.previousCount = 0;
 
     if (hadProjectiles && notifySettlement) {

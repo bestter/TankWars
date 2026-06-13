@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { memo, useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
@@ -11,7 +11,7 @@ export interface MobileControlsProps {
   onFire: () => void;
 }
 
-export function MobileControls({
+export const MobileControls = memo(function MobileControls({
   turnInfo,
   onAdjustAngle,
   onAdjustPower,
@@ -182,4 +182,4 @@ export function MobileControls({
       </div>
     </div>
   );
-}
+});

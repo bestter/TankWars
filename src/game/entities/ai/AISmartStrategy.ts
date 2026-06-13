@@ -16,6 +16,7 @@ import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
+import { searchBallisticSolution } from "./BallisticsSimulator";
 
 interface SmartMemory {
   currentTargetId?: string;
@@ -243,70 +244,35 @@ export class AISmartStrategy implements AIEngine {
     const aMin = isRight ? 15 : 95;
     const aMax = isRight ? 85 : 165;
 
-    const BASE_SPEED = 6.0;
-    const DT = 1 / 120;
-    const MAX_STEPS = 420;
-
     const weapon = WEAPON_REGISTRY[weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
 
-    let best = { angle: isRight ? 55 : 125, power: 60, err: 999999 };
-
-    // Smart fine search: 1.5° angle steps
-    for (let a = aMin; a <= aMax; a += 1.5) {
-      let lo = 20;
-      let hi = 95;
-      for (let iter = 0; iter < 10; iter++) {
-        const p = (lo + hi) / 2;
-        const res = this.simulateSmartShot(
-          sx,
-          sy,
-          a,
-          p,
-          wind,
-          gravity,
-          BASE_SPEED,
-          DT,
-          MAX_STEPS,
-          terrain,
-          weaponId,
-        );
-
-        // Self-damage check: Penalty if it hits too close to self
-        const selfDist = Math.hypot(res.landX - sx, res.landY - sy);
-        const selfHarmPenalty = selfDist < blastRadius + 25 ? 50000 : 0;
-
-        const xErr = Math.abs(res.landX - tx);
-        const yErr = Math.abs(res.landY - ty) * 0.35;
-
-        // Detect intermediate terrain obstacle between shooter and target
-        let obstaclePenalty = 0;
-        if (res.hitTerrainEarly) {
-          const isBetween = isRight 
-            ? (res.landX > sx + 20 && res.landX < tx - 35)
-            : (res.landX < sx - 20 && res.landX > tx + 35);
-          if (isBetween) {
-            obstaclePenalty = 10000;
-          } else {
-            obstaclePenalty = 20; // standard early landing penalty
-          }
-        }
-
-        const err = xErr + yErr + obstaclePenalty + selfHarmPenalty;
-
-        if (err < best.err) {
-          best = { angle: a, power: p, err };
-        }
-
-        if (res.landX < tx) {
-          if (isRight) lo = p;
-          else hi = p;
-        } else {
-          if (isRight) hi = p;
-          else lo = p;
-        }
-      }
-    }
+    const best = searchBallisticSolution({
+      sx,
+      sy,
+      tx,
+      ty,
+      wind,
+      gravity,
+      terrain,
+      isRight,
+      aMin,
+      aMax,
+      coarseStep: 5,
+      fineStep: 1.5,
+      fineWindow: 4,
+      powerLo: 20,
+      powerHi: 95,
+      powerIterations: 10,
+      obstaclePenaltyHigh: 10000,
+      obstaclePenaltyLow: 20,
+      weaponId,
+      earlyExitError: 4,
+      selfHarmPenalty: (landX, landY) => {
+        const selfDist = Math.hypot(landX - sx, landY - sy);
+        return selfDist < blastRadius + 25 ? 50000 : 0;
+      },
+    });
 
     let angle = best.angle;
     let power = best.power + mem.lastPowerBias;
@@ -330,96 +296,6 @@ export class AISmartStrategy implements AIEngine {
     power = Math.max(25, Math.min(95, power));
 
     return { angle, power };
-  }
-
-  private simulateSmartShot(
-    sx: number,
-    sy: number,
-    angleDeg: number,
-    power: number,
-    wind: number,
-    gravity: number,
-    baseSpeed: number,
-    dt: number,
-    maxSteps: number,
-    terrain: TerrainManager,
-    weaponId: WeaponId,
-  ): { landX: number; landY: number; hitTerrainEarly: boolean } {
-    const rad = (angleDeg * Math.PI) / 180;
-    let vx = Math.cos(rad) * power * baseSpeed;
-    let vy = -Math.sin(rad) * power * baseSpeed;
-    
-    // Calculate barrel tip position to match GameEngine's launch coordinates
-    const barrelLength = 20;
-    const barrelStartY = sy - 13;
-    let x = sx + Math.cos(rad) * barrelLength;
-    let y = barrelStartY - Math.sin(rad) * barrelLength;
-    let landX = x;
-    let landY = y;
-    let hitEarly = false;
-    let bounceCount = 0;
-    let prevVy: number;
-
-    const DRAG = 0.28;
-    const isGrenade = weaponId === "GRENADE";
-    const isCluster = weaponId === "CLUSTER";
-
-    for (let step = 0; step < maxSteps; step++) {
-      prevVy = vy;
-      vy += gravity * dt;
-      vx += wind * dt;
-
-      const sp = Math.hypot(vx, vy);
-      if (sp > 4) {
-        const drag = DRAG * sp * dt;
-        vx -= (vx / sp) * drag;
-        vy -= (vy / sp) * drag;
-      }
-
-      x += vx * dt;
-      y += vy * dt;
-
-      // Cluster splits at apex in the air
-      if (isCluster && prevVy < 0 && vy >= 0) {
-        // Central submunition continues with similar speed and direction.
-        // We simulate the central cluster submunition continuing.
-        // Just let it keep going.
-      }
-
-      // Check collision
-      if (terrain.checkCollision(x, y)) {
-        if (isGrenade) {
-          // Grenade bounce simulation
-          const surfaceY = terrain.getHeightAt(x);
-          y = surfaceY - 1.2;
-          bounceCount++;
-
-          const speed = Math.hypot(vx, vy);
-          const shouldExplode =
-            bounceCount >= 4 || speed < 3.2 || Math.abs(vy) < 2.0;
-          if (shouldExplode) {
-            landX = x;
-            landY = y;
-            break;
-          }
-          // bounce physics reflect vertical velocity
-          vy = -vy * 0.64;
-          vx *= 0.78;
-        } else {
-          // Normal projectile or cluster split submunition
-          landX = x;
-          landY = y;
-          hitEarly = true;
-          break;
-        }
-      }
-      if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) break;
-
-      landX = x;
-      landY = y;
-    }
-
-    return { landX, landY, hitTerrainEarly: hitEarly };
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
