@@ -17,3 +17,6 @@
 
 ## Fix for Predictable Date.now() in ID Generation
 Replaced hardcoded 'p-1' and 'p-2' (and any remaining Date.now()) with crypto.randomUUID() to ensure secure and unique ID generation for player configurations in MainMenu.tsx.
+Added caching to `TankManager.getAlivePlayers()` to prevent array allocations inside game loop.
+Tested performance using a benchmark, verified functionality via test suite.
+No security impact, strictly an internal performance cache.
