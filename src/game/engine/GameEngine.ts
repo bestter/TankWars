@@ -715,8 +715,9 @@ export class GameEngine {
     // Override the winning tank's cannon angle during celebration so it sweeps 78.5°-112.5°
     // and visually "shoots" the fireworks (we restore immediately after draw).
     const restoredAngles = new Map<string, number>();
+    const players = this.tankManager.getPlayers();
     if (this.celebrationWinnerTankId != null && this.celebrationAngle != null) {
-      for (const p of this.tankManager.getPlayers()) {
+      for (const p of players) {
         if (p.tank.id === this.celebrationWinnerTankId) {
           restoredAngles.set(p.tank.id, p.tank.angle);
           p.tank.angle = this.celebrationAngle;
@@ -726,7 +727,7 @@ export class GameEngine {
     }
     this.tankManager.draw(ctx, showPlayerNames, this.terrain);
     // restore
-    for (const p of this.tankManager.getPlayers()) {
+    for (const p of players) {
       const orig = restoredAngles.get(p.tank.id);
       if (orig !== undefined) {
         p.tank.angle = orig;
@@ -787,7 +788,11 @@ export class GameEngine {
       ctx.fillStyle = this.winner.tank.color;
       ctx.font = "bold 28px monospace";
       ctx.textAlign = "center";
-      ctx.fillText(i18n.t("winner_wins", { name: this.winner.name }), this.width / 2, 80);
+      ctx.fillText(
+        i18n.t("winner_wins", { name: this.winner.name }),
+        this.width / 2,
+        80,
+      );
     }
   }
 
@@ -822,7 +827,10 @@ export class GameEngine {
 
     // Create initial big rockets (multicolored!) launching from the bottom
     for (let i = 0; i < 9; i++) {
-      const rocketColor = secureRandom() < 0.4 ? this.celebrationColor : festiveColors[i % festiveColors.length];
+      const rocketColor =
+        secureRandom() < 0.4
+          ? this.celebrationColor
+          : festiveColors[i % festiveColors.length];
       this.fireworks.push({
         type: "rocket",
         x: centerX + (secureRandom() - 0.5) * 180,
@@ -1014,7 +1022,10 @@ export class GameEngine {
         const crackleGain = ctx.createGain();
 
         crackleOsc.type = "sawtooth";
-        crackleOsc.frequency.setValueAtTime(900 + secureRandom() * 1100, ctx.currentTime);
+        crackleOsc.frequency.setValueAtTime(
+          900 + secureRandom() * 1100,
+          ctx.currentTime,
+        );
         crackleGain.gain.setValueAtTime(0.015, ctx.currentTime);
         crackleGain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.04);
 
@@ -1132,7 +1143,10 @@ export class GameEngine {
             vy: 0.2 + secureRandom() * 0.6,
             life: 8 + secureRandom() * 8,
             maxLife: 16,
-            color: secureRandom() < 0.5 ? VGA_PALETTE.CYBER_YELLOW : VGA_PALETTE.WHITE,
+            color:
+              secureRandom() < 0.5
+                ? VGA_PALETTE.CYBER_YELLOW
+                : VGA_PALETTE.WHITE,
             size: 1.2 + secureRandom() * 0.8,
             trail: [],
           });
@@ -1186,7 +1200,8 @@ export class GameEngine {
           } else if (explosionPattern === 2) {
             // Fountain Cascade
             const count = 18 + Math.floor(secureRandom() * 10);
-            const burstColor = secureRandom() < 0.3 ? VGA_PALETTE.CYBER_YELLOW : p.color;
+            const burstColor =
+              secureRandom() < 0.3 ? VGA_PALETTE.CYBER_YELLOW : p.color;
             for (let i = 0; i < count; i++) {
               this.queueFireworkSpawn({
                 type: "particle",
@@ -1215,7 +1230,10 @@ export class GameEngine {
                 vy: Math.sin(angle) * speed - 0.4,
                 life: 28 + secureRandom() * 22,
                 maxLife: 50,
-                color: secureRandom() < 0.5 ? VGA_PALETTE.CYBER_YELLOW : VGA_PALETTE.WHITE,
+                color:
+                  secureRandom() < 0.5
+                    ? VGA_PALETTE.CYBER_YELLOW
+                    : VGA_PALETTE.WHITE,
                 size: 1.5 + secureRandom() * 1.0,
                 trail: [],
               });
@@ -1267,12 +1285,14 @@ export class GameEngine {
       } else if (p.type === "confetti") {
         // Slow descent confetti physics
         p.vy = Math.min(1.0, p.vy + 0.025); // cap vertical speed
-        p.vx = Math.sin((p.life * p.swaySpeed!) + p.swayOffset!) * p.swayWidth!;
+        p.vx = Math.sin(p.life * p.swaySpeed! + p.swayOffset!) * p.swayWidth!;
         p.rotation! += p.rotationSpeed!;
         p.life -= 1;
 
         // Check ground height to avoid drawing confetti underground
-        const groundY = this.terrain.getHeightAt(Math.max(0, Math.min(this.width - 1, Math.floor(p.x))));
+        const groundY = this.terrain.getHeightAt(
+          Math.max(0, Math.min(this.width - 1, Math.floor(p.x))),
+        );
 
         if (p.life > 0 && p.y < groundY) {
           this.fireworks[write++] = p;
@@ -1342,7 +1362,12 @@ export class GameEngine {
         for (const pt of p.trail) {
           ctx.fillStyle = p.color;
           ctx.globalAlpha = pt.alpha * alpha * 0.38;
-          ctx.fillRect(pt.x - p.size / 3, pt.y - p.size / 3, p.size / 1.5, p.size / 1.5);
+          ctx.fillRect(
+            pt.x - p.size / 3,
+            pt.y - p.size / 3,
+            p.size / 1.5,
+            p.size / 1.5,
+          );
         }
       }
 
@@ -1452,25 +1477,39 @@ export class GameEngine {
       const lastTank = aliveTanks[0];
       // The last tank receives the double ($600) upon the second-to-last tank's death
       lastTank.money = (lastTank.money ?? 0) + 600;
-      console.log(`[EARNINGS] Last tank standing ${lastTank.name} (id=${lastTank.id}) receives double reward: +$600`);
+      console.log(
+        `[EARNINGS] Last tank standing ${lastTank.name} (id=${lastTank.id}) receives double reward: +$600`,
+      );
 
       // If the last tank was also the killer, it already receives $600 total.
       // If the killer was someone else (different from victim and lastTank), they receive standard $300.
-      if (actualKiller !== "unknown" && actualKiller !== victimId && actualKiller !== lastTank.id) {
-        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+      if (
+        actualKiller !== "unknown" &&
+        actualKiller !== victimId &&
+        actualKiller !== lastTank.id
+      ) {
+        const killerPlayer = this.tankManager
+          .getPlayers()
+          .find((p) => p.id === actualKiller);
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
-          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+          console.log(
+            `[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`,
+          );
         }
       }
     } else if (aliveTanks.length > 1) {
       // Standard death (not the end of the round yet)
       // Standard reward ($300) to the killer (unless suicide)
       if (actualKiller !== "unknown" && actualKiller !== victimId) {
-        const killerPlayer = this.tankManager.getPlayers().find((p) => p.id === actualKiller);
+        const killerPlayer = this.tankManager
+          .getPlayers()
+          .find((p) => p.id === actualKiller);
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
-          console.log(`[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`);
+          console.log(
+            `[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`,
+          );
         }
       }
     }
