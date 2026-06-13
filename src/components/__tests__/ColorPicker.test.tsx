@@ -7,7 +7,7 @@ import type { Color } from '../../types/game';
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, params?: Record<string, string>) => key + (params ? '_' + params.color : ''),
+    t: (key: string, params?: { color?: string }) => key + (params?.color ? '_' + params.color : ''),
   }),
 }));
 
