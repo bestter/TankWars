@@ -112,9 +112,13 @@ export class PhysicsEngine {
     const vx = Math.cos(rad) * speed;
     const vy = -Math.sin(rad) * speed; // négatif = vers le haut dans le canvas
 
-    const p = this.getProjectile(startX, startY, vx, vy, weaponId, ownerId, ownerColor, undefined, undefined);
+    const p = this.getProjectile(startX, startY, vx, vy, weaponId, ownerId, ownerColor);
     p.initialAngle = angle;
     p.initialPower = power;
+    p.isSubmunition = undefined;
+    p.lastVy = undefined;
+    p.bounceCount = undefined;
+    p.hasLeftOwnerHitbox = undefined;
     this.projectiles.push(p);
 
     this.previousCount = this.projectiles.length;
@@ -310,7 +314,13 @@ export class PhysicsEngine {
       const relX = p.x + Math.cos(dir) * offset;
       const relY = p.y + Math.sin(dir) * offset;
 
-      this.projectiles.push(this.getProjectile(relX, relY, subVx, subVy, p.weaponId, p.ownerId, p.ownerColor, true, undefined));
+      const sub = this.getProjectile(relX, relY, subVx, subVy, p.weaponId, p.ownerId, p.ownerColor, true);
+      sub.lastVy = undefined;
+      sub.initialAngle = undefined;
+      sub.initialPower = undefined;
+      sub.bounceCount = undefined;
+      sub.hasLeftOwnerHitbox = undefined;
+      this.projectiles.push(sub);
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)

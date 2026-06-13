@@ -32,6 +32,7 @@
   - Phase 3: `AISniperStrategy` ("IA SNIPER", `aiProfile: 'v3-sniper'`) — high precision.
   - Phase 4: `AISmartStrategy` ("IA EXPERT", `aiProfile: 'v4-smart'`) — adaptive/smart.
   All wired in MainMenu + GameCanvas. Not one-shot snipers by design (v2+).
+- **Performance:** Object pooling for projectiles fully activated in PhysicsEngine (recycles instances for launches and cluster sub-munitions to cut GC pressure). Part of ongoing perf work on the dedicated branch.
 - **Keyboard Controls** — Classic artillery feel: ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
