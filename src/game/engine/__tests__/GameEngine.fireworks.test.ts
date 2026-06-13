@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { GameEngine } from "../GameEngine";
+import * as random from "../../../utils/random";
 
 type FireworkParticle = {
   x: number;
@@ -47,11 +48,16 @@ describe("GameEngine fireworks optimization", () => {
   let internal: FireworksInternals;
 
   beforeEach(() => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
     engine = new GameEngine(200, 200);
     internal = engineInternals(engine);
     internal.fireworks.length = 0;
     internal.fireworkSpawnBuffer.length = 0;
     internal.fireworksUpdateAccum = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("decimates fireworks simulation to ~60 Hz (not every 120 Hz physics step)", () => {

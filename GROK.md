@@ -12,6 +12,7 @@
 
 ## Recent Polish (Step 4, 5, 6 & 7)
 
+- **Complete Projectile Object Pooling (perf branch):** Wired the `getProjectile` pooling helper (Jules) into launch + cluster split paths in PhysicsEngine; removed duplication. Pool now active for every projectile (prevents GC churn). Fixed build/lint/test issues for clean verification. — Grok 4.3 (xAI)
 - **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, cut grass on slopes, and fuzzy fringe from partial offscreen updates (`Terrain.ts`: opaque sky, brown below grass, grass ribbon, sky clip). **113 unit tests**.
 - **Game Version Bump:** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
 - **Performance Optimizations (v0.4.1):** `BallisticsSimulator.ts` shared aiming + lazy v2–v4 AI; terrain partial dirty redraw; HUD throttle + `React.memo`; fireworks 60 Hz / in-place compaction. **112 unit tests** (was 85).

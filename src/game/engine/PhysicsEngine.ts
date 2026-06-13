@@ -112,35 +112,14 @@ export class PhysicsEngine {
     const vx = Math.cos(rad) * speed;
     const vy = -Math.sin(rad) * speed; // négatif = vers le haut dans le canvas
 
-    const p = this.projectilePool.pop();
-    if (p) {
-      p.x = startX;
-      p.y = startY;
-      p.vx = vx;
-      p.vy = vy;
-      p.weaponId = weaponId;
-      p.ownerId = ownerId;
-      p.ownerColor = ownerColor;
-      p.initialAngle = angle;
-      p.initialPower = power;
-      p.isSubmunition = undefined;
-      p.lastVy = undefined;
-      p.bounceCount = undefined;
-      p.hasLeftOwnerHitbox = undefined;
-      this.projectiles.push(p);
-    } else {
-      this.projectiles.push({
-        x: startX,
-        y: startY,
-        vx,
-        vy,
-        weaponId,
-        ownerId,
-        ownerColor,
-        initialAngle: angle,
-        initialPower: power,
-      });
-    }
+    const p = this.getProjectile(startX, startY, vx, vy, weaponId, ownerId, ownerColor);
+    p.initialAngle = angle;
+    p.initialPower = power;
+    p.isSubmunition = undefined;
+    p.lastVy = undefined;
+    p.bounceCount = undefined;
+    p.hasLeftOwnerHitbox = undefined;
+    this.projectiles.push(p);
 
     this.previousCount = this.projectiles.length;
   }
@@ -335,34 +314,13 @@ export class PhysicsEngine {
       const relX = p.x + Math.cos(dir) * offset;
       const relY = p.y + Math.sin(dir) * offset;
 
-      const sub = this.projectilePool.pop();
-      if (sub) {
-        sub.x = relX;
-        sub.y = relY;
-        sub.vx = subVx;
-        sub.vy = subVy;
-        sub.weaponId = p.weaponId;
-        sub.ownerId = p.ownerId;
-        sub.ownerColor = p.ownerColor;
-        sub.isSubmunition = true;
-        sub.lastVy = undefined;
-        sub.initialAngle = undefined;
-        sub.initialPower = undefined;
-        sub.bounceCount = undefined;
-        sub.hasLeftOwnerHitbox = undefined;
-        this.projectiles.push(sub);
-      } else {
-        this.projectiles.push({
-          x: relX,
-          y: relY,
-          vx: subVx,
-          vy: subVy,
-          weaponId: p.weaponId,
-          ownerId: p.ownerId,
-          ownerColor: p.ownerColor,
-          isSubmunition: true,
-        });
-      }
+      const sub = this.getProjectile(relX, relY, subVx, subVy, p.weaponId, p.ownerId, p.ownerColor, true);
+      sub.lastVy = undefined;
+      sub.initialAngle = undefined;
+      sub.initialPower = undefined;
+      sub.bounceCount = undefined;
+      sub.hasLeftOwnerHitbox = undefined;
+      this.projectiles.push(sub);
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
