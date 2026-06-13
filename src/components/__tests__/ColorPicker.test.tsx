@@ -2,12 +2,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { ColorPicker } from '../ColorPicker';
-import { Color } from '../../types/game';
+import type { Color } from '../../types/game';
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, params?: any) => key + (params ? '_' + params.color : ''),
+    t: (key: string, params?: Record<string, string>) => key + (params ? '_' + params.color : ''),
   }),
 }));
 

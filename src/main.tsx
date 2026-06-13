@@ -28,7 +28,8 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
         console.log("Service Worker registered successfully", reg);
       })
       .catch((err) => {
-        console.error("Service Worker registration failed", err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error("Service Worker registration failed", errorMessage);
       });
   });
 }
