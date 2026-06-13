@@ -19,6 +19,12 @@ import { VGA_PALETTE } from "../../types/game";
 /** Margin from canvas bottom for the lava "floor" level. When terrain is destroyed to/beyond this, lava is exposed visually and tanks touching it die instantly. */
 const LAVA_TOP_MARGIN = 6;
 
+/** Must match GameEngine sky fill (#0000AA) so offscreen pixels are always opaque. */
+const SKY_COLOR = VGA_PALETTE.DARK_BLUE;
+
+/** Vertical depth of the green grass ribbon along the terrain surface. */
+const GRASS_THICKNESS = 3;
+
 export class TerrainManager {
   public readonly width: number;
   public readonly height: number;
@@ -30,6 +36,13 @@ export class TerrainManager {
   private offscreenCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
   private offscreenCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
   private isDirty: boolean = true;
+  /** When true, next draw rebuilds the entire offscreen buffer (generate / first paint). */
+  private needsFullRedraw = true;
+  /** Horizontal band invalidated by destroyTerrain (inclusive column indices). */
+  private dirtyStartX = 0;
+  private dirtyEndX = 0;
+  /** Reusable scratch buffer for smoothHeights (avoids per-crater .slice()). */
+  private smoothScratch: number[] = [];
 
   constructor(width: number, height: number) {
     if (width <= 0 || height <= 0) {
@@ -46,7 +59,10 @@ export class TerrainManager {
    * Ajoute un offset vertical pour positionner correctement le terrain.
    */
   public generate(): void {
+    this.needsFullRedraw = true;
     this.isDirty = true;
+    this.dirtyStartX = 0;
+    this.dirtyEndX = this.width - 1;
     const base = this.height * 0.62; // offset vertical principal
     const amp1 = this.height * 0.11; // grandes collines
     const amp2 = this.height * 0.065; // collines moyennes
@@ -82,97 +98,187 @@ export class TerrainManager {
   private initOffscreenCanvas(): void {
     if (this.offscreenCanvas) return;
 
+    const contextOptions: CanvasRenderingContext2DSettings = { alpha: false };
+
     if (typeof OffscreenCanvas !== "undefined") {
       this.offscreenCanvas = new OffscreenCanvas(this.width, this.height);
-      this.offscreenCtx = this.offscreenCanvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+      this.offscreenCtx = this.offscreenCanvas.getContext(
+        "2d",
+        contextOptions,
+      ) as OffscreenCanvasRenderingContext2D;
     } else if (typeof document !== "undefined") {
       this.offscreenCanvas = document.createElement("canvas");
       this.offscreenCanvas.width = this.width;
       this.offscreenCanvas.height = this.height;
-      this.offscreenCtx = this.offscreenCanvas.getContext("2d") as CanvasRenderingContext2D;
+      this.offscreenCtx = this.offscreenCanvas.getContext(
+        "2d",
+        contextOptions,
+      ) as CanvasRenderingContext2D;
     } else {
       // Fallback for tests environments without canvas
       return;
     }
+
+    this.offscreenCtx.imageSmoothingEnabled = false;
   }
 
-  /**
-   * Renders the terrain to the offscreen canvas.
-   */
-  private renderToOffscreen(): void {
-    this.initOffscreenCanvas();
-    const ctx = this.offscreenCtx;
-    if (!ctx) return;
-
-    // Clear background to sky color (or transparent) if needed.
-    // Wait, the GameEngine draws sky before terrain. Since alpha is false, we might overwrite.
-    // Actually, offscreen canvas doesn't need alpha:false if we want transparency, but terrain is fully opaque at the bottom?
-    // Let's set alpha: true by removing it, just in case.
-
-    // Clear
-    ctx.clearRect(0, 0, this.width, this.height);
-
-    const lavaTop = this.lavaTop;
-
-    // Draw lava at the absolute bottom (the "floor level" when all ground is destroyed)
-    // Retro VGA-style lava using DARK_RED base + RED/YELLOW accents for bubbly look
+  private drawLavaBand(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    bandStart: number,
+    bandEnd: number,
+    lavaTop: number,
+  ): void {
+    const bandWidth = bandEnd - bandStart + 1;
     ctx.fillStyle = VGA_PALETTE.DARK_RED;
-    ctx.fillRect(0, lavaTop, this.width, this.height - lavaTop);
+    ctx.fillRect(bandStart, lavaTop, bandWidth, this.height - lavaTop);
 
-    // Simple pixel-art lava texture / bubbles (static for perf + retro feel)
     ctx.fillStyle = VGA_PALETTE.RED;
-    for (let x = 0; x < this.width; x += 3) {
+    for (let x = bandStart; x <= bandEnd; x += 3) {
       const offset = x % 5;
       ctx.fillRect(x, lavaTop + 1 + offset, 2, 2 + (x % 2));
     }
     ctx.fillStyle = VGA_PALETTE.YELLOW;
-    for (let x = 2; x < this.width; x += 5) {
+    for (let x = bandStart + 2; x <= bandEnd; x += 5) {
       ctx.fillRect(x, lavaTop + 3 + (x % 3), 1, 1);
     }
+  }
 
-    // Brown terrain fill, but clamped so it never goes below lavaTop.
-    // When heights[x] >= lavaTop (fully dug out), that column shows pure lava (no ground left).
+  /**
+   * Brown earth strictly below the grass ribbon (never above the surface).
+   * Per-column fill avoids 1px sky gaps on curves; grass is drawn on top separately.
+   */
+  private drawTerrainFillBandColumns(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    bandStart: number,
+    bandEnd: number,
+    lavaTop: number,
+  ): void {
     ctx.fillStyle = VGA_PALETTE.BROWN;
-    ctx.beginPath();
-    ctx.moveTo(0, lavaTop);
-
-    for (let x = 0; x < this.width; x++) {
-      // Clamp surface to lavaTop: brown ground "thickness" goes to zero when dug to lava
-      const h = Math.min(this.heights[x], lavaTop);
-      ctx.lineTo(x, h);
+    for (let x = bandStart; x <= bandEnd; x++) {
+      const surfaceY = Math.min(this.heights[x], lavaTop);
+      if (surfaceY >= lavaTop) continue;
+      const brownTop = Math.min(surfaceY + GRASS_THICKNESS, lavaTop);
+      if (brownTop >= lavaTop) continue;
+      ctx.fillRect(x, brownTop, 1, lavaTop - brownTop);
     }
+  }
 
-    ctx.lineTo(this.width, lavaTop);
-    ctx.closePath();
-    ctx.fill();
+  /**
+   * Re-paint sky above the surface to remove antialiased green/brown fringe ("fuzzy" edge).
+   */
+  private clipSkyAboveSurface(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    bandStart: number,
+    bandEnd: number,
+    lavaTop: number,
+  ): void {
+    ctx.fillStyle = SKY_COLOR;
+    for (let x = bandStart; x <= bandEnd; x++) {
+      const surfaceY = Math.min(this.heights[x], lavaTop);
+      if (surfaceY <= 0) continue;
+      ctx.fillRect(x, 0, 1, surfaceY);
+    }
+  }
 
-    // Green grass edge line: only on terrain surfaces that haven't reached the lava floor.
-    // Deep craters/pits will have their floor as lava (no grass line on lava).
-    ctx.strokeStyle = VGA_PALETTE.GREEN;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    let drawingEdge = false;
-    for (let x = 0; x < this.width; x++) {
-      const h = this.heights[x];
-      if (h < lavaTop) {
-        if (!drawingEdge) {
+  private fillSkyBand(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    bandStart: number,
+    bandWidth: number,
+  ): void {
+    ctx.fillStyle = SKY_COLOR;
+    ctx.fillRect(bandStart, 0, bandWidth, this.height);
+  }
+
+  /**
+   * Filled grass ribbon that follows terrain curves with uniform thickness.
+   * Stroke/column fills look jagged or "cut" on slopes after partial offscreen updates.
+   */
+  private drawGrassBand(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    bandStart: number,
+    bandEnd: number,
+    lavaTop: number,
+  ): void {
+    ctx.fillStyle = VGA_PALETTE.GREEN;
+
+    let segmentStart: number | null = null;
+
+    const flushSegment = (segmentEnd: number): void => {
+      if (segmentStart === null) return;
+
+      const start = segmentStart;
+      const end = segmentEnd;
+
+      ctx.beginPath();
+      for (let x = start; x <= end; x++) {
+        const h = Math.min(this.heights[x], lavaTop);
+        if (x === start) {
           ctx.moveTo(x, h);
-          drawingEdge = true;
         } else {
           ctx.lineTo(x, h);
         }
-      } else if (drawingEdge) {
-        ctx.stroke();
-        ctx.beginPath();
-        drawingEdge = false;
+      }
+      for (let x = end; x >= start; x--) {
+        const h = Math.min(this.heights[x], lavaTop);
+        ctx.lineTo(x, Math.min(h + GRASS_THICKNESS, lavaTop));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      segmentStart = null;
+    };
+
+    for (let x = bandStart; x <= bandEnd; x++) {
+      if (this.heights[x] < lavaTop) {
+        if (segmentStart === null) {
+          segmentStart = x;
+        }
+      } else {
+        flushSegment(x - 1);
       }
     }
-    if (drawingEdge) {
-      ctx.stroke();
-    }
-    ctx.lineWidth = 1;
 
-    this.isDirty = false;
+    if (segmentStart !== null) {
+      flushSegment(bandEnd);
+    }
+  }
+
+  /**
+   * Renders the full terrain to the offscreen canvas.
+   */
+  private renderFullOffscreen(): void {
+    this.initOffscreenCanvas();
+    const ctx = this.offscreenCtx;
+    if (!ctx) return;
+
+    this.fillSkyBand(ctx, 0, this.width);
+    const lavaTop = this.lavaTop;
+
+    this.drawLavaBand(ctx, 0, this.width - 1, lavaTop);
+    this.drawTerrainFillBandColumns(ctx, 0, this.width - 1, lavaTop);
+    this.drawGrassBand(ctx, 0, this.width - 1, lavaTop);
+    this.clipSkyAboveSurface(ctx, 0, this.width - 1, lavaTop);
+  }
+
+  /**
+   * Redraws only the dirty horizontal band after a localized crater mutation.
+   */
+  private renderPartialOffscreen(startX: number, endX: number): void {
+    this.initOffscreenCanvas();
+    const ctx = this.offscreenCtx;
+    if (!ctx) return;
+
+    const pad = 8;
+    const bandStart = Math.max(0, startX - pad);
+    const bandEnd = Math.min(this.width - 1, endX + pad);
+    const bandWidth = bandEnd - bandStart + 1;
+    const lavaTop = this.lavaTop;
+
+    this.fillSkyBand(ctx, bandStart, bandWidth);
+    this.drawLavaBand(ctx, bandStart, bandEnd, lavaTop);
+    this.drawTerrainFillBandColumns(ctx, bandStart, bandEnd, lavaTop);
+    this.drawGrassBand(ctx, bandStart, bandEnd, lavaTop);
+    this.clipSkyAboveSurface(ctx, bandStart, bandEnd, lavaTop);
   }
 
   /**
@@ -181,7 +287,13 @@ export class TerrainManager {
    */
   public draw(ctx: CanvasRenderingContext2D): void {
     if (this.isDirty) {
-      this.renderToOffscreen();
+      if (this.needsFullRedraw || !this.offscreenCanvas) {
+        this.renderFullOffscreen();
+        this.needsFullRedraw = false;
+      } else {
+        this.renderPartialOffscreen(this.dirtyStartX, this.dirtyEndX);
+      }
+      this.isDirty = false;
     }
 
     if (this.offscreenCanvas) {
@@ -212,47 +324,9 @@ export class TerrainManager {
       ctx.fillRect(x, lavaTop + 3 + (x % 3), 1, 1);
     }
 
-    // Brown terrain fill, but clamped so it never goes below lavaTop.
-    // When heights[x] >= lavaTop (fully dug out), that column shows pure lava (no ground left).
-    ctx.fillStyle = VGA_PALETTE.BROWN;
-    ctx.beginPath();
-    ctx.moveTo(0, lavaTop);
-
-    for (let x = 0; x < this.width; x++) {
-      // Clamp surface to lavaTop: brown ground "thickness" goes to zero when dug to lava
-      const h = Math.min(this.heights[x], lavaTop);
-      ctx.lineTo(x, h);
-    }
-
-    ctx.lineTo(this.width, lavaTop);
-    ctx.closePath();
-    ctx.fill();
-
-    // Green grass edge line: only on terrain surfaces that haven't reached the lava floor.
-    // Deep craters/pits will have their floor as lava (no grass line on lava).
-    ctx.strokeStyle = VGA_PALETTE.GREEN;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    let drawingEdge = false;
-    for (let x = 0; x < this.width; x++) {
-      const h = this.heights[x];
-      if (h < lavaTop) {
-        if (!drawingEdge) {
-          ctx.moveTo(x, h);
-          drawingEdge = true;
-        } else {
-          ctx.lineTo(x, h);
-        }
-      } else if (drawingEdge) {
-        ctx.stroke();
-        ctx.beginPath();
-        drawingEdge = false;
-      }
-    }
-    if (drawingEdge) {
-      ctx.stroke();
-    }
-    ctx.lineWidth = 1;
+    this.drawTerrainFillBandColumns(ctx, 0, this.width - 1, lavaTop);
+    this.drawGrassBand(ctx, 0, this.width - 1, lavaTop);
+    this.clipSkyAboveSurface(ctx, 0, this.width - 1, lavaTop);
   }
 
   /**
@@ -265,7 +339,6 @@ export class TerrainManager {
     radius: number,
   ): void {
     if (radius <= 0) return;
-    this.isDirty = true;
 
     const r = radius;
     const r2 = r * r;
@@ -293,7 +366,20 @@ export class TerrainManager {
     }
 
     // Smooth crater edges only — never raise the surface (which would undo destruction).
-    this.smoothHeights(0.35, startX - 3, endX + 3, true);
+    const smoothStart = Math.max(0, startX - 3);
+    const smoothEnd = Math.min(this.width - 1, endX + 3);
+    this.smoothHeights(0.35, smoothStart, smoothEnd, true);
+
+    const bandStart = Math.max(0, smoothStart - 10);
+    const bandEnd = Math.min(this.width - 1, smoothEnd + 10);
+    if (!this.isDirty) {
+      this.dirtyStartX = bandStart;
+      this.dirtyEndX = bandEnd;
+    } else {
+      this.dirtyStartX = Math.min(this.dirtyStartX, bandStart);
+      this.dirtyEndX = Math.max(this.dirtyEndX, bandEnd);
+    }
+    this.isDirty = true;
   }
 
   /**
@@ -342,13 +428,21 @@ export class TerrainManager {
 
     if (e - s < 2) return;
 
-    const copy = this.heights.slice(s, e + 1);
+    const len = e - s + 1;
+    if (this.smoothScratch.length < len) {
+      this.smoothScratch.length = len;
+    }
+    for (let i = 0; i < len; i++) {
+      this.smoothScratch[i] = this.heights[s + i];
+    }
 
-    for (let i = 1; i < copy.length - 1; i++) {
+    for (let i = 1; i < len - 1; i++) {
       const idx = s + i;
-      const avg = (copy[i - 1] + copy[i] + copy[i + 1]) / 3;
-      const blended = copy[i] * (1 - strength) + avg * strength;
-      this.heights[idx] = preserveDepth ? Math.max(copy[i], blended) : blended;
+      const cur = this.smoothScratch[i];
+      const avg =
+        (this.smoothScratch[i - 1] + this.smoothScratch[i] + this.smoothScratch[i + 1]) / 3;
+      const blended = cur * (1 - strength) + avg * strength;
+      this.heights[idx] = preserveDepth ? Math.max(cur, blended) : blended;
     }
   }
 }

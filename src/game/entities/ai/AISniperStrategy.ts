@@ -15,6 +15,7 @@ import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
+import { searchBallisticSolution } from "./BallisticsSimulator";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -212,105 +213,28 @@ export class AISniperStrategy implements AIEngine {
     const aMin = isRight ? 15 : 95;
     const aMax = isRight ? 85 : 165;
 
-    const BASE_SPEED = 6.0;
-    const DT = 1 / 120;
-    const MAX_STEPS = 420;
-
-    let best = { angle: isRight ? 55 : 125, power: 60, err: 999999 };
-
-    for (let a = aMin; a <= aMax; a += 1.0) {
-      let lo = 20;
-      let hi = 95;
-      for (let iter = 0; iter < 10; iter++) {
-        const p = (lo + hi) / 2;
-        const res = this.simulateShot(sx, sy, a, p, wind, gravity, BASE_SPEED, DT, MAX_STEPS, terrain);
-
-        const xErr = Math.abs(res.landX - tx);
-        const yErr = Math.abs(res.landY - ty) * 0.35;
-
-        // Detect intermediate terrain obstacle between shooter and target
-        let obstaclePenalty = 0;
-        if (res.hitTerrainEarly) {
-          const isBetween = isRight 
-            ? (res.landX > sx + 20 && res.landX < tx - 35)
-            : (res.landX < sx - 20 && res.landX > tx + 35);
-          if (isBetween) {
-            obstaclePenalty = 10000;
-          }
-        }
-
-        const err = xErr + yErr + obstaclePenalty;
-
-        if (err < best.err) {
-          best = { angle: a, power: p, err };
-        }
-
-        if (res.landX < tx) {
-          if (isRight) lo = p;
-          else hi = p;
-        } else {
-          if (isRight) hi = p;
-          else lo = p;
-        }
-      }
-    }
+    const best = searchBallisticSolution({
+      sx,
+      sy,
+      tx,
+      ty,
+      wind,
+      gravity,
+      terrain,
+      isRight,
+      aMin,
+      aMax,
+      coarseStep: 5,
+      fineStep: 1,
+      fineWindow: 4,
+      powerLo: 20,
+      powerHi: 95,
+      powerIterations: 10,
+      obstaclePenaltyHigh: 10000,
+      earlyExitError: 2,
+    });
 
     return { angle: best.angle, power: best.power };
-  }
-
-  private simulateShot(
-    sx: number,
-    sy: number,
-    angleDeg: number,
-    power: number,
-    wind: number,
-    gravity: number,
-    baseSpeed: number,
-    dt: number,
-    maxSteps: number,
-    terrain: TerrainManager,
-  ): { landX: number; landY: number; hitTerrainEarly: boolean } {
-    const rad = (angleDeg * Math.PI) / 180;
-    let vx = Math.cos(rad) * power * baseSpeed;
-    let vy = -Math.sin(rad) * power * baseSpeed;
-    
-    // Calculate barrel tip position to match GameEngine's launch coordinates
-    const barrelLength = 20;
-    const barrelStartY = sy - 13;
-    let x = sx + Math.cos(rad) * barrelLength;
-    let y = barrelStartY - Math.sin(rad) * barrelLength;
-    let landX = x;
-    let landY = y;
-    let hitEarly = false;
-
-    const DRAG = 0.28;
-
-    for (let step = 0; step < maxSteps; step++) {
-      vy += gravity * dt;
-      vx += wind * dt;
-
-      const sp = Math.hypot(vx, vy);
-      if (sp > 4) {
-        const drag = DRAG * sp * dt;
-        vx -= (vx / sp) * drag;
-        vy -= (vy / sp) * drag;
-      }
-
-      x += vx * dt;
-      y += vy * dt;
-
-      if (terrain.checkCollision(x, y)) {
-        landX = x;
-        landY = y;
-        hitEarly = true;
-        break;
-      }
-      if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) break;
-
-      landX = x;
-      landY = y;
-    }
-    return { landX, landY, hitTerrainEarly: hitEarly };
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
