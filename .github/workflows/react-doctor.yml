@@ -27,4 +27,3 @@ jobs:
         with:
           blocking: warning
           scope: changed
-          project: "tsconfig.app.json,tsconfig.node.json"

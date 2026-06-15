@@ -24,6 +24,7 @@
 
 - ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
+- **React Doctor GitHub Action Fix :** Retrait du paramètre invalide `project` dans l'action GitHub `millionco/react-doctor@v2` dans `.github/workflows/react-doctor.yml`, car il s'attend à un chemin de répertoire plutôt qu'à une liste de fichiers tsconfig, résolvant l'erreur de chemin sur GitHub CI.
 - **Complete Projectile Object Pooling (perf branch) :** Wired Jules' `getProjectile` helper into `launchProjectile` and `splitCluster` in PhysicsEngine.ts (removed inline duplication). Projectile pool now fully active for launches + clusters (GC churn reduction). Fixed blocking TS error + lint + fireworks test. lint/build/test all pass. — Grok 4.3 (xAI)
 - **Terrain Partial Redraw Visual Fix (v0.4.1) :** Fixed blue vertical lines, cut grass on curves, and fuzzy brown/green fringe from partial offscreen crater redraw (`Terrain.ts` layered paint). **113 unit tests**.
 - **Game Version Bump :** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.

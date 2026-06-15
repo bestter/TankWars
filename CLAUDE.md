@@ -43,6 +43,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **React Doctor GitHub Action Fix:** Removed the invalid `project` parameter from the `millionco/react-doctor@v2` GitHub Action step in `.github/workflows/react-doctor.yml` since it expects a directory path rather than file paths, resolving the directory path error on GitHub CI.
 - **Complete Projectile Object Pooling (perf branch):** Wired Jules' `getProjectile` helper into `launchProjectile` + `splitCluster` (PhysicsEngine.ts), removing duplicated pool logic. All shots and clusters now recycle via the pool (GC reduction). Fixed build TS error, lint `any`, and fireworks test flakiness. lint+build+test (130) all green. — Grok 4.3 (xAI)
 - **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, jagged grass on curves, and fuzzy brown/green fringe after partial offscreen crater redraws. Layered offscreen paint: opaque sky, brown columns below grass ribbon, smooth grass polygon, `clipSkyAboveSurface`. **113 unit tests**.
 - **Game Version Bump:** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.

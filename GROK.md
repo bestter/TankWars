@@ -12,6 +12,7 @@
 
 ## Recent Polish (Step 4, 5, 6 & 7)
 
+- **React Doctor GitHub Action Fix:** Removed the invalid `project` parameter from the `millionco/react-doctor@v2` GitHub Action step in `.github/workflows/react-doctor.yml` since it expects a directory path rather than file paths, resolving the directory path error on GitHub CI.
 - **Complete Projectile Object Pooling (perf branch):** Wired the `getProjectile` pooling helper (Jules) into launch + cluster split paths in PhysicsEngine; removed duplication. Pool now active for every projectile (prevents GC churn). Fixed build/lint/test issues for clean verification. — Grok 4.3 (xAI)
 - **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, cut grass on slopes, and fuzzy fringe from partial offscreen updates (`Terrain.ts`: opaque sky, brown below grass, grass ribbon, sky clip). **113 unit tests**.
 - **Game Version Bump:** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
