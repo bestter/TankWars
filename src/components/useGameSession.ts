@@ -186,7 +186,7 @@ export function useGameSession({
       playerCount: players.length,
       humanCount: players.filter((p) => p.isHuman).length,
       aiCount: players.filter((p) => !p.isHuman).length,
-      aiProfiles: players.filter((p) => !p.isHuman).map((p) => p.aiProfile ?? "v1-random"),
+      aiProfiles: players.reduce((acc, p) => (!p.isHuman ? [...acc, p.aiProfile ?? "v1-random"] : acc), [] as string[]),
     });
 
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
