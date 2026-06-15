@@ -4,7 +4,7 @@ import {
   searchBallisticSolution,
   simulateShot,
   simulateSmartShot,
-  BALLISTICS_MAX_STEPS,
+
 } from "../BallisticsSimulator";
 import { flatTerrain, terrainWithMidObstacle } from "../../../__tests__/helpers";
 
@@ -16,7 +16,7 @@ describe("BallisticsSimulator", () => {
     const result = simulateShot(100, 300, 45, 10, 0, 260, terrain);
     expect(result.landX).toBeTypeOf("number");
     expect(result.landY).toBeTypeOf("number");
-    expect(BALLISTICS_MAX_STEPS).toBeGreaterThan(100);
+
   });
 
   it("searchBallisticSolution finds a low-error shot on flat terrain", () => {

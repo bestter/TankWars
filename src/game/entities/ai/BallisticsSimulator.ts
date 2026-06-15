@@ -6,10 +6,10 @@
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
 
-export const BALLISTICS_BASE_SPEED = 6.0;
-export const BALLISTICS_DT = 1 / 120;
-export const BALLISTICS_MAX_STEPS = 420;
-export const BALLISTICS_DRAG = 0.28;
+const BALLISTICS_BASE_SPEED = 6.0;
+const BALLISTICS_DT = 1 / 120;
+const BALLISTICS_MAX_STEPS = 420;
+const BALLISTICS_DRAG = 0.28;
 
 const BARREL_LENGTH = 20;
 const BARREL_START_Y_OFFSET = 13;
