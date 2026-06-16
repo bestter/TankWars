@@ -20,6 +20,10 @@
 
 ## Recent Polish (Step 4, 5, 6 & 7)
 
+- **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR). — Grok 4.3 (xAI)
+
+- **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json`. — Grok 4.3 (xAI)
+
 - **Online Multiplayer Unit Tests:** +16 tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights. — Grok 4.3 (xAI)
 
 - **Documentation sync (v0.4.2):** All agent docs + README updated (worker/, online, 139 tests, v0.4.2). — Grok 4.3 (xAI)

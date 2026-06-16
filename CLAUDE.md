@@ -46,6 +46,10 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR locales). — Grok 4.3 (xAI)
+
+- **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json`. — Grok 4.3 (xAI)
+
 - **Online Multiplayer Unit Tests:** 16 new tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights, seedFromRoomRound. — Grok 4.3 (xAI)
 
 - **Documentation sync (v0.4.2):** Layout, worker commands, online architecture, 139 tests — see AGENTS.md. — Grok 4.3 (xAI)

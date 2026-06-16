@@ -213,6 +213,10 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
+- **Copyright attribution:** UI legal footer (`legal_footer` in `en.json` / `fr.json`) now credits **Martin Labelle** instead of Bestter; `LICENSE` unchanged. — Grok 4.3 (xAI)
+
+- **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json` (online multiplayer MVP milestone). — Grok 4.3 (xAI)
+
 - **Online Multiplayer Unit Tests:** Added 16 tests (**155** total): `onlineSession.test.ts` (sessionStorage persist/read/clear), `GameEngine.online.test.ts` (`syncRoundEndFromRemote`, `enterInterRoundPhase`, `isRoundCombatActive`), TurnManager `executeRemoteFire` by `ownerId`, Terrain `loadHeights`, `seedFromRoomRound` room isolation. lint + build + test green. — Grok 4.3 (xAI)
 
 - **Documentation sync (v0.4.2):** Updated AGENTS.md layout/commands (worker/, online files), README features/architecture/tech stack, and companion docs with current test count (**139**), version **v0.4.2**, online dev workflow (`npm run dev` + `npm run worker:dev`), and worker folder conventions. — Grok 4.3 (xAI)
