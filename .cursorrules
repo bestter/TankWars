@@ -25,6 +25,7 @@
 
 - ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
+- **Production deploy option B :** Client prod via `VITE_API_BASE` (workers.dev) dans `onlineApi.ts`; CSP `*.workers.dev`. 158 tests. — Grok 4.3 (xAI)
 - **Copyright attribution :** Pied de page légal — Martin Labelle (locales EN/FR). — Grok 4.3 (xAI)
 - **Game Version Bump :** Version `0.5.0` dans `package.json` et `package-lock.json`. — Grok 4.3 (xAI)
 - **Online Multiplayer Unit Tests :** +16 tests (155 total). — Grok 4.3 (xAI)

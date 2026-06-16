@@ -24,6 +24,7 @@
 - State machine (see `src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons & Economy: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited (never in shop). Others limited, decrement on use. Shop between rounds. Advanced weapons (Thermonuclear etc.) have special VFX/sounds in GameEngine.
 - **Online multiplayer (`AddMultiplayer`):** `OnlineLobby.tsx` + `useGameSession.ts` (client) + `worker/` (Cloudflare Worker + `GameRoom` DO). Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored. **155 tests** (onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights).
+- **Production deploy option B :** `VITE_API_BASE` → workers.dev (`onlineApi.ts`), CSP `*.workers.dev`. 158 tests. Script deploy local gitignored. — Grok 4.3 (xAI)
 - **Copyright attribution :** Pied de page légal — Martin Labelle (locales EN/FR). — Grok 4.3 (xAI)
 - **Game Version Bump :** Version du jeu portée à `0.5.0` dans `package.json` et `package-lock.json`. — Grok 4.3 (xAI)
 - **Online Multiplayer Unit Tests :** +16 tests (155 total). Voir AGENTS.md. — Grok 4.3 (xAI)

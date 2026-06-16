@@ -11,6 +11,7 @@ import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
 import { setRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
+import { getOnlineWsBase } from "../utils/onlineApi";
 import {
   clearOnlineSession,
   persistOnlineSession,
@@ -360,7 +361,7 @@ export function useGameSession({
     const combatRoomId = roomId;
     const combatSlot = slot;
     const combatToken = token;
-    const wsBase = import.meta.env.DEV ? 'ws://localhost:8787' : (typeof window !== 'undefined' ? `wss://${window.location.host}` : '');
+    const wsBase = getOnlineWsBase();
 
     const clearCombatReconnect = (): void => {
       if (combatReconnectTimer !== null) {

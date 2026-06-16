@@ -98,6 +98,8 @@ npm run worker:deploy
 
 **Online dev:** start both `npm run dev` (frontend, port 5173) and `npm run worker:dev` (API, port 8787). Restart the worker after editing `worker/src/game-room.ts`.
 
+**Production deploy (option B — Worker on workers.dev):** run `.\deploy-cloudflare.ps1`. It deploys the Worker first, injects `VITE_API_BASE` into the Vite build, then deploys Pages. The game on `tankwars.pages.dev` calls the API on `https://tankwars-api.<account>.workers.dev`. See `.env.production.example` for manual builds.
+
 ---
 
 ## Architecture Highlights
@@ -157,7 +159,7 @@ Fully working:
 - **Worker `.gitignore` cleanup**: `worker/.wrangler/` (Wrangler local dev SQLite/cache) excluded from Git; accidentally tracked artifacts removed from index. Worker source code (`worker/src/`, `wrangler.toml`) remains versioned.
 - **Online Multiplayer (AddMultiplayer branch)**: Full cross-client flow — lobby WS + auto-start, combat WS (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END`), shop relay (`SHOP_BUY_SELL` / `SHOP_ADVANCE` / `SHOP_FINISH`), `localPlayerId` gating, `seedFromRoomRound`, remote fire by slot, `GAME_START` catch-up, `onlineSession.ts` resume, combat WS reconnect, round 2 server reset. MVP = client physics + server turn order; authoritative server sim still planned.
 - **Online Multiplayer Unit Tests**: 16 new tests — `onlineSession`, `GameEngine.online` (remote round end), TurnManager `ownerId` remote fire, Terrain `loadHeights`, `seedFromRoomRound` room isolation.
-- **Test Suite (v0.5.0)**: **155 unit tests** across 16 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, and reducer coverage.
+- **Test Suite (v0.5.0)**: **158 unit tests** across 17 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, and reducer coverage.
 - **Bullet and Nuke Direct Hit Damage Fix**: Fixed a bug where direct hits with `BULLET` and `NUKE` were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.

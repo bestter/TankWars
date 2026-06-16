@@ -26,6 +26,7 @@ Browser-based artillery game (Scorched Earth / Worms style): destructible terrai
 | Preview build | `npm run preview` |
 | Worker dev (online API) | `npm run worker:dev` → <http://localhost:8787> (restart after `game-room.ts` edits) |
 | Worker deploy | `npm run worker:deploy` |
+| Full prod deploy (Pages + Worker, option B) | `.\deploy-cloudflare.ps1` (sets `VITE_API_BASE` → workers.dev) |
 | React health scan | `npm run doctor` or `npx react-doctor@latest --verbose --diff` after React changes |
 
 Verify changes with `npm run lint`, `npm run build`, and `npm run test` before finishing. Running all tests is mandatory on every modification. If tests are failing or need correction, they must be corrected immediately. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
@@ -214,6 +215,8 @@ Do not block current architecture for these; implement incrementally when asked:
 ## Recent Updates & Bug Fixes
 
 - **Copyright attribution:** UI legal footer (`legal_footer` in `en.json` / `fr.json`) now credits **Martin Labelle** instead of Bestter; `LICENSE` unchanged. — Grok 4.3 (xAI)
+
+- **Production deploy option B:** Client prod uses `VITE_API_BASE` (workers.dev) via `src/utils/onlineApi.ts`; CSP `connect-src` allows `*.workers.dev`; `.env.production.example` for manual builds. Local `deploy-cloudflare.ps1` (gitignored) deploys Worker + Pages. **158 tests**. — Grok 4.3 (xAI)
 
 - **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json` (online multiplayer MVP milestone). — Grok 4.3 (xAI)
 

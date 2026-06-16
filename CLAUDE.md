@@ -46,6 +46,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Production deploy option B:** `VITE_API_BASE` → workers.dev via `onlineApi.ts`; CSP `*.workers.dev`; `deploy-cloudflare.ps1` updated locally (gitignored). 158 tests. — Grok 4.3 (xAI)
+
 - **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR locales). — Grok 4.3 (xAI)
 
 - **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json`. — Grok 4.3 (xAI)

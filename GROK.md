@@ -6,7 +6,7 @@
 
 - Always begin by reading AGENTS.md + the current file.
 - Before any code change that affects visuals or engine: re-read `src/game/engine/GameEngine.ts` (render + fireProjectile), `TankManager.ts` (draw + recoil), `PhysicsEngine.ts` (draw + Projectile).
-- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **155 tests**).
+- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **158 tests**).
 - Online work: run `npm run dev` + `npm run worker:dev` together; restart worker after `worker/src/game-room.ts` changes.
 - Use imperative commit style and sign with your exact model: e.g. `Add floating active indicator (Step 4) — Grok 4.3 (xAI)`.
 - The system prompt identifies you as "Grok 4.3 released by xAI in April 2026".
@@ -19,6 +19,8 @@
 - **Deploy:** `npm run worker:deploy` (separate from Cloudflare Pages frontend)
 
 ## Recent Polish (Step 4, 5, 6 & 7)
+
+- **Production deploy option B:** `VITE_API_BASE` + `onlineApi.ts` for workers.dev API; CSP updated. 158 tests. — Grok 4.3 (xAI)
 
 - **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR). — Grok 4.3 (xAI)
 

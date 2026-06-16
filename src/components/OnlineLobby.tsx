@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import type { CreateRoomResponse, RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../types/room';
 import type { Player } from '../types/player';
 import { VGA_PALETTE } from '../types/game';
+import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
 
 export interface OnlineLobbyProps {
   /** When provided via URL params we are in "join" mode for that slot */
@@ -46,9 +47,6 @@ interface JoinedInfo {
   name: string;
   type: 'human' | 'ai';
 }
-
-const API_BASE = import.meta.env.DEV ? 'http://localhost:8787' : ''; // wrangler dev default port
-const WS_BASE = import.meta.env.DEV ? 'ws://localhost:8787' : (typeof window !== 'undefined' ? `wss://${window.location.host}` : '');
 
 export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartGame, onExitToLocalMenu }: OnlineLobbyProps) {
   const { t } = useTranslation();
@@ -124,7 +122,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
         origin: typeof window !== 'undefined' ? window.location.origin : undefined,
       };
 
-      const res = await fetch(`${API_BASE}/api/rooms`, {
+      const res = await fetch(`${getOnlineApiBase()}/api/rooms`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
@@ -240,7 +238,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       }
 
       const nameParam = nameForClaim ? `&name=${encodeURIComponent(nameForClaim)}` : '';
-      const wsUrl = `${WS_BASE}/api/rooms/${rId}/ws?slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
+      const wsUrl = `${getOnlineWsBase()}/api/rooms/${rId}/ws?slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
