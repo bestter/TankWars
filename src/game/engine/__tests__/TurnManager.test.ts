@@ -243,5 +243,29 @@ describe('TurnManager', () => {
 
       expect(mockFireCallback).toHaveBeenCalledTimes(1);
     });
+
+    it('replays remote fire by ownerId when fromSlot is omitted', () => {
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 12, power: 55, weaponId: 'GRENADE' },
+        { ownerId: 'player-2' },
+      );
+
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(1);
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+      expect(mockFireCallback.mock.calls[0][2]).toBe('player-2');
+    });
+
+    it('ignores remote fire when ownerId does not match any player', () => {
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 12, power: 55, weaponId: 'MISSILE' },
+        { ownerId: 'unknown-player' },
+      );
+
+      expect(mockFireCallback).not.toHaveBeenCalled();
+    });
   });
 });

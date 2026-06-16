@@ -71,6 +71,10 @@ describe('seedFromRoomRound', () => {
     expect(seedFromRoomRound('abc123', 1)).not.toBe(seedFromRoomRound('abc123', 2));
   });
 
+  it('differs across room ids for the same round number', () => {
+    expect(seedFromRoomRound('room-a', 1)).not.toBe(seedFromRoomRound('room-b', 1));
+  });
+
   it('produces identical spawn draws on two fresh seeded RNG instances', () => {
     const seed = seedFromRoomRound('room-xyz', 2);
     const a = createSeededRNG(seed);

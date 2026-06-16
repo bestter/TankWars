@@ -6,11 +6,23 @@
 
 - Always begin by reading AGENTS.md + the current file.
 - Before any code change that affects visuals or engine: re-read `src/game/engine/GameEngine.ts` (render + fireProjectile), `TankManager.ts` (draw + recoil), `PhysicsEngine.ts` (draw + Projectile).
-- After edits: run `npm run lint && npm run build` (mandatory per AGENTS).
+- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **155 tests**).
+- Online work: run `npm run dev` + `npm run worker:dev` together; restart worker after `worker/src/game-room.ts` changes.
 - Use imperative commit style and sign with your exact model: e.g. `Add floating active indicator (Step 4) — Grok 4.3 (xAI)`.
 - The system prompt identifies you as "Grok 4.3 released by xAI in April 2026".
 
+## Worker folder (`worker/`)
+
+- **Versioned:** `worker/src/index.ts`, `worker/src/game-room.ts`, `worker/wrangler.toml`
+- **Gitignored:** `worker/.wrangler/` (local Wrangler SQLite/cache from `wrangler dev`)
+- **Role:** REST `/api/rooms` + WS to `GameRoom` DO — lobby, turn relay, `ROUND_END`, shop sync
+- **Deploy:** `npm run worker:deploy` (separate from Cloudflare Pages frontend)
+
 ## Recent Polish (Step 4, 5, 6 & 7)
+
+- **Online Multiplayer Unit Tests:** +16 tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights. — Grok 4.3 (xAI)
+
+- **Documentation sync (v0.4.2):** All agent docs + README updated (worker/, online, 139 tests, v0.4.2). — Grok 4.3 (xAI)
 
 - **Worker `.gitignore` cleanup:** `worker/.wrangler/` gitignored; removed tracked Wrangler local dev SQLite/cache from index. — Grok 4.3 (xAI)
 

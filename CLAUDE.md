@@ -9,7 +9,9 @@
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`)
+- Run tests: `npm run test` (or `vitest run`) — **155 tests**
+- Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
+- Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
 
 Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must pass on every modification. If tests fail or require correction, they must be fixed. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
@@ -25,6 +27,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **Step 5 Tank Positioning:** Randomized spawn coordinates with shuffled starting order at each new round via `spawnTanks` in `TankManager` (100px minimum distance safety, 13% width margins, snapped vertically to `Y = groundY` surface).
 - **Step 6 Shell-Tank Collision:** Direct AABB shell-to-tank collision checking in `PhysicsEngine.updateProjectiles` (24x15 hitbox) with launch-time self-sabotage protection (ignores owner's hitbox until projectile exits it). Triggers explosions, damage, and projectile cleanup.
 - **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
+- **Online Multiplayer (`AddMultiplayer`):** `worker/` (Cloudflare Worker + `GameRoom` Durable Object) coordinates rooms and WS sync; client (`OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`) keeps local Canvas physics. `worker/.wrangler/` is gitignored.
 
 ## AI Strategy Pattern (Crucial)
 
@@ -42,6 +45,10 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
 
 ## Recent Updates & Bug Fixes
+
+- **Online Multiplayer Unit Tests:** 16 new tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights, seedFromRoomRound. — Grok 4.3 (xAI)
+
+- **Documentation sync (v0.4.2):** Layout, worker commands, online architecture, 139 tests — see AGENTS.md. — Grok 4.3 (xAI)
 
 - **Worker `.gitignore` cleanup:** `worker/.wrangler/` excluded from Git; removed tracked Wrangler local SQLite/cache from index. Worker source stays versioned. — Grok 4.3 (xAI)
 

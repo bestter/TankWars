@@ -12,7 +12,7 @@ Guidance for AI coding agents working in **Bestter's TankWars** (`bestters-tankw
 
 ## Project summary
 
-Browser-based artillery game (Scorched Earth / Worms style): destructible terrain, turn-based combat, weapon shop economy, 2–4 players (human or AI). **React 19 + TypeScript (strict) + HTML5 Canvas 2D**. No game frameworks, no external physics engines.
+Browser-based artillery game (Scorched Earth / Worms style): destructible terrain, turn-based combat, weapon shop economy, 2–4 players (human or AI). **React 19 + TypeScript (strict) + HTML5 Canvas 2D**. No game frameworks, no external physics engines. **Online multiplayer** (branch `AddMultiplayer`): Cloudflare Worker + Durable Object (`worker/`) coordinates rooms, turns, and WS sync; client keeps local physics (MVP).
 
 ## Commands
 
@@ -24,6 +24,8 @@ Browser-based artillery game (Scorched Earth / Worms style): destructible terrai
 | Lint | `npm run lint` |
 | Run tests | `npm run test` (or `npx vitest`) |
 | Preview build | `npm run preview` |
+| Worker dev (online API) | `npm run worker:dev` → <http://localhost:8787> (restart after `game-room.ts` edits) |
+| Worker deploy | `npm run worker:deploy` |
 | React health scan | `npm run doctor` or `npx react-doctor@latest --verbose --diff` after React changes |
 
 Verify changes with `npm run lint`, `npm run build`, and `npm run test` before finishing. Running all tests is mandatory on every modification. If tests are failing or need correction, they must be corrected immediately. Prefer fixing lint warnings you introduce; do not drive-by refactor unrelated warnings.
@@ -32,13 +34,20 @@ Verify changes with `npm run lint`, `npm run build`, and `npm run test` before f
 
 ```
 src/
-├── App.tsx                 # Top-level phase: MENU vs combat (mounts GameCanvas)
+├── App.tsx                 # Top-level phase: MENU vs combat; online session resume / lobby gating
 ├── main.tsx
-├── types/                  # Single source of truth (game, player, weapon) — zero `any`
+├── types/                  # Single source of truth (game, player, weapon, room) — zero `any`
+├── utils/
+│   ├── onlineSession.ts    # sessionStorage persistence for in-progress online matches
+│   └── random.ts           # secureRandom + createSeededRNG + seedFromRoomRound (online sync)
 ├── components/
-│   ├── MainMenu.tsx        # Player count, names, Human / IA Simple / IA OK / IA SNIPER / IA EXPERT (v1-v4 profiles)
+│   ├── MainMenu.tsx        # Local match: player count, names, Human / IA (v1–v4)
+│   ├── OnlineLobby.tsx     # Online: create room, shareable URLs, WS waiting room
 │   ├── GameCanvas.tsx      # Canvas ref + GameEngine lifecycle + React phase overlays
+│   ├── useGameSession.ts   # Core match loop, WS combat sync, shop/round relay
+│   ├── gameCanvasReducer.ts
 │   ├── GameHUD.tsx
+│   ├── MobileControls.tsx
 │   ├── WeaponShop.tsx
 │   ├── RoundSummary.tsx
 │   ├── ColorPicker.tsx     # Pre-game color selection (mutual exclusion)
@@ -63,6 +72,13 @@ src/
             ├── AISniperStrategy.ts     # Phase 3 "IA SNIPER" (v3-sniper) — high precision
             ├── AISmartStrategy.ts      # Phase 4 "IA EXPERT" (v4-smart) — adaptive
             └── AIStrategy.ts
+
+worker/                     # Cloudflare Worker backend (online multiplayer) — versioned
+├── wrangler.toml           # tankwars-api + GAME_ROOM Durable Object binding
+└── src/
+    ├── index.ts            # REST /api/rooms + WS upgrade routing
+    └── game-room.ts        # GameRoom DO: lobby, FIRE, SHOT, STATE_UPDATE, ROUND_END, SHOP_*
+# worker/.wrangler/         # Local wrangler dev state (SQLite) — gitignored, never commit
 ```
 
 ## Architecture (non-negotiable)
@@ -135,6 +151,9 @@ getResolutionFallback?(): { angle: number; power: number } | null  // sync bailo
 | Tank visual / procedural sprite + Step 4 polish | `game/rendering/tankSprite.ts`, `TankManager.ts` (recoil + draw), `GameEngine.ts` (render indicator + fire recoil trigger + color lookup), `PhysicsEngine.ts` (ownerColor on projectiles) |
 | Smarter AI | New file under `game/entities/ai/`, implement `AIEngine`; reuse `BallisticsSimulator.ts` for aiming; register in `AIByProfileStrategy.ts` + `GameCanvas.tsx` |
 | Global match phase | `App.tsx`, `types/game.ts` |
+| Online lobby / room URLs | `OnlineLobby.tsx`, `types/room.ts`, `worker/src/index.ts` |
+| Online combat WS sync | `useGameSession.ts`, `onlineSession.ts`, `TurnManager.ts`, `GameEngine.ts` |
+| Server room / turn relay | `worker/src/game-room.ts` |
 
 ## What agents must not do
 
@@ -153,6 +172,7 @@ After any modification or substantive change:
 3. `npm run build` — TypeScript + Vite succeed.
 4. If React/UI touched: `npx react-doctor@latest --verbose --diff` — score should not regress (see `.agents/skills/react-doctor/SKILL.md`).
 5. Manually sanity-check: menu → 2+ players → fire → terrain crater → shop round if relevant.
+6. If online touched: run **both** `npm run dev` (5173) and `npm run worker:dev` (8787); test lobby → combat → round end → shop → round 2.
 
 ## Commit Rules and Documentation Update
 
@@ -189,8 +209,13 @@ Do not block current architecture for these; implement incrementally when asked:
 - Sound, particles, more weapons
 - Persistent scores / match history
 - Further AI improvements (v3-sniper optimized with highly accurate numerical trajectory search that handles drag and wind, and coordinate-shifting deliberate first-shot miss (Step 7 complete); v4-smart implemented)
+- **Online authoritative sim:** server-side headless physics (terrain/damage/HP shot-by-shot) to eliminate client divergence; wind sync at match start
 
 ## Recent Updates & Bug Fixes
+
+- **Online Multiplayer Unit Tests:** Added 16 tests (**155** total): `onlineSession.test.ts` (sessionStorage persist/read/clear), `GameEngine.online.test.ts` (`syncRoundEndFromRemote`, `enterInterRoundPhase`, `isRoundCombatActive`), TurnManager `executeRemoteFire` by `ownerId`, Terrain `loadHeights`, `seedFromRoomRound` room isolation. lint + build + test green. — Grok 4.3 (xAI)
+
+- **Documentation sync (v0.4.2):** Updated AGENTS.md layout/commands (worker/, online files), README features/architecture/tech stack, and companion docs with current test count (**139**), version **v0.4.2**, online dev workflow (`npm run dev` + `npm run worker:dev`), and worker folder conventions. — Grok 4.3 (xAI)
 
 - **Worker `.gitignore` cleanup:** Added `worker/.wrangler/` to `.gitignore` and removed accidentally tracked Wrangler local dev state (Durable Object SQLite + cache) from the Git index. Worker source (`worker/src/`, `wrangler.toml`) remains versioned; only ephemeral `wrangler dev` artifacts are excluded. — Grok 4.3 (xAI)
 
