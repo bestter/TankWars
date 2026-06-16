@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
 import { MainMenu } from "./components/MainMenu";
@@ -7,6 +8,11 @@ import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { GamePhase } from "./types/game";
 import type { Player } from "./types/player";
 import { SEO } from './components/SEO';
+import {
+  clearOnlineSession,
+  readOnlineSession,
+  type OnlineCanvasSnapshot,
+} from "./utils/onlineSession";
 
 /**
  * Bestter's TankWars - Root App (src/App.tsx)
@@ -20,8 +26,15 @@ import { SEO } from './components/SEO';
  */
 
 function App() {
-  const [phase, setPhase] = useState<GamePhase>("MENU");
-  const [players, setPlayers] = useState<Player[] | null>(null);
+  const { t } = useTranslation();
+  const [savedSession] = useState(() => readOnlineSession());
+
+  const [phase, setPhase] = useState<GamePhase>(() =>
+    savedSession ? "COMBAT" : "MENU",
+  );
+  const [players, setPlayers] = useState<Player[] | null>(
+    () => savedSession?.players ?? null,
+  );
 
   // Online lobby meta (when we came from a room link or host creation)
   const [onlineMeta, setOnlineMeta] = useState<{
@@ -29,12 +42,20 @@ function App() {
     localPlayerId: string;
     initialHeights?: number[];
     initialWind?: number;
+    initialCurrentPlayerIndex?: number;
     slot?: number;
     token?: string;
-  } | null>(null);
+  } | null>(() => savedSession?.meta ?? null);
 
   // Local flag to force showing the OnlineLobby create UI from the "Play online" button in MainMenu
   const [forceShowOnlineLobby, setForceShowOnlineLobby] = useState(false);
+  /** Once an online match has started, never route back to the waiting-room lobby on MENU. */
+  const [onlineMatchStarted, setOnlineMatchStarted] = useState(
+    () => !!savedSession,
+  );
+  const [resumeCanvas, setResumeCanvas] = useState<OnlineCanvasSnapshot | null>(
+    () => savedSession?.canvas ?? null,
+  );
 
   // Parse URL once on mount (supports direct join links and after create)
   const [onlineParams] = useState(() => {
@@ -48,6 +69,8 @@ function App() {
   });
 
   const isOnlineJoin = !!onlineParams.room && onlineParams.slot !== null && !!onlineParams.token;
+  const showOnlineLobby =
+    !onlineMatchStarted && (isOnlineJoin || forceShowOnlineLobby);
 
   const handleStartGame = (initialPlayers: Player[]): void => {
     setPlayers(initialPlayers);
@@ -56,7 +79,7 @@ function App() {
 
   const handleStartOnlineGame = (
     initialPlayers: Player[],
-    meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; slot?: number; token?: string },
+    meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string },
   ): void => {
     setPlayers(initialPlayers);
     setOnlineMeta({
@@ -64,9 +87,13 @@ function App() {
       localPlayerId: meta.localPlayerId,
       initialHeights: meta.initialHeights,
       initialWind: meta.initialWind,
+      initialCurrentPlayerIndex: meta.initialCurrentPlayerIndex,
       slot: meta.slot,
       token: meta.token,
     });
+    setResumeCanvas(null);
+    setOnlineMatchStarted(true);
+    setForceShowOnlineLobby(false);
     setPhase("COMBAT");
   };
 
@@ -74,6 +101,10 @@ function App() {
     // Démontage du canvas/engine → libération ressources + retour config
     setPlayers(null);
     setOnlineMeta(null);
+    setResumeCanvas(null);
+    setOnlineMatchStarted(false);
+    setForceShowOnlineLobby(false);
+    clearOnlineSession();
     // Best effort: clean URL params if we were in an online flow
     if (typeof window !== 'undefined' && (onlineParams.room || onlineMeta)) {
       window.history.replaceState({}, '', window.location.pathname);
@@ -81,8 +112,13 @@ function App() {
     setPhase("MENU");
   };
 
-  // When GameCanvas asks to go back in an online context we go back to local menu (MVP)
-  const handleReturnToLobbyOrMenu = () => handleReturnToMenu();
+  const handleReturnToLobbyOrMenu = (): void => {
+    if (onlineMeta) {
+      const ok = window.confirm(t("online_quit_confirm"));
+      if (!ok) return;
+    }
+    handleReturnToMenu();
+  };
 
   const showMenu = phase === "MENU" && players === null;
 
@@ -104,7 +140,7 @@ function App() {
       </div>
 
       {showMenu ? (
-        isOnlineJoin || forceShowOnlineLobby ? (
+        showOnlineLobby ? (
           <OnlineLobby
             initialRoomId={isOnlineJoin ? onlineParams.room! : undefined}
             initialSlot={isOnlineJoin ? onlineParams.slot! : undefined}
@@ -128,6 +164,8 @@ function App() {
             roomId={onlineMeta?.roomId}
             initialHeights={onlineMeta?.initialHeights}
             initialWind={onlineMeta?.initialWind}
+            initialCurrentPlayerIndex={onlineMeta?.initialCurrentPlayerIndex}
+            resumeCanvas={resumeCanvas ?? undefined}
             slot={onlineMeta?.slot}
             token={onlineMeta?.token}
           />

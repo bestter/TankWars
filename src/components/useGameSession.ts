@@ -10,7 +10,19 @@ import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
-import { setRNG, createSeededRNG } from "../utils/random";
+import { setRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
+import {
+  clearOnlineSession,
+  persistOnlineSession,
+  type OnlineCanvasSnapshot,
+} from "../utils/onlineSession";
+
+function buildInitialCanvasState(
+  resume?: OnlineCanvasSnapshot,
+): typeof INITIAL_STATE {
+  if (!resume) return INITIAL_STATE;
+  return { ...INITIAL_STATE, ...resume };
+}
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
@@ -69,6 +81,8 @@ interface UseGameSessionProps {
   roomId?: string;
   initialHeights?: number[];
   initialWind?: number;
+  initialCurrentPlayerIndex?: number;
+  resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
   token?: string;
 }
@@ -81,18 +95,37 @@ export function useGameSession({
   roomId,
   initialHeights,
   initialWind,
+  initialCurrentPlayerIndex,
+  resumeCanvas,
   slot,
   token,
 }: UseGameSessionProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const gameWsRef = useRef<WebSocket | null>(null);
+  const roundEndFromNetworkRef = useRef(false);
+  const shopSyncRef = useRef({
+    applyRemoteAdvance: (nextIndex: number) => {
+      void nextIndex;
+    },
+    finishShop: () => {},
+  });
 
-  const [state, dispatch] = useReducer(gameCanvasReducer, INITIAL_STATE);
+  const [state, dispatch] = useReducer(
+    gameCanvasReducer,
+    resumeCanvas,
+    buildInitialCanvasState,
+  );
   const {
     gamePhase,
     shopPlayers,
     currentShopIndex,
+    uiPlayers,
+    currentManche,
+    roundResult,
+    lastRoundOutcome,
+    wind: canvasWind,
   } = state;
 
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
@@ -131,12 +164,79 @@ export function useGameSession({
     currentMancheRef.current = state.currentManche;
   }, [state.currentManche]);
 
+  // Persist online match so refresh / accidental MENU does not drop into the waiting-room lobby.
+  useEffect(() => {
+    if (
+      gameMode !== "online" ||
+      !roomId ||
+      slot == null ||
+      !token ||
+      !localPlayerId
+    ) {
+      return;
+    }
+    if (gamePhase === "GAME_OVER") {
+      clearOnlineSession();
+      return;
+    }
+    const roster = uiPlayers.length > 0 ? uiPlayers : (initialPlayers ?? []);
+    if (roster.length < 2) return;
+
+    persistOnlineSession({
+      meta: {
+        roomId,
+        localPlayerId,
+        slot,
+        token,
+        initialHeights,
+        initialWind,
+        initialCurrentPlayerIndex,
+      },
+      players: roster,
+      canvas: {
+        gamePhase,
+        currentManche,
+        uiPlayers: roster,
+        shopPlayers,
+        currentShopIndex,
+        roundResult,
+        lastRoundOutcome,
+        wind: canvasWind,
+      },
+    });
+  }, [
+    gameMode,
+    roomId,
+    slot,
+    token,
+    localPlayerId,
+    gamePhase,
+    currentManche,
+    uiPlayers,
+    shopPlayers,
+    currentShopIndex,
+    roundResult,
+    lastRoundOutcome,
+    canvasWind,
+    initialPlayers,
+    initialHeights,
+    initialWind,
+    initialCurrentPlayerIndex,
+  ]);
+
   const clearShopAiTimeout = useCallback((): void => {
     if (shopAiTimeoutRef.current !== null) {
       clearTimeout(shopAiTimeoutRef.current);
       shopAiTimeoutRef.current = null;
     }
   }, []);
+
+  /** Online: true only when the active shop slot belongs to this client. */
+  const isLocalShopTurn =
+    gameMode !== 'online' ||
+    !localPlayerId ||
+    (!!shopPlayers[currentShopIndex]?.isHuman &&
+      shopPlayers[currentShopIndex]?.id === localPlayerId);
 
   const clearCelebrationTimer = useCallback(() => {
     if (celebrationTimerRef.current !== null) {
@@ -199,12 +299,9 @@ export function useGameSession({
       }
     }
 
-    // For online: use a seeded RNG derived from roomId so that all clients
-    // produce the exact same random spawns (TankManager.spawnTanks + shuffle).
-    // This makes initial tank positions identical across windows.
+    // Online: seeded RNG per combat round so spawnTanks + wind are identical on every client.
     if (gameMode === 'online' && roomId) {
-      const seed = roomId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      setRNG(createSeededRNG(seed));
+      setRNG(createSeededRNG(seedFromRoomRound(roomId, 1)));
     }
 
     // Cross-tab sync for online dev testing (same browser, multiple tabs)
@@ -257,53 +354,137 @@ export function useGameSession({
     // === Game phase persistent WS connection to the room DO for authoritative sync ===
     // This survives the lobby unmount. Client sends FIRE to server; server simulates and broadcasts SHOT + STATE_UPDATE to all sockets in room.
     // Clients apply server state for sync, and replay SHOT for visuals.
-    if (gameMode === 'online' && roomId && slot != null && token) {
-      const wsBase = import.meta.env.DEV ? 'ws://localhost:8787' : (typeof window !== 'undefined' ? `wss://${window.location.host}` : '');
-      const wsUrl = `${wsBase}/api/rooms/${roomId}/ws?slot=${slot}&token=${encodeURIComponent(token)}`;
-      gameWs = new WebSocket(wsUrl);
+    let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-      gameWs.onopen = () => {
+    if (gameMode === 'online' && roomId && slot != null && token) {
+    const combatRoomId = roomId;
+    const combatSlot = slot;
+    const combatToken = token;
+    const wsBase = import.meta.env.DEV ? 'ws://localhost:8787' : (typeof window !== 'undefined' ? `wss://${window.location.host}` : '');
+
+    const clearCombatReconnect = (): void => {
+      if (combatReconnectTimer !== null) {
+        clearTimeout(combatReconnectTimer);
+        combatReconnectTimer = null;
+      }
+    };
+
+    function bindCombatWsHandlers(ws: WebSocket): void {
+      ws.onopen = () => {
         console.log('[Game] Combat WS connected to server');
       };
 
-      gameWs.onmessage = (ev) => {
+      ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           const tm = engine.getTurnManager();
+
+          if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number') {
+            tm.syncTurn(msg.currentPlayerIndex);
+            if (typeof msg.wind === 'number') {
+              engine.setWindForce(msg.wind);
+            }
+          }
 
           if (msg.type === 'SHOT' && msg.command) {
             // For the firer, we already executed the full local fire for immediate feedback.
             // For other clients (or to be safe), replay only if the slot in the message is not our local slot.
             // This avoids double execution on the firer.
-            if (msg.slot !== slot) {
-              tm.executeRemoteFire(msg.command);
+            if (
+              msg.slot !== slot &&
+              gamePhaseRef.current === 'COMBAT' &&
+              engine.isRoundCombatActive() &&
+              !tm.isInterRoundPaused()
+            ) {
+              tm.executeRemoteFire(msg.command, {
+                fromSlot: typeof msg.slot === 'number' ? msg.slot : undefined,
+                ownerId: typeof msg.ownerId === 'string' ? msg.ownerId : undefined,
+              });
             }
           }
 
           if (msg.type === 'STATE_UPDATE') {
-            if (msg.heights && Array.isArray(msg.heights)) {
-              engine.getTerrain().loadHeights(msg.heights);
+            // MVP: server only coordinates turn order. Clients run local physics after SHOT replay.
+            // Do NOT apply server players/heights here — the DO stub still carries placeholder
+            // spawn Y values (≈280) which teleport tanks into the sky and reset crater terrain.
+            // Ignore late turn updates after round end (prevents desync back into "waiting for shot").
+            if (
+              gamePhaseRef.current === 'COMBAT' &&
+              engine.isRoundCombatActive() &&
+              !tm.isInterRoundPaused()
+            ) {
+              if (typeof msg.currentPlayerIndex === 'number') {
+                tm.syncTurn(msg.currentPlayerIndex);
+              }
+              if (typeof msg.wind === 'number') {
+                engine.setWindForce(msg.wind);
+              }
             }
-            if (msg.players) {
+          }
+
+          if (msg.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players) && msg.slot !== slot) {
+            if (gamePhaseRef.current === 'SHOP') {
               engine.getTankManager().setPlayers(msg.players);
-              dispatch({ type: "SET_UI_PLAYERS", players: msg.players });
+              dispatch({ type: "MUTATE_SHOP_PLAYERS", players: msg.players });
             }
-            if (typeof msg.currentPlayerIndex === 'number') {
-              tm.syncTurn(msg.currentPlayerIndex);
+          }
+
+          if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && msg.slot !== slot) {
+            if (gamePhaseRef.current === 'SHOP') {
+              shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
             }
-            // wind etc. can be synced similarly
+          }
+
+          if (msg.type === 'SHOP_FINISH' && Array.isArray(msg.players) && msg.slot !== slot) {
+            if (gamePhaseRef.current === 'SHOP') {
+              engine.getTankManager().setPlayers(msg.players);
+              dispatch({ type: "MUTATE_SHOP_PLAYERS", players: msg.players });
+              shopSyncRef.current.finishShop();
+            }
+          }
+
+          if (msg.type === 'ROUND_END' && Array.isArray(msg.players) && msg.slot !== slot) {
+            if (gamePhaseRef.current === 'COMBAT') {
+              roundEndFromNetworkRef.current = true;
+              engine.syncRoundEndFromRemote(
+                msg.players,
+                typeof msg.roundWinnerId === 'string' ? msg.roundWinnerId : null,
+                !!msg.isDraw,
+              );
+            }
           }
         } catch (e) {
           console.warn('[Game] invalid WS message', e);
         }
       };
 
-      gameWs.onclose = () => {
+      ws.onclose = () => {
         console.log('[Game] Combat WS closed');
+        if (gameWsRef.current === ws) {
+          gameWsRef.current = null;
+        }
+        if (gamePhaseRef.current !== 'GAME_OVER') {
+          clearCombatReconnect();
+          combatReconnectTimer = setTimeout(() => {
+            combatReconnectTimer = null;
+            connectCombatWs();
+          }, 2000);
+        }
       };
-      gameWs.onerror = (e) => {
+      ws.onerror = (e) => {
         console.warn('[Game] Combat WS error', e);
       };
+    }
+
+    function connectCombatWs(): void {
+      if (gameWsRef.current?.readyState === WebSocket.OPEN) return;
+      const wsUrl = `${wsBase}/api/rooms/${combatRoomId}/ws?slot=${combatSlot}&token=${encodeURIComponent(combatToken)}`;
+      gameWs = new WebSocket(wsUrl);
+      gameWsRef.current = gameWs;
+      bindCombatWsHandlers(gameWs);
+    }
+
+    connectCombatWs();
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
@@ -313,12 +494,39 @@ export function useGameSession({
         ? snapshotPlayers.map((p) => ({ ...p }))
         : createDemoPlayers();
 
-    // Initialize players (this also calls setupInputListeners + starts first turn)
-    engine.setPlayers(players);
-    dispatch({ type: "SET_UI_PLAYERS", players });
-
+    // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
     if (localPlayerId) {
       engine.setLocalPlayerId(localPlayerId);
+    }
+
+    const resumed = resumeCanvas;
+    const tm = engine.getTurnManager();
+
+    if (resumed && resumed.uiPlayers.length >= 2) {
+      engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
+      gamePhaseRef.current = resumed.gamePhase;
+      shopPlayersRef.current = resumed.shopPlayers;
+      currentShopIndexRef.current = resumed.currentShopIndex;
+
+      if (resumed.gamePhase === 'COMBAT') {
+        tm.resumeForCombat();
+        tm.setupInputListeners();
+        if (typeof initialCurrentPlayerIndex === 'number') {
+          tm.syncTurn(initialCurrentPlayerIndex);
+        }
+      } else {
+        engine.enterInterRoundPhase();
+      }
+      if (resumed.wind) {
+        engine.setWindForce(resumed.wind);
+      }
+      dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
+    } else {
+      engine.setPlayers(players);
+      if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number') {
+        tm.syncTurn(initialCurrentPlayerIndex);
+      }
+      dispatch({ type: "SET_UI_PLAYERS", players });
     }
 
     // Also set wind if provided (for HUD etc.; main sync will come from server updates)
@@ -357,13 +565,30 @@ export function useGameSession({
       dispatch({ type: "SET_TURN_INFO", info });
     };
 
-    const tm = engine.getTurnManager();
-
     /**
      * Combat round ends on last man standing (0 or 1 tanks remain alive).
      */
     engine.onRoundEnded = (payload) => {
       if (gamePhaseRef.current !== "COMBAT") return;
+
+      const fromNetwork = roundEndFromNetworkRef.current;
+      roundEndFromNetworkRef.current = false;
+
+      if (
+        gameMode === "online" &&
+        !fromNetwork &&
+        gameWsRef.current?.readyState === WebSocket.OPEN
+      ) {
+        gameWsRef.current.send(
+          JSON.stringify({
+            type: "ROUND_END",
+            players: [...engine.getTankManager().getPlayers()],
+            roundWinnerId: payload.roundWinner?.id ?? null,
+            isDraw: payload.isDraw,
+            slot,
+          }),
+        );
+      }
 
       tm.pauseForInterRound();
 
@@ -424,11 +649,15 @@ export function useGameSession({
     renderLoop();
 
     return () => {
+      if (combatReconnectTimer !== null) {
+        clearTimeout(combatReconnectTimer);
+      }
       clearShopAiTimeout();
       clearCelebrationTimer();
       if (gameWs) {
         try { gameWs.close(); } catch { void 0; /* ignore close errors */ }
       }
+      gameWsRef.current = null;
       if (fireChannel) {
         try { fireChannel.close(); } catch { void 0; /* ignore close errors */ }
       }
@@ -549,6 +778,10 @@ export function useGameSession({
   };
 
   const handleNewGameFromSummary = (): void => {
+    if (gameMode === 'online') {
+      handleGoToShop();
+      return;
+    }
     const engine = engineRef.current;
     if (engine) {
       engine.resetGame();
@@ -572,6 +805,10 @@ export function useGameSession({
       shopPlayersRef.current[idx];
 
     if (!currentPlayer || !currentPlayer.isHuman) return;
+
+    if (gameMode === 'online' && localPlayerId && currentPlayer.id !== localPlayerId) {
+      return;
+    }
 
     const def = WEAPON_REGISTRY[weaponId];
     if (!def) return;
@@ -613,9 +850,27 @@ export function useGameSession({
     engine.getTankManager().setPlayers(updatedPlayers);
 
     dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
+
+    if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
+      gameWsRef.current.send(
+        JSON.stringify({ type: 'SHOP_BUY_SELL', players: updatedPlayers, slot }),
+      );
+    }
   };
 
   const handleShopReady = (): void => {
+    const idx = currentShopIndexRef.current;
+    const shopper = shopPlayersRef.current[idx];
+    if (gameMode === 'online' && localPlayerId) {
+      if (!shopper || shopper.id !== localPlayerId) return;
+    }
+
+    const nextIndex = idx + 1;
+    if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
+      gameWsRef.current.send(
+        JSON.stringify({ type: 'SHOP_ADVANCE', nextIndex, slot }),
+      );
+    }
     advanceToNextShopper();
   };
 
@@ -624,6 +879,18 @@ export function useGameSession({
     const nextIndex = currentShopIndexRef.current + 1;
 
     if (nextIndex >= currentLen) {
+      if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
+        const eng = engineRef.current;
+        if (eng) {
+          gameWsRef.current.send(
+            JSON.stringify({
+              type: 'SHOP_FINISH',
+              players: [...eng.getTankManager().getPlayers()],
+              slot,
+            }),
+          );
+        }
+      }
       finishShopPhase();
     } else {
       dispatch({ type: "ADVANCE_SHOPPER", nextIndex });
@@ -659,6 +926,11 @@ export function useGameSession({
     const engine = engineRef.current;
     if (!engine) return;
 
+    // Re-seed before each new combat round — RNG may have diverged (fireworks, celebration skip, etc.)
+    if (gameMode === 'online' && roomId) {
+      setRNG(createSeededRNG(seedFromRoomRound(roomId, currentMancheRef.current)));
+    }
+
     shopFinishingRef.current = true;
     clearShopAiTimeout();
 
@@ -679,15 +951,41 @@ export function useGameSession({
     }
 
     tm.resumeForCombat();
+    tm.syncTurn(0);
 
     const nextPlayers = [...engine.getTankManager().getPlayers()];
     dispatch({ type: "FINISH_SHOP", uiPlayers: nextPlayers });
+    gamePhaseRef.current = "COMBAT";
     shopPlayersRef.current = [];
     currentShopIndexRef.current = 0;
 
     clearCelebrationTimer();
     shopFinishingRef.current = false;
   };
+
+  useEffect(() => {
+    shopSyncRef.current.applyRemoteAdvance = (nextIndex: number) => {
+      if (shopFinishingRef.current || gamePhaseRef.current !== "SHOP") return;
+      if (nextIndex >= shopPlayersRef.current.length) {
+        finishShopPhase();
+        return;
+      }
+      if (currentShopIndexRef.current >= nextIndex) return;
+
+      currentShopIndexRef.current = nextIndex;
+      dispatch({ type: "ADVANCE_SHOPPER", nextIndex });
+
+      const nextPlayer = shopPlayersRef.current[nextIndex];
+      if (nextPlayer && !nextPlayer.isHuman) {
+        clearShopAiTimeout();
+        shopAiTimeoutRef.current = setTimeout(() => {
+          shopAiTimeoutRef.current = null;
+          processNextShopperIfAI();
+        }, 80);
+      }
+    };
+    shopSyncRef.current.finishShop = finishShopPhase;
+  });
 
   const handleNewGame = () => {
     const engine = engineRef.current;
@@ -745,5 +1043,6 @@ export function useGameSession({
     handleAdjustPower,
     handleCycleWeapon,
     handleFire,
+    isLocalShopTurn,
   };
 }

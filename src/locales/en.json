@@ -49,6 +49,7 @@
   "shop_header": "SHOP: PLAYER {{current}} / {{total}}",
   "shop_instructions": "Use + to buy, − to sell (full refund)",
   "shop_stock": "Stock",
+  "shop_waiting_opponent": "Waiting for {{name}} to shop…",
   "start_battle_button": "START THE BATTLE",
   "status_ai_turn": "[AI TURN]",
   "status_resolving": "[RESOLVING]",
@@ -123,5 +124,7 @@
   "room_error_invalid": "Invalid room link or token.",
   "room_error_generic": "Could not connect to the room. Is the game server running?",
   "connecting": "Connecting to room...",
-  "all_ready_auto_start": "All players joined — starting automatically..."
+  "all_ready_auto_start": "All players joined — starting automatically...",
+  "online_quit_confirm": "Leave the current online match?",
+  "online_resume_match": "Resuming online match…"
 }

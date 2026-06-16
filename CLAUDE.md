@@ -43,6 +43,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Online Multiplayer Sync & Session Stability:** ROUND_END relay, remote fire by slot, shop WS sync, per-round RNG reseed, GAME_START catch-up, sessionStorage resume, no mid-match lobby return, combat WS reconnect, round 2 server reset. 139 tests. See AGENTS.md. — Grok 4.3 (xAI)
+
 - **Basic Online Multiplayer Foundation:** Host creates room with per-player URLs (human slots + optional AI), WS lobby (roster, auto-start), game-phase persistent WS for FIRE → server coordination + SHOT/STATE_UPDATE. Client: localPlayerId gating (TurnManager.isLocalHumanTurn + syncTurn lock), seeded RNG for identical spawns, load server heights. Worker/DO for rooms. CSP for dev worker. Verifs green. See AGENTS.md for details. — Grok 4.3 (xAI)
 
 - **React Doctor GitHub Action Fix:** Removed the invalid `project` parameter from the `millionco/react-doctor@v2` GitHub Action step in `.github/workflows/react-doctor.yml` since it expects a directory path rather than file paths, resolving the directory path error on GitHub CI.

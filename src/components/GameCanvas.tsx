@@ -9,6 +9,7 @@ import { GameControlsExplanation } from "./GameControlsExplanation";
 import { GameOverOverlay } from "./GameOverOverlay";
 import { useGameSession } from "./useGameSession";
 import { MobileControls } from "./MobileControls";
+import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -21,6 +22,8 @@ export interface GameCanvasProps {
   roomId?: string;
   initialHeights?: number[];
   initialWind?: number;
+  initialCurrentPlayerIndex?: number;
+  resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
   token?: string;
 }
@@ -33,6 +36,8 @@ export function GameCanvas({
   roomId,
   initialHeights,
   initialWind,
+  initialCurrentPlayerIndex,
+  resumeCanvas,
   slot,
   token,
 }: GameCanvasProps = {}) {
@@ -53,7 +58,8 @@ export function GameCanvas({
     handleAdjustPower,
     handleCycleWeapon,
     handleFire,
-  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, slot, token });
+    isLocalShopTurn,
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token });
 
   const {
     gamePhase,
@@ -145,24 +151,31 @@ export function GameCanvas({
         {gamePhase === "SHOP" && shopPlayers.length > 0 && (
           <>
             {shopPlayers[currentShopIndex]?.isHuman ? (
-              <WeaponShop
-                player={shopPlayers[currentShopIndex]}
-                shopIndex={currentShopIndex}
-                totalShoppers={shopPlayers.length}
-                onBuySell={handleShopBuySell}
-                onReady={handleShopReady}
-              />
+              isLocalShopTurn ? (
+                <WeaponShop
+                  player={shopPlayers[currentShopIndex]}
+                  shopIndex={currentShopIndex}
+                  totalShoppers={shopPlayers.length}
+                  onBuySell={handleShopBuySell}
+                  onReady={handleShopReady}
+                />
+              ) : (
+                <div className="retro-ai-overlay">
+                  {t("shop_waiting_opponent", {
+                    name: shopPlayers[currentShopIndex]?.name ?? "",
+                  })}
+                </div>
+              )
             ) : (
-              // Pendant qu'une IA achète automatiquement (très rapide)
-              <div className="retro-ai-overlay">
-                L'IA{" "}
-                <strong
-                  style={{ color: shopPlayers[currentShopIndex]?.tank.color }}
-                >
-                  {shopPlayers[currentShopIndex]?.name}
-                </strong>{" "}
-                fait ses achats...
-              </div>
+              <div
+                className="retro-ai-overlay"
+                dangerouslySetInnerHTML={{
+                  __html: t("ai_shopping_status", {
+                    color: shopPlayers[currentShopIndex]?.tank.color ?? "#fff",
+                    name: shopPlayers[currentShopIndex]?.name ?? "",
+                  }),
+                }}
+              />
             )}
           </>
         )}

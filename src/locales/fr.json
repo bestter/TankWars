@@ -50,6 +50,7 @@
   "shop_header": "BOUTIQUE: JOUEUR {{current}} / {{total}}",
   "shop_instructions": "Utilisez + pour acheter, − pour vendre (remboursement intégral)",
   "shop_stock": "Stock",
+  "shop_waiting_opponent": "En attente des achats de {{name}}…",
   "start_battle_button": "COMMENCER LA BATAILLE",
   "status_ai_turn": "[TOUR IA]",
   "status_resolving": "[RÉSOLUTION]",
@@ -124,5 +125,7 @@
   "room_error_invalid": "Lien de salle ou jeton invalide.",
   "room_error_generic": "Impossible de se connecter à la salle. Le serveur de jeu est-il démarré ?",
   "connecting": "Connexion à la salle...",
-  "all_ready_auto_start": "Tous les joueurs ont rejoint — démarrage automatique..."
+  "all_ready_auto_start": "Tous les joueurs ont rejoint — démarrage automatique...",
+  "online_quit_confirm": "Quitter la partie en ligne en cours ?",
+  "online_resume_match": "Reprise de la partie en ligne…"
 }

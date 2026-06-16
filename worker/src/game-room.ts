@@ -202,14 +202,19 @@ export class GameRoom extends DurableObject {
         // Handle messages from this player
         server.accept();
         server.addEventListener('message', (evt) => this.handleClientMessage(slot, evt.data));
-        server.addEventListener('close', () => this.sockets.delete(slot));
-        server.addEventListener('error', () => this.sockets.delete(slot));
+        server.addEventListener('close', () => this.handleSocketDisconnect(slot));
+        server.addEventListener('error', () => this.handleSocketDisconnect(slot));
 
         // Claim the slot immediately using name from query param (passed by client in WS URL)
         // This populates joinedHumans so roster count and auto-start work.
         const nameFromQuery = url.searchParams.get('name');
         const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
         this.claimHumanSlot(slot, name);
+
+        // Late join / reconnect: if the match already started, send GAME_START to this socket only.
+        if (this.state?.started) {
+          this.sendGameStartToSocket(server as WebSocket);
+        }
 
         return new Response(null, { status: 101, webSocket: client });
       } catch (err) {
@@ -238,6 +243,13 @@ export class GameRoom extends DurableObject {
 
     if (!this.state) return;
 
+    // Catch-up: client missed the GAME_START broadcast (e.g. host tab still in lobby)
+    if (msg?.type === 'REQUEST_GAME_START' && this.state.started) {
+      const wsConn = this.sockets.get(slot);
+      if (wsConn) this.sendGameStartToSocket(wsConn as WebSocket);
+      return;
+    }
+
     // Handle name identification / update (sent by client after WS open)
     if (msg && msg.type === 'IDENTIFY' && msg.name) {
       if (this.state.joinedHumans[slot]) {
@@ -247,7 +259,44 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (!this.state.started || this.state.roundEnded) return;
+    if (!this.state.started) return;
+
+    if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
+      this.state.roundEnded = true;
+      this.broadcast({
+        type: 'ROUND_END',
+        players: msg.players,
+        roundWinnerId: msg.roundWinnerId ?? null,
+        isDraw: !!msg.isDraw,
+        slot: typeof msg.slot === 'number' ? msg.slot : slot,
+      });
+      return;
+    }
+
+    // Shop phase relay (turn order not required — clients coordinate sequential shopping)
+    if (msg?.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players)) {
+      this.broadcast({ type: 'SHOP_BUY_SELL', players: msg.players, slot });
+      return;
+    }
+    if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
+      this.broadcast({ type: 'SHOP_ADVANCE', nextIndex: msg.nextIndex, slot });
+      return;
+    }
+    if (msg?.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
+      this.state.roundEnded = false;
+      this.state.currentPlayerIndex = 0;
+      this.state.players = msg.players;
+      this.broadcast({ type: 'SHOP_FINISH', players: msg.players, slot });
+      this.broadcast({
+        type: 'STATE_UPDATE',
+        currentPlayerIndex: 0,
+        roundEnded: false,
+      });
+      this.maybeRunAIServerTurn();
+      return;
+    }
+
+    if (this.state.roundEnded) return;
 
     const current = this.state.currentPlayerIndex;
     if (slot !== current) return; // not your turn
@@ -279,15 +328,51 @@ export class GameRoom extends DurableObject {
     const roster = Object.entries(this.state.joinedHumans).map(([s, info]) => ({
       slot: Number(s),
       name: info.name,
-      type: 'human',
+      type: 'human' as const,
     }));
     // Add AI slots for UI display
     this.state.slotConfigs.forEach((c, i) => {
       if (c.type === 'ai' && !roster.find((r) => r.slot === i)) {
-        roster.push({ slot: i, name: `IA ${c.aiProfile || ''}`.trim(), type: 'ai' });
+        roster.push({ slot: i, name: `IA ${c.aiProfile || ''}`.trim(), type: 'ai' as const });
       }
     });
-    this.broadcast({ type: 'ROSTER_UPDATE', roster, numPlayers: this.state.numPlayers });
+    this.broadcast({
+      type: 'ROSTER_UPDATE',
+      roster,
+      numPlayers: this.state.numPlayers,
+      gameStarted: this.state.started,
+    });
+  }
+
+  /** Remove stale lobby presence when a human disconnects before the match starts. */
+  private handleSocketDisconnect(slot: number): void {
+    this.sockets.delete(slot);
+    if (!this.state || this.state.started) return;
+    if (this.state.slotConfigs[slot]?.type !== 'human') return;
+    if (!this.state.joinedHumans[slot]) return;
+    delete this.state.joinedHumans[slot];
+    this.sendRosterUpdate();
+  }
+
+  private buildGameStartMessage() {
+    if (!this.state?.started) return null;
+    return {
+      type: 'GAME_START' as const,
+      players: this.state.players,
+      heights: this.state.heights,
+      wind: this.state.wind,
+      currentPlayerIndex: this.state.currentPlayerIndex,
+    };
+  }
+
+  private sendGameStartToSocket(ws: WebSocket): void {
+    const msg = this.buildGameStartMessage();
+    if (!msg) return;
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      // ignore stale socket
+    }
   }
 
   // Claim a human slot (called on WS connect for the slot)
@@ -307,7 +392,11 @@ export class GameRoom extends DurableObject {
       .map((c, i) => (c.type === 'human' ? i : -1))
       .filter((i) => i >= 0);
 
-    const allHumansJoined = humanSlots.every((s) => !!this.state!.joinedHumans[s]);
+    // Require a live WebSocket for every human slot — prevents ghost entries in joinedHumans
+    // from starting the match while the host tab is disconnected.
+    const allHumansJoined = humanSlots.every(
+      (s) => !!this.state!.joinedHumans[s] && this.sockets.has(s),
+    );
     if (!allHumansJoined) return;
 
     // Build the initial authoritative roster (same shape the local MainMenu produces)
@@ -352,13 +441,15 @@ export class GameRoom extends DurableObject {
     this.state.startAt = Date.now();
 
     // Tell everyone the game is starting + give them the full initial snapshot
-    this.broadcast({
-      type: 'GAME_START',
-      players,
-      heights: placeholderHeights,
-      wind: this.state.wind,
-      currentPlayerIndex: 0,
-    });
+    const gameStart = this.buildGameStartMessage();
+    if (gameStart) {
+      this.broadcast(gameStart);
+      // Belt-and-suspenders: also send directly to each human socket (missed broadcast recovery)
+      for (const humanSlot of humanSlots) {
+        const wsConn = this.sockets.get(humanSlot);
+        if (wsConn) this.sendGameStartToSocket(wsConn as WebSocket);
+      }
+    }
 
     // If the very first player is an AI, the server immediately plays it (MVP)
     this.maybeRunAIServerTurn();
@@ -394,11 +485,9 @@ export class GameRoom extends DurableObject {
     const next = (fromSlot + 1) % this.state.numPlayers;
     this.state.currentPlayerIndex = next;
 
+    // Turn coordination only — clients simulate shots locally until headless authoritative sim is wired.
     const update = {
       type: 'STATE_UPDATE',
-      players: this.state.players,
-      heights: this.state.heights,
-      wind: this.state.wind,
       currentPlayerIndex: this.state.currentPlayerIndex,
       roundEnded: false,
     };

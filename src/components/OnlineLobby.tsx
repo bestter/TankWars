@@ -26,7 +26,7 @@ export interface OnlineLobbyProps {
   initialToken?: string;
 
   /** Called when the game actually starts (server sent GAME_START). Parent transitions to GameCanvas. */
-  onStartGame: (players: Player[], meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; slot?: number; token?: string }) => void;
+  onStartGame: (players: Player[], meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string }) => void;
 
   /** Optional: return to the pure local MainMenu */
   onExitToLocalMenu?: () => void;
@@ -75,7 +75,24 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
   const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
 
   const wsRef = useRef<WebSocket | null>(null);
+  const onStartGameRef = useRef(onStartGame);
+  const gameStartedRef = useRef(false);
+  const missedGameStartRef = useRef(false);
+  const [serverGameLive, setServerGameLive] = useState(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionRef = useRef<{ rId: string; slot: number; token: string; name: string } | null>(null);
   const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    onStartGameRef.current = onStartGame;
+  }, [onStartGame]);
+
+  const clearReconnectTimer = useCallback((): void => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
 
   // Keep slotConfigs in sync with numPlayers (exact same pattern as local MainMenu — no setState inside effect)
   const changeNumPlayers = (n: 2 | 3 | 4): void => {
@@ -163,11 +180,63 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
     }
   };
 
+  const handleServerGameStart = useCallback(
+    (start: Extract<ServerGameMessage, { type: 'GAME_START' }>, rId: string, slot: number, token: string, ws: WebSocket) => {
+      if (gameStartedRef.current) return;
+      gameStartedRef.current = true;
+      clearReconnectTimer();
+
+      const localPlayer = start.players[slot];
+      const localPlayerId = localPlayer ? localPlayer.id : `player-${slot + 1}`;
+
+      onStartGameRef.current(start.players as Player[], {
+        roomId: rId,
+        localPlayerId,
+        gameMode: 'online',
+        initialHeights: start.heights,
+        initialWind: start.wind,
+        initialCurrentPlayerIndex: start.currentPlayerIndex,
+        slot,
+        token,
+      });
+
+      try {
+        ws.close();
+      } catch {
+        // ignore close errors
+      }
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+    },
+    [clearReconnectTimer],
+  );
+
+  const connectWebSocketRef = useRef<(rId: string, slot: number, token: string, name: string) => void>(() => {});
+
+  const scheduleReconnect = useCallback(() => {
+    if (gameStartedRef.current || !connectionRef.current) return;
+    clearReconnectTimer();
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      const p = connectionRef.current;
+      if (!p || gameStartedRef.current) return;
+      connectWebSocketRef.current(p.rId, p.slot, p.token, p.name);
+    }, 2000);
+  }, [clearReconnectTimer]);
+
   // Core WS connection + protocol handling (MVP)
   const connectWebSocket = useCallback(
     (rId: string, slot: number, token: string, nameForClaim: string) => {
+      connectionRef.current = { rId, slot, token, name: nameForClaim };
+      clearReconnectTimer();
+
       if (wsRef.current) {
-        wsRef.current.close();
+        try {
+          wsRef.current.close();
+        } catch {
+          // ignore close errors
+        }
       }
 
       const nameParam = nameForClaim ? `&name=${encodeURIComponent(nameForClaim)}` : '';
@@ -178,9 +247,6 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       ws.onopen = () => {
         setConnected(true);
         setError(null);
-        // Immediately claim / announce our name (server echoes roster)
-        // The server will see the connection and we can also send a lightweight "identify" if needed.
-        // For this MVP the server claims on WS accept using the slot+token.
       };
 
       ws.onmessage = (ev) => {
@@ -194,40 +260,19 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
         if (msg.type === 'ROSTER_UPDATE') {
           const r = msg as ServerRosterUpdate;
           setRoster(r.roster);
-          // If we are this slot and have a name, the server already knows us via connect.
-          // We opportunistically re-send a lightweight claim (harmless).
-          if (slot === (r.roster.find((x) => x.name === nameForClaim)?.slot ?? -1)) {
-            // nothing extra needed
+          if (r.gameStarted) {
+            setServerGameLive(true);
+            if (!gameStartedRef.current) {
+              missedGameStartRef.current = true;
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+              }
+            }
           }
         }
 
         if (msg.type === 'GAME_START') {
-          // Server decided we are full — build the exact Player[] it sent (it is authoritative)
-          const start = msg;
-          // Attach local flag for the engine gating
-          const playersWithLocal = start.players.map((p) => ({
-            ...p,
-            // The client that matches the slot knows it is "local"
-          }));
-
-          // Find our player id from slot
-          const localPlayer = start.players[slot];
-          const localPlayerId = localPlayer ? localPlayer.id : `player-${slot + 1}`;
-
-          // Hand off to parent (App will switch phase + mount GameCanvas in online mode)
-          onStartGame(playersWithLocal as Player[], {
-            roomId: rId,
-            localPlayerId,
-            gameMode: 'online',
-            initialHeights: start.heights,
-            initialWind: start.wind,
-            slot,
-            token,
-          });
-
-          // Close the lobby WS now that the game has started; the game phase will open its own WS for combat sync.
-          // The DO cleanup will handle replacing the socket for the slot cleanly.
-          ws.close();
+          handleServerGameStart(msg, rId, slot, token, ws);
         }
       };
 
@@ -238,18 +283,14 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
 
       ws.onclose = () => {
         setConnected(false);
-        // If we were in waiting and the socket died before GAME_START, show a soft error
-        if (view === 'waiting') {
-          // Keep the UI; user can try to re-open the same URL (server supports rejoin via same token)
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        if (!gameStartedRef.current && connectionRef.current) {
+          scheduleReconnect();
         }
       };
 
-      // For the join path we also want to tell the server our display name.
-      // The current DO implementation claims on WS accept; we can enhance later to accept an
-      // "IDENTIFY" message right after open. For MVP the name the host typed for a slot is shown
-      // when the player joins from their link (they type it in the join form).
-      // The server already receives the slot and can store a name if we send one.
-      // We opportunistically send a tiny identify payload after open.
       const sendIdentify = () => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'IDENTIFY', name: nameForClaim }));
@@ -257,18 +298,39 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       };
       setTimeout(sendIdentify, 50);
     },
-    [onStartGame, t, view],
+    [clearReconnectTimer, handleServerGameStart, scheduleReconnect, t],
   );
+
+  useEffect(() => {
+    connectWebSocketRef.current = connectWebSocket;
+  }, [connectWebSocket]);
+
+  // Retry GAME_START catch-up while the match is live but this tab missed the broadcast
+  useEffect(() => {
+    if (view !== 'waiting' && view !== 'joining') return;
+    const retryId = setInterval(() => {
+      if (gameStartedRef.current || !missedGameStartRef.current) return;
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+      }
+    }, 2000);
+    return () => clearInterval(retryId);
+  }, [view]);
 
   // Cleanup WS on unmount
   useEffect(() => {
     return () => {
+      clearReconnectTimer();
+      gameStartedRef.current = false;
+      missedGameStartRef.current = false;
+      connectionRef.current = null;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [clearReconnectTimer]);
 
   // --- Copy helper ---
   const copyLink = async (url: string | null, slot: number) => {
@@ -452,6 +514,12 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
               </div>
 
               <div style={{ color: '#666', fontSize: 11, marginBottom: 12 }}>{t('auto_start_note')}</div>
+
+              {serverGameLive && (
+                <div style={{ color: VGA_PALETTE.FLASH_GREEN, fontSize: 12, marginBottom: 8 }}>
+                  {t('all_ready_auto_start')}
+                </div>
+              )}
 
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                 <button type="button" onClick={() => {

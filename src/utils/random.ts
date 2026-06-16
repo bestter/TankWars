@@ -53,3 +53,17 @@ export function createSeededRNG(seed: number): RNG {
     },
   };
 }
+
+/**
+ * Deterministic seed for online multiplayer: identical across clients for a given room + combat round.
+ * Re-seed before each spawnTanks so divergent RNG use (fireworks, shop, etc.) cannot desync positions.
+ */
+export function seedFromRoomRound(roomId: string, roundNumber: number): number {
+  let acc = 0;
+  const key = `${roomId}:combat:${roundNumber}`;
+  for (let i = 0; i < key.length; i++) {
+    acc = Math.imul(acc, 31) + key.charCodeAt(i);
+    acc |= 0;
+  }
+  return acc >>> 0;
+}
