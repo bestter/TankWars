@@ -40,6 +40,9 @@ export class TurnManager {
   ) => void;
   private aiEngine?: AIEngine;
 
+  /** When in online mode, this client only controls this specific player id. */
+  private localPlayerId?: string;
+
   private currentPlayerIndex = 0;
   /** Monotonic turn counter within the current combat round (not a match "manche"). */
   private turnNumber = 1;
@@ -148,6 +151,10 @@ export class TurnManager {
     this.aiEngine = aiEngine;
   }
 
+  public setLocalPlayerId(playerId: string | undefined): void {
+    this.localPlayerId = playerId;
+  }
+
   /**
    * Met à jour les timers de sécurité basés sur le temps de simulation physique (dt).
    * Cela évite que les watchdogs ne se déclenchent lorsque l'onglet est en veille
@@ -167,7 +174,7 @@ export class TurnManager {
         console.warn(
           `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? "unknown"} — forcing nextTurn (missed settlement?)`,
         );
-        this.isInputLocked = false;
+        this.isInputLocked = !this.isLocalHumanTurn();
         this.clearAwaitingStabilization();
         this.clearResolutionTimeout();
         this.clearSettlementSafetyTimeout();
@@ -214,7 +221,7 @@ export class TurnManager {
           console.warn(
             `[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`,
           );
-          this.isInputLocked = false;
+          this.isInputLocked = !this.isLocalHumanTurn();
           this.clearAwaitingStabilization();
           this.clearResolutionTimeout();
           this.clearSettlementSafetyTimeout();
@@ -243,7 +250,7 @@ export class TurnManager {
             console.warn(
               `[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing nextTurn as safety net`,
             );
-            this.isInputLocked = false;
+            this.isInputLocked = !this.isLocalHumanTurn();
             this.clearAwaitingStabilization();
             this.clearResolutionTimeout();
             this.clearSettlementSafetyTimeout();
@@ -333,7 +340,9 @@ export class TurnManager {
   public resumeForCombat(): void {
     this.interRoundPaused = false;
     const player = this.getCurrentPlayer();
-    this.isInputLocked = player ? !player.isHuman : false;
+    // In online mode we only unlock if it's the local human's turn
+    const localTurn = this.isLocalHumanTurn();
+    this.isInputLocked = player ? (!player.isHuman || !localTurn) : false;
     console.log('[TurnManager] resumeForCombat: player=' + player?.name + ', isInputLocked=' + this.isInputLocked);
     this.clearAwaitingStabilization();
     this.setupInputListeners();
@@ -391,6 +400,7 @@ export class TurnManager {
 
   /** Modifie l'angle du canon du joueur actuel */
   public adjustAngle(delta: number): void {
+    if (!this.isLocalHumanTurn()) return;
     const player = this.getCurrentPlayer();
     if (!player) return;
 
@@ -405,6 +415,7 @@ export class TurnManager {
 
   /** Modifie la puissance du tir */
   public adjustPower(delta: number): void {
+    if (!this.isLocalHumanTurn()) return;
     const player = this.getCurrentPlayer();
     if (!player) return;
 
@@ -433,6 +444,25 @@ export class TurnManager {
       return false;
     this.fire();
     return true;
+  }
+
+  /** For online (demo with multiple tabs): replay a fire command from another client so that terrain, damage and effects stay in sync. */
+  public executeRemoteFire(command: FireCommand): void {
+    const player = this.getCurrentPlayer();
+    if (!player) return;
+
+    // Force the tank state to the one used by the firing client
+    player.tank.angle = command.angle;
+    player.tank.power = command.power;
+    player.tank.currentWeapon = command.weaponId;
+
+    // Bypass the input lock temporarily so the fire goes through
+    const wasLocked = this.isInputLocked;
+    this.isInputLocked = false;
+
+    this.fire();   // this will launch, consume ammo, set lock=true, etc.
+
+    this.isInputLocked = wasLocked;
   }
 
   /** Déclenche le tir du joueur actuel (après validation tryFire). */
@@ -466,6 +496,7 @@ export class TurnManager {
 
   /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles; MISSILE always selectable). */
   public selectWeapon(weaponId: WeaponId): boolean {
+    if (!this.isLocalHumanTurn()) return false;
     const player = this.getCurrentPlayer();
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
@@ -480,6 +511,7 @@ export class TurnManager {
 
   /** Cycle l'arme active (delta = +1 ou -1). Filtre sur les armes avec munitions > 0 (MISSILE always available as it is unlimited). */
   public cycleWeapon(delta: 1 | -1): boolean {
+    if (!this.isLocalHumanTurn()) return false;
     const player = this.getCurrentPlayer();
     if (!player || !player.isHuman || this.isInputLocked) return false;
 
@@ -558,8 +590,8 @@ export class TurnManager {
 
     this.turnNumber++;
 
-    // Déverrouille les entrées pour le nouveau joueur (sera potentiellement re-verrouillé par l'IA)
-    this.isInputLocked = false;
+    // Déverrouille les entrées seulement si c'est le tour du joueur local (en mode online)
+    this.isInputLocked = !this.isLocalHumanTurn();
     this.isProcessingAI = false; // Reset processing flag so next turn is never skipped due to race conditions
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout(); // Clear any pending AI resolution timeout
@@ -581,6 +613,19 @@ export class TurnManager {
   public getCurrentPlayer(): Player | null {
     const players = this.tankManager.getPlayers();
     return players[this.currentPlayerIndex] ?? null;
+  }
+
+  /** Sync the current turn index from server authoritative state. */
+  public syncTurn(currentPlayerIndex: number): void {
+    this.currentPlayerIndex = currentPlayerIndex;
+    this.isInputLocked = !this.isLocalHumanTurn();
+    this.notifyHudUpdate();
+  }
+
+  private isLocalHumanTurn(): boolean {
+    if (!this.localPlayerId) return true; // local hotseat mode: everyone can input on their turn
+    const player = this.getCurrentPlayer();
+    return !!player && player.isHuman && player.id === this.localPlayerId;
   }
 
   /** Retourne les informations nécessaires pour le HUD React */
@@ -663,7 +708,7 @@ export class TurnManager {
     console.log('[TurnManager] startFirstTurn: entering');
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
-    this.isInputLocked = false;
+    this.isInputLocked = !this.isLocalHumanTurn();
 
     const players = this.tankManager.getPlayers();
     if (players.length === 0) {
@@ -708,7 +753,7 @@ export class TurnManager {
     this.clearAwaitingStabilization();
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
-    this.isInputLocked = false;
+    this.isInputLocked = !this.isLocalHumanTurn();
     this.isProcessingAI = false;
     this.interRoundPaused = false;
     this.removeInputListeners();

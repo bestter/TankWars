@@ -34,6 +34,8 @@ export interface GameConfig {
   windForce: number;
   /** Base velocity multiplier for power (0-100). Tunable feel. */
   baseShotSpeed: number;
+  /** When true the engine runs without rAF, audio, input listeners or VFX. Used for authoritative server simulation. */
+  headless?: boolean;
 }
 
 interface HitEvent {
@@ -292,6 +294,12 @@ export class GameEngine {
   /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy or AIByProfileStrategy for mixed v1/v2). */
   public setAIEngine(aiEngine: AIEngine): void {
     this.turnManager.setAIEngine(aiEngine);
+  }
+
+  /** For online multiplayer: tells the engine which player id is controlled by this client.
+   *  Used by TurnManager to lock input for other players' turns. */
+  public setLocalPlayerId(playerId: string | undefined): void {
+    this.turnManager.setLocalPlayerId(playerId);
   }
 
   /** Initialise les joueurs et place leurs tanks sur le terrain */

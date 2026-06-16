@@ -10,6 +10,7 @@ import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
+import { setRNG, createSeededRNG } from "../utils/random";
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
@@ -62,11 +63,26 @@ function createDemoPlayers(): Player[] {
 interface UseGameSessionProps {
   initialPlayers?: Player[];
   onReturnToMenu?: () => void;
+  /** Online mode */
+  gameMode?: 'local' | 'online';
+  localPlayerId?: string;
+  roomId?: string;
+  initialHeights?: number[];
+  initialWind?: number;
+  slot?: number;
+  token?: string;
 }
 
 export function useGameSession({
   initialPlayers,
   onReturnToMenu,
+  gameMode = 'local',
+  localPlayerId,
+  roomId,
+  initialHeights,
+  initialWind,
+  slot,
+  token,
 }: UseGameSessionProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -164,11 +180,131 @@ export function useGameSession({
 
     ctxRef.current = ctx;
 
+    let fireChannel: BroadcastChannel | null = null;
+    let gameWs: WebSocket | null = null;
+
     // === GAME ENGINE ===
     const engine = new GameEngine(CANVAS_WIDTH, CANVAS_HEIGHT, {
       gravity: 260,
       baseShotSpeed: 420,
     });
+
+    // Online: load the authoritative terrain heights sent by the server
+    // BEFORE setPlayers, so spawnTanks will snap tank Y positions to the server heights.
+    if (gameMode === 'online' && initialHeights && initialHeights.length > 0) {
+      try {
+        engine.getTerrain().loadHeights(initialHeights);
+      } catch (e) {
+        console.warn('[useGameSession] could not load initialHeights', e);
+      }
+    }
+
+    // For online: use a seeded RNG derived from roomId so that all clients
+    // produce the exact same random spawns (TankManager.spawnTanks + shuffle).
+    // This makes initial tank positions identical across windows.
+    if (gameMode === 'online' && roomId) {
+      const seed = roomId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      setRNG(createSeededRNG(seed));
+    }
+
+    // Cross-tab sync for online dev testing (same browser, multiple tabs)
+    // When one tab fires, it announces the command via BroadcastChannel so other tabs can replay the exact same shot.
+    // This keeps terrain/damage in sync until we have real server-authoritative simulation + WS broadcast.
+    if (gameMode === 'online' && roomId && localPlayerId) {
+      fireChannel = new BroadcastChannel(`tankwars-fire-${roomId}`);
+
+      // Listen for fires announced by other tabs
+      fireChannel.onmessage = (ev) => {
+        if (ev.data?.type === 'FIRE' && ev.data.command) {
+          const tm = engine.getTurnManager();
+          // Only replay if it's not our own local fire (to avoid double execution)
+          if (ev.data.fromPlayerId !== localPlayerId) {
+            tm.executeRemoteFire(ev.data.command);
+          }
+        }
+      };
+
+      // Wrap tryFire so that when *we* successfully fire as local human, we announce to other tabs
+      const tm = engine.getTurnManager();
+      const origTryFire = tm.tryFire.bind(tm);
+      tm.tryFire = () => {
+        const ok = origTryFire();
+        if (ok && localPlayerId) {
+          const player = tm.getCurrentPlayer();
+          if (player) {
+            const command = {
+              angle: player.tank.angle,
+              power: player.tank.power,
+              weaponId: player.tank.currentWeapon,
+            };
+            // Prefer sending to server WS for authoritative processing and broadcast to all room sockets
+            if (gameWs && gameWs.readyState === WebSocket.OPEN) {
+              gameWs.send(JSON.stringify({ type: 'FIRE', command }));
+            } else if (fireChannel) {
+              // Fallback for demo tab sync if no WS
+              fireChannel.postMessage({
+                type: 'FIRE',
+                fromPlayerId: localPlayerId,
+                command,
+              });
+            }
+          }
+        }
+        return ok;
+      };
+    }
+
+    // === Game phase persistent WS connection to the room DO for authoritative sync ===
+    // This survives the lobby unmount. Client sends FIRE to server; server simulates and broadcasts SHOT + STATE_UPDATE to all sockets in room.
+    // Clients apply server state for sync, and replay SHOT for visuals.
+    if (gameMode === 'online' && roomId && slot != null && token) {
+      const wsBase = import.meta.env.DEV ? 'ws://localhost:8787' : (typeof window !== 'undefined' ? `wss://${window.location.host}` : '');
+      const wsUrl = `${wsBase}/api/rooms/${roomId}/ws?slot=${slot}&token=${encodeURIComponent(token)}`;
+      gameWs = new WebSocket(wsUrl);
+
+      gameWs.onopen = () => {
+        console.log('[Game] Combat WS connected to server');
+      };
+
+      gameWs.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          const tm = engine.getTurnManager();
+
+          if (msg.type === 'SHOT' && msg.command) {
+            // For the firer, we already executed the full local fire for immediate feedback.
+            // For other clients (or to be safe), replay only if the slot in the message is not our local slot.
+            // This avoids double execution on the firer.
+            if (msg.slot !== slot) {
+              tm.executeRemoteFire(msg.command);
+            }
+          }
+
+          if (msg.type === 'STATE_UPDATE') {
+            if (msg.heights && Array.isArray(msg.heights)) {
+              engine.getTerrain().loadHeights(msg.heights);
+            }
+            if (msg.players) {
+              engine.getTankManager().setPlayers(msg.players);
+              dispatch({ type: "SET_UI_PLAYERS", players: msg.players });
+            }
+            if (typeof msg.currentPlayerIndex === 'number') {
+              tm.syncTurn(msg.currentPlayerIndex);
+            }
+            // wind etc. can be synced similarly
+          }
+        } catch (e) {
+          console.warn('[Game] invalid WS message', e);
+        }
+      };
+
+      gameWs.onclose = () => {
+        console.log('[Game] Combat WS closed');
+      };
+      gameWs.onerror = (e) => {
+        console.warn('[Game] Combat WS error', e);
+      };
+    }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
     const snapshotPlayers = initialPlayersRef.current;
@@ -180,6 +316,17 @@ export function useGameSession({
     // Initialize players (this also calls setupInputListeners + starts first turn)
     engine.setPlayers(players);
     dispatch({ type: "SET_UI_PLAYERS", players });
+
+    if (localPlayerId) {
+      engine.setLocalPlayerId(localPlayerId);
+    }
+
+    // Also set wind if provided (for HUD etc.; main sync will come from server updates)
+    if (gameMode === 'online' && typeof initialWind === 'number') {
+      // The engine has onWindChange but for initial we can set via internal if needed.
+      // For now the first wind update will come, or we can dispatch it.
+      // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
+    }
 
     // Track game start event with Cloudflare Zaraz
     trackEvent("game_start", {
@@ -279,13 +426,19 @@ export function useGameSession({
     return () => {
       clearShopAiTimeout();
       clearCelebrationTimer();
+      if (gameWs) {
+        try { gameWs.close(); } catch { void 0; /* ignore close errors */ }
+      }
+      if (fireChannel) {
+        try { fireChannel.close(); } catch { void 0; /* ignore close errors */ }
+      }
       engine.stop();
       engine.getTurnManager().removeInputListeners();
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
     };
-  }, [clearCelebrationTimer, clearShopAiTimeout, goToSummary]);
+  }, [clearCelebrationTimer, clearShopAiTimeout, goToSummary]); // eslint-disable-line react-hooks/exhaustive-deps -- complex effect with conditional online logic; re-running on those is acceptable for game session mount
 
   // Global SPACE to skip round celebration fireworks
   useEffect(() => {

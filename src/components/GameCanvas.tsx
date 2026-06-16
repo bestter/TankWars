@@ -15,11 +15,26 @@ export interface GameCanvasProps {
   initialPlayers?: Player[];
   /** Permet de retourner à l'écran titre (démontage engine + ressources). */
   onReturnToMenu?: () => void;
+  /** Online multiplayer info (passed from lobby start) */
+  gameMode?: 'local' | 'online';
+  localPlayerId?: string;
+  roomId?: string;
+  initialHeights?: number[];
+  initialWind?: number;
+  slot?: number;
+  token?: string;
 }
 
 export function GameCanvas({
   initialPlayers,
   onReturnToMenu,
+  gameMode,
+  localPlayerId,
+  roomId,
+  initialHeights,
+  initialWind,
+  slot,
+  token,
 }: GameCanvasProps = {}) {
   const { t } = useTranslation();
 
@@ -38,7 +53,7 @@ export function GameCanvas({
     handleAdjustPower,
     handleCycleWeapon,
     handleFire,
-  } = useGameSession({ initialPlayers, onReturnToMenu });
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, slot, token });
 
   const {
     gamePhase,

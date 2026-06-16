@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "doctor": "npx react-doctor@latest",
     "test": "vitest run",
-    "postbuild": "node Scripts/ping-indexnow.js"
+    "postbuild": "node Scripts/ping-indexnow.js",
+    "worker:dev": "cd worker && npx wrangler dev",
+    "worker:deploy": "cd worker && npx wrangler deploy"
   },
   "dependencies": {
     "i18next": "^26.3.1",
