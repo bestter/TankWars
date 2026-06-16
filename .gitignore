@@ -27,3 +27,6 @@ deploy-cloudflare.ps1
 /src/Temp
 /Temp
 coverage/
+
+# Wrangler local dev state (Durable Objects SQLite, cache)
+worker/.wrangler/
