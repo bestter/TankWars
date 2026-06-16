@@ -222,25 +222,38 @@ export class GameRoom extends DurableObject {
         // Handle messages from this player
         server.accept();
         server.addEventListener('message', (evt) => {
-          void this.handleClientMessage(slot, evt.data);
+          this.handleClientMessage(slot, evt.data).catch((err) => {
+            console.error(`[GameRoom] Error handling client message from slot ${slot}:`, err);
+          });
         });
         server.addEventListener('close', () => {
-          void this.handleSocketDisconnect(slot);
+          this.handleSocketDisconnect(slot, server as any).catch((err) => {
+            console.error(`[GameRoom] Error on socket disconnect for slot ${slot}:`, err);
+          });
         });
         server.addEventListener('error', () => {
-          void this.handleSocketDisconnect(slot);
+          this.handleSocketDisconnect(slot, server as any).catch((err) => {
+            console.error(`[GameRoom] Error on socket error for slot ${slot}:`, err);
+          });
         });
 
-        // Claim the slot immediately using name from query param (passed by client in WS URL)
-        // This populates joinedHumans so roster count and auto-start work.
+        // Defer post-connection tasks (claiming the slot and sending game start) to the next tick.
+        // This ensures we return the 101 Switching Protocols response first, letting the runtime
+        // complete the WebSocket handshake before we try to perform any async database transactions
+        // or send data down the socket. Prevents segment faults/unhandled errors in workerd.
         const nameFromQuery = url.searchParams.get('name');
         const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
-        await this.claimHumanSlot(slot, name);
-
-        // Late join / reconnect: if the match already started, send GAME_START to this socket only.
-        if (this.state?.started) {
-          this.sendGameStartToSocket(server as WebSocket);
-        }
+        setTimeout(() => {
+          this.claimHumanSlot(slot, name)
+            .then(() => {
+              if (this.state?.started) {
+                this.sendGameStartToSocket(server as WebSocket);
+              }
+            })
+            .catch((err) => {
+              console.error(`[GameRoom] Error in post-connection setup for slot ${slot}:`, err);
+            });
+        }, 0);
 
         return new Response(null, { status: 101, webSocket: client });
       } catch (err) {
@@ -377,8 +390,10 @@ export class GameRoom extends DurableObject {
   }
 
   /** Remove stale lobby presence when a human disconnects before the match starts. */
-  private async handleSocketDisconnect(slot: number): Promise<void> {
-    this.sockets.delete(slot);
+  private async handleSocketDisconnect(slot: number, ws: WebSocket): Promise<void> {
+    if (this.sockets.get(slot) === ws) {
+      this.sockets.delete(slot);
+    }
     if (!this.state || this.state.started) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
     if (!this.state.joinedHumans[slot]) return;
@@ -550,7 +565,9 @@ export class GameRoom extends DurableObject {
     };
     // Small delay so clients see the turn change
     setTimeout(() => {
-      void this.executeFire(idx, fakeCommand);
+      this.executeFire(idx, fakeCommand).catch((err) => {
+        console.error(`[GameRoom] Error executing AI fire for slot ${idx}:`, err);
+      });
     }, 1200);
   }
 

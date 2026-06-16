@@ -463,13 +463,13 @@ export function useGameSession({
         console.log('[Game] Combat WS closed');
         if (gameWsRef.current === ws) {
           gameWsRef.current = null;
-        }
-        if (gamePhaseRef.current !== 'GAME_OVER') {
-          clearCombatReconnect();
-          combatReconnectTimer = setTimeout(() => {
-            combatReconnectTimer = null;
-            connectCombatWs();
-          }, 2000);
+          if (gamePhaseRef.current !== 'GAME_OVER') {
+            clearCombatReconnect();
+            combatReconnectTimer = setTimeout(() => {
+              combatReconnectTimer = null;
+              connectCombatWs();
+            }, 2000);
+          }
         }
       };
       ws.onerror = (e) => {
@@ -478,7 +478,12 @@ export function useGameSession({
     }
 
     function connectCombatWs(): void {
-      if (gameWsRef.current?.readyState === WebSocket.OPEN) return;
+      if (
+        gameWsRef.current?.readyState === WebSocket.OPEN ||
+        gameWsRef.current?.readyState === WebSocket.CONNECTING
+      ) {
+        return;
+      }
       const wsUrl = `${wsBase}/api/rooms/${combatRoomId}/ws?slot=${combatSlot}&token=${encodeURIComponent(combatToken)}`;
       gameWs = new WebSocket(wsUrl);
       gameWsRef.current = gameWs;

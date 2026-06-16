@@ -56,13 +56,13 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
 
   // Host creation config (per slot)
   const [slotConfigs, setSlotConfigs] = useState<RoomSlotConfig[]>([
-    { type: 'human' },
-    { type: 'ai', aiProfile: 'v1-random' },
+    { type: 'human', id: 'slot-0' },
+    { type: 'ai', aiProfile: 'v1-random', id: 'slot-1' },
   ]);
 
   const [roomId, setRoomId] = useState<string | null>(initialRoomId ?? null);
-  const [mySlot, setMySlot] = useState<number | null>(initialSlot ?? null);
-  const [myToken, setMyToken] = useState<string | null>(initialToken ?? null);
+  const mySlotRef = useRef<number | null>(initialSlot ?? null);
+  const myTokenRef = useRef<string | null>(initialToken ?? null);
   const [myName, setMyName] = useState<string>('');
 
   const [slotsInfo, setSlotsInfo] = useState<SlotUI[]>([]);
@@ -100,7 +100,11 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       const next = [...prev];
       while (next.length < n) {
         const idx = next.length;
-        next.push(idx === 0 ? { type: 'human' } : { type: 'ai', aiProfile: 'v1-random' as const });
+        next.push(
+          idx === 0
+            ? { type: 'human', id: `slot-${idx}` }
+            : { type: 'ai', aiProfile: 'v1-random' as const, id: `slot-${idx}` }
+        );
       }
       return next.slice(0, n);
     });
@@ -141,8 +145,8 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       // Host defaults to slot 0 (first link). They can also copy any other.
       const hostSlot = 0;
       const hostInfo = data.slots.find((s) => s.slot === hostSlot);
-      setMySlot(hostSlot);
-      setMyToken(hostInfo?.url ? new URL(hostInfo.url).searchParams.get('token') : null);
+      mySlotRef.current = hostSlot;
+      myTokenRef.current = hostInfo?.url ? new URL(hostInfo.url).searchParams.get('token') : null;
       setMyName(t('default_player_name_1'));
 
       // Switch to waiting view immediately (host also "joins" their slot via WS)
@@ -163,12 +167,12 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
 
   // --- Join flow (from link or manual) ---
   const handleJoin = async () => {
-    if (!roomId || mySlot === null || !myToken || !myName.trim() || isJoining) return;
+    if (!roomId || mySlotRef.current === null || !myTokenRef.current || !myName.trim() || isJoining) return;
     setIsJoining(true);
     setError(null);
 
     try {
-      connectWebSocket(roomId, mySlot, myToken, myName.trim());
+      connectWebSocket(roomId, mySlotRef.current, myTokenRef.current, myName.trim());
       setView('waiting');
     } catch (e) {
       console.error('[OnlineLobby] Failed to initiate join', e);
@@ -318,14 +322,11 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
 
   // Cleanup WS on unmount
   useEffect(() => {
+    const currentWsRef = wsRef;
     return () => {
       clearReconnectTimer();
-      gameStartedRef.current = false;
-      missedGameStartRef.current = false;
-      connectionRef.current = null;
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      if (currentWsRef.current) {
+        currentWsRef.current.close();
       }
     };
   }, [clearReconnectTimer]);
@@ -386,13 +387,13 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
               </div>
 
               {import.meta.env.DEV && (
-                <div style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
                   Dev: Assurez-vous que <code>npm run worker:dev</code> tourne dans un autre terminal (port 8787 par défaut).
                 </div>
               )}
 
               {slotConfigs.map((cfg, idx) => (
-                <div key={idx} style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div key={cfg.id} style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span style={{ width: 92, color: VGA_PALETTE.YELLOW, fontSize: 12 }}>
                     {t('slot_label', { num: idx + 1 })}
                   </span>
@@ -417,9 +418,11 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                     <option value="ai:v4-smart">{t('slot_ai_expert')}</option>
                   </select>
 
-                  <span style={{ fontSize: 11, color: '#666' }}>
-                    {cfg.type === 'human' ? 'URL générée' : 'serveur (pas d’URL)'}
-                  </span>
+                  {cfg.type === 'human' && idx > 0 && (
+                    <span style={{ fontSize: 12, color: '#666' }}>
+                      {t('link_instructions')}
+                    </span>
+                  )}
                 </div>
               ))}
 
@@ -456,6 +459,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                   <input
                     type="text"
                     placeholder={t('enter_name_placeholder')}
+                    aria-label={t('enter_name_placeholder')}
                     value={myName}
                     onChange={(e) => setMyName(e.target.value)}
                     style={{ width: '100%', padding: 6, background: '#000', color: '#fff', border: '1px solid #555' }}
@@ -483,10 +487,10 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                       </span>
                       {s.url && (
                         <>
-                          <button type="button" onClick={() => copyLink(s.url, s.slot)} style={{ fontSize: 11 }}>
+                          <button type="button" onClick={() => copyLink(s.url, s.slot)} style={{ fontSize: 12 }}>
                             {copyFeedback[s.slot] ? t('link_copied') : t('copy_link')}
                           </button>
-                          <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: VGA_PALETTE.ELECTRIC_CYAN }}>
+                          <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: VGA_PALETTE.ELECTRIC_CYAN }}>
                             {t('open_link')}
                           </a>
                         </>
@@ -511,7 +515,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                 ))}
               </div>
 
-              <div style={{ color: '#666', fontSize: 11, marginBottom: 12 }}>{t('auto_start_note')}</div>
+              <div style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>{t('auto_start_note')}</div>
 
               {serverGameLive && (
                 <div style={{ color: VGA_PALETTE.FLASH_GREEN, fontSize: 12, marginBottom: 8 }}>
@@ -528,7 +532,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                 </button>
               </div>
 
-              {connected && <div style={{ marginTop: 8, fontSize: 11, color: VGA_PALETTE.FLASH_GREEN }}>● Connecté</div>}
+              {connected && <div style={{ marginTop: 8, fontSize: 12, color: VGA_PALETTE.FLASH_GREEN }}>● Connecté</div>}
             </>
           )}
 

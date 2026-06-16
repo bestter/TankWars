@@ -11,6 +11,7 @@ export interface RoomSlotConfig {
   type: 'human' | 'ai';
   /** Only for type === 'ai' */
   aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart';
+  id?: string;
 }
 
 export interface CreateRoomRequest {

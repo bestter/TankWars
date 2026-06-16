@@ -1,4 +1,4 @@
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
 import type { Player } from "../types/player";
 import { GameHUD } from "./GameHUD";
@@ -167,15 +167,23 @@ export function GameCanvas({
                 </div>
               )
             ) : (
-              <div
-                className="retro-ai-overlay"
-                dangerouslySetInnerHTML={{
-                  __html: t("ai_shopping_status", {
-                    color: shopPlayers[currentShopIndex]?.tank.color ?? "#fff",
+              <div className="retro-ai-overlay">
+                <Trans
+                  i18nKey="ai_shopping_status"
+                  values={{
                     name: shopPlayers[currentShopIndex]?.name ?? "",
-                  }),
-                }}
-              />
+                  }}
+                  components={{
+                    strong: (
+                      <strong
+                        style={{
+                          color: shopPlayers[currentShopIndex]?.tank.color ?? "#fff",
+                        }}
+                      />
+                    ),
+                  }}
+                />
+              </div>
             )}
           </>
         )}

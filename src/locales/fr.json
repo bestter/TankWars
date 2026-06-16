@@ -104,6 +104,7 @@
   "room_code_label": "Code de salle",
   "copy_link": "Copier le lien",
   "link_copied": "Copié !",
+  "link_instructions": "Lien généré (à partager)",
   "open_link": "Ouvrir",
   "your_slot": "Votre emplacement (Hôte)",
   "host_name_label": "Votre nom (Hôte)",

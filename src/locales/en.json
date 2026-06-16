@@ -103,6 +103,7 @@
   "room_code_label": "Room code",
   "copy_link": "Copy link",
   "link_copied": "Copied!",
+  "link_instructions": "Link generated (to share)",
   "open_link": "Open",
   "your_slot": "Your slot (Host)",
   "host_name_label": "Your name (Host)",
