@@ -214,6 +214,8 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
+- **Cloudflare Worker TypeScript Integration & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) by adding `@cloudflare/workers-types` devDependency at root, creating a dedicated `worker/tsconfig.json` configuration, and linking it as a project reference in the root `tsconfig.json`. Corrected all TypeScript compilation errors: updated `game-room.ts` to use global `DurableObjectNamespace` and `DurableObjectState` types, explicitly typed the local lobby `roster` to allow both `'human'` and `'ai'` elements, and corrected the `assignColor` return signature to the strict `Color` type from shared game types. All tests (158/158), build and lint pass successfully. — Antigravity (Gemini 3.5 Flash (High))
+
 - **Copyright attribution:** UI legal footer (`legal_footer` in `en.json` / `fr.json`) now credits **Martin Labelle** instead of Bestter; `LICENSE` unchanged. — Grok 4.3 (xAI)
 
 - **Production deploy option B:** Client prod uses `VITE_API_BASE` (workers.dev) via `src/utils/onlineApi.ts`; CSP `connect-src` allows `*.workers.dev`; `.env.production.example` for manual builds. Local `deploy-cloudflare.ps1` (gitignored) deploys Worker + Pages. **158 tests**. — Grok 4.3 (xAI)

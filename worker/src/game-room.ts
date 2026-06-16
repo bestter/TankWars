@@ -22,9 +22,10 @@
  * All random MUST go through a seeded RNG for determinism (injected later).
  */
 
-import { DurableObject, DurableObjectState } from "cloudflare:workers";
+import { DurableObject } from "cloudflare:workers";
 
 import type { Player } from '../../src/types/player'; // share types from root (works in monorepo-style dev)
+import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import { DEFAULT_INVENTORY } from '../../src/types/weapon';
 
@@ -325,7 +326,7 @@ export class GameRoom extends DurableObject {
 
   private sendRosterUpdate() {
     if (!this.state) return;
-    const roster = Object.entries(this.state.joinedHumans).map(([s, info]) => ({
+    const roster: Array<{ slot: number; name: string; type: 'human' | 'ai' }> = Object.entries(this.state.joinedHumans).map(([s, info]) => ({
       slot: Number(s),
       name: info.name,
       type: 'human' as const,
@@ -456,8 +457,8 @@ export class GameRoom extends DurableObject {
   }
 
   // Very naive color assignment (stable, no collision). Real version can be richer.
-  private assignColor(slot: number): string {
-    const palette = [
+  private assignColor(slot: number): Color {
+    const palette: Color[] = [
       '#5555FF', '#FF5555', '#00F7FF', '#00FF7F', '#FF1A8C', '#D7FF00', '#FF8C00', '#B300FF',
     ];
     return palette[slot % palette.length];

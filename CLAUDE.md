@@ -3,13 +3,18 @@
 **Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules; operational detail lives in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
 
 ## Build & Development Commands
+# Bestter's TankWars Project Guide
+
+**Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules; operational detail lives in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
+
+## Build & Development Commands
 
 - Install dependencies: `npm install`
 - Start dev server: `npm run dev` (http://localhost:5173)
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **155 tests**
+- Run tests: `npm run test` (or `vitest run`) — **158 tests**
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -45,6 +50,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
 
 ## Recent Updates & Bug Fixes
+
+- **Cloudflare Worker TypeScript & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`). — Antigravity (Gemini 3.5 Flash (High))
 
 - **Production deploy option B:** `VITE_API_BASE` → workers.dev via `onlineApi.ts`; CSP `*.workers.dev`; `deploy-cloudflare.ps1` updated locally (gitignored). 158 tests. — Grok 4.3 (xAI)
 

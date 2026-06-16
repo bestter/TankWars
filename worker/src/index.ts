@@ -13,8 +13,6 @@
 // pointed to by "main" in wrangler.toml). Wrangler validates this at startup.
 export { GameRoom } from './game-room';
 
-import { DurableObjectNamespace } from "cloudflare:workers";
-
 // Env bindings injected by wrangler (see wrangler.toml)
 export interface Env {
   GAME_ROOM: DurableObjectNamespace;
