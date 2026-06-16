@@ -76,12 +76,29 @@ export class GameRoom extends DurableObject {
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
 
-  // In-memory only for MVP (DO will hibernate when idle)
+  // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as Record<string, unknown>);
-    // On cold start the DO may reload state from storage if we had persisted it.
-    // For MVP we keep everything in memory (fast, simple). Real rooms are short-lived.
+    ctx.blockConcurrencyWhile(async () => {
+      const stored = await this.ctx.storage.get<RoomState>("state");
+      if (stored) {
+        this.state = stored;
+        // Restore AI profiles in memory if reloaded
+        if (this.state.slotConfigs) {
+          this.state.slotConfigs.forEach((cfg, idx) => {
+            if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
+          });
+        }
+      }
+    });
   }
+
+  private async saveState(): Promise<void> {
+    if (this.state) {
+      await this.ctx.storage.put("state", this.state);
+    }
+  }
+
 
   // --- REST entry from the Worker (create room) ---
   async fetchCreate(request: Request): Promise<Response> {
@@ -140,6 +157,8 @@ export class GameRoom extends DurableObject {
         ? `${origin}/?room=${roomId}&slot=${idx}&token=${tokens[idx]}`
         : null,
     }));
+
+    await this.saveState();
 
     return new Response(
       JSON.stringify({
@@ -202,15 +221,21 @@ export class GameRoom extends DurableObject {
 
         // Handle messages from this player
         server.accept();
-        server.addEventListener('message', (evt) => this.handleClientMessage(slot, evt.data));
-        server.addEventListener('close', () => this.handleSocketDisconnect(slot));
-        server.addEventListener('error', () => this.handleSocketDisconnect(slot));
+        server.addEventListener('message', (evt) => {
+          void this.handleClientMessage(slot, evt.data);
+        });
+        server.addEventListener('close', () => {
+          void this.handleSocketDisconnect(slot);
+        });
+        server.addEventListener('error', () => {
+          void this.handleSocketDisconnect(slot);
+        });
 
         // Claim the slot immediately using name from query param (passed by client in WS URL)
         // This populates joinedHumans so roster count and auto-start work.
         const nameFromQuery = url.searchParams.get('name');
         const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
-        this.claimHumanSlot(slot, name);
+        await this.claimHumanSlot(slot, name);
 
         // Late join / reconnect: if the match already started, send GAME_START to this socket only.
         if (this.state?.started) {
@@ -234,7 +259,7 @@ export class GameRoom extends DurableObject {
   }
 
   // --- Client message handler (only FIRE for now in MVP) ---
-  private handleClientMessage(slot: number, raw: any) {
+  private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
     let msg: any;
     try {
       msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -255,6 +280,7 @@ export class GameRoom extends DurableObject {
     if (msg && msg.type === 'IDENTIFY' && msg.name) {
       if (this.state.joinedHumans[slot]) {
         this.state.joinedHumans[slot].name = msg.name.trim() || `Joueur-${slot + 1}`;
+        await this.saveState();
         this.sendRosterUpdate();
       }
       return;
@@ -264,6 +290,8 @@ export class GameRoom extends DurableObject {
 
     if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
       this.state.roundEnded = true;
+      this.state.players = msg.players;
+      await this.saveState();
       this.broadcast({
         type: 'ROUND_END',
         players: msg.players,
@@ -276,6 +304,8 @@ export class GameRoom extends DurableObject {
 
     // Shop phase relay (turn order not required — clients coordinate sequential shopping)
     if (msg?.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players)) {
+      this.state.players = msg.players;
+      await this.saveState();
       this.broadcast({ type: 'SHOP_BUY_SELL', players: msg.players, slot });
       return;
     }
@@ -287,6 +317,7 @@ export class GameRoom extends DurableObject {
       this.state.roundEnded = false;
       this.state.currentPlayerIndex = 0;
       this.state.players = msg.players;
+      await this.saveState();
       this.broadcast({ type: 'SHOP_FINISH', players: msg.players, slot });
       this.broadcast({
         type: 'STATE_UPDATE',
@@ -308,7 +339,7 @@ export class GameRoom extends DurableObject {
     if (msg && msg.type === 'FIRE' && msg.command) {
       console.log(`[GameRoom] Received FIRE from slot ${slot}, current=${this.state.currentPlayerIndex}, cmd=`, msg.command);
       const cmd = msg.command as { angle: number; power: number; weaponId: WeaponId };
-      this.executeFire(slot, cmd);
+      await this.executeFire(slot, cmd);
     }
   }
 
@@ -346,12 +377,13 @@ export class GameRoom extends DurableObject {
   }
 
   /** Remove stale lobby presence when a human disconnects before the match starts. */
-  private handleSocketDisconnect(slot: number): void {
+  private async handleSocketDisconnect(slot: number): Promise<void> {
     this.sockets.delete(slot);
     if (!this.state || this.state.started) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
     if (!this.state.joinedHumans[slot]) return;
     delete this.state.joinedHumans[slot];
+    await this.saveState();
     this.sendRosterUpdate();
   }
 
@@ -377,16 +409,17 @@ export class GameRoom extends DurableObject {
   }
 
   // Claim a human slot (called on WS connect for the slot)
-  private claimHumanSlot(slot: number, name: string) {
+  private async claimHumanSlot(slot: number, name: string): Promise<void> {
     if (!this.state) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
     this.state.joinedHumans[slot] = { name: name.trim() || `Joueur-${slot + 1}`, joinedAt: Date.now() };
+    await this.saveState();
     this.sendRosterUpdate();
-    this.maybeAutoStart();
+    await this.maybeAutoStart();
   }
 
   // Auto-start when every human-configured slot has a joined human
-  private maybeAutoStart() {
+  private async maybeAutoStart(): Promise<void> {
     if (!this.state || this.state.started) return;
 
     const humanSlots = this.state.slotConfigs
@@ -441,6 +474,8 @@ export class GameRoom extends DurableObject {
     this.state.started = true;
     this.state.startAt = Date.now();
 
+    await this.saveState();
+
     // Tell everyone the game is starting + give them the full initial snapshot
     const gameStart = this.buildGameStartMessage();
     if (gameStart) {
@@ -465,7 +500,7 @@ export class GameRoom extends DurableObject {
   }
 
   // Execute a fire (either from human WS or from server AI)
-  private executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }) {
+  private async executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
     // In real impl: restore the headless simulator here, call fire + fastForwardUntilSettled,
@@ -485,6 +520,8 @@ export class GameRoom extends DurableObject {
     // For now just rotate to next alive player (demo purpose)
     const next = (fromSlot + 1) % this.state.numPlayers;
     this.state.currentPlayerIndex = next;
+
+    await this.saveState();
 
     // Turn coordination only — clients simulate shots locally until headless authoritative sim is wired.
     const update = {
@@ -512,7 +549,9 @@ export class GameRoom extends DurableObject {
       weaponId: 'MISSILE' as WeaponId,
     };
     // Small delay so clients see the turn change
-    setTimeout(() => this.executeFire(idx, fakeCommand), 1200);
+    setTimeout(() => {
+      void this.executeFire(idx, fakeCommand);
+    }, 1200);
   }
 
   // Public helper if we later expose REST status

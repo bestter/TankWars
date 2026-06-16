@@ -214,6 +214,8 @@ Do not block current architecture for these; implement incrementally when asked:
 
 ## Recent Updates & Bug Fixes
 
+- **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Modified DO lifecycle to asynchronously restore the state on cold starts (using `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby slots updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. Handled all floating promises with `void` to maintain code health. — Antigravity (Gemini 3.5 Flash (High))
+
 - **Cloudflare Worker TypeScript Integration & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) by adding `@cloudflare/workers-types` devDependency at root, creating a dedicated `worker/tsconfig.json` configuration, and linking it as a project reference in the root `tsconfig.json`. Corrected all TypeScript compilation errors: updated `game-room.ts` to use global `DurableObjectNamespace` and `DurableObjectState` types, explicitly typed the local lobby `roster` to allow both `'human'` and `'ai'` elements, and corrected the `assignColor` return signature to the strict `Color` type from shared game types. All tests (158/158), build and lint pass successfully. — Antigravity (Gemini 3.5 Flash (High))
 
 - **Copyright attribution:** UI legal footer (`legal_footer` in `en.json` / `fr.json`) now credits **Martin Labelle** instead of Bestter; `LICENSE` unchanged. — Grok 4.3 (xAI)

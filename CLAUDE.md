@@ -51,6 +51,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. — Antigravity (Gemini 3.5 Flash (High))
+
 - **Cloudflare Worker TypeScript & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`). — Antigravity (Gemini 3.5 Flash (High))
 
 - **Production deploy option B:** `VITE_API_BASE` → workers.dev via `onlineApi.ts`; CSP `*.workers.dev`; `deploy-cloudflare.ps1` updated locally (gitignored). 158 tests. — Grok 4.3 (xAI)
