@@ -69,7 +69,14 @@ export class AIHeuristicStrategy implements AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
-    const self = gameState.players.find((p) => p.tank.id === tankId);
+    const playerById = new Map<string, Player>();
+    let self: Player | undefined;
+    for (const p of gameState.players) {
+      playerById.set(p.id, p);
+      if (p.tank.id === tankId) {
+        self = p;
+      }
+    }
     if (!self || self.tank.isDead) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
@@ -94,9 +101,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // === Update memory from previous shot on the PREVIOUS target ===
     if (mem.currentTargetId) {
-      const prevTarget = gameState.players.find(
-        (p) => p.id === mem.currentTargetId,
-      );
+      const prevTarget = playerById.get(mem.currentTargetId);
       if (prevTarget) {
         const wasAlive = (mem.lastKnownHealth[prevTarget.id] ?? 0) > 0;
         const isDeadNow = prevTarget.tank.isDead || prevTarget.tank.health <= 0;
@@ -134,12 +139,18 @@ export class AIHeuristicStrategy implements AIEngine {
     // 1. Revenge: if someone just tried to kill us, prioritize them
     const revengeId = self.tank.lastHitBy;
     if (revengeId) {
-      target = enemies.find((e) => e.id === revengeId);
+      const e = playerById.get(revengeId);
+      if (e && e.id !== self.id && !e.tank.isDead) {
+        target = e;
+      }
     }
 
     // 2. Stick to previous target if still alive
     if (!target && mem.currentTargetId) {
-      target = enemies.find((e) => e.id === mem.currentTargetId);
+      const e = playerById.get(mem.currentTargetId);
+      if (e && e.id !== self.id && !e.tank.isDead) {
+        target = e;
+      }
     }
 
     // 3. New target: weakest (lowest health) among AIs first, fallback to human only if no AIs left
