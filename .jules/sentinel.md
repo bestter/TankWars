@@ -21,3 +21,7 @@ Added caching to `TankManager.getAlivePlayers()` to prevent array allocations in
 Tested performance using a benchmark, verified functionality via test suite.
 No security impact, strictly an internal performance cache.
 ## 2026-06-12 - [Remove unsafe-inline from CSP script-src]\n**Vulnerability:** The Content-Security-Policy (CSP) in `public/_headers` included the `'unsafe-inline'` directive in `script-src`.\n**Learning:** This directive allows the execution of inline scripts (e.g., via `<script>...</script>` blocks or inline event handlers like `onclick="), which significantly increases the risk and impact of Cross-Site Scripting (XSS) attacks. In modern React/Vite applications, this is generally unnecessary for production environments.\n**Prevention:** Avoid using `'unsafe-inline'` in the `script-src` directive of the CSP. Ensure the configuration in HTTP headers matches the secure configuration in `index.html`.
+## 2026-06-12 - [Remove unsafe-inline from CSP style-src]
+**Vulnerability:** The Content-Security-Policy (CSP) in `index.html` and `public/_headers` included the `'unsafe-inline'` directive in `style-src`.
+**Learning:** This directive allows the execution of inline styles (e.g., via `<style>...</style>` blocks or inline `style="..."` attributes), which significantly increases the risk and impact of CSS-based attacks, such as data exfiltration via CSS injection.
+**Prevention:** Avoid using `'unsafe-inline'` in the `style-src` directive of the CSP. Ensure the configuration in HTTP headers matches the secure configuration in `index.html`.
