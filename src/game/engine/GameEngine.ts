@@ -233,18 +233,26 @@ export class GameEngine {
 
         // Attribute any players who died due to *this* impact (splash + direct, works for chains)
         // We avoid array mapping overhead but must maintain the Set for newly spawned/resurrected players
-        const nowAlive = new Set<string>();
-        for (const player of this.tankManager.getPlayers()) {
-          if (!player.tank.isDead) {
-            nowAlive.add(player.id);
-          }
-        }
+        const players = this.tankManager.getPlayers();
         for (const id of this.aliveAtLastShot) {
-          if (!nowAlive.has(id)) {
+          let isDead = false;
+          for (let i = 0; i < players.length; i++) {
+            if (players[i].id === id) {
+              isDead = players[i].tank.isDead;
+              break;
+            }
+          }
+          if (isDead) {
+            this.aliveAtLastShot.delete(id);
             this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
           }
         }
-        this.aliveAtLastShot = nowAlive;
+        for (let i = 0; i < players.length; i++) {
+          const p = players[i];
+          if (!p.tank.isDead) {
+            this.aliveAtLastShot.add(p.id);
+          }
+        }
       }
 
       this.onProjectileHit?.({
