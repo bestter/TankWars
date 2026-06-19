@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TurnManager } from '../TurnManager';
 import type { TankManager } from '../../entities/TankManager';
 import type { TerrainManager } from '../Terrain';
@@ -9,7 +9,7 @@ describe('TurnManager', () => {
   let turnManager: TurnManager;
   let mockTankManager: Partial<TankManager>;
   let mockTerrainManager: Partial<TerrainManager>;
-  let mockFireCallback: Mock;
+  const mockFireCallback = vi.fn();
   let mockAiEngine: Partial<AIEngine>;
 
   beforeEach(() => {
@@ -18,7 +18,7 @@ describe('TurnManager', () => {
       anyTankIsFalling: vi.fn().mockReturnValue(false),
     };
     mockTerrainManager = {};
-    mockFireCallback = vi.fn();
+    mockFireCallback.mockReset();
     mockAiEngine = {};
 
     turnManager = new TurnManager(
