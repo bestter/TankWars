@@ -79,6 +79,7 @@ Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–
 - Utiliser `secureRandom` de `src/utils/random.ts` au lieu de `Math.random` pour tout le RNG.
 - Ne pas stocker de tableaux de projectiles/particules/ImageData dans `useState` mis à jour à chaque frame.
 - Ne pas muter le canvas context dans un render React.
+- **CSP style-src** : Ne JAMAIS enlever `'unsafe-inline'` de la directive `style-src` dans `index.html` ou `public/_headers`. Vite et React en ont absolument besoin pour injecter les styles de dev et gérer les attributs `style` dynamiques (un test unitaire `csp.test.ts` veille au grain).
 - `tsc -b` vérifie `worker/` aussi (projet reference). Les erreurs de type dans `worker/src/` cassent le build.
 - Le worker DO utilise des types globaux (`DurableObjectNamespace`), pas d'imports de plateforme.
 - Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.
