@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { autoBuyForAI } from "../aiShopHelper";
 import { makePlayer } from "../../../__tests__/helpers";
-import { WEAPON_REGISTRY } from "../../../../types/weapon";
 import type { Player } from "../../../../types/player";
 
 describe("autoBuyForAI", () => {
