@@ -123,7 +123,9 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   };
 
   const handleNameChange = (index: number, value: string): void => {
-    updatePlayer(index, { name: value });
+    // Security enhancement: enforce input length limit at state level
+    // to prevent DoS/memory exhaustion if HTML maxLength is bypassed
+    updatePlayer(index, { name: value.slice(0, 16) });
   };
 
   const handleTypeChange = (index: number, isHuman: boolean): void => {
