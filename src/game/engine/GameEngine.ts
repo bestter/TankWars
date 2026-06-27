@@ -917,7 +917,7 @@ export class GameEngine {
         const gain = ctx.createGain();
         const filter = ctx.createBiquadFilter();
 
-        const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
+        const frequency = 440 * 2 ** ((midiNote - 69) / 12);
 
         osc.type = "sawtooth";
         osc.frequency.value = frequency;
@@ -949,7 +949,7 @@ export class GameEngine {
         chordNotes.forEach((midiNote, i) => {
           const osc = c2.createOscillator();
           const gain = c2.createGain();
-          const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+          const freq = 440 * 2 ** ((midiNote - 69) / 12);
 
           osc.type = i === 0 ? "square" : "sawtooth";
           osc.frequency.value = freq;
