@@ -127,13 +127,7 @@ export class AISmartStrategy implements AIEngine {
       target = bestFallbackTarget;
     }
 
-    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
-    if (isNewTarget) {
-      console.log(
-        `[AI TARGET] ${self.name} (Smart V4) selected NEW target: ${target!.name}`,
-      );
-    }
 
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
