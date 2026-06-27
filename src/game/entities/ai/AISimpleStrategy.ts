@@ -39,6 +39,12 @@ export class AISimpleStrategy implements AIEngine {
     const target: Player =
       candidates[Math.floor(secureRandom() * candidates.length)];
 
+    if (import.meta.env.DEV) {
+      console.log(
+        `[AI TARGET] ${currentPlayer.name} (Simple V1) targeted ${target.name}`,
+      );
+    }
+
     const myX = currentPlayer.tank.position.x;
     const targetX = target.tank.position.x;
 

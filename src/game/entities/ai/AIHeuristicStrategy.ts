@@ -109,16 +109,31 @@ export class AIHeuristicStrategy implements AIEngine {
         if (wasAlive && isDeadNow) {
           // Success! Target was killed (by us or someone else, we successfully resolved this threat)
           mem.roundSuccesses += 1;
+          if (import.meta.env.DEV) {
+            console.log(
+              `[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`,
+            );
+          }
         } else if (!isDeadNow) {
           // Still alive: compare health to check for a hit
           const prevHealth =
             mem.lastKnownHealth[prevTarget.id] ?? prevTarget.tank.health + 20;
           if (prevTarget.tank.health < prevHealth - 0.1) {
             mem.roundSuccesses += 1;
+            if (import.meta.env.DEV) {
+              console.log(
+                `[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`,
+              );
+            }
           } else {
             // Miss!
             mem.roundFails += 1;
             mem.lastPowerBias += (secureRandom() - 0.5) * 1.2;
+            if (import.meta.env.DEV) {
+              console.log(
+                `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
+              );
+            }
           }
         }
       }
@@ -160,7 +175,13 @@ export class AIHeuristicStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
+    if (isNewTarget && import.meta.env.DEV) {
+      console.log(
+        `[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`,
+      );
+    }
 
     // Record current known healths of all alive enemies for next comparison
     mem.lastKnownHealth = {};
