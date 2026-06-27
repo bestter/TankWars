@@ -153,7 +153,7 @@ export class AISniperStrategy implements AIEngine {
 
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
-    if (isNewTarget) {
+    if (isNewTarget && import.meta.env.DEV) {
       console.log(
         `[AI TARGET] ${self.name} (Sniper V3) selected NEW target: ${target!.name}`,
       );
