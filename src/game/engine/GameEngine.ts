@@ -672,9 +672,15 @@ export class GameEngine {
     const roundWinner = survivors.length === 1 ? survivors[0] : null;
 
     if (isDraw) {
-      const allPlayers = this.tankManager.getPlayers().map((p) => p.name);
+      const players = this.tankManager.getPlayers();
+      let allPlayersStr = "";
+      for (let i = 0; i < players.length; i++) {
+        if (i > 0) allPlayersStr += ", ";
+        allPlayersStr += players[i].name;
+      }
+
       console.log(
-        `[ROUND END] DRAW — all tanks destroyed: ${allPlayers.join(", ")}`,
+        `[ROUND END] DRAW — all tanks destroyed: ${allPlayersStr}`,
       );
       this.logDeathSummary();
     } else if (roundWinner) {
