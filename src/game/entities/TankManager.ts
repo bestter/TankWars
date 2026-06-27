@@ -347,9 +347,6 @@ export class TankManager {
           tank.isDead = true;
           this.invalidateAliveCache();
           const details = `touched lava (y=${pos.y.toFixed(1)} >= lavaTop=${lavaY})`;
-          console.log(
-            `[DEATH] player=${player.name} (id=${player.id}) cause=burial (lava) pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)})`,
-          );
           this.onPlayerDied?.(player.id, "burial", details);
           this.velocities.delete(id);
           this.fallenDistances.delete(id);
@@ -373,9 +370,6 @@ export class TankManager {
             fallen -= levelsCrossed * damageLevelHeight;
             this.fallenDistances.set(id, fallen);
 
-            console.log(
-              `[FALL DMG] ${player.name} ${isVoid ? "(VOID)" : "(SLOPE)"} +${deltaFall.toFixed(1)}px (accum ${(fallen + levelsCrossed * damageLevelHeight).toFixed(1)}) -> ${dmg} dmg, health=${tank.health}`,
-            );
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;
@@ -385,9 +379,6 @@ export class TankManager {
                 levelsCrossed * damageLevelHeight
               ).toFixed(0);
               const details = `fall damage (${dmg} pts after ~${totalFallen}px)`;
-              console.log(
-                `[DEATH] player=${player.name} (id=${player.id}) cause=burial (fall) pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)})`,
-              );
               this.onPlayerDied?.(player.id, "burial", details);
             }
           }
@@ -447,7 +438,6 @@ export class TankManager {
       if (unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
         this.invalidateAliveCache();
-        const cause = "burial";
         let details: string;
         if (touchedLava) {
           details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
@@ -456,9 +446,6 @@ export class TankManager {
         } else {
           details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         }
-        console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=${cause} pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) ${details}`,
-        );
         this.onPlayerDied?.(player.id, "burial", details);
       }
     }
@@ -591,9 +578,6 @@ export class TankManager {
         tank.isDead = true;
         this.invalidateAliveCache();
         const details = `explosion by ${killerId ?? "unknown"} (damage=${damage.toFixed(1)})`;
-        console.log(
-          `[DEATH] player=${player.name} (id=${player.id}) cause=explosion pos=(${tank.position.x.toFixed(1)},${tank.position.y.toFixed(1)}) killer=${killerId ?? "unknown"}`,
-        );
         this.onPlayerDied?.(player.id, "explosion", details, killerId);
         if (killerId) {
           killsThisExplosion++;
