@@ -356,6 +356,8 @@ export function useGameSession({
     // This survives the lobby unmount. Client sends FIRE to server; server simulates and broadcasts SHOT + STATE_UPDATE to all sockets in room.
     // Clients apply server state for sync, and replay SHOT for visuals.
     let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let combatStartTimer: ReturnType<typeof setTimeout> | null = null;
+    let isMounted = true;
 
     if (gameMode === 'online' && roomId && slot != null && token) {
     const combatRoomId = roomId;
@@ -463,7 +465,7 @@ export function useGameSession({
         console.log('[Game] Combat WS closed');
         if (gameWsRef.current === ws) {
           gameWsRef.current = null;
-          if (gamePhaseRef.current !== 'GAME_OVER') {
+          if (gamePhaseRef.current !== 'GAME_OVER' && isMounted) {
             clearCombatReconnect();
             combatReconnectTimer = setTimeout(() => {
               combatReconnectTimer = null;
@@ -478,6 +480,7 @@ export function useGameSession({
     }
 
     function connectCombatWs(): void {
+      if (!isMounted) return;
       if (
         gameWsRef.current?.readyState === WebSocket.OPEN ||
         gameWsRef.current?.readyState === WebSocket.CONNECTING
@@ -490,7 +493,7 @@ export function useGameSession({
       bindCombatWsHandlers(gameWs);
     }
 
-    connectCombatWs();
+    combatStartTimer = setTimeout(connectCombatWs, 150);
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
@@ -554,6 +557,20 @@ export function useGameSession({
     engine.setAIEngine(new AIByProfileStrategy());
 
     engine.onWindChange = (w) => dispatch({ type: "SET_WIND", wind: w });
+
+    // Envoi de l'événement SHOT_SETTLED au serveur en mode multijoueur lorsque le coup local s'est stabilisé
+    engine.getTurnManager().onShotSettled = () => {
+      if (gameMode === 'online' && localPlayerId) {
+        const tm = engine.getTurnManager();
+        const currentPlayer = tm.getCurrentPlayer();
+        if (currentPlayer && currentPlayer.id === localPlayerId) {
+          if (gameWsRef.current && gameWsRef.current.readyState === WebSocket.OPEN) {
+            console.log('[Game] Sending SHOT_SETTLED to server');
+            gameWsRef.current.send(JSON.stringify({ type: 'SHOT_SETTLED', slot }));
+          }
+        }
+      }
+    };
 
     // Wire callbacks
     engine.onProjectileHit = (hit) => {
@@ -655,6 +672,10 @@ export function useGameSession({
     renderLoop();
 
     return () => {
+      isMounted = false;
+      if (combatStartTimer !== null) {
+        clearTimeout(combatStartTimer);
+      }
       if (combatReconnectTimer !== null) {
         clearTimeout(combatReconnectTimer);
       }

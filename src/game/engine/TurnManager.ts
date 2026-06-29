@@ -115,6 +115,9 @@ export class TurnManager {
   /** When true, nextTurn / AI turns are suppressed (match ended). Wired from GameEngine.gameOver. */
   private isMatchEnded: () => boolean = () => false;
 
+  /** Callback optionnel appelé lorsque la simulation physique d'un tir est complètement stabilisée sur le client. */
+  public onShotSettled?: () => void;
+
   public setMatchEndedChecker(checker: () => boolean): void {
     this.isMatchEnded = checker;
   }
@@ -664,6 +667,7 @@ export class TurnManager {
     if (this.localPlayerId) {
       this.isInputLocked = !this.isLocalHumanTurn();
       this.notifyHudUpdate();
+      this.onShotSettled?.();
       return;
     }
     this.nextTurn();

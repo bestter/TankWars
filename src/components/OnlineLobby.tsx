@@ -202,11 +202,14 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
         token,
       });
 
-      try {
-        ws.close();
-      } catch {
-        // ignore close errors
-      }
+      setTimeout(() => {
+        try {
+          ws.close();
+        } catch {
+          // ignore close errors
+        }
+      }, 200);
+
       if (wsRef.current === ws) {
         wsRef.current = null;
       }
@@ -325,7 +328,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
     const currentWsRef = wsRef;
     return () => {
       clearReconnectTimer();
-      if (currentWsRef.current) {
+      if (currentWsRef.current && !gameStartedRef.current) {
         currentWsRef.current.close();
       }
     };

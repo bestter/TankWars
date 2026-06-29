@@ -75,6 +75,7 @@ export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
+  private shotSettledTimeout: any = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -96,6 +97,13 @@ export class GameRoom extends DurableObject {
   private async saveState(): Promise<void> {
     if (this.state) {
       await this.ctx.storage.put("state", this.state);
+    }
+  }
+
+  private clearShotSettledTimeout(): void {
+    if (this.shotSettledTimeout) {
+      clearTimeout(this.shotSettledTimeout);
+      this.shotSettledTimeout = null;
     }
   }
 
@@ -301,7 +309,17 @@ export class GameRoom extends DurableObject {
 
     if (!this.state.started) return;
 
+    if (msg?.type === 'SHOT_SETTLED') {
+      if (slot === this.state.currentPlayerIndex) {
+        console.log(`[GameRoom] Received SHOT_SETTLED from active slot ${slot}`);
+        this.clearShotSettledTimeout();
+        await this.advanceTurnAndNotify();
+      }
+      return;
+    }
+
     if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
+      this.clearShotSettledTimeout();
       this.state.roundEnded = true;
       this.state.players = msg.players;
       await this.saveState();
@@ -327,6 +345,7 @@ export class GameRoom extends DurableObject {
       return;
     }
     if (msg?.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
+      this.clearShotSettledTimeout();
       this.state.roundEnded = false;
       this.state.currentPlayerIndex = 0;
       this.state.players = msg.players;
@@ -518,11 +537,8 @@ export class GameRoom extends DurableObject {
   private async executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
-    // In real impl: restore the headless simulator here, call fire + fastForwardUntilSettled,
-    // compute real craters (heights mutation), damage, round end, etc.
-    // Then produce the deltas and broadcast.
+    this.clearShotSettledTimeout();
 
-    // For the skeleton we just advance turn and echo the command so clients can at least see "something happened".
     const shotEvent = {
       type: 'SHOT',
       slot: fromSlot,
@@ -531,9 +547,33 @@ export class GameRoom extends DurableObject {
     };
     this.broadcast(shotEvent);
 
-    // Very fake "resolution" – in the real version the server would have mutated heights + players
-    // For now just rotate to next alive player (demo purpose)
-    const next = (fromSlot + 1) % this.state.numPlayers;
+    const cfg = this.state.slotConfigs[fromSlot];
+    if (cfg && cfg.type === 'ai') {
+      // Pour une IA, le serveur attend un délai réaliste (par exemple 4.5s) avant d'avancer le tour
+      this.shotSettledTimeout = setTimeout(() => {
+        this.shotSettledTimeout = null;
+        this.advanceTurnAndNotify().catch((err) => {
+          console.error('[GameRoom] Error advancing turn for AI shot:', err);
+        });
+      }, 4500);
+    } else {
+      // Pour un humain, on attend le message SHOT_SETTLED du client.
+      // Par sécurité, on force le passage au tour suivant après 8 secondes.
+      this.shotSettledTimeout = setTimeout(() => {
+        this.shotSettledTimeout = null;
+        console.warn(`[GameRoom] Security timeout triggered: forcing turn advance after slot ${fromSlot} shot`);
+        this.advanceTurnAndNotify().catch((err) => {
+          console.error('[GameRoom] Error in human shot safety timeout:', err);
+        });
+      }, 8000);
+    }
+  }
+
+  private async advanceTurnAndNotify(): Promise<void> {
+    if (!this.state || this.state.roundEnded) return;
+
+    // fake rotation to next player
+    const next = (this.state.currentPlayerIndex + 1) % this.state.numPlayers;
     this.state.currentPlayerIndex = next;
 
     await this.saveState();
