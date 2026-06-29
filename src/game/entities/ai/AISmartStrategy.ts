@@ -129,7 +129,7 @@ export class AISmartStrategy implements AIEngine {
 
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
-    if (isNewTarget) {
+    if (isNewTarget && import.meta.env.DEV) {
       console.log(
         `[AI TARGET] ${self.name} (Smart V4) selected NEW target: ${target!.name}`,
       );

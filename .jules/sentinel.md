@@ -25,3 +25,11 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The Content-Security-Policy (CSP) in `index.html` and `public/_headers` included the `'unsafe-inline'` directive in `style-src`.
 **Learning:** This directive allows the execution of inline styles (e.g., via `<style>...</style>` blocks or inline `style="..."` attributes), which significantly increases the risk and impact of CSS-based attacks, such as data exfiltration via CSS injection.
 **Prevention:** Avoid using `'unsafe-inline'` in the `style-src` directive of the CSP. Ensure the configuration in HTTP headers matches the secure configuration in `index.html`.
+## 2026-06-24 - [Secure CI/CD Dependency Installation]
+**Vulnerability:** CI pipelines (like `deploy.yml`) were using `npm ci` without the `--ignore-scripts` flag.
+**Learning:** Running `npm ci` executes post-install and pre-install scripts defined in dependencies' `package.json`. Malicious packages can use these scripts to execute arbitrary code during the CI build process, potentially stealing secrets or modifying the build output.
+**Prevention:** Always use `npm ci --ignore-scripts` in CI/CD pipelines to prevent unintended code execution during dependency installation, unless execution of specific scripts is explicitly required and trusted.
+## 2026-06-25 - [Input Length Exhaustion]
+**Vulnerability:** Missing state-level programmatic enforcement of maximum string length for user inputs (e.g. `handleNameChange` in `MainMenu.tsx`).
+**Learning:** Relying solely on the HTML `maxLength` attribute is insufficient. If a malicious user bypasses the client-side HTML restriction (e.g. via direct script interaction or API manipulation, though here it's purely frontend state), extremely large strings could be loaded into React component state. Over time, or with multiple properties, this can cause excessive memory usage or Denial of Service (DoS) conditions on the client.
+**Prevention:** As a defense-in-depth measure, enforce input constraints programmatically (e.g. using `value.slice(0, MAX_LENGTH)`) before passing data to state updaters.

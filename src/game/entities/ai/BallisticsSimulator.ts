@@ -95,7 +95,7 @@ export function simulateShot(
     vy += gravity * BALLISTICS_DT;
     vx += wind * BALLISTICS_DT;
 
-    const sp = Math.hypot(vx, vy);
+    const sp = Math.sqrt(vx * vx + vy * vy);
     if (sp > 4) {
       const drag = BALLISTICS_DRAG * sp * BALLISTICS_DT;
       vx -= (vx / sp) * drag;
@@ -148,7 +148,7 @@ export function simulateSmartShot(
     vy += gravity * BALLISTICS_DT;
     vx += wind * BALLISTICS_DT;
 
-    const sp = Math.hypot(vx, vy);
+    const sp = Math.sqrt(vx * vx + vy * vy);
     if (sp > 4) {
       const drag = BALLISTICS_DRAG * sp * BALLISTICS_DT;
       vx -= (vx / sp) * drag;

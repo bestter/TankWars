@@ -113,6 +113,7 @@ export class GameEngine {
   private celebrationCenterX: number = 0;
   private celebrationColor: string = "#FFFFFF";
   private celebrationWinnerTankId: string | null = null;
+  private celebrationWinner: import("../../types/player").Player | null = null;
   private celebrationAngle: number = 90;
   private celebrationAngleDir: number = 1;
 
@@ -246,18 +247,26 @@ export class GameEngine {
 
         // Attribute any players who died due to *this* impact (splash + direct, works for chains)
         // We avoid array mapping overhead but must maintain the Set for newly spawned/resurrected players
-        const nowAlive = new Set<string>();
-        for (const player of this.tankManager.getPlayers()) {
-          if (!player.tank.isDead) {
-            nowAlive.add(player.id);
-          }
-        }
+        const players = this.tankManager.getPlayers();
         for (const id of this.aliveAtLastShot) {
-          if (!nowAlive.has(id)) {
+          let isDead = false;
+          for (let i = 0; i < players.length; i++) {
+            if (players[i].id === id) {
+              isDead = players[i].tank.isDead;
+              break;
+            }
+          }
+          if (isDead) {
+            this.aliveAtLastShot.delete(id);
             this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
           }
         }
-        this.aliveAtLastShot = nowAlive;
+        for (let i = 0; i < players.length; i++) {
+          const p = players[i];
+          if (!p.tank.isDead) {
+            this.aliveAtLastShot.add(p.id);
+          }
+        }
       }
 
       this.onProjectileHit?.({
@@ -477,6 +486,7 @@ export class GameEngine {
     const c = roundWinner ? roundWinner.tank.color : undefined;
     if (roundWinner) {
       this.celebrationWinnerTankId = roundWinner.tank.id;
+      this.celebrationWinner = roundWinner;
       this.celebrationAngle = 78.5;
       this.celebrationAngleDir = 1;
     }
@@ -492,6 +502,7 @@ export class GameEngine {
     this.celebrationCenterX = 0;
     this.celebrationColor = "#FFFFFF";
     this.celebrationWinnerTankId = null;
+    this.celebrationWinner = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
     this.tankManager.clearRecoil(); // ensure no stale kick visible in non-combat phases
@@ -503,6 +514,7 @@ export class GameEngine {
     this.gameOver = true;
     this.winner = winner;
     this.celebrationWinnerTankId = winner.tank.id;
+    this.celebrationWinner = winner;
     this.celebrationAngle = 78.5;
     this.celebrationAngleDir = 1;
     this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
@@ -543,6 +555,7 @@ export class GameEngine {
     this.impactExplosions = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
+    this.celebrationWinner = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
 
@@ -678,9 +691,15 @@ export class GameEngine {
     const roundWinner = survivors.length === 1 ? survivors[0] : null;
 
     if (isDraw) {
-      const allPlayers = this.tankManager.getPlayers().map((p) => p.name);
+      const players = this.tankManager.getPlayers();
+      let allPlayersStr = "";
+      for (let i = 0; i < players.length; i++) {
+        if (i > 0) allPlayersStr += ", ";
+        allPlayersStr += players[i].name;
+      }
+
       console.log(
-        `[ROUND END] DRAW — all tanks destroyed: ${allPlayers.join(", ")}`,
+        `[ROUND END] DRAW — all tanks destroyed: ${allPlayersStr}`,
       );
       this.logDeathSummary();
     } else if (roundWinner) {
@@ -763,24 +782,17 @@ export class GameEngine {
 
     // Override the winning tank's cannon angle during celebration so it sweeps 78.5°-112.5°
     // and visually "shoots" the fireworks (we restore immediately after draw).
-    const restoredAngles = new Map<string, number>();
-    const players = this.tankManager.getPlayers();
-    if (this.celebrationWinnerTankId != null && this.celebrationAngle != null) {
-      for (const p of players) {
-        if (p.tank.id === this.celebrationWinnerTankId) {
-          restoredAngles.set(p.tank.id, p.tank.angle);
-          p.tank.angle = this.celebrationAngle;
-          break;
-        }
-      }
+    let restoredAngle: number | undefined;
+    if (this.celebrationWinner != null && this.celebrationAngle != null) {
+      restoredAngle = this.celebrationWinner.tank.angle;
+      this.celebrationWinner.tank.angle = this.celebrationAngle;
     }
+
     this.tankManager.draw(ctx, showPlayerNames, this.terrain);
+
     // restore
-    for (const p of players) {
-      const orig = restoredAngles.get(p.tank.id);
-      if (orig !== undefined) {
-        p.tank.angle = orig;
-      }
+    if (this.celebrationWinner != null && restoredAngle !== undefined) {
+      this.celebrationWinner.tank.angle = restoredAngle;
     }
 
     // === Active Player Indicator (Step 4 polish) ===
@@ -960,7 +972,7 @@ export class GameEngine {
         const gain = ctx.createGain();
         const filter = ctx.createBiquadFilter();
 
-        const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
+        const frequency = 440 * 2 ** ((midiNote - 69) / 12);
 
         osc.type = "sawtooth";
         osc.frequency.value = frequency;
@@ -992,7 +1004,7 @@ export class GameEngine {
         chordNotes.forEach((midiNote, i) => {
           const osc = c2.createOscillator();
           const gain = c2.createGain();
-          const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+          const freq = 440 * 2 ** ((midiNote - 69) / 12);
 
           osc.type = i === 0 ? "square" : "sawtooth";
           osc.frequency.value = freq;
@@ -1131,9 +1143,7 @@ export class GameEngine {
 
       // Shoot a firework rocket from the cannon tip at the current angle (with some spread)
       if (secureRandom() < 0.18) {
-        const winnerP = this.tankManager
-          .getPlayers()
-          .find((p) => p.tank.id === this.celebrationWinnerTankId);
+        const winnerP = this.celebrationWinner;
         if (winnerP) {
           const tank = winnerP.tank;
           const barrelLength = 20;
@@ -1586,6 +1596,7 @@ export class GameEngine {
     this.impactExplosions = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
+    this.celebrationWinner = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
     this.physicsEngine.clear(false);

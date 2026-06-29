@@ -69,7 +69,14 @@ export class AIHeuristicStrategy implements AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
-    const self = gameState.players.find((p) => p.tank.id === tankId);
+    const playerById = new Map<string, Player>();
+    let self: Player | undefined;
+    for (const p of gameState.players) {
+      playerById.set(p.id, p);
+      if (p.tank.id === tankId) {
+        self = p;
+      }
+    }
     if (!self || self.tank.isDead) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
@@ -94,9 +101,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // === Update memory from previous shot on the PREVIOUS target ===
     if (mem.currentTargetId) {
-      const prevTarget = gameState.players.find(
-        (p) => p.id === mem.currentTargetId,
-      );
+      const prevTarget = playerById.get(mem.currentTargetId);
       if (prevTarget) {
         const wasAlive = (mem.lastKnownHealth[prevTarget.id] ?? 0) > 0;
         const isDeadNow = prevTarget.tank.isDead || prevTarget.tank.health <= 0;
@@ -104,25 +109,31 @@ export class AIHeuristicStrategy implements AIEngine {
         if (wasAlive && isDeadNow) {
           // Success! Target was killed (by us or someone else, we successfully resolved this threat)
           mem.roundSuccesses += 1;
-          console.log(
-            `[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`,
-          );
+          if (import.meta.env.DEV) {
+            console.log(
+              `[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`,
+            );
+          }
         } else if (!isDeadNow) {
           // Still alive: compare health to check for a hit
           const prevHealth =
             mem.lastKnownHealth[prevTarget.id] ?? prevTarget.tank.health + 20;
           if (prevTarget.tank.health < prevHealth - 0.1) {
             mem.roundSuccesses += 1;
-            console.log(
-              `[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`,
-            );
+            if (import.meta.env.DEV) {
+              console.log(
+                `[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`,
+              );
+            }
           } else {
             // Miss!
             mem.roundFails += 1;
             mem.lastPowerBias += (secureRandom() - 0.5) * 1.2;
-            console.log(
-              `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
-            );
+            if (import.meta.env.DEV) {
+              console.log(
+                `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
+              );
+            }
           }
         }
       }
@@ -134,12 +145,18 @@ export class AIHeuristicStrategy implements AIEngine {
     // 1. Revenge: if someone just tried to kill us, prioritize them
     const revengeId = self.tank.lastHitBy;
     if (revengeId) {
-      target = enemies.find((e) => e.id === revengeId);
+      const e = playerById.get(revengeId);
+      if (e && e.id !== self.id && !e.tank.isDead) {
+        target = e;
+      }
     }
 
     // 2. Stick to previous target if still alive
     if (!target && mem.currentTargetId) {
-      target = enemies.find((e) => e.id === mem.currentTargetId);
+      const e = playerById.get(mem.currentTargetId);
+      if (e && e.id !== self.id && !e.tank.isDead) {
+        target = e;
+      }
     }
 
     // 3. New target: weakest (lowest health) among AIs first, fallback to human only if no AIs left
@@ -160,7 +177,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
-    if (isNewTarget) {
+    if (isNewTarget && import.meta.env.DEV) {
       console.log(
         `[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`,
       );

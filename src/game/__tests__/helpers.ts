@@ -1,7 +1,6 @@
 import type { GameState } from "../../types/game";
 import { VGA_PALETTE } from "../../types/game";
 import type { Player } from "../../types/player";
-import type { WeaponId } from "../../types/weapon";
 import { TerrainManager } from "../engine/Terrain";
 
 export function makeTank(
@@ -99,12 +98,3 @@ export function terrainInternals(terrain: TerrainManager): {
   };
 }
 
-export const ALL_WEAPONS: WeaponId[] = [
-  "MISSILE",
-  "GRENADE",
-  "CLUSTER",
-  "NUKE",
-  "THERMONUCLEAR",
-  "DRILLER",
-  "BULLET",
-];
