@@ -1012,6 +1012,9 @@ export function useGameSession({
       }
     };
     shopSyncRef.current.finishShop = finishShopPhase;
+    return () => {
+      clearShopAiTimeout();
+    };
   });
 
   const handleNewGame = () => {
