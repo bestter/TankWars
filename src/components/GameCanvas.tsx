@@ -26,6 +26,7 @@ export interface GameCanvasProps {
   resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
   token?: string;
+  ws?: WebSocket;
 }
 
 export function GameCanvas({
@@ -40,6 +41,7 @@ export function GameCanvas({
   resumeCanvas,
   slot,
   token,
+  ws,
 }: GameCanvasProps = {}) {
   const { t } = useTranslation();
 
@@ -59,7 +61,7 @@ export function GameCanvas({
     handleCycleWeapon,
     handleFire,
     isLocalShopTurn,
-  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token });
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,

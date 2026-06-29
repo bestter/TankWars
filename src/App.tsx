@@ -45,6 +45,7 @@ function App() {
     initialCurrentPlayerIndex?: number;
     slot?: number;
     token?: string;
+    ws?: WebSocket;
   } | null>(() => savedSession?.meta ?? null);
 
   // Local flag to force showing the OnlineLobby create UI from the "Play online" button in MainMenu
@@ -79,7 +80,7 @@ function App() {
 
   const handleStartOnlineGame = (
     initialPlayers: Player[],
-    meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string },
+    meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string; ws?: WebSocket },
   ): void => {
     setPlayers(initialPlayers);
     setOnlineMeta({
@@ -90,6 +91,7 @@ function App() {
       initialCurrentPlayerIndex: meta.initialCurrentPlayerIndex,
       slot: meta.slot,
       token: meta.token,
+      ws: meta.ws,
     });
     setResumeCanvas(null);
     setOnlineMatchStarted(true);
@@ -168,6 +170,7 @@ function App() {
             resumeCanvas={resumeCanvas ?? undefined}
             slot={onlineMeta?.slot}
             token={onlineMeta?.token}
+            ws={onlineMeta?.ws}
           />
         </div>
       )}

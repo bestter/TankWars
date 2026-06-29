@@ -310,10 +310,13 @@ export class GameRoom extends DurableObject {
     if (!this.state.started) return;
 
     if (msg?.type === 'SHOT_SETTLED') {
+      console.log(`[GameRoom] Received SHOT_SETTLED message from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}`);
       if (slot === this.state.currentPlayerIndex) {
-        console.log(`[GameRoom] Received SHOT_SETTLED from active slot ${slot}`);
+        console.log(`[GameRoom] SHOT_SETTLED slot matches active slot. Advancing turn...`);
         this.clearShotSettledTimeout();
         await this.advanceTurnAndNotify();
+      } else {
+        console.warn(`[GameRoom] SHOT_SETTLED slot ${slot} does NOT match active slot ${this.state?.currentPlayerIndex}`);
       }
       return;
     }
@@ -537,6 +540,7 @@ export class GameRoom extends DurableObject {
   private async executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
+    console.log(`[GameRoom] executeFire: fromSlot=${fromSlot}, command=`, command);
     this.clearShotSettledTimeout();
 
     const shotEvent = {
@@ -549,14 +553,17 @@ export class GameRoom extends DurableObject {
 
     const cfg = this.state.slotConfigs[fromSlot];
     if (cfg && cfg.type === 'ai') {
+      console.log(`[GameRoom] executeFire: active slot ${fromSlot} is AI. Arming 4.5s turn advance timer...`);
       // Pour une IA, le serveur attend un délai réaliste (par exemple 4.5s) avant d'avancer le tour
       this.shotSettledTimeout = setTimeout(() => {
         this.shotSettledTimeout = null;
+        console.log(`[GameRoom] AI turn advance timer fired. Advancing turn...`);
         this.advanceTurnAndNotify().catch((err) => {
           console.error('[GameRoom] Error advancing turn for AI shot:', err);
         });
       }, 4500);
     } else {
+      console.log(`[GameRoom] executeFire: active slot ${fromSlot} is Human. Waiting for SHOT_SETTLED... (8s watchdog armed)`);
       // Pour un humain, on attend le message SHOT_SETTLED du client.
       // Par sécurité, on force le passage au tour suivant après 8 secondes.
       this.shotSettledTimeout = setTimeout(() => {
@@ -573,8 +580,10 @@ export class GameRoom extends DurableObject {
     if (!this.state || this.state.roundEnded) return;
 
     // fake rotation to next player
+    const prev = this.state.currentPlayerIndex;
     const next = (this.state.currentPlayerIndex + 1) % this.state.numPlayers;
     this.state.currentPlayerIndex = next;
+    console.log(`[GameRoom] advanceTurnAndNotify: currentPlayerIndex changed from ${prev} to ${next}`);
 
     await this.saveState();
 

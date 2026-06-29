@@ -437,7 +437,11 @@ export class TurnManager {
    * No-op during AI turns, resolution lock, or inter-round pause.
    */
   public tryFire(): boolean {
-    if (!this.isLocalHumanTurn()) return false;
+    console.log(`[TurnManager] tryFire: localPlayerId=${this.localPlayerId}, isInputLocked=${this.isInputLocked}, interRoundPaused=${this.interRoundPaused}, anyTankIsFalling=${this.tankManager.anyTankIsFalling()}`);
+    if (!this.isLocalHumanTurn()) {
+      console.warn(`[TurnManager] tryFire: Not local human turn! localPlayerId=${this.localPlayerId}, currentPlayerIndex=${this.currentPlayerIndex}`);
+      return false;
+    }
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return false;
     if (!player.isHuman) return false;
@@ -664,9 +668,11 @@ export class TurnManager {
    * In online mode the server is authoritative — only refresh the input lock for the current index.
    */
   private finishShotResolution(): void {
+    console.log(`[TurnManager] finishShotResolution: localPlayerId=${this.localPlayerId}, currentPlayerIndex=${this.currentPlayerIndex}`);
     if (this.localPlayerId) {
       this.isInputLocked = true; // Reste verrouillé en ligne jusqu'au STATE_UPDATE officiel du serveur
       this.notifyHudUpdate();
+      console.log(`[TurnManager] finishShotResolution: calling onShotSettled callback...`);
       this.onShotSettled?.();
       return;
     }

@@ -27,7 +27,7 @@ export interface OnlineLobbyProps {
   initialToken?: string;
 
   /** Called when the game actually starts (server sent GAME_START). Parent transitions to GameCanvas. */
-  onStartGame: (players: Player[], meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string }) => void;
+  onStartGame: (players: Player[], meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string; ws?: WebSocket }) => void;
 
   /** Optional: return to the pure local MainMenu */
   onExitToLocalMenu?: () => void;
@@ -200,15 +200,8 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
         initialCurrentPlayerIndex: start.currentPlayerIndex,
         slot,
         token,
+        ws, // Transmet la WebSocket ouverte pour la réutiliser en combat
       });
-
-      setTimeout(() => {
-        try {
-          ws.close();
-        } catch {
-          // ignore close errors
-        }
-      }, 200);
 
       if (wsRef.current === ws) {
         wsRef.current = null;

@@ -86,6 +86,7 @@ interface UseGameSessionProps {
   resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
   token?: string;
+  ws?: WebSocket;
 }
 
 export function useGameSession({
@@ -100,11 +101,13 @@ export function useGameSession({
   resumeCanvas,
   slot,
   token,
+  ws,
 }: UseGameSessionProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const gameWsRef = useRef<WebSocket | null>(null);
+  const initialWsRef = useRef(ws);
   const roundEndFromNetworkRef = useRef(false);
   const shopSyncRef = useRef({
     applyRemoteAdvance: (nextIndex: number) => {
@@ -327,6 +330,7 @@ export function useGameSession({
       const origTryFire = tm.tryFire.bind(tm);
       tm.tryFire = () => {
         const ok = origTryFire();
+        console.log(`[Game] tm.tryFire called. ok=${ok}, localPlayerId=${localPlayerId}`);
         if (ok && localPlayerId) {
           const player = tm.getCurrentPlayer();
           if (player) {
@@ -336,15 +340,18 @@ export function useGameSession({
               weaponId: player.tank.currentWeapon,
             };
             // Prefer sending to server WS for authoritative processing and broadcast to all room sockets
-            if (gameWs && gameWs.readyState === WebSocket.OPEN) {
-              gameWs.send(JSON.stringify({ type: 'FIRE', command }));
-            } else if (fireChannel) {
-              // Fallback for demo tab sync if no WS
-              fireChannel.postMessage({
-                type: 'FIRE',
-                fromPlayerId: localPlayerId,
-                command,
-              });
+            if (gameWsRef.current && gameWsRef.current.readyState === WebSocket.OPEN) {
+              console.log('[Game] Sending FIRE to server via WebSocket');
+              gameWsRef.current.send(JSON.stringify({ type: 'FIRE', command }));
+            } else {
+              console.warn(`[Game] WebSocket not open (readyState=${gameWsRef.current?.readyState}). Falling back to fireChannel.`);
+              if (fireChannel) {
+                fireChannel.postMessage({
+                  type: 'FIRE',
+                  fromPlayerId: localPlayerId,
+                  command,
+                });
+              }
             }
           }
         }
@@ -383,6 +390,7 @@ export function useGameSession({
           const tm = engine.getTurnManager();
 
           if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number') {
+            console.log(`[Game] Received GAME_START: currentPlayerIndex=${msg.currentPlayerIndex}`);
             tm.syncTurn(msg.currentPlayerIndex);
             if (typeof msg.wind === 'number') {
               engine.setWindForce(msg.wind);
@@ -390,6 +398,7 @@ export function useGameSession({
           }
 
           if (msg.type === 'SHOT' && msg.command) {
+            console.log(`[Game] Received SHOT from slot=${msg.slot}, cmd=`, msg.command);
             // For the firer, we already executed the full local fire for immediate feedback.
             // For other clients (or to be safe), replay only if the slot in the message is not our local slot.
             // This avoids double execution on the firer.
@@ -407,6 +416,7 @@ export function useGameSession({
           }
 
           if (msg.type === 'STATE_UPDATE') {
+            console.log(`[Game] Received STATE_UPDATE: currentPlayerIndex=${msg.currentPlayerIndex}`);
             // MVP: server only coordinates turn order. Clients run local physics after SHOT replay.
             // Do NOT apply server players/heights here — the DO stub still carries placeholder
             // spawn Y values (≈280) which teleport tanks into the sky and reset crater terrain.
@@ -493,7 +503,16 @@ export function useGameSession({
       bindCombatWsHandlers(gameWs);
     }
 
-    combatStartTimer = setTimeout(connectCombatWs, 150);
+    const incomingWs = initialWsRef.current;
+    if (incomingWs && incomingWs.readyState === WebSocket.OPEN) {
+      console.log('[Game] Re-using existing WebSocket connection from lobby');
+      gameWs = incomingWs;
+      gameWsRef.current = incomingWs;
+      bindCombatWsHandlers(incomingWs);
+    } else {
+      console.log('[Game] No existing active WS or not open. Connecting new WebSocket...');
+      combatStartTimer = setTimeout(connectCombatWs, 50);
+    }
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
@@ -560,13 +579,17 @@ export function useGameSession({
 
     // Envoi de l'événement SHOT_SETTLED au serveur en mode multijoueur lorsque le coup local s'est stabilisé
     engine.getTurnManager().onShotSettled = () => {
+      console.log(`[Game] onShotSettled callback triggered. gameMode=${gameMode}, localPlayerId=${localPlayerId}`);
       if (gameMode === 'online' && localPlayerId) {
         const tm = engine.getTurnManager();
         const currentPlayer = tm.getCurrentPlayer();
+        console.log(`[Game] onShotSettled: currentPlayer.id=${currentPlayer?.id}, localPlayerId=${localPlayerId}`);
         if (currentPlayer && currentPlayer.id === localPlayerId) {
           if (gameWsRef.current && gameWsRef.current.readyState === WebSocket.OPEN) {
             console.log('[Game] Sending SHOT_SETTLED to server');
             gameWsRef.current.send(JSON.stringify({ type: 'SHOT_SETTLED', slot }));
+          } else {
+            console.warn(`[Game] Cannot send SHOT_SETTLED: socket not open. readyState=${gameWsRef.current?.readyState}`);
           }
         }
       }
