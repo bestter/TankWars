@@ -213,7 +213,7 @@ describe('TurnManager', () => {
       turnManager.update(0.016);
 
       expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(0);
-      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
     });
 
     it('replays remote fire from the correct slot even when turn index is desynced', () => {

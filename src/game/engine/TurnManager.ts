@@ -665,7 +665,7 @@ export class TurnManager {
    */
   private finishShotResolution(): void {
     if (this.localPlayerId) {
-      this.isInputLocked = !this.isLocalHumanTurn();
+      this.isInputLocked = true; // Reste verrouillé en ligne jusqu'au STATE_UPDATE officiel du serveur
       this.notifyHudUpdate();
       this.onShotSettled?.();
       return;
