@@ -113,8 +113,17 @@ export function useGameSession({
     applyRemoteAdvance: (nextIndex: number) => {
       void nextIndex;
     },
+    applyRemoteBuySell: (players: Player[]) => {
+      void players;
+    },
     finishShop: () => {},
   });
+  /** Shop WS messages received before this client entered SHOP (SUMMARY/CELEBRATION lag). */
+  const pendingShopNextIndexRef = useRef<number | null>(null);
+  const pendingShopFinishRef = useRef(false);
+  const pendingShopPlayersRef = useRef<Player[] | null>(null);
+  const handleGoToShopRef = useRef<() => void>(() => {});
+  const finishShopPhaseRef = useRef<() => void>(() => {});
 
   const [state, dispatch] = useReducer(
     gameCanvasReducer,
@@ -436,24 +445,21 @@ export function useGameSession({
           }
 
           if (msg.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players) && msg.slot !== slot) {
-            if (gamePhaseRef.current === 'SHOP') {
-              engine.getTankManager().setPlayers(msg.players);
-              dispatch({ type: "MUTATE_SHOP_PLAYERS", players: msg.players });
-            }
+            shopSyncRef.current.applyRemoteBuySell(msg.players);
           }
 
           if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && msg.slot !== slot) {
-            if (gamePhaseRef.current === 'SHOP') {
-              shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
-            }
+            shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
           }
 
           if (msg.type === 'SHOP_FINISH' && Array.isArray(msg.players) && msg.slot !== slot) {
+            engine.getTankManager().setPlayers(msg.players);
             if (gamePhaseRef.current === 'SHOP') {
-              engine.getTankManager().setPlayers(msg.players);
               dispatch({ type: "MUTATE_SHOP_PLAYERS", players: msg.players });
-              shopSyncRef.current.finishShop();
+            } else {
+              pendingShopPlayersRef.current = msg.players;
             }
+            shopSyncRef.current.finishShop();
           }
 
           if (msg.type === 'ROUND_END' && Array.isArray(msg.players) && msg.slot !== slot) {
@@ -814,6 +820,41 @@ export function useGameSession({
     dispatch({ type: "START_SHOP", roster });
     shopPlayersRef.current = roster;
     currentShopIndexRef.current = 0;
+    gamePhaseRef.current = "SHOP";
+
+    if (pendingShopPlayersRef.current) {
+      engine.getTankManager().setPlayers(pendingShopPlayersRef.current);
+      dispatch({ type: "MUTATE_SHOP_PLAYERS", players: pendingShopPlayersRef.current });
+      shopPlayersRef.current = pendingShopPlayersRef.current;
+    }
+
+    if (pendingShopFinishRef.current) {
+      pendingShopFinishRef.current = false;
+      pendingShopNextIndexRef.current = null;
+      finishShopPhaseRef.current();
+      return;
+    }
+
+    const pendingNext = pendingShopNextIndexRef.current;
+    if (pendingNext !== null) {
+      pendingShopNextIndexRef.current = null;
+      if (pendingNext >= roster.length) {
+        finishShopPhaseRef.current();
+        return;
+      }
+      if (pendingNext > 0) {
+        currentShopIndexRef.current = pendingNext;
+        dispatch({ type: "ADVANCE_SHOPPER", nextIndex: pendingNext });
+        const nextPlayer = shopPlayersRef.current[pendingNext];
+        if (nextPlayer && !nextPlayer.isHuman) {
+          shopAiTimeoutRef.current = setTimeout(() => {
+            shopAiTimeoutRef.current = null;
+            processNextShopperIfAI();
+          }, 80);
+        }
+        return;
+      }
+    }
 
     if (!roster[0].isHuman) {
       shopAiTimeoutRef.current = setTimeout(() => {
@@ -1014,8 +1055,35 @@ export function useGameSession({
   };
 
   useEffect(() => {
+    handleGoToShopRef.current = handleGoToShop;
+    finishShopPhaseRef.current = finishShopPhase;
+
+    shopSyncRef.current.applyRemoteBuySell = (players: Player[]) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      eng.getTankManager().setPlayers(players);
+      pendingShopPlayersRef.current = players;
+      if (gamePhaseRef.current === "SHOP") {
+        dispatch({ type: "MUTATE_SHOP_PLAYERS", players });
+        shopPlayersRef.current = players;
+      }
+    };
+
     shopSyncRef.current.applyRemoteAdvance = (nextIndex: number) => {
-      if (shopFinishingRef.current || gamePhaseRef.current !== "SHOP") return;
+      if (shopFinishingRef.current) return;
+
+      const phase = gamePhaseRef.current;
+      if (phase !== "SHOP") {
+        pendingShopNextIndexRef.current = Math.max(
+          pendingShopNextIndexRef.current ?? -1,
+          nextIndex,
+        );
+        if (phase === "SUMMARY") {
+          handleGoToShopRef.current();
+        }
+        return;
+      }
+
       if (nextIndex >= shopPlayersRef.current.length) {
         finishShopPhase();
         return;
@@ -1034,7 +1102,21 @@ export function useGameSession({
         }, 80);
       }
     };
-    shopSyncRef.current.finishShop = finishShopPhase;
+
+    shopSyncRef.current.finishShop = () => {
+      if (shopFinishingRef.current) return;
+      const phase = gamePhaseRef.current;
+      if (phase !== "SHOP") {
+        pendingShopFinishRef.current = true;
+        pendingShopNextIndexRef.current = null;
+        if (phase === "SUMMARY") {
+          handleGoToShopRef.current();
+        }
+        return;
+      }
+      finishShopPhase();
+    };
+
     return () => {
       clearShopAiTimeout();
     };
