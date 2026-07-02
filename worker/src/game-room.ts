@@ -75,7 +75,9 @@ export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
-  private shotSettledTimeout: any = null;
+  private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
+  private awaitingShotFromSlot: number | null = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -310,13 +312,20 @@ export class GameRoom extends DurableObject {
     if (!this.state.started) return;
 
     if (msg?.type === 'SHOT_SETTLED') {
-      console.log(`[GameRoom] Received SHOT_SETTLED message from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}`);
-      if (slot === this.state.currentPlayerIndex) {
-        console.log(`[GameRoom] SHOT_SETTLED slot matches active slot. Advancing turn...`);
+      console.log(
+        `[GameRoom] Received SHOT_SETTLED from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}, awaitingShotFromSlot=${this.awaitingShotFromSlot}`,
+      );
+      if (
+        slot === this.state.currentPlayerIndex &&
+        slot === this.awaitingShotFromSlot
+      ) {
+        console.log(`[GameRoom] SHOT_SETTLED accepted for active human shot. Advancing turn...`);
         this.clearShotSettledTimeout();
         await this.advanceTurnAndNotify();
       } else {
-        console.warn(`[GameRoom] SHOT_SETTLED slot ${slot} does NOT match active slot ${this.state?.currentPlayerIndex}`);
+        console.warn(
+          `[GameRoom] Ignoring SHOT_SETTLED from slot ${slot} (active=${this.state?.currentPlayerIndex}, awaiting=${this.awaitingShotFromSlot})`,
+        );
       }
       return;
     }
@@ -524,6 +533,9 @@ export class GameRoom extends DurableObject {
       }
     }
 
+    // Notify lobby clients that the match is live (enables REQUEST_GAME_START catch-up).
+    this.sendRosterUpdate();
+
     // If the very first player is an AI, the server immediately plays it (MVP)
     this.maybeRunAIServerTurn();
   }
@@ -563,6 +575,7 @@ export class GameRoom extends DurableObject {
         });
       }, 4500);
     } else {
+      this.awaitingShotFromSlot = fromSlot;
       console.log(`[GameRoom] executeFire: active slot ${fromSlot} is Human. Waiting for SHOT_SETTLED... (8s watchdog armed)`);
       // Pour un humain, on attend le message SHOT_SETTLED du client.
       // Par sécurité, on force le passage au tour suivant après 8 secondes.
@@ -578,6 +591,8 @@ export class GameRoom extends DurableObject {
 
   private async advanceTurnAndNotify(): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
+
+    this.awaitingShotFromSlot = null;
 
     // fake rotation to next player
     const prev = this.state.currentPlayerIndex;

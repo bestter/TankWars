@@ -205,9 +205,10 @@ describe('TurnManager', () => {
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
     });
 
-    it('does not advance turn index locally after shot resolution in online mode', () => {
+    it('does not advance turn index locally after a local shot resolves in online mode', () => {
       turnManager.setLocalPlayerId('player-1');
       turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
 
       Reflect.set(turnManager, 'awaitingTankStabilization', true);
       turnManager.update(0.016);
@@ -266,6 +267,44 @@ describe('TurnManager', () => {
       );
 
       expect(mockFireCallback).not.toHaveBeenCalled();
+    });
+
+    it('does not emit onShotSettled when a remote replay settles after syncTurn advanced', () => {
+      const onShotSettled = vi.fn();
+      turnManager.setLocalPlayerId('player-2');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'MISSILE' },
+        { fromSlot: 0 },
+      );
+
+      // Server STATE_UPDATE arrives before the remote replay finishes on this client.
+      turnManager.syncTurn(1);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentTurnInfo()?.playerId).toBe('player-2');
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
+    it('emits onShotSettled only for locally fired shots in online mode', () => {
+      const onShotSettled = vi.fn();
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).toHaveBeenCalledTimes(1);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
     });
   });
 });

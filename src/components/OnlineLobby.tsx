@@ -76,6 +76,9 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
   const onStartGameRef = useRef(onStartGame);
   const gameStartedRef = useRef(false);
   const missedGameStartRef = useRef(false);
+  const rosterRef = useRef<JoinedInfo[]>([]);
+  const serverNumPlayersRef = useRef(0);
+  const serverGameLiveRef = useRef(false);
   const [serverGameLive, setServerGameLive] = useState(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionRef = useRef<{ rId: string; slot: number; token: string; name: string } | null>(null);
@@ -90,6 +93,27 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+  }, []);
+
+  const expectedHumansToStart = useCallback((): number => {
+    if (slotsInfo.length > 0) {
+      return slotsInfo.filter((s) => s.type === 'human').length;
+    }
+    return serverNumPlayersRef.current || numPlayers || 2;
+  }, [numPlayers, slotsInfo]);
+
+  const isRosterReadyToStart = useCallback(
+    (rosterEntries: JoinedInfo[]): boolean => {
+      const humansJoined = rosterEntries.filter((r) => r.type === 'human').length;
+      return humansJoined >= expectedHumansToStart();
+    },
+    [expectedHumansToStart],
+  );
+
+  const requestGameStartCatchUp = useCallback((ws: WebSocket): void => {
+    if (gameStartedRef.current || ws.readyState !== WebSocket.OPEN) return;
+    missedGameStartRef.current = true;
+    ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
   }, []);
 
   // Keep slotConfigs in sync with numPlayers (exact same pattern as local MainMenu — no setState inside effect)
@@ -245,6 +269,14 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       ws.onopen = () => {
         setConnected(true);
         setError(null);
+        // Reconnect or late attach: pull GAME_START if the match already went live.
+        if (
+          missedGameStartRef.current ||
+          serverGameLiveRef.current ||
+          isRosterReadyToStart(rosterRef.current)
+        ) {
+          requestGameStartCatchUp(ws);
+        }
       };
 
       ws.onmessage = (ev) => {
@@ -258,14 +290,19 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
         if (msg.type === 'ROSTER_UPDATE') {
           const r = msg as ServerRosterUpdate;
           setRoster(r.roster);
+          rosterRef.current = r.roster;
+          if (typeof r.numPlayers === 'number') {
+            serverNumPlayersRef.current = r.numPlayers;
+          }
+
+          const rosterComplete = isRosterReadyToStart(r.roster);
+
           if (r.gameStarted) {
+            serverGameLiveRef.current = true;
             setServerGameLive(true);
-            if (!gameStartedRef.current) {
-              missedGameStartRef.current = true;
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
-              }
-            }
+          }
+          if (r.gameStarted || rosterComplete) {
+            requestGameStartCatchUp(ws);
           }
         }
 
@@ -296,7 +333,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       };
       setTimeout(sendIdentify, 50);
     },
-    [clearReconnectTimer, handleServerGameStart, scheduleReconnect, t],
+    [clearReconnectTimer, handleServerGameStart, isRosterReadyToStart, requestGameStartCatchUp, scheduleReconnect, t],
   );
 
   useEffect(() => {
@@ -307,14 +344,20 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
   useEffect(() => {
     if (view !== 'waiting' && view !== 'joining') return;
     const retryId = setInterval(() => {
-      if (gameStartedRef.current || !missedGameStartRef.current) return;
+      if (gameStartedRef.current) return;
       const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
-      }
+      if (ws?.readyState !== WebSocket.OPEN) return;
+
+      const shouldRetry =
+        missedGameStartRef.current ||
+        serverGameLiveRef.current ||
+        isRosterReadyToStart(rosterRef.current);
+      if (!shouldRetry) return;
+
+      requestGameStartCatchUp(ws);
     }, 2000);
     return () => clearInterval(retryId);
-  }, [view]);
+  }, [view, isRosterReadyToStart, requestGameStartCatchUp]);
 
   // Cleanup WS on unmount
   useEffect(() => {

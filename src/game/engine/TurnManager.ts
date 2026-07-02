@@ -118,6 +118,14 @@ export class TurnManager {
   /** Callback optionnel appelé lorsque la simulation physique d'un tir est complètement stabilisée sur le client. */
   public onShotSettled?: () => void;
 
+  /**
+   * True when the shot currently resolving was fired locally (tryFire).
+   * Remote replays (executeRemoteFire) must not emit SHOT_SETTLED — otherwise a late
+   * STATE_UPDATE can advance currentPlayerIndex before the replay settles and the
+   * observer client would notify the server with the wrong slot.
+   */
+  private settlingShotWasLocal = false;
+
   public setMatchEndedChecker(checker: () => boolean): void {
     this.isMatchEnded = checker;
   }
@@ -495,6 +503,7 @@ export class TurnManager {
 
   /** Launch a replayed remote shot — bypasses local turn lock and falling-tank guards. */
   private fireRemote(player: Player, command: FireCommand): void {
+    this.settlingShotWasLocal = false;
     this.fireCallback(player.tank.position, command, player.id);
     this.consumeAmmo(player, command.weaponId);
     this.isInputLocked = true;
@@ -515,6 +524,7 @@ export class TurnManager {
       weaponId: tank.currentWeapon,
     };
 
+    this.settlingShotWasLocal = true;
     this.fireCallback(tank.position, command, player.id);
 
     // Consume 1 from inventory for limited weapons (MISSILE is unlimited).
@@ -668,12 +678,23 @@ export class TurnManager {
    * In online mode the server is authoritative — only refresh the input lock for the current index.
    */
   private finishShotResolution(): void {
-    console.log(`[TurnManager] finishShotResolution: localPlayerId=${this.localPlayerId}, currentPlayerIndex=${this.currentPlayerIndex}`);
+    const wasLocalShot = this.settlingShotWasLocal;
+    this.settlingShotWasLocal = false;
+
+    console.log(
+      `[TurnManager] finishShotResolution: localPlayerId=${this.localPlayerId}, currentPlayerIndex=${this.currentPlayerIndex}, wasLocalShot=${wasLocalShot}`,
+    );
     if (this.localPlayerId) {
-      this.isInputLocked = true; // Reste verrouillé en ligne jusqu'au STATE_UPDATE officiel du serveur
+      if (wasLocalShot) {
+        // Firer's client: stay locked until the server broadcasts the next turn.
+        this.isInputLocked = true;
+        console.log(`[TurnManager] finishShotResolution: calling onShotSettled callback...`);
+        this.onShotSettled?.();
+      } else {
+        // Observer replay settled (possibly after syncTurn already advanced): refresh lock only.
+        this.isInputLocked = !this.isLocalHumanTurn();
+      }
       this.notifyHudUpdate();
-      console.log(`[TurnManager] finishShotResolution: calling onShotSettled callback...`);
-      this.onShotSettled?.();
       return;
     }
     this.nextTurn();
