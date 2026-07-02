@@ -371,7 +371,7 @@ export class GameEngine {
     const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
 
     console.log(
-      `[SHOT] owner=${ownerId} weapon=${command.weaponId} from=(${from.x.toFixed(1)},${from.y.toFixed(1)}) launch=(${launchX.toFixed(1)},${launchY.toFixed(1)}) angle=${command.angle} power=${command.power}`,
+      `[SHOT] weapon=${command.weaponId} angle=${command.angle} power=${command.power} (owner and coordinates redacted)`,
     );
 
     // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
@@ -499,7 +499,7 @@ export class GameEngine {
     this.celebrationAngle = 78.5;
     this.celebrationAngleDir = 1;
     this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
-    console.log(`[GAME OVER] WINNER: ${winner.name}`);
+    console.log(`[GAME OVER] WINNER: (redacted)`);
     this.onGameOver?.(winner);
   }
 
@@ -672,20 +672,13 @@ export class GameEngine {
     const roundWinner = survivors.length === 1 ? survivors[0] : null;
 
     if (isDraw) {
-      const players = this.tankManager.getPlayers();
-      let allPlayersStr = "";
-      for (let i = 0; i < players.length; i++) {
-        if (i > 0) allPlayersStr += ", ";
-        allPlayersStr += players[i].name;
-      }
-
       console.log(
-        `[ROUND END] DRAW — all tanks destroyed: ${allPlayersStr}`,
+        `[ROUND END] DRAW — all tanks destroyed (players redacted)`,
       );
       this.logDeathSummary();
     } else if (roundWinner) {
       console.log(
-        `[ROUND END] ${roundWinner.name} is the last tank standing this round`,
+        `[ROUND END] (player redacted) is the last tank standing this round`,
       );
     }
 
@@ -699,16 +692,17 @@ export class GameEngine {
   private logDeathSummary(): void {
     console.log("=== RÉSUMÉ DES CAUSES DE MORT ===");
     const playerList = this.tankManager.getPlayers();
-    for (const p of playerList) {
+    for (let i = 0; i < playerList.length; i++) {
+      const p = playerList[i];
       const reasons = this.deathReasons[p.id] || [];
       if (reasons.length === 0) {
-        console.log(`  - ${p.name}: aucune mort enregistrée`);
+        console.log(`  - Player ${i + 1}: aucune mort enregistrée`);
         continue;
       }
-      console.log(`  - ${p.name}:`);
+      console.log(`  - Player ${i + 1}:`);
       for (const r of reasons) {
         const turnInfo = r.round ? ` (turn ~${r.round})` : "";
-        console.log(`      • ${r.cause}${turnInfo}: ${r.info ?? ""}`);
+        console.log(`      • ${r.cause}${turnInfo}: (info redacted)`);
       }
     }
     console.log("==================================");
@@ -1488,7 +1482,7 @@ export class GameEngine {
       // The last tank receives the double ($600) upon the second-to-last tank's death
       lastTank.money = (lastTank.money ?? 0) + 600;
       console.log(
-        `[EARNINGS] Last tank standing ${lastTank.name} (id=${lastTank.id}) receives double reward: +$600`,
+        `[EARNINGS] Last tank standing (redacted) receives double reward: +$600`,
       );
 
       // If the last tank was also the killer, it already receives $600 total.
@@ -1504,7 +1498,7 @@ export class GameEngine {
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
           console.log(
-            `[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`,
+            `[EARNINGS] Killer (redacted) receives standard reward: +$300`,
           );
         }
       }
@@ -1518,7 +1512,7 @@ export class GameEngine {
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
           console.log(
-            `[EARNINGS] Killer ${killerPlayer.name} receives standard reward: +$300`,
+            `[EARNINGS] Killer (redacted) receives standard reward: +$300`,
           );
         }
       }
