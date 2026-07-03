@@ -14,7 +14,7 @@
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **158 tests**
+- Run tests: `npm run test` (or `vitest run`) — **159 tests** (23 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -32,7 +32,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **Step 5 Tank Positioning:** Randomized spawn coordinates with shuffled starting order at each new round via `spawnTanks` in `TankManager` (100px minimum distance safety, 13% width margins, snapped vertically to `Y = groundY` surface).
 - **Step 6 Shell-Tank Collision:** Direct AABB shell-to-tank collision checking in `PhysicsEngine.updateProjectiles` (24x15 hitbox) with launch-time self-sabotage protection (ignores owner's hitbox until projectile exits it). Triggers explosions, damage, and projectile cleanup.
 - **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
-- **Online Multiplayer (`AddMultiplayer`):** `worker/` (Cloudflare Worker + `GameRoom` Durable Object) coordinates rooms and WS sync; client (`OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`) keeps local Canvas physics. `worker/.wrangler/` is gitignored.
+- **Online Multiplayer (`AddMultiplayer`):** Cloudflare Worker + `GameRoom` Durable Object (`worker/`) coordinates rooms, handles transactional state storage, and WS sync; client (`OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`) keeps local Canvas physics, and handles automatic combat WS reconnect. Deployed via `deploy-cloudflare.ps1` with `VITE_API_BASE` integration.
 
 ## AI Strategy Pattern (Crucial)
 
@@ -51,6 +51,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Online Multiplayer Stability & Shop Sync:** Fixed input locks after firing in online mode. Corrected useEffect memory leaks inside the WeaponShop component. Added buffering for online shop decisions and synchronization across phase transitions to avoid desyncs during rapid transitions. Fixed GAME_START catch-up and turn synchronization issues for hosts. Added a new regression test in [csp.test.ts](file:///d:/projects/Repos/TankWars/src/utils/__tests__/csp.test.ts) to verify CSP rules. — Antigravity (Gemini 3.5 Flash)
 - **Multiplayer Connection Hardening & Sync Fixes:** Resolved a critical multiplayer synchronization bug where slot connection cleanup was deleting the new combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Implemented reference check validation (`this.sockets.get(slot) === ws`) in the Durable Object's `handleSocketDisconnect` before deleting. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur. Fixed client-side unmount cleanup in `OnlineLobby.tsx` to safely close the active WebSocket using a copied ref parameter (`currentWsRef.current.close()`) to avoid state-related lifecycle warnings. Added missing translation key `link_instructions` to both `fr.json` and `en.json` to pass strict TypeScript i18n checks. All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100. — Antigravity (Gemini 3.5 Pro)
 
 - **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. — Antigravity (Gemini 3.5 Flash (High))

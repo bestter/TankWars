@@ -14,7 +14,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 158 tests, 17 fichiers) |
+| Tests | `npm run test` (vitest, 159 tests, 23 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` |
@@ -48,13 +48,13 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 - **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
 - **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).
 
-### Online multiplayer (work in progress)
+### Online multiplayer
 
-- `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tour relay, shop sync).
-- Client : `OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`.
+- `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tour relay, shop sync persistant et transactionnel via Durable Object storage).
+- Client : `OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts` (gère la reconnexion automatique du WebSocket combat et la résilience aux coupures).
 - Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
 - `worker/.wrangler/` est gitignoré (état local SQLite).
-- Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine.
+- Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine pour la validation statique stricte des types.
 
 ### Système d'IA
 

@@ -39,7 +39,7 @@
 - **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned instantly from tank destructions ($300 standard, $600 for the last standing tank) and base survival ($500).
 - **Internationalization (i18n)** — Complete French (FR) and English (EN) translations for all UI text, settings, weapon descriptions, and game status messages. Features a retro-styled LanguageSwitcher component to toggle language on the fly.
 - **Mobile Playability & PWA Support** — Full touch controls (D-Pad for angle and power, fire, weapon cycling) with press & hold support. Progressive Web App (PWA) configuration (`manifest.json` + Service Worker `sw.js` for offline cache) enabling installability on iOS and Android home screens in fullscreen landscape mode.
-- **Online Multiplayer (AddMultiplayer branch)** — Host creates a room (2–4 players: human shareable URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) handles lobby WS, turn coordination, and cross-client phase sync (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END` / shop relay). Client: `localPlayerId` turn gating, seeded RNG per round (`seedFromRoomRound`), `sessionStorage` session resume, combat WS reconnect. MVP = client-side physics + server turn order (authoritative sim in progress).
+- **Online Multiplayer (AddMultiplayer branch)** — Host creates a room (2–4 players: human shareable URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn coordination, and transactional cross-client phase sync (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END` / shop relay). Client: `localPlayerId` turn gating, seeded RNG per round (`seedFromRoomRound`), `sessionStorage` session resume, and combat WS reconnect. Stable and hardened against desyncs and abrupt disconnects.
 
 ---
 
@@ -86,7 +86,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (155 unit tests)
+# Run tests (159 unit tests across 23 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -162,7 +162,7 @@ Fully working:
 - **Durable Object State Persistence**: Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation.
 - **Online Multiplayer (AddMultiplayer branch)**: Full cross-client flow — lobby WS + auto-start, combat WS (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END`), shop relay (`SHOP_BUY_SELL` / `SHOP_ADVANCE` / `SHOP_FINISH`), `localPlayerId` gating, `seedFromRoomRound`, remote fire by slot, `GAME_START` catch-up, `onlineSession.ts` resume, combat WS reconnect, round 2 server reset. MVP = client physics + server turn order; authoritative server sim still planned.
 - **Online Multiplayer Unit Tests**: 16 new tests — `onlineSession`, `GameEngine.online` (remote round end), TurnManager `ownerId` remote fire, Terrain `loadHeights`, `seedFromRoomRound` room isolation.
-- **Test Suite (v0.5.0)**: **158 unit tests** across 17 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, and reducer coverage.
+- **Test Suite (v0.5.0)**: **159 unit tests** across 23 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP regression testing, and reducer coverage.
 - **Bullet and Nuke Direct Hit Damage Fix**: Fixed a bug where direct hits with `BULLET` and `NUKE` were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
