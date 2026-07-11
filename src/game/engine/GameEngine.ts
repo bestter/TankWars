@@ -380,9 +380,7 @@ export class GameEngine {
     );
 
     // Lookup firer color for projectile harmonization + recoil trigger (Step 4 polish)
-    const firerPlayer = this.tankManager
-      .getPlayers()
-      .find((p) => p.id === ownerId);
+    const firerPlayer = this.tankManager.getPlayerById(ownerId);
     const ownerColor = firerPlayer?.tank.color;
 
     // Micro recoil on chassis at fire instant (opposite barrel dir)
@@ -1492,9 +1490,7 @@ export class GameEngine {
         actualKiller !== victimId &&
         actualKiller !== lastTank.id
       ) {
-        const killerPlayer = this.tankManager
-          .getPlayers()
-          .find((p) => p.id === actualKiller);
+        const killerPlayer = this.tankManager.getPlayerById(actualKiller);
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
           console.log(
@@ -1506,9 +1502,7 @@ export class GameEngine {
       // Standard death (not the end of the round yet)
       // Standard reward ($300) to the killer (unless suicide)
       if (actualKiller !== "unknown" && actualKiller !== victimId) {
-        const killerPlayer = this.tankManager
-          .getPlayers()
-          .find((p) => p.id === actualKiller);
+        const killerPlayer = this.tankManager.getPlayerById(actualKiller);
         if (killerPlayer) {
           killerPlayer.money = (killerPlayer.money ?? 0) + 300;
           console.log(
