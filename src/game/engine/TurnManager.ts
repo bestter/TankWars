@@ -195,9 +195,8 @@ export class TurnManager {
     ) {
       this.turnLockAccumulatedTime += dt;
       if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
-        const stillCurrent = this.getCurrentPlayer();
         console.warn(
-          `[TurnManager] Turn lock safety watchdog triggered for ${stillCurrent?.name ?? "unknown"} — forcing shot resolution (missed settlement?)`,
+          `[TurnManager] Turn lock safety watchdog triggered for (player redacted) — forcing shot resolution (missed settlement?)`,
         );
         this.clearAwaitingStabilization();
         this.clearResolutionTimeout();
@@ -220,7 +219,7 @@ export class TurnManager {
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
         const player = this.resolutionPlayer;
         console.warn(
-          `[TurnManager] AI resolution timeout for ${player.name}. Triggering fallback.`,
+          `[TurnManager] AI resolution timeout for (player redacted). Triggering fallback.`,
         );
 
         let fallback: { angle: number; power: number } | null = null;
@@ -243,7 +242,7 @@ export class TurnManager {
           this.consumeAmmo(player, player.tank.currentWeapon);
         } else {
           console.warn(
-            `[TurnManager] ${player.name} forfeits its turn (no resolution fallback).`,
+            `[TurnManager] (player redacted) forfeits its turn (no resolution fallback).`,
           );
           this.clearAwaitingStabilization();
           this.clearResolutionTimeout();
@@ -271,7 +270,7 @@ export class TurnManager {
             this.isInputLocked
           ) {
             console.warn(
-              `[TurnManager] Settlement did not advance turn for AI ${stillCurrent.name} — forcing shot resolution as safety net`,
+              `[TurnManager] Settlement did not advance turn for AI (player redacted) — forcing shot resolution as safety net`,
             );
             this.clearAwaitingStabilization();
             this.clearResolutionTimeout();
@@ -367,7 +366,9 @@ export class TurnManager {
     // In online mode we only unlock if it's the local human's turn
     const localTurn = this.isLocalHumanTurn();
     this.isInputLocked = player ? (!player.isHuman || !localTurn) : false;
-    console.log('[TurnManager] resumeForCombat: player=' + player?.name + ', isInputLocked=' + this.isInputLocked);
+    console.log(
+      `[TurnManager] resumeForCombat: player=(player redacted), isInputLocked=${this.isInputLocked}`,
+    );
     this.clearAwaitingStabilization();
     this.setupInputListeners();
   }
@@ -864,7 +865,7 @@ export class TurnManager {
       return;
     }
 
-    console.log('[TurnManager] startFirstTurn: firstPlayer=' + firstPlayer.name);
+    console.log('[TurnManager] startFirstTurn: firstPlayer=(player redacted)');
     this.onTurnChange?.(firstPlayer, this.turnNumber);
     this.notifyHudUpdate();
     this.handleAITurnIfNeeded(firstPlayer);
@@ -895,11 +896,11 @@ export class TurnManager {
    * Ne bloque pas le rendu du Canvas grâce à l'utilisation de setTimeout + Promise.
    */
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
-    console.log('[TurnManager] handleAITurnIfNeeded: player=' + player.name + ', isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
+    console.log('[TurnManager] handleAITurnIfNeeded: player=(player redacted), isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
     if (!this.aiEngine) {
       console.warn(
-        `[TurnManager] No AIEngine configured for AI player ${player.name}. Skipping turn.`,
+        `[TurnManager] No AIEngine configured for AI player (player redacted). Skipping turn.`,
       );
       setTimeout(() => this.nextTurn(), 800);
       return;
