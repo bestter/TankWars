@@ -14,7 +14,7 @@
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **159 tests** (23 files)
+- Run tests: `npm run test` (or `vitest run`) — **207 tests** (25 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -25,14 +25,14 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 - **Tech Stack:** React (functional components, hooks) + TypeScript + HTML5 Canvas.
 - **State Separation:** Keep React state (turns, shop, money, `GamePhase`) strictly decoupled from the Canvas 2D high-frequency loop (physics, rendering).
-- **Phase ownership:** `App.tsx` — `MENU` vs combat; `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `CELEBRATION` (round fireworks) → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
+- **Phase ownership:** `App.tsx` + `appReducer.ts` — `MENU` vs combat (session via `useReducer`); `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `CELEBRATION` (round fireworks) → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
 - **Type Safety:** Strict TypeScript. Zero `any`. Define structural types inside `src/types/`.
 - **Canvas Rendering:** Use `VGA_PALETTE` from `src/types/game.ts` (classic 16-color VGA + extended high-contrast neon/arcade colors for tank redesign) for all game visuals. Pure procedural drawing helpers live in `src/game/rendering/` (e.g. `drawTankSprite` — geometric chenilles, beveled chassis, independent turret/cannon, strict save/translate/rotate/restore transforms) and are integrated into the 120Hz engine loop (scaled up to 24x15 with matching hitboxes) with slope-aware chassis tilt.
 - **Step 4 Visual Polish (in engine):** Floating active-player indicator (colored inverted triangle, `Math.sin(Date.now()/200)*5` bob) drawn in `GameEngine.render`; projectiles use firer tank color via `ownerColor`; micro recoil (chassis offset opposite barrel) in `TankManager` + trigger from `GameEngine.fireProjectile`. All pure Canvas2D, cheap per-frame.
 - **Step 5 Tank Positioning:** Randomized spawn coordinates with shuffled starting order at each new round via `spawnTanks` in `TankManager` (100px minimum distance safety, 13% width margins, snapped vertically to `Y = groundY` surface).
 - **Step 6 Shell-Tank Collision:** Direct AABB shell-to-tank collision checking in `PhysicsEngine.updateProjectiles` (24x15 hitbox) with launch-time self-sabotage protection (ignores owner's hitbox until projectile exits it). Triggers explosions, damage, and projectile cleanup.
 - **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
-- **Online Multiplayer (`AddMultiplayer`):** Cloudflare Worker + `GameRoom` Durable Object (`worker/`) coordinates rooms, handles transactional state storage, and WS sync; client (`OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`) keeps local Canvas physics, and handles automatic combat WS reconnect. Deployed via `deploy-cloudflare.ps1` with `VITE_API_BASE` integration.
+- **Online Multiplayer (`AddMultiplayer`):** Cloudflare Worker + `GameRoom` Durable Object (`worker/`) coordinates rooms, handles transactional state storage, and WS sync; client lobby (`OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`) + combat (`useGameSession.ts`, `onlineSession.ts`) keep local Canvas physics and automatic combat WS reconnect. Deployed via `deploy-cloudflare.ps1` with `VITE_API_BASE` integration.
 
 ## AI Strategy Pattern (Crucial)
 
