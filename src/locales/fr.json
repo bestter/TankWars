@@ -51,6 +51,7 @@
   "shop_instructions": "Utilisez + pour acheter, − pour vendre (remboursement intégral)",
   "shop_stock": "Stock",
   "shop_waiting_opponent": "En attente des achats de {{name}}…",
+  "shop_waiting_others": "En attente des autres joueurs…",
   "start_battle_button": "COMMENCER LA BATAILLE",
   "status_ai_turn": "[TOUR IA]",
   "status_resolving": "[RÉSOLUTION]",

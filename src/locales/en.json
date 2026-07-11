@@ -50,6 +50,7 @@
   "shop_instructions": "Use + to buy, − to sell (full refund)",
   "shop_stock": "Stock",
   "shop_waiting_opponent": "Waiting for {{name}} to shop…",
+  "shop_waiting_others": "Waiting for other players…",
   "start_battle_button": "START THE BATTLE",
   "status_ai_turn": "[AI TURN]",
   "status_resolving": "[RESOLVING]",

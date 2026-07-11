@@ -98,6 +98,12 @@ export class GameRoom extends DurableObject {
     command: { angle: number; power: number; weaponId: WeaponId };
     ownerId?: string;
   } | null = null;
+  /**
+   * Authoritative parallel boutique session (in-memory).
+   * Every human slot shops independently and sends SHOP_READY; the DO finishes when all humans are ready.
+   * Dead tanks still shop (they respawn next round) — never skip isDead slots.
+   */
+  private shopSession: { active: boolean; readySlots: number[] } | null = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -405,6 +411,7 @@ export class GameRoom extends DurableObject {
 
     if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
       this.resetShotCoordination();
+      this.shopSession = null;
       this.state.roundEnded = true;
       this.state.players = msg.players;
       await this.saveState();
@@ -418,30 +425,35 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    // Shop phase relay (turn order not required — clients coordinate sequential shopping)
-    if (msg?.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players)) {
-      this.state.players = msg.players;
-      await this.saveState();
-      this.broadcast({ type: 'SHOP_BUY_SELL', players: msg.players, slot });
+    // Shop inventory relay — merge only the sender's player so parallel buys don't clobber each other.
+    if (msg?.type === 'SHOP_BUY_SELL') {
+      const updated = this.mergeShopPlayerUpdate(slot, msg);
+      if (updated) {
+        await this.saveState();
+        this.broadcast({ type: 'SHOP_BUY_SELL', players: this.state.players, slot });
+      }
       return;
     }
+    if (msg?.type === 'SHOP_ENTER') {
+      await this.handleShopEnter(
+        slot,
+        Array.isArray(msg.players) ? (msg.players as Player[]) : undefined,
+      );
+      return;
+    }
+    if (msg?.type === 'SHOP_READY') {
+      await this.handleShopReady(slot, Array.isArray(msg.players) ? (msg.players as Player[]) : undefined);
+      return;
+    }
+    // Legacy client relay (pre-authoritative shop). Prefer SHOP_READY; keep for mid-deploy compat.
     if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
-      this.broadcast({ type: 'SHOP_ADVANCE', nextIndex: msg.nextIndex, slot });
+      console.warn(`[GameRoom] Legacy SHOP_ADVANCE from slot ${slot} — treating as SHOP_READY`);
+      await this.handleShopReady(slot, Array.isArray(msg.players) ? (msg.players as Player[]) : undefined);
       return;
     }
     if (msg?.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
-      this.resetShotCoordination();
-      this.state.roundEnded = false;
-      this.state.currentPlayerIndex = 0;
-      this.state.players = msg.players;
-      await this.saveState();
-      this.broadcast({ type: 'SHOP_FINISH', players: msg.players, slot });
-      this.broadcast({
-        type: 'STATE_UPDATE',
-        currentPlayerIndex: 0,
-        roundEnded: false,
-      });
-      this.maybeRunAIServerTurn();
+      // Legacy: only accept if shop session already completed or absent (belt-and-suspenders).
+      await this.completeShopPhase(msg.players as Player[], slot);
       return;
     }
 
@@ -791,6 +803,148 @@ export class GameRoom extends DurableObject {
       }, 1200);
     });
     this.ctx.waitUntil(aiTurnPromise);
+  }
+
+  private getHumanSlots(): number[] {
+    if (!this.state) return [];
+    const slots: number[] = [];
+    this.state.slotConfigs.forEach((cfg, i) => {
+      if (cfg.type === 'human') slots.push(i);
+    });
+    return slots;
+  }
+
+  /**
+   * Apply only the purchasing slot's player to the authoritative roster.
+   * Accepts either `{ player }` (preferred) or full `{ players[] }` (legacy).
+   */
+  private mergeShopPlayerUpdate(slot: number, msg: { player?: Player; players?: Player[] }): boolean {
+    if (!this.state) return false;
+    if (this.state.slotConfigs[slot]?.type !== 'human') return false;
+
+    let patch: Player | undefined;
+    if (msg.player && typeof msg.player === 'object' && typeof msg.player.id === 'string') {
+      patch = msg.player;
+    } else if (Array.isArray(msg.players) && msg.players[slot]) {
+      patch = msg.players[slot];
+    }
+    if (!patch) return false;
+
+    // Prefer index === slot (canonical). Fall back to id match.
+    let idx = slot;
+    if (!this.state.players[idx] || this.state.players[idx].id !== patch.id) {
+      const byId = this.state.players.findIndex((p) => p.id === patch!.id);
+      if (byId >= 0) idx = byId;
+    }
+    if (idx < 0 || idx >= this.state.numPlayers) return false;
+
+    const next = [...this.state.players];
+    // Ensure array length if server roster was still empty.
+    while (next.length < this.state.numPlayers) {
+      next.push(patch);
+    }
+    next[idx] = patch;
+    this.state.players = next;
+    return true;
+  }
+
+  /** Client entered the boutique — init parallel session and re-sync ready set. */
+  private async handleShopEnter(slot: number, players?: Player[]): Promise<void> {
+    if (!this.state) return;
+
+    if (!this.shopSession?.active) {
+      this.shopSession = { active: true, readySlots: [] };
+      console.log(`[GameRoom] Parallel shop session started by slot ${slot}`);
+    }
+
+    // Host often sends post-AI-buy roster on enter; accept first full snapshot.
+    if (players && players.length === this.state.numPlayers) {
+      this.state.players = players;
+      await this.saveState();
+    }
+
+    this.broadcast({
+      type: 'SHOP_STATE',
+      mode: 'parallel',
+      readySlots: [...this.shopSession.readySlots],
+      done: false,
+      players: this.state.players.length > 0 ? this.state.players : undefined,
+    });
+  }
+
+  /**
+   * A human finished their own shopping. When every human slot has readied, end boutique.
+   * AI purchases are applied client-side (host) before SHOP_ENTER / via BUY_SELL — not via ready gate.
+   */
+  private async handleShopReady(slot: number, players?: Player[]): Promise<void> {
+    if (!this.state) return;
+
+    if (!this.shopSession?.active) {
+      this.shopSession = { active: true, readySlots: [] };
+    }
+
+    const cfg = this.state.slotConfigs[slot];
+    if (!cfg || cfg.type !== 'human') {
+      console.warn(`[GameRoom] SHOP_READY ignored from non-human slot ${slot}`);
+      return;
+    }
+
+    // Merge only this human's final snapshot — do not replace the whole roster from one client.
+    if (players && players.length === this.state.numPlayers && players[slot]) {
+      this.mergeShopPlayerUpdate(slot, { player: players[slot], players });
+      await this.saveState();
+    }
+
+    if (!this.shopSession.readySlots.includes(slot)) {
+      this.shopSession.readySlots.push(slot);
+    }
+
+    const humans = this.getHumanSlots();
+    const ready = this.shopSession.readySlots;
+    console.log(
+      `[GameRoom] SHOP_READY slot ${slot} — ready=[${ready.join(',')}] humans=[${humans.join(',')}]`,
+    );
+
+    this.broadcast({
+      type: 'SHOP_STATE',
+      mode: 'parallel',
+      readySlots: [...ready],
+      done: false,
+      players: this.state.players,
+    });
+
+    const allHumansReady = humans.length > 0 && humans.every((h) => ready.includes(h));
+    if (allHumansReady) {
+      console.log(`[GameRoom] All humans ready — completing shop`);
+      await this.completeShopPhase(this.state.players, slot);
+    }
+  }
+
+  private async completeShopPhase(players: Player[], fromSlot: number): Promise<void> {
+    if (!this.state) return;
+
+    this.shopSession = null;
+    this.resetShotCoordination();
+    this.state.roundEnded = false;
+    this.state.currentPlayerIndex = 0;
+    if (players.length > 0) {
+      this.state.players = players;
+    }
+    await this.saveState();
+
+    // Single completion signal — clients must apply players only inside finishShopPhase
+    // (before startNextRound). A follow-up setPlayers after spawn re-applied isDead and desynced turns.
+    this.broadcast({
+      type: 'SHOP_FINISH',
+      players: this.state.players,
+      slot: fromSlot,
+    });
+    this.broadcast({
+      type: 'STATE_UPDATE',
+      currentPlayerIndex: 0,
+      roundEnded: false,
+    });
+    this.maybeRunAIServerTurn();
   }
 
   // Public helper if we later expose REST status

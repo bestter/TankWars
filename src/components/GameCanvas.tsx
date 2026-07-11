@@ -17,7 +17,7 @@ export interface GameCanvasProps {
   /** Permet de retourner à l'écran titre (démontage engine + ressources). */
   onReturnToMenu?: () => void;
   /** Online multiplayer info (passed from lobby start) */
-  gameMode?: 'local' | 'online';
+  gameMode?: "local" | "online";
   localPlayerId?: string;
   roomId?: string;
   initialHeights?: number[];
@@ -61,6 +61,8 @@ export function GameCanvas({
     handleCycleWeapon,
     handleFire,
     isLocalShopTurn,
+    shopDisplayPlayer,
+    localShopDone,
   } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
@@ -149,10 +151,31 @@ export function GameCanvas({
           />
         )}
 
-        {/* Weapon Shop overlay — full sequential boutique (humans one-by-one + AI auto) */}
+        {/* Weapon Shop — online: parallel (each human shops self); local: sequential index */}
         {gamePhase === "SHOP" && shopPlayers.length > 0 && (
           <>
-            {shopPlayers[currentShopIndex]?.isHuman ? (
+            {gameMode === "online" ? (
+              isLocalShopTurn && shopDisplayPlayer ? (
+                <WeaponShop
+                  player={shopDisplayPlayer}
+                  shopIndex={Math.max(
+                    0,
+                    shopPlayers.findIndex((p) => p.id === shopDisplayPlayer.id),
+                  )}
+                  totalShoppers={shopPlayers.filter((p) => p.isHuman).length}
+                  onBuySell={handleShopBuySell}
+                  onReady={handleShopReady}
+                />
+              ) : (
+                <div className="retro-ai-overlay">
+                  {localShopDone
+                    ? t("shop_waiting_others")
+                    : t("shop_waiting_opponent", {
+                        name: shopPlayers[currentShopIndex]?.name ?? "",
+                      })}
+                </div>
+              )
+            ) : shopPlayers[currentShopIndex]?.isHuman ? (
               isLocalShopTurn ? (
                 <WeaponShop
                   player={shopPlayers[currentShopIndex]}

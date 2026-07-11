@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useReducer } from "react";
+import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine } from "../game/engine/GameEngine";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { VGA_PALETTE } from "../types/game";
@@ -114,6 +114,8 @@ export function useGameSession({
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const gameWsRef = useRef<WebSocket | null>(null);
   const initialWsRef = useRef(ws);
+  /** Outbox for combat WS messages when the socket is not yet OPEN. */
+  const pendingCombatMessagesRef = useRef<string[]>([]);
   const roundEndFromNetworkRef = useRef(false);
   const shopSyncRef = useRef({
     applyRemoteAdvance: (nextIndex: number) => {
@@ -122,14 +124,17 @@ export function useGameSession({
     applyRemoteBuySell: (players: Player[]) => {
       void players;
     },
-    finishShop: () => {},
+    /** Optional final roster (money/inventory) applied only before startNextRound. */
+    finishShop: (players?: Player[]) => {
+      void players;
+    },
   });
   /** Shop WS messages received before this client entered SHOP (SUMMARY/CELEBRATION lag). */
   const pendingShopNextIndexRef = useRef<number | null>(null);
   const pendingShopFinishRef = useRef(false);
   const pendingShopPlayersRef = useRef<Player[] | null>(null);
   const handleGoToShopRef = useRef<() => void>(() => {});
-  const finishShopPhaseRef = useRef<() => void>(() => {});
+  const finishShopPhaseRef = useRef<(finalPlayers?: Player[]) => void>(() => {});
 
   const [state, dispatch] = useReducer(
     gameCanvasReducer,
@@ -250,12 +255,69 @@ export function useGameSession({
     }
   }, []);
 
-  /** Online: true only when the active shop slot belongs to this client. */
+  const flushCombatMessages = useCallback((): void => {
+    const ws = gameWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    while (pendingCombatMessagesRef.current.length > 0) {
+      const payload = pendingCombatMessagesRef.current.shift();
+      if (!payload) continue;
+      try {
+        ws.send(payload);
+      } catch (e) {
+        console.warn('[Game] Failed to flush combat message', e);
+        pendingCombatMessagesRef.current.unshift(payload);
+        break;
+      }
+    }
+  }, []);
+
+  const sendCombatMessage = useCallback(
+    (obj: Record<string, unknown>): void => {
+      const payload = JSON.stringify(obj);
+      const ws = gameWsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(payload);
+          return;
+        } catch (e) {
+          console.warn('[Game] WS send failed, queueuing', e);
+        }
+      }
+      pendingCombatMessagesRef.current.push(payload);
+      console.warn(
+        `[Game] Queued combat message type=${String(obj.type)} (ws readyState=${ws?.readyState ?? 'null'})`,
+      );
+    },
+    [],
+  );
+
+  /**
+   * Online: parallel boutique — each human shops their own tank until they press Ready.
+   * Local/hotseat: sequential index (classic).
+   */
+  const [localShopDone, setLocalShopDone] = useState(false);
+  const localShopDoneRef = useRef(false);
+
+  const onlineShopPlayer =
+    gameMode === 'online' && localPlayerId
+      ? shopPlayers.find((p) => p.id === localPlayerId) ?? null
+      : null;
+
   const isLocalShopTurn =
-    gameMode !== 'online' ||
-    !localPlayerId ||
-    (!!shopPlayers[currentShopIndex]?.isHuman &&
-      shopPlayers[currentShopIndex]?.id === localPlayerId);
+    gameMode === 'online'
+      ? !localShopDone && !!onlineShopPlayer?.isHuman
+      : !localPlayerId ||
+        (!!shopPlayers[currentShopIndex]?.isHuman &&
+          shopPlayers[currentShopIndex]?.id === localPlayerId);
+
+  /** Player shown in the shop UI (self online; sequential index offline). */
+  const shopDisplayPlayer =
+    gameMode === 'online'
+      ? onlineShopPlayer
+      : (shopPlayers[currentShopIndex] ?? null);
+
+  /** Host (slot 0) applies AI auto-buy once when entering online boutique. */
+  const isOnlineShopHost = gameMode === 'online' && slot === 0;
 
   const clearCelebrationTimer = useCallback(() => {
     if (celebrationTimerRef.current !== null) {
@@ -326,44 +388,8 @@ export function useGameSession({
     // Cross-tab sync for online dev testing (same browser, multiple tabs)
     // When one tab fires, it announces the command via BroadcastChannel so other tabs can replay the exact same shot.
     // This keeps terrain/damage in sync until we have real server-authoritative simulation + WS broadcast.
-    // Outgoing combat messages queued until the WS is OPEN (avoids silent FIRE drops).
-    const pendingCombatMessages: string[] = [];
     /** Dedup remote SHOT replays (reconnect catch-up can re-send the same in-flight shot). */
     let lastReplayedShotKey: string | null = null;
-
-    const flushCombatMessages = (): void => {
-      const ws = gameWsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      while (pendingCombatMessages.length > 0) {
-        const payload = pendingCombatMessages.shift();
-        if (payload) {
-          try {
-            ws.send(payload);
-          } catch (e) {
-            console.warn('[Game] Failed to flush combat message', e);
-            pendingCombatMessages.unshift(payload);
-            break;
-          }
-        }
-      }
-    };
-
-    const sendCombatMessage = (obj: Record<string, unknown>): void => {
-      const payload = JSON.stringify(obj);
-      const ws = gameWsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(payload);
-          return;
-        } catch (e) {
-          console.warn('[Game] WS send failed, queueuing', e);
-        }
-      }
-      pendingCombatMessages.push(payload);
-      console.warn(
-        `[Game] Queued combat message type=${String(obj.type)} (ws readyState=${ws?.readyState ?? 'null'})`,
-      );
-    };
 
     if (gameMode === 'online' && roomId && localPlayerId) {
       fireChannel = new BroadcastChannel(`tankwars-fire-${roomId}`);
@@ -505,18 +531,33 @@ export function useGameSession({
             shopSyncRef.current.applyRemoteBuySell(msg.players);
           }
 
+          // Authoritative parallel shop state from the Durable Object.
+          if (msg.type === 'SHOP_STATE') {
+            if (Array.isArray(msg.players) && msg.players.length > 0) {
+              shopSyncRef.current.applyRemoteBuySell(msg.players);
+            }
+            if (msg.done === true) {
+              shopSyncRef.current.finishShop(
+                Array.isArray(msg.players) && msg.players.length > 0
+                  ? msg.players
+                  : undefined,
+              );
+            } else if (typeof msg.shopIndex === 'number' && msg.mode !== 'parallel') {
+              // Legacy sequential cursor (older server).
+              shopSyncRef.current.applyRemoteAdvance(msg.shopIndex);
+            }
+            // Parallel mode: readySlots is informational only; combat starts on SHOP_FINISH.
+          }
+
+          // Legacy advance relay (older server / mid-deploy). Prefer SHOP_STATE.
           if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && msg.slot !== slot) {
             shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
           }
 
-          if (msg.type === 'SHOP_FINISH' && Array.isArray(msg.players) && msg.slot !== slot) {
-            engine.getTankManager().setPlayers(msg.players);
-            if (gamePhaseRef.current === 'SHOP') {
-              dispatch({ type: "MUTATE_SHOP_PLAYERS", players: msg.players });
-            } else {
-              pendingShopPlayersRef.current = msg.players;
-            }
-            shopSyncRef.current.finishShop();
+          // Server authority for boutique end. Must not setPlayers after combat already started
+          // (that stomped spawnTanks and re-applied isDead → P1 "turn" but cannot fire).
+          if (msg.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
+            shopSyncRef.current.finishShop(msg.players);
           }
 
           if (msg.type === 'ROUND_END' && Array.isArray(msg.players) && msg.slot !== slot) {
@@ -887,12 +928,22 @@ export function useGameSession({
 
     clearShopAiTimeout();
     shopFinishingRef.current = false;
+    localShopDoneRef.current = false;
+    setLocalShopDone(false);
     engine.getTurnManager().pauseForInterRound();
 
-    const roster = [...engine.getTankManager().getPlayers()];
+    let roster = [...engine.getTankManager().getPlayers()];
     if (roster.length < 2) {
       endMatchFromShop(engine, roster);
       return;
+    }
+
+    // Online host: deterministic AI auto-buy once, then share roster via SHOP_ENTER.
+    if (gameMode === 'online' && isOnlineShopHost) {
+      for (const p of roster) {
+        if (!p.isHuman) autoBuyForAI(p);
+      }
+      engine.getTankManager().setPlayers(roster);
     }
 
     dispatch({ type: "START_SHOP", roster });
@@ -904,6 +955,7 @@ export function useGameSession({
       engine.getTankManager().setPlayers(pendingShopPlayersRef.current);
       dispatch({ type: "MUTATE_SHOP_PLAYERS", players: pendingShopPlayersRef.current });
       shopPlayersRef.current = pendingShopPlayersRef.current;
+      roster = pendingShopPlayersRef.current;
     }
 
     if (pendingShopFinishRef.current) {
@@ -913,28 +965,31 @@ export function useGameSession({
       return;
     }
 
+    // Online parallel boutique: every human shops; server waits for all SHOP_READY.
+    if (gameMode === 'online') {
+      sendCombatMessage({
+        type: 'SHOP_ENTER',
+        players: [...engine.getTankManager().getPlayers()],
+        slot,
+      });
+      return;
+    }
+
+    // Local / hotseat: sequential shop index.
     const pendingNext = pendingShopNextIndexRef.current;
     if (pendingNext !== null) {
       pendingShopNextIndexRef.current = null;
-      if (pendingNext >= roster.length) {
+      if (pendingNext >= shopPlayersRef.current.length) {
         finishShopPhaseRef.current();
         return;
       }
       if (pendingNext > 0) {
         currentShopIndexRef.current = pendingNext;
         dispatch({ type: "ADVANCE_SHOPPER", nextIndex: pendingNext });
-        const nextPlayer = shopPlayersRef.current[pendingNext];
-        if (nextPlayer && !nextPlayer.isHuman) {
-          shopAiTimeoutRef.current = setTimeout(() => {
-            shopAiTimeoutRef.current = null;
-            processNextShopperIfAI();
-          }, 80);
-        }
-        return;
       }
     }
 
-    if (!roster[0].isHuman) {
+    if (!roster[0]?.isHuman) {
       shopAiTimeoutRef.current = setTimeout(() => {
         shopAiTimeoutRef.current = null;
         processNextShopperIfAI();
@@ -963,15 +1018,19 @@ export function useGameSession({
   /** Achat / vente d'une arme pour le joueur courant de la boutique */
   const handleShopBuySell = (weaponId: WeaponId, delta: 1 | -1): void => {
     if (shopPlayers.length === 0) return;
+    if (gameMode === 'online' && localShopDoneRef.current) return;
 
     const engine = engineRef.current;
     if (!engine) return;
 
     const enginePlayers = engine.getTankManager().getPlayers();
-    const idx = currentShopIndexRef.current;
+    // Online parallel: always mutate the local human. Offline: sequential index.
     const currentPlayer =
-      enginePlayers.find((p) => p.id === shopPlayersRef.current[idx]?.id) ||
-      shopPlayersRef.current[idx];
+      gameMode === 'online' && localPlayerId
+        ? enginePlayers.find((p) => p.id === localPlayerId) ?? null
+        : enginePlayers.find(
+            (p) => p.id === shopPlayersRef.current[currentShopIndexRef.current]?.id,
+          ) || shopPlayersRef.current[currentShopIndexRef.current];
 
     if (!currentPlayer || !currentPlayer.isHuman) return;
 
@@ -1020,46 +1079,52 @@ export function useGameSession({
 
     dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
 
-    if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
-      gameWsRef.current.send(
-        JSON.stringify({ type: 'SHOP_BUY_SELL', players: updatedPlayers, slot }),
-      );
+    if (gameMode === 'online') {
+      // Send only the local player so parallel buys merge cleanly on the server.
+      const localUpdated =
+        updatedPlayers.find((p) => p.id === localPlayerId) ?? currentPlayer;
+      sendCombatMessage({ type: 'SHOP_BUY_SELL', player: localUpdated, slot });
     }
   };
 
   const handleShopReady = (): void => {
-    const idx = currentShopIndexRef.current;
-    const shopper = shopPlayersRef.current[idx];
     if (gameMode === 'online' && localPlayerId) {
-      if (!shopper || shopper.id !== localPlayerId) return;
+      if (localShopDoneRef.current) return;
+      const eng = engineRef.current;
+      const me = eng
+        ?.getTankManager()
+        .getPlayers()
+        .find((p) => p.id === localPlayerId);
+      if (!me?.isHuman) return;
+
+      localShopDoneRef.current = true;
+      setLocalShopDone(true);
+
+      const players = eng
+        ? [...eng.getTankManager().getPlayers()]
+        : [...shopPlayersRef.current];
+      // Parallel shop: server waits until every human slot has SHOP_READY.
+      sendCombatMessage({ type: 'SHOP_READY', players, slot });
+      return;
     }
 
-    const nextIndex = idx + 1;
-    if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
-      gameWsRef.current.send(
-        JSON.stringify({ type: 'SHOP_ADVANCE', nextIndex, slot }),
-      );
-    }
+    const idx = currentShopIndexRef.current;
+    const shopper = shopPlayersRef.current[idx];
+    if (localPlayerId && shopper && shopper.id !== localPlayerId) return;
     advanceToNextShopper();
   };
 
+  /** Local / hotseat only — online shop cursor is server-driven via SHOP_STATE. */
   const advanceToNextShopper = (): void => {
+    if (gameMode === 'online') {
+      // Online must not locally finish or skip ahead; wait for SHOP_STATE / SHOP_FINISH.
+      return;
+    }
+
     const currentLen = shopPlayersRef.current.length;
     const nextIndex = currentShopIndexRef.current + 1;
 
     if (nextIndex >= currentLen) {
-      if (gameMode === 'online' && gameWsRef.current?.readyState === WebSocket.OPEN) {
-        const eng = engineRef.current;
-        if (eng) {
-          gameWsRef.current.send(
-            JSON.stringify({
-              type: 'SHOP_FINISH',
-              players: [...eng.getTankManager().getPlayers()],
-              slot,
-            }),
-          );
-        }
-      }
       finishShopPhase();
     } else {
       dispatch({ type: "ADVANCE_SHOPPER", nextIndex });
@@ -1078,6 +1143,8 @@ export function useGameSession({
 
   const processNextShopperIfAI = (): void => {
     if (shopFinishingRef.current || gamePhaseRef.current !== "SHOP") return;
+    // Online parallel: AI already auto-bought on host enter — no sequential AI shop turns.
+    if (gameMode === 'online') return;
 
     const currentLen = shopPlayersRef.current.length;
     if (currentLen === 0) return;
@@ -1089,19 +1156,42 @@ export function useGameSession({
     advanceToNextShopper();
   };
 
-  const finishShopPhase = (): void => {
+  /**
+   * Leave boutique and start the next combat round.
+   * @param finalPlayers Optional money/inventory snapshot from the server — applied ONLY
+   *   before startNextRound. Re-applying shop players after spawn restored isDead and left
+   *   P1 unable to fire while P2 waited for P1's shot.
+   */
+  const finishShopPhase = (finalPlayers?: Player[]): void => {
     if (shopFinishingRef.current) return;
+    // Duplicate SHOP_FINISH / SHOP_STATE after combat already began for this round.
+    if (gamePhaseRef.current === "COMBAT" && shopPlayersRef.current.length === 0) {
+      return;
+    }
 
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Re-seed before each new combat round — RNG may have diverged (fireworks, celebration skip, etc.)
+    shopFinishingRef.current = true;
+    clearShopAiTimeout();
+    pendingShopFinishRef.current = false;
+    pendingShopNextIndexRef.current = null;
+    localShopDoneRef.current = false;
+    setLocalShopDone(false);
+
+    if (finalPlayers && finalPlayers.length >= 2) {
+      engine.getTankManager().setPlayers(finalPlayers);
+      shopPlayersRef.current = finalPlayers;
+    } else if (pendingShopPlayersRef.current && pendingShopPlayersRef.current.length >= 2) {
+      engine.getTankManager().setPlayers(pendingShopPlayersRef.current);
+      shopPlayersRef.current = pendingShopPlayersRef.current;
+    }
+    pendingShopPlayersRef.current = null;
+
+    // Re-seed before each new combat round — RNG may have diverged (fireworks, shop, etc.)
     if (gameMode === 'online' && roomId) {
       setRNG(createSeededRNG(seedFromRoomRound(roomId, currentMancheRef.current)));
     }
-
-    shopFinishingRef.current = true;
-    clearShopAiTimeout();
 
     const tm = engine.getTurnManager();
     const roster = engine.getTankManager().getPlayers();
@@ -1119,6 +1209,7 @@ export function useGameSession({
       return;
     }
 
+    // Fresh round: spawn revived everyone; unlock local human on server turn 0.
     tm.resumeForCombat();
     tm.syncTurn(0);
 
@@ -1139,15 +1230,35 @@ export function useGameSession({
     shopSyncRef.current.applyRemoteBuySell = (players: Player[]) => {
       const eng = engineRef.current;
       if (!eng) return;
-      eng.getTankManager().setPlayers(players);
-      pendingShopPlayersRef.current = players;
+
+      // While still shopping, keep our in-progress cart for the local human.
+      let merged = players;
+      if (
+        gameMode === "online" &&
+        localPlayerId &&
+        gamePhaseRef.current === "SHOP" &&
+        !localShopDoneRef.current
+      ) {
+        const localLive = eng
+          .getTankManager()
+          .getPlayers()
+          .find((p) => p.id === localPlayerId);
+        if (localLive) {
+          merged = players.map((p) => (p.id === localPlayerId ? localLive : p));
+        }
+      }
+
+      eng.getTankManager().setPlayers(merged);
+      pendingShopPlayersRef.current = merged;
       if (gamePhaseRef.current === "SHOP") {
-        dispatch({ type: "MUTATE_SHOP_PLAYERS", players });
-        shopPlayersRef.current = players;
+        dispatch({ type: "MUTATE_SHOP_PLAYERS", players: merged });
+        shopPlayersRef.current = merged;
       }
     };
 
     shopSyncRef.current.applyRemoteAdvance = (nextIndex: number) => {
+      // Legacy sequential cursor only — online uses parallel SHOP_READY set.
+      if (gameMode === 'online') return;
       if (shopFinishingRef.current) return;
 
       const phase = gamePhaseRef.current;
@@ -1166,7 +1277,6 @@ export function useGameSession({
         finishShopPhase();
         return;
       }
-      if (currentShopIndexRef.current >= nextIndex) return;
 
       currentShopIndexRef.current = nextIndex;
       dispatch({ type: "ADVANCE_SHOPPER", nextIndex });
@@ -1181,18 +1291,29 @@ export function useGameSession({
       }
     };
 
-    shopSyncRef.current.finishShop = () => {
+    shopSyncRef.current.finishShop = (finalPlayers?: Player[]) => {
       if (shopFinishingRef.current) return;
+
+      // Duplicate SHOP_FINISH after we already started the next combat round: ignore.
+      if (gamePhaseRef.current === "COMBAT" && shopPlayersRef.current.length === 0) {
+        return;
+      }
+
       const phase = gamePhaseRef.current;
       if (phase !== "SHOP") {
+        if (finalPlayers && finalPlayers.length >= 2) {
+          pendingShopPlayersRef.current = finalPlayers;
+        }
         pendingShopFinishRef.current = true;
         pendingShopNextIndexRef.current = null;
         if (phase === "SUMMARY") {
+          // Enter shop then immediately finish with pending roster.
           handleGoToShopRef.current();
         }
+        // CELEBRATION: keep pending; SUMMARY → SHOP will drain it.
         return;
       }
-      finishShopPhase();
+      finishShopPhase(finalPlayers);
     };
 
     return () => {
@@ -1257,5 +1378,7 @@ export function useGameSession({
     handleCycleWeapon,
     handleFire,
     isLocalShopTurn,
+    shopDisplayPlayer,
+    localShopDone,
   };
 }
