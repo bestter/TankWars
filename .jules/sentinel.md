@@ -37,3 +37,7 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** Extensive use of `console.log` and `console.error` exposing sensitive game state and PII data (e.g., exact player coordinates, player names, internal IDs) during combat events and errors.
 **Learning:** Even though non-error console methods are neutralized in production via `main.tsx`, leaving verbose sensitive data in development or staging logs can inadvertently leak internal state logic, PII, and structural details to developers, beta testers, or anyone accessing the environment before production minification/neutralization. It's a "Data/PII exposure" risk.
 **Prevention:** Always sanitize or redact sensitive information (like exact coordinates, UUIDs, or player names) before logging to `console`. Log generic event structures instead (e.g., `(coordinates redacted)`, `(player redacted)`).
+## 2026-06-25 - [Client-Side Data Exposure in Logs]
+**Vulnerability:** The exact coordinates of projectile hits were being logged in `src/components/useGameSession.ts` via `console.log`.
+**Learning:** This is an extension of the existing Client-Side Data Exposure in Logs vulnerability pattern found earlier. Even seemingly harmless physics data like exact coordinates should be redacted to prevent leaking precise internal state and logic to clients.
+**Prevention:** Redact the exact `hit.x` and `hit.y` values and replace them with `(coordinates redacted)` in console output.

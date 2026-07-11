@@ -200,8 +200,7 @@ export function useGameSession({
         "[GameEngine] Hit:",
         hit.weaponId,
         "at",
-        hit.x.toFixed(1),
-        hit.y.toFixed(1),
+        "(coordinates redacted)",
       );
     };
 
