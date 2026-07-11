@@ -88,6 +88,10 @@ export class TankManager {
     this.recoilState.clear();
   }
 
+  public getPlayerById(id: string): Player | undefined {
+    return this.playerMap.get(id);
+  }
+
   public getPlayers(): ReadonlyArray<Player> {
     return this.players;
   }
