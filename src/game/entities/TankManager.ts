@@ -33,6 +33,7 @@ const VOID_FALL_THRESHOLD = 12;
 export class TankManager {
   private players: Player[] = [];
   private playersMap: Map<string, Player> = new Map();
+  private playersMap: Map<string, Player> = new Map();
 
   /** Internal velocities for gradual falling (key = tank.id). Enables sliding + floor sounds. */
   private velocities: Map<string, number> = new Map();
@@ -380,7 +381,6 @@ export class TankManager {
             // keep remainder so we don't lose fractional progress
             fallen -= levelsCrossed * damageLevelHeight;
             this.fallenDistances.set(id, fallen);
-
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;

@@ -689,9 +689,7 @@ export class GameEngine {
     const roundWinner = survivors.length === 1 ? survivors[0] : null;
 
     if (isDraw) {
-      console.log(
-        `[ROUND END] DRAW — all tanks destroyed (players redacted)`,
-      );
+      console.log(`[ROUND END] DRAW — all tanks destroyed (players redacted)`);
       this.logDeathSummary();
     } else if (roundWinner) {
       console.log(
@@ -1098,7 +1096,10 @@ export class GameEngine {
   }
 
   private queueFireworkSpawn(p: FireworkParticle): void {
-    if (this.fireworks.length + this.fireworkSpawnBuffer.length < MAX_FIREWORKS) {
+    if (
+      this.fireworks.length + this.fireworkSpawnBuffer.length <
+      MAX_FIREWORKS
+    ) {
       this.fireworkSpawnBuffer.push(p);
     }
   }
@@ -1213,7 +1214,12 @@ export class GameEngine {
             // Ring Burst
             const count = 22 + Math.floor(secureRandom() * 10);
             const baseSpeed = 2.4 + secureRandom() * 1.6;
-            const burstColor = secureRandom() < 0.4 ? FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)] : p.color;
+            const burstColor =
+              secureRandom() < 0.4
+                ? FESTIVE_COLORS[
+                    Math.floor(secureRandom() * FESTIVE_COLORS.length)
+                  ]
+                : p.color;
             for (let i = 0; i < count; i++) {
               const angle = (i * 2 * Math.PI) / count;
               this.queueFireworkSpawn({
@@ -1243,7 +1249,10 @@ export class GameEngine {
                 vy: Math.sin(angle) * speed,
                 life: 20 + secureRandom() * 22,
                 maxLife: 42,
-                color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
+                color:
+                  FESTIVE_COLORS[
+                    Math.floor(secureRandom() * FESTIVE_COLORS.length)
+                  ],
                 size: 1.8 + secureRandom() * 2.2,
                 trail: [],
               });
@@ -1302,7 +1311,10 @@ export class GameEngine {
               vy: -1.0 - secureRandom() * 2.0,
               life: 110 + secureRandom() * 80,
               maxLife: 190,
-              color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
+              color:
+                FESTIVE_COLORS[
+                  Math.floor(secureRandom() * FESTIVE_COLORS.length)
+                ],
               size: 4 + secureRandom() * 4,
               swaySpeed: 0.04 + secureRandom() * 0.05,
               swayOffset: secureRandom() * Math.PI * 2,
@@ -1363,8 +1375,15 @@ export class GameEngine {
 
     // Keep spawning lots of big rockets from the bottom of the screen while celebrating
     if (activeRockets < 5 && secureRandom() < 0.07) {
-      const spawnX = Math.max(40, Math.min(this.width - 40, this.celebrationCenterX + (secureRandom() - 0.5) * 260));
-      const spawnColor = FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)];
+      const spawnX = Math.max(
+        40,
+        Math.min(
+          this.width - 40,
+          this.celebrationCenterX + (secureRandom() - 0.5) * 260,
+        ),
+      );
+      const spawnColor =
+        FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)];
       this.queueFireworkSpawn({
         type: "rocket",
         x: spawnX,
@@ -1389,7 +1408,8 @@ export class GameEngine {
         vy: 0.3 + secureRandom() * 0.5,
         life: 130 + secureRandom() * 90,
         maxLife: 220,
-        color: FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
+        color:
+          FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
         size: 4 + secureRandom() * 3.5,
         swaySpeed: 0.03 + secureRandom() * 0.04,
         swayOffset: secureRandom() * Math.PI * 2,
