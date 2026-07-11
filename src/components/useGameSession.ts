@@ -89,6 +89,12 @@ interface UseGameSessionProps {
   ws?: WebSocket;
 }
 
+/**
+ * Module-level generation counter for the combat WS mount effect.
+ * Lets cleanup defer-close without killing a socket reclaimed by Strict Mode remount.
+ */
+let combatWsEffectGen = 0;
+
 export function useGameSession({
   initialPlayers,
   onReturnToMenu,
@@ -320,6 +326,45 @@ export function useGameSession({
     // Cross-tab sync for online dev testing (same browser, multiple tabs)
     // When one tab fires, it announces the command via BroadcastChannel so other tabs can replay the exact same shot.
     // This keeps terrain/damage in sync until we have real server-authoritative simulation + WS broadcast.
+    // Outgoing combat messages queued until the WS is OPEN (avoids silent FIRE drops).
+    const pendingCombatMessages: string[] = [];
+    /** Dedup remote SHOT replays (reconnect catch-up can re-send the same in-flight shot). */
+    let lastReplayedShotKey: string | null = null;
+
+    const flushCombatMessages = (): void => {
+      const ws = gameWsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      while (pendingCombatMessages.length > 0) {
+        const payload = pendingCombatMessages.shift();
+        if (payload) {
+          try {
+            ws.send(payload);
+          } catch (e) {
+            console.warn('[Game] Failed to flush combat message', e);
+            pendingCombatMessages.unshift(payload);
+            break;
+          }
+        }
+      }
+    };
+
+    const sendCombatMessage = (obj: Record<string, unknown>): void => {
+      const payload = JSON.stringify(obj);
+      const ws = gameWsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(payload);
+          return;
+        } catch (e) {
+          console.warn('[Game] WS send failed, queueuing', e);
+        }
+      }
+      pendingCombatMessages.push(payload);
+      console.warn(
+        `[Game] Queued combat message type=${String(obj.type)} (ws readyState=${ws?.readyState ?? 'null'})`,
+      );
+    };
+
     if (gameMode === 'online' && roomId && localPlayerId) {
       fireChannel = new BroadcastChannel(`tankwars-fire-${roomId}`);
 
@@ -341,26 +386,18 @@ export function useGameSession({
         const ok = origTryFire();
         console.log(`[Game] tm.tryFire called. ok=${ok}, localPlayerId=${localPlayerId}`);
         if (ok && localPlayerId) {
-          const player = tm.getCurrentPlayer();
-          if (player) {
-            const command = {
-              angle: player.tank.angle,
-              power: player.tank.power,
-              weaponId: player.tank.currentWeapon,
-            };
-            // Prefer sending to server WS for authoritative processing and broadcast to all room sockets
-            if (gameWsRef.current && gameWsRef.current.readyState === WebSocket.OPEN) {
-              console.log('[Game] Sending FIRE to server via WebSocket');
-              gameWsRef.current.send(JSON.stringify({ type: 'FIRE', command }));
-            } else {
-              console.warn(`[Game] WebSocket not open (readyState=${gameWsRef.current?.readyState}). Falling back to fireChannel.`);
-              if (fireChannel) {
-                fireChannel.postMessage({
-                  type: 'FIRE',
-                  fromPlayerId: localPlayerId,
-                  command,
-                });
-              }
+          // Use the exact command captured before ammo consume / weapon auto-switch.
+          const command = tm.getLastLocalFireCommand();
+          if (command) {
+            console.log('[Game] Sending FIRE to server via WebSocket');
+            sendCombatMessage({ type: 'FIRE', command });
+            // Same-browser multi-tab fallback (does not replace the server path).
+            if (fireChannel) {
+              fireChannel.postMessage({
+                type: 'FIRE',
+                fromPlayerId: localPlayerId,
+                command,
+              });
             }
           }
         }
@@ -374,12 +411,15 @@ export function useGameSession({
     let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let combatStartTimer: ReturnType<typeof setTimeout> | null = null;
     let isMounted = true;
+    /** Bumps on each effect run so Strict Mode remount does not close the live combat socket. */
+    const effectGeneration = ++combatWsEffectGen;
 
     if (gameMode === 'online' && roomId && slot != null && token) {
     const combatRoomId = roomId;
     const combatSlot = slot;
     const combatToken = token;
     const wsBase = getOnlineWsBase();
+    const localSlotNum = Number(combatSlot);
 
     const clearCombatReconnect = (): void => {
       if (combatReconnectTimer !== null) {
@@ -391,6 +431,13 @@ export function useGameSession({
     function bindCombatWsHandlers(ws: WebSocket): void {
       ws.onopen = () => {
         console.log('[Game] Combat WS connected to server');
+        flushCombatMessages();
+        // Pull turn index + any in-flight SHOT we may have missed during transition/reconnect.
+        try {
+          ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+        } catch {
+          // ignore
+        }
       };
 
       ws.onmessage = (ev) => {
@@ -407,20 +454,31 @@ export function useGameSession({
           }
 
           if (msg.type === 'SHOT' && msg.command) {
-            console.log(`[Game] Received SHOT from slot=${msg.slot}, cmd=`, msg.command);
+            const shotSlot =
+              typeof msg.slot === 'number' ? msg.slot : Number(msg.slot);
+            console.log(`[Game] Received SHOT from slot=${shotSlot}, cmd=`, msg.command);
             // For the firer, we already executed the full local fire for immediate feedback.
-            // For other clients (or to be safe), replay only if the slot in the message is not our local slot.
-            // This avoids double execution on the firer.
+            // Replay for every other slot so observers always see the projectile.
             if (
-              msg.slot !== slot &&
+              !Number.isNaN(shotSlot) &&
+              shotSlot !== localSlotNum &&
               gamePhaseRef.current === 'COMBAT' &&
-              engine.isRoundCombatActive() &&
               !tm.isInterRoundPaused()
             ) {
-              tm.executeRemoteFire(msg.command, {
-                fromSlot: typeof msg.slot === 'number' ? msg.slot : undefined,
-                ownerId: typeof msg.ownerId === 'string' ? msg.ownerId : undefined,
-              });
+              const shotKey = `${shotSlot}:${msg.command.angle}:${msg.command.power}:${msg.command.weaponId}:${String(msg.ownerId ?? '')}`;
+              if (shotKey === lastReplayedShotKey && engine.getActiveProjectiles().length > 0) {
+                console.log('[Game] Skipping duplicate in-flight SHOT replay');
+              } else {
+                lastReplayedShotKey = shotKey;
+                tm.executeRemoteFire(msg.command, {
+                  fromSlot: shotSlot,
+                  ownerId: typeof msg.ownerId === 'string' ? msg.ownerId : undefined,
+                });
+              }
+            } else {
+              console.log(
+                `[Game] SHOT not replayed (shotSlot=${shotSlot}, localSlot=${localSlotNum}, phase=${gamePhaseRef.current}, paused=${tm.isInterRoundPaused()})`,
+              );
             }
           }
 
@@ -432,7 +490,6 @@ export function useGameSession({
             // Ignore late turn updates after round end (prevents desync back into "waiting for shot").
             if (
               gamePhaseRef.current === 'COMBAT' &&
-              engine.isRoundCombatActive() &&
               !tm.isInterRoundPaused()
             ) {
               if (typeof msg.currentPlayerIndex === 'number') {
@@ -515,6 +572,13 @@ export function useGameSession({
       gameWs = incomingWs;
       gameWsRef.current = incomingWs;
       bindCombatWsHandlers(incomingWs);
+      // Lobby socket is already OPEN — onopen will not fire again; flush + catch-up now.
+      flushCombatMessages();
+      try {
+        incomingWs.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+      } catch {
+        // ignore
+      }
     } else {
       console.log('[Game] No existing active WS or not open. Connecting new WebSocket...');
       combatStartTimer = setTimeout(connectCombatWs, 50);
@@ -590,13 +654,14 @@ export function useGameSession({
         const tm = engine.getTurnManager();
         const currentPlayer = tm.getCurrentPlayer();
         console.log(`[Game] onShotSettled: currentPlayer.id=${currentPlayer?.id}, localPlayerId=${localPlayerId}`);
-        if (currentPlayer && currentPlayer.id === localPlayerId) {
-          if (gameWsRef.current && gameWsRef.current.readyState === WebSocket.OPEN) {
-            console.log('[Game] Sending SHOT_SETTLED to server');
-            gameWsRef.current.send(JSON.stringify({ type: 'SHOT_SETTLED', slot }));
-          } else {
-            console.warn(`[Game] Cannot send SHOT_SETTLED: socket not open. readyState=${gameWsRef.current?.readyState}`);
-          }
+        // Prefer identity match; also accept "still awaiting server turn" so a late
+        // index desync cannot drop the only message that advances the room.
+        const shouldNotify =
+          (currentPlayer && currentPlayer.id === localPlayerId) ||
+          tm.isAwaitingServerTurnAfterLocalShot();
+        if (shouldNotify) {
+          console.log('[Game] Sending SHOT_SETTLED to server');
+          sendCombatMessage({ type: 'SHOT_SETTLED', slot });
         }
       }
     };
@@ -710,10 +775,23 @@ export function useGameSession({
       }
       clearShopAiTimeout();
       clearCelebrationTimer();
-      if (gameWs) {
-        try { gameWs.close(); } catch { void 0; /* ignore close errors */ }
-      }
-      gameWsRef.current = null;
+      // Defer close so React Strict Mode remount can reuse the same lobby/combat socket
+      // without dropping the DO mapping mid-handshake (which made P2 miss P1's SHOT).
+      const wsToClose = gameWs;
+      const genAtCleanup = effectGeneration;
+      setTimeout(() => {
+        if (combatWsEffectGen !== genAtCleanup) return; // a newer effect owns the session
+        if (wsToClose && (wsToClose.readyState === WebSocket.OPEN || wsToClose.readyState === WebSocket.CONNECTING)) {
+          try {
+            wsToClose.close();
+          } catch {
+            void 0;
+          }
+        }
+        if (gameWsRef.current === wsToClose) {
+          gameWsRef.current = null;
+        }
+      }, 0);
       if (fireChannel) {
         try { fireChannel.close(); } catch { void 0; /* ignore close errors */ }
       }

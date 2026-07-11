@@ -292,6 +292,41 @@ describe('TurnManager', () => {
       expect(turnManager.tryFire()).toBe(true);
     });
 
+    it('stays locked when syncTurn repeats the same index after a local shot', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      // Stale GAME_START / reconnect with same index must not re-unlock the firer.
+      turnManager.syncTurn(0);
+
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+    });
+
+    it('unlocks only after server advances away then back to the local player', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+
+      // Server gives the turn to player 2
+      turnManager.syncTurn(1);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+
+      // Full cycle later: server returns the turn to player 1
+      turnManager.syncTurn(0);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
     it('emits onShotSettled only for locally fired shots in online mode', () => {
       const onShotSettled = vi.fn();
       turnManager.setLocalPlayerId('player-1');

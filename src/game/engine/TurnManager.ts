@@ -126,6 +126,16 @@ export class TurnManager {
    */
   private settlingShotWasLocal = false;
 
+  /**
+   * Online only: after a local shot settles we stay locked until the server moves the
+   * turn index away from us. Prevents GAME_START catch-up / reconnect from re-unlocking
+   * the same turn (double fire on player 1).
+   */
+  private awaitingServerTurnAfterLocalShot = false;
+
+  /** Last command actually launched by tryFire/fire (captured before ammo consume). */
+  private lastLocalFireCommand: FireCommand | null = null;
+
   public setMatchEndedChecker(checker: () => boolean): void {
     this.isMatchEnded = checker;
   }
@@ -335,6 +345,8 @@ export class TurnManager {
     this.interRoundPaused = true;
     this.isInputLocked = true;
     this.isProcessingAI = false;
+    this.settlingShotWasLocal = false;
+    this.awaitingServerTurnAfterLocalShot = false;
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
@@ -510,6 +522,19 @@ export class TurnManager {
     this.armTurnLockSafetyWatchdog();
   }
 
+  /**
+   * Command used for the most recent successful local tryFire (pre-ammo-consume).
+   * Online clients should send this exact payload as FIRE so observers replay the same shot.
+   */
+  public getLastLocalFireCommand(): FireCommand | null {
+    return this.lastLocalFireCommand;
+  }
+
+  /** True after a local online shot settled, until the server advances the turn index. */
+  public isAwaitingServerTurnAfterLocalShot(): boolean {
+    return this.awaitingServerTurnAfterLocalShot;
+  }
+
   /** Déclenche le tir du joueur actuel (après validation tryFire). */
   private fire(): void {
     const player = this.getCurrentPlayer();
@@ -523,6 +548,9 @@ export class TurnManager {
       power: tank.power,
       weaponId: tank.currentWeapon,
     };
+
+    // Capture before consumeAmmo (which may auto-switch currentWeapon when stock hits 0).
+    this.lastLocalFireCommand = { ...command };
 
     this.settlingShotWasLocal = true;
     this.fireCallback(tank.position, command, player.id);
@@ -664,7 +692,21 @@ export class TurnManager {
   /** Sync the current turn index from server authoritative state. */
   public syncTurn(currentPlayerIndex: number): void {
     this.currentPlayerIndex = currentPlayerIndex;
-    this.isInputLocked = !this.isLocalHumanTurn();
+
+    if (this.awaitingServerTurnAfterLocalShot) {
+      if (!this.isLocalHumanTurn()) {
+        // Server advanced to someone else — local shot fully acknowledged.
+        this.awaitingServerTurnAfterLocalShot = false;
+        this.isInputLocked = true;
+      } else {
+        // Still our index after we already fired (stale GAME_START / no advance yet).
+        // Stay locked so we cannot FIRE twice on the same server turn.
+        this.isInputLocked = true;
+      }
+    } else {
+      this.isInputLocked = !this.isLocalHumanTurn();
+    }
+
     this.clearAwaitingStabilization();
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
@@ -687,12 +729,16 @@ export class TurnManager {
     if (this.localPlayerId) {
       if (wasLocalShot) {
         // Firer's client: stay locked until the server broadcasts the next turn.
+        this.awaitingServerTurnAfterLocalShot = true;
         this.isInputLocked = true;
         console.log(`[TurnManager] finishShotResolution: calling onShotSettled callback...`);
         this.onShotSettled?.();
       } else {
         // Observer replay settled (possibly after syncTurn already advanced): refresh lock only.
-        this.isInputLocked = !this.isLocalHumanTurn();
+        // Do not clear awaitingServerTurnAfterLocalShot here — that is only for local fires.
+        this.isInputLocked = this.awaitingServerTurnAfterLocalShot
+          ? true
+          : !this.isLocalHumanTurn();
       }
       this.notifyHudUpdate();
       return;
@@ -786,6 +832,8 @@ export class TurnManager {
     console.log('[TurnManager] startFirstTurn: entering');
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
+    this.settlingShotWasLocal = false;
+    this.awaitingServerTurnAfterLocalShot = false;
     this.isInputLocked = !this.isLocalHumanTurn();
 
     const players = this.tankManager.getPlayers();
@@ -831,6 +879,8 @@ export class TurnManager {
     this.clearAwaitingStabilization();
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
+    this.settlingShotWasLocal = false;
+    this.awaitingServerTurnAfterLocalShot = false;
     this.isInputLocked = !this.isLocalHumanTurn();
     this.isProcessingAI = false;
     this.interRoundPaused = false;

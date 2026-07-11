@@ -28,6 +28,7 @@ import type { Player } from '../../src/types/player'; // share types from root (
 import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import { DEFAULT_INVENTORY } from '../../src/types/weapon';
+import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 
 // Very small serializable state for MVP (will be enriched with real engine state later)
 interface RoomState {
@@ -78,6 +79,25 @@ export class GameRoom extends DurableObject {
   private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
+  /**
+   * True from executeFire until advanceTurnAndNotify completes.
+   * Prevents double FIRE and double turn advances (SHOT_SETTLED vs 8s timeout races).
+   */
+  private shotInFlight = false;
+  /**
+   * Monotonic epoch bumped on every new shot and every successful turn advance.
+   * Settlement timeouts capture the epoch at arm time and no-op if it changed.
+   */
+  private shotEpoch = 0;
+  /**
+   * Last SHOT broadcast while a shot is in flight. Re-sent on combat WS reconnect so
+   * observers who missed the original message still replay the projectile.
+   */
+  private lastShot: {
+    slot: number;
+    command: { angle: number; power: number; weaponId: WeaponId };
+    ownerId?: string;
+  } | null = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -106,6 +126,50 @@ export class GameRoom extends DurableObject {
     if (this.shotSettledTimeout) {
       clearTimeout(this.shotSettledTimeout);
       this.shotSettledTimeout = null;
+    }
+  }
+
+  /** Clears in-flight shot bookkeeping (timeouts, epoch, awaiting slot). */
+  private resetShotCoordination(): void {
+    this.clearShotSettledTimeout();
+    this.awaitingShotFromSlot = null;
+    this.shotInFlight = false;
+    this.lastShot = null;
+    this.shotEpoch++;
+  }
+
+  /** Catch-up payload for a socket that (re)joins an in-progress match. */
+  private sendCombatCatchUpToSocket(ws: WebSocket): void {
+    this.sendGameStartToSocket(ws);
+    if (!this.state?.started) return;
+
+    // Always push authoritative turn index (GAME_START already has it; belt-and-suspenders).
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'STATE_UPDATE',
+          currentPlayerIndex: this.state.currentPlayerIndex,
+          roundEnded: this.state.roundEnded,
+        }),
+      );
+    } catch {
+      // ignore stale
+    }
+
+    // Re-broadcast the in-flight SHOT so a late/reconnected observer can still see it.
+    if (this.shotInFlight && this.lastShot) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: 'SHOT',
+            slot: this.lastShot.slot,
+            command: this.lastShot.command,
+            ownerId: this.lastShot.ownerId,
+          }),
+        );
+      } catch {
+        // ignore stale
+      }
     }
   }
 
@@ -253,17 +317,24 @@ export class GameRoom extends DurableObject {
         // or send data down the socket. Prevents segment faults/unhandled errors in workerd.
         const nameFromQuery = url.searchParams.get('name');
         const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
-        setTimeout(() => {
-          this.claimHumanSlot(slot, name)
-            .then(() => {
-              if (this.state?.started) {
-                this.sendGameStartToSocket(server as WebSocket);
-              }
-            })
-            .catch((err) => {
-              console.error(`[GameRoom] Error in post-connection setup for slot ${slot}:`, err);
-            });
-        }, 0);
+        const postSetupPromise = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            this.claimHumanSlot(slot, name)
+              .then(() => {
+                if (this.state?.started) {
+                  // Catch-up: turn index + any in-flight SHOT the client may have missed
+                  // (lobby→combat transition, Strict Mode remount, brief disconnect).
+                  this.sendCombatCatchUpToSocket(server as WebSocket);
+                }
+                resolve();
+              })
+              .catch((err) => {
+                console.error(`[GameRoom] Error in post-connection setup for slot ${slot}:`, err);
+                resolve();
+              });
+          }, 0);
+        });
+        this.ctx.waitUntil(postSetupPromise);
 
         return new Response(null, { status: 101, webSocket: client });
       } catch (err) {
@@ -293,9 +364,10 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
 
     // Catch-up: client missed the GAME_START broadcast (e.g. host tab still in lobby)
+    // or reconnected mid-shot and needs the in-flight SHOT replayed.
     if (msg?.type === 'REQUEST_GAME_START' && this.state.started) {
       const wsConn = this.sockets.get(slot);
-      if (wsConn) this.sendGameStartToSocket(wsConn as WebSocket);
+      if (wsConn) this.sendCombatCatchUpToSocket(wsConn as WebSocket);
       return;
     }
 
@@ -313,9 +385,10 @@ export class GameRoom extends DurableObject {
 
     if (msg?.type === 'SHOT_SETTLED') {
       console.log(
-        `[GameRoom] Received SHOT_SETTLED from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}, awaitingShotFromSlot=${this.awaitingShotFromSlot}`,
+        `[GameRoom] Received SHOT_SETTLED from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}, awaitingShotFromSlot=${this.awaitingShotFromSlot}, shotInFlight=${this.shotInFlight}`,
       );
       if (
+        this.shotInFlight &&
         slot === this.state.currentPlayerIndex &&
         slot === this.awaitingShotFromSlot
       ) {
@@ -324,14 +397,14 @@ export class GameRoom extends DurableObject {
         await this.advanceTurnAndNotify();
       } else {
         console.warn(
-          `[GameRoom] Ignoring SHOT_SETTLED from slot ${slot} (active=${this.state?.currentPlayerIndex}, awaiting=${this.awaitingShotFromSlot})`,
+          `[GameRoom] Ignoring SHOT_SETTLED from slot ${slot} (active=${this.state?.currentPlayerIndex}, awaiting=${this.awaitingShotFromSlot}, shotInFlight=${this.shotInFlight})`,
         );
       }
       return;
     }
 
     if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
-      this.clearShotSettledTimeout();
+      this.resetShotCoordination();
       this.state.roundEnded = true;
       this.state.players = msg.players;
       await this.saveState();
@@ -357,7 +430,7 @@ export class GameRoom extends DurableObject {
       return;
     }
     if (msg?.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
-      this.clearShotSettledTimeout();
+      this.resetShotCoordination();
       this.state.roundEnded = false;
       this.state.currentPlayerIndex = 0;
       this.state.players = msg.players;
@@ -381,6 +454,13 @@ export class GameRoom extends DurableObject {
     if (cfg.type !== 'human') return;
 
     if (msg && msg.type === 'FIRE' && msg.command) {
+      // One shot in flight at a time — blocks double-fire on the same turn (client unlock races).
+      if (this.shotInFlight || this.awaitingShotFromSlot != null) {
+        console.warn(
+          `[GameRoom] Ignoring FIRE from slot ${slot} — shot already in flight (awaiting=${this.awaitingShotFromSlot}, shotInFlight=${this.shotInFlight})`,
+        );
+        return;
+      }
       console.log(`[GameRoom] Received FIRE from slot ${slot}, current=${this.state.currentPlayerIndex}, cmd=`, msg.command);
       const cmd = msg.command as { angle: number; power: number; weaponId: WeaponId };
       await this.executeFire(slot, cmd);
@@ -420,10 +500,14 @@ export class GameRoom extends DurableObject {
     });
   }
 
-  /** Remove stale lobby presence when a human disconnects before the match starts. */
   private async handleSocketDisconnect(slot: number, ws: WebSocket): Promise<void> {
     if (this.sockets.get(slot) === ws) {
       this.sockets.delete(slot);
+    }
+    try {
+      ws.close(1000, 'connection closed');
+    } catch {
+      // ignore if already closed
     }
     if (!this.state || this.state.started) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
@@ -519,6 +603,7 @@ export class GameRoom extends DurableObject {
     this.state.currentPlayerIndex = 0;
     this.state.started = true;
     this.state.startAt = Date.now();
+    this.resetShotCoordination();
 
     await this.saveState();
 
@@ -552,14 +637,27 @@ export class GameRoom extends DurableObject {
   private async executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
+    // Defense in depth: AI timer + human FIRE path both funnel here.
+    if (this.shotInFlight) {
+      console.warn(
+        `[GameRoom] executeFire ignored for slot ${fromSlot} — shot already in flight`,
+      );
+      return;
+    }
+
     console.log(`[GameRoom] executeFire: fromSlot=${fromSlot}, command=`, command);
     this.clearShotSettledTimeout();
+    this.shotInFlight = true;
+    this.shotEpoch++;
+    const epoch = this.shotEpoch;
 
+    const ownerId = this.state.players[fromSlot]?.id;
+    this.lastShot = { slot: fromSlot, command, ownerId };
     const shotEvent = {
       type: 'SHOT',
       slot: fromSlot,
       command,
-      ownerId: this.state.players[fromSlot]?.id,
+      ownerId,
     };
     this.broadcast(shotEvent);
 
@@ -567,36 +665,73 @@ export class GameRoom extends DurableObject {
     if (cfg && cfg.type === 'ai') {
       console.log(`[GameRoom] executeFire: active slot ${fromSlot} is AI. Arming 4.5s turn advance timer...`);
       // Pour une IA, le serveur attend un délai réaliste (par exemple 4.5s) avant d'avancer le tour
-      this.shotSettledTimeout = setTimeout(() => {
-        this.shotSettledTimeout = null;
-        console.log(`[GameRoom] AI turn advance timer fired. Advancing turn...`);
-        this.advanceTurnAndNotify().catch((err) => {
-          console.error('[GameRoom] Error advancing turn for AI shot:', err);
-        });
-      }, 4500);
+      const aiTimeoutPromise = new Promise<void>((resolve) => {
+        this.shotSettledTimeout = setTimeout(() => {
+          this.shotSettledTimeout = null;
+          if (epoch !== this.shotEpoch || !this.shotInFlight) {
+            console.log(`[GameRoom] AI turn advance timer ignored (stale epoch ${epoch} vs ${this.shotEpoch})`);
+            resolve();
+            return;
+          }
+          console.log(`[GameRoom] AI turn advance timer fired. Advancing turn...`);
+          this.advanceTurnAndNotify()
+            .then(resolve)
+            .catch((err) => {
+              console.error('[GameRoom] Error advancing turn for AI shot:', err);
+              resolve();
+            });
+        }, 4500);
+      });
+      this.ctx.waitUntil(aiTimeoutPromise);
     } else {
       this.awaitingShotFromSlot = fromSlot;
       console.log(`[GameRoom] executeFire: active slot ${fromSlot} is Human. Waiting for SHOT_SETTLED... (8s watchdog armed)`);
       // Pour un humain, on attend le message SHOT_SETTLED du client.
       // Par sécurité, on force le passage au tour suivant après 8 secondes.
-      this.shotSettledTimeout = setTimeout(() => {
-        this.shotSettledTimeout = null;
-        console.warn(`[GameRoom] Security timeout triggered: forcing turn advance after slot ${fromSlot} shot`);
-        this.advanceTurnAndNotify().catch((err) => {
-          console.error('[GameRoom] Error in human shot safety timeout:', err);
-        });
-      }, 8000);
+      const humanTimeoutPromise = new Promise<void>((resolve) => {
+        this.shotSettledTimeout = setTimeout(() => {
+          this.shotSettledTimeout = null;
+          if (epoch !== this.shotEpoch || !this.shotInFlight) {
+            console.log(`[GameRoom] Human shot safety timeout ignored (stale epoch ${epoch} vs ${this.shotEpoch})`);
+            resolve();
+            return;
+          }
+          console.warn(`[GameRoom] Security timeout triggered: forcing turn advance after slot ${fromSlot} shot`);
+          this.advanceTurnAndNotify()
+            .then(resolve)
+            .catch((err) => {
+              console.error('[GameRoom] Error in human shot safety timeout:', err);
+              resolve();
+            });
+        }, 8000);
+      });
+      this.ctx.waitUntil(humanTimeoutPromise);
     }
   }
 
   private async advanceTurnAndNotify(): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
-    this.awaitingShotFromSlot = null;
+    // Idempotent: only one advance per in-flight shot (SHOT_SETTLED + timeout race).
+    if (!this.shotInFlight) {
+      console.warn('[GameRoom] advanceTurnAndNotify ignored — no shot in flight');
+      return;
+    }
 
-    // fake rotation to next player
+    this.clearShotSettledTimeout();
+    this.awaitingShotFromSlot = null;
+    this.shotInFlight = false;
+    this.lastShot = null;
+    // Invalidate any timeout still racing into this method.
+    this.shotEpoch++;
+
     const prev = this.state.currentPlayerIndex;
-    const next = (this.state.currentPlayerIndex + 1) % this.state.numPlayers;
+    const players = this.state.players;
+    const next = nextLivingPlayerIndex(
+      this.state.currentPlayerIndex,
+      this.state.numPlayers,
+      (i) => !!players[i]?.tank?.isDead,
+    );
     this.state.currentPlayerIndex = next;
     console.log(`[GameRoom] advanceTurnAndNotify: currentPlayerIndex changed from ${prev} to ${next}`);
 
@@ -616,9 +751,16 @@ export class GameRoom extends DurableObject {
 
   private maybeRunAIServerTurn() {
     if (!this.state || this.state.roundEnded) return;
+    if (this.shotInFlight) return;
     const idx = this.state.currentPlayerIndex;
     const cfg = this.state.slotConfigs[idx];
     if (cfg?.type !== 'ai') return;
+
+    // Skip dead AI slots (authoritative roster may lag mid-combat; still safe).
+    if (this.state.players[idx]?.tank?.isDead) {
+      // Should not happen if nextLivingPlayerIndex worked; force another advance only if stuck.
+      return;
+    }
 
     // In later step we will call the real AI strategy here (headless) and then executeFire.
     // For skeleton: pick a safe-ish random shot so the round can progress in a multi-tab test.
@@ -628,11 +770,27 @@ export class GameRoom extends DurableObject {
       weaponId: 'MISSILE' as WeaponId,
     };
     // Small delay so clients see the turn change
-    setTimeout(() => {
-      this.executeFire(idx, fakeCommand).catch((err) => {
-        console.error(`[GameRoom] Error executing AI fire for slot ${idx}:`, err);
-      });
-    }, 1200);
+    const epochAtSchedule = this.shotEpoch;
+    const aiTurnPromise = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        // Abort if a human already fired or turn advanced while we waited.
+        if (epochAtSchedule !== this.shotEpoch || this.shotInFlight) {
+          resolve();
+          return;
+        }
+        if (this.state?.currentPlayerIndex !== idx) {
+          resolve();
+          return;
+        }
+        this.executeFire(idx, fakeCommand)
+          .then(resolve)
+          .catch((err) => {
+            console.error(`[GameRoom] Error executing AI fire for slot ${idx}:`, err);
+            resolve();
+          });
+      }, 1200);
+    });
+    this.ctx.waitUntil(aiTurnPromise);
   }
 
   // Public helper if we later expose REST status
