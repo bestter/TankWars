@@ -52,7 +52,8 @@ describe('analytics utility', () => {
     }).not.toThrow();
 
     expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[Analytics] [Simulated] Tracked event: "test_event"'),
+      '[Analytics] [Simulated] Tracked event:',
+      'test_event',
       { customProp: 'hello' }
     );
   });
@@ -74,8 +75,9 @@ describe('analytics utility', () => {
     }).not.toThrow();
 
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[Analytics] Failed to track event "test_event" via Zaraz:'),
-      "Zaraz network failure"
+      '[Analytics] Failed to track event via Zaraz:',
+      'test_event',
+      'Zaraz network failure'
     );
   });
 });

@@ -482,7 +482,7 @@ export function useGameSession({
           if (msg.type === 'SHOT' && msg.command) {
             const shotSlot =
               typeof msg.slot === 'number' ? msg.slot : Number(msg.slot);
-            console.log(`[Game] Received SHOT from slot=${shotSlot}, cmd=`, msg.command);
+            console.log('[Game] Received SHOT from slot=', shotSlot, ', cmd=', msg.command);
             // For the firer, we already executed the full local fire for immediate feedback.
             // Replay for every other slot so observers always see the projectile.
             if (

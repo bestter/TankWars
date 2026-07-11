@@ -303,17 +303,17 @@ export class GameRoom extends DurableObject {
         server.accept();
         server.addEventListener('message', (evt) => {
           this.handleClientMessage(slot, evt.data).catch((err) => {
-            console.error(`[GameRoom] Error handling client message from slot ${slot}:`, err);
+            console.error('[GameRoom] Error handling client message from slot=', slot, ':', err);
           });
         });
         server.addEventListener('close', () => {
           this.handleSocketDisconnect(slot, server as any).catch((err) => {
-            console.error(`[GameRoom] Error on socket disconnect for slot ${slot}:`, err);
+            console.error('[GameRoom] Error on socket disconnect for slot=', slot, ':', err);
           });
         });
         server.addEventListener('error', () => {
           this.handleSocketDisconnect(slot, server as any).catch((err) => {
-            console.error(`[GameRoom] Error on socket error for slot ${slot}:`, err);
+            console.error('[GameRoom] Error on socket error for slot=', slot, ':', err);
           });
         });
 
@@ -335,7 +335,7 @@ export class GameRoom extends DurableObject {
                 resolve();
               })
               .catch((err) => {
-                console.error(`[GameRoom] Error in post-connection setup for slot ${slot}:`, err);
+                console.error('[GameRoom] Error in post-connection setup for slot=', slot, ':', err);
                 resolve();
               });
           }, 0);
@@ -473,7 +473,14 @@ export class GameRoom extends DurableObject {
         );
         return;
       }
-      console.log(`[GameRoom] Received FIRE from slot ${slot}, current=${this.state.currentPlayerIndex}, cmd=`, msg.command);
+      console.log(
+        '[GameRoom] Received FIRE from slot=',
+        slot,
+        ', current=',
+        this.state.currentPlayerIndex,
+        ', cmd=',
+        msg.command,
+      );
       const cmd = msg.command as { angle: number; power: number; weaponId: WeaponId };
       await this.executeFire(slot, cmd);
     }
@@ -655,7 +662,7 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    console.log(`[GameRoom] executeFire: fromSlot=${fromSlot}, command=`, command);
+    console.log('[GameRoom] executeFire: fromSlot=', fromSlot, ', command=', command);
     this.clearShotSettledTimeout();
     this.shotInFlight = true;
     this.shotEpoch++;
@@ -795,7 +802,7 @@ export class GameRoom extends DurableObject {
         this.executeFire(idx, fakeCommand)
           .then(resolve)
           .catch((err) => {
-            console.error(`[GameRoom] Error executing AI fire for slot ${idx}:`, err);
+            console.error('[GameRoom] Error executing AI fire for slot=', idx, ':', err);
             resolve();
           });
       }, 1200);
