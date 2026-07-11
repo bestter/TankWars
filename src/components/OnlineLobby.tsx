@@ -340,6 +340,14 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
     connectWebSocketRef.current = connectWebSocket;
   }, [connectWebSocket]);
 
+  // Keep latest callbacks in refs so the catch-up interval does not re-subscribe every render.
+  const isRosterReadyToStartRef = useRef(isRosterReadyToStart);
+  const requestGameStartCatchUpRef = useRef(requestGameStartCatchUp);
+  useEffect(() => {
+    isRosterReadyToStartRef.current = isRosterReadyToStart;
+    requestGameStartCatchUpRef.current = requestGameStartCatchUp;
+  }, [isRosterReadyToStart, requestGameStartCatchUp]);
+
   // Retry GAME_START catch-up while the match is live but this tab missed the broadcast
   useEffect(() => {
     if (view !== 'waiting' && view !== 'joining') return;
@@ -351,13 +359,13 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
       const shouldRetry =
         missedGameStartRef.current ||
         serverGameLiveRef.current ||
-        isRosterReadyToStart(rosterRef.current);
+        isRosterReadyToStartRef.current(rosterRef.current);
       if (!shouldRetry) return;
 
-      requestGameStartCatchUp(ws);
+      requestGameStartCatchUpRef.current(ws);
     }, 2000);
     return () => clearInterval(retryId);
-  }, [view, isRosterReadyToStart, requestGameStartCatchUp]);
+  }, [view]);
 
   // Cleanup WS on unmount
   useEffect(() => {
@@ -438,6 +446,7 @@ export function OnlineLobby({ initialRoomId, initialSlot, initialToken, onStartG
                   </span>
 
                   <select
+                    aria-label={t('controller_type_aria_label', { num: idx + 1 })}
                     value={cfg.type === 'human' ? 'human' : `ai:${cfg.aiProfile}`}
                     onChange={(e) => {
                       const v = e.target.value;

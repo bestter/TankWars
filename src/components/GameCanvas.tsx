@@ -115,6 +115,15 @@ export function GameCanvas({
         <canvas
           ref={canvasRef}
           onClick={handleCanvasClick}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleCanvasClick();
+            }
+          }}
+          tabIndex={0}
+          role="img"
+          aria-label={t("canvas_game_aria_label")}
           style={{
             border: `3px solid ${VGA_PALETTE.GRAY}`,
             imageRendering: "pixelated",

@@ -564,9 +564,7 @@ export class GameRoom extends DurableObject {
   private async maybeAutoStart(): Promise<void> {
     if (!this.state || this.state.started) return;
 
-    const humanSlots = this.state.slotConfigs
-      .map((c, i) => (c.type === 'human' ? i : -1))
-      .filter((i) => i >= 0);
+    const humanSlots = this.getHumanSlots();
 
     // Require a live WebSocket for every human slot — prevents ghost entries in joinedHumans
     // from starting the match while the host tab is disconnected.
@@ -901,6 +899,7 @@ export class GameRoom extends DurableObject {
 
     const humans = this.getHumanSlots();
     const ready = this.shopSession.readySlots;
+    const readySet = new Set(ready);
     console.log(
       `[GameRoom] SHOP_READY slot ${slot} — ready=[${ready.join(',')}] humans=[${humans.join(',')}]`,
     );
@@ -913,7 +912,8 @@ export class GameRoom extends DurableObject {
       players: this.state.players,
     });
 
-    const allHumansReady = humans.length > 0 && humans.every((h) => ready.includes(h));
+    const allHumansReady =
+      humans.length > 0 && humans.every((h) => readySet.has(h));
     if (allHumansReady) {
       console.log(`[GameRoom] All humans ready — completing shop`);
       await this.completeShopPhase(this.state.players, slot);

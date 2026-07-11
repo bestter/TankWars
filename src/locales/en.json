@@ -51,6 +51,7 @@
   "shop_stock": "Stock",
   "shop_waiting_opponent": "Waiting for {{name}} to shop…",
   "shop_waiting_others": "Waiting for other players…",
+  "canvas_game_aria_label": "TankWars game area — Enter or Space to fire or skip",
   "start_battle_button": "START THE BATTLE",
   "status_ai_turn": "[AI TURN]",
   "status_resolving": "[RESOLVING]",
