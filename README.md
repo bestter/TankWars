@@ -86,7 +86,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (159 unit tests across 23 files)
+# Run tests (207 unit tests across 25 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -106,9 +106,9 @@ npm run worker:deploy
 
 This project follows a strict separation of concerns:
 
-- **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
+- **React Layer** (`src/components/`, `src/App.tsx`, `src/appReducer.ts`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop) via `useReducer`. Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
-- **Online layer** (`OnlineLobby.tsx`, `useGameSession.ts`, `worker/`): REST room creation + persistent WS to `GameRoom` Durable Object; server coordinates turns and relays state; each client runs local Canvas physics.
+- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `worker/`): REST room creation + persistent WS to `GameRoom` Durable Object; server coordinates turns and relays state; each client runs local Canvas physics.
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
 - **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate for future engine integration. Strict React/Canvas decoupling.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches based on `player.aiProfile`:
@@ -162,7 +162,7 @@ Fully working:
 - **Durable Object State Persistence**: Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation.
 - **Online Multiplayer (AddMultiplayer branch)**: Full cross-client flow — lobby WS + auto-start, combat WS (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END`), shop relay (`SHOP_BUY_SELL` / `SHOP_ADVANCE` / `SHOP_FINISH`), `localPlayerId` gating, `seedFromRoomRound`, remote fire by slot, `GAME_START` catch-up, `onlineSession.ts` resume, combat WS reconnect, round 2 server reset. MVP = client physics + server turn order; authoritative server sim still planned.
 - **Online Multiplayer Unit Tests**: 16 new tests — `onlineSession`, `GameEngine.online` (remote round end), TurnManager `ownerId` remote fire, Terrain `loadHeights`, `seedFromRoomRound` room isolation.
-- **Test Suite (v0.5.0)**: **159 unit tests** across 23 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP regression testing, and reducer coverage.
+- **Test Suite (v0.5.0)**: **207 unit tests** across 25 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP regression testing, and reducer coverage.
 - **Bullet and Nuke Direct Hit Damage Fix**: Fixed a bug where direct hits with `BULLET` and `NUKE` were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
@@ -204,14 +204,14 @@ This is an early-stage project focused on solid foundational architecture before
 
 To explore the codebase:
 
-- Start with `src/main.tsx` (app entry point, handles production console suppression), `src/App.tsx` (top-level phase management), and `src/components/MainMenu.tsx`
+- Start with `src/main.tsx` (app entry point, handles production console suppression), `src/App.tsx` + `src/appReducer.ts` (top-level phase management), and `src/components/MainMenu.tsx`
 - Main game view + engine integration: `src/components/GameCanvas.tsx`
 - Core simulation lives in `src/game/engine/GameEngine.ts` (also hosts active turn indicator + recoil trigger + celebration)
 - Terrain destruction: `src/game/engine/Terrain.ts`
 - AI contract: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tank + recoil visuals: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectile color harmonization: `src/game/engine/PhysicsEngine.ts`
-- Online lobby + WS client: `src/components/OnlineLobby.tsx`, `src/components/useGameSession.ts`
+- Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 

@@ -14,10 +14,10 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 159 tests, 23 fichiers) |
+| Tests | `npm run test` (vitest, 207 tests, 25 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
-| Doctor React | `npm run doctor` |
+| Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
 
 **Ordre de vérification obligatoire:** `npm run lint` → `npm run build` → `npm run test`. Tous les tests doivent passer. Corriger les échecs immédiatement.
 
@@ -38,7 +38,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 
 `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → ... → `GAME_OVER`
 
-- `App.tsx` : `MENU` vs le reste.
+- `App.tsx` + `appReducer.ts` : `MENU` vs le reste (session React via `useReducer`).
 - `GameCanvas.tsx` : phases intra-match (COMBAT → GAME_OVER).
 
 ### Rendu & terrain
@@ -51,7 +51,8 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 ### Online multiplayer
 
 - `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tour relay, shop sync persistant et transactionnel via Durable Object storage).
-- Client : `OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts` (gère la reconnexion automatique du WebSocket combat et la résilience aux coupures).
+- Client lobby : `OnlineLobby.tsx` (shell) + `useOnlineLobby.ts` + `OnlineLobbyCreate.tsx` / `OnlineLobbyWaiting.tsx` / `onlineLobbyTypes.ts`.
+- Client combat : `useGameSession.ts`, `onlineSession.ts` (reconnexion WS combat et résilience aux coupures).
 - Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
 - `worker/.wrangler/` est gitignoré (état local SQLite).
 - Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine pour la validation statique stricte des types.
@@ -92,8 +93,8 @@ Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–
 | Nouveau cycle/manche | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physique/explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
 | Terrain cratères | `Terrain.ts` |
-| Phase globale | `App.tsx`, `types/game.ts` |
-| Online lobby | `OnlineLobby.tsx`, `worker/src/index.ts`, `worker/src/game-room.ts` |
+| Phase globale | `App.tsx`, `appReducer.ts`, `types/game.ts` |
+| Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
 | Online sync combat | `useGameSession.ts`, `onlineSession.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 
