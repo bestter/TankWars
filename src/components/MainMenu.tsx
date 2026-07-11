@@ -30,6 +30,8 @@ import { PlayerConfigRow } from "./PlayerConfigRow";
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
   onStartGame: (players: Player[]) => void;
+  /** Ouvre le lobby multijoueur en ligne (création / URLs) — parallèle au hotseat local */
+  onPlayOnline?: () => void;
 }
 
 export interface PlayerConfig {
@@ -56,7 +58,7 @@ const TANK_COLOR_POOL: readonly Color[] = [
   VGA_PALETTE.VOLT_PURPLE, // #B300FF
 ] as const;
 
-export function MainMenu({ onStartGame }: MainMenuProps) {
+export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   const { t } = useTranslation();
 
   const getDefaultName = (index: number, isHuman: boolean): string => {
@@ -266,7 +268,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
             {t("color_picker_help_2")}
           </div>
 
-          {/* === GROS BOUTON D'ACTION === */}
+          {/* === GROS BOUTON D'ACTION (LOCAL) === */}
           <div style={{ textAlign: "center" }}>
             <button
               type="button"
@@ -280,6 +282,24 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
             >
               {t("start_battle_button")}
             </button>
+
+            {/* Online entry point (parallel to local hotseat, per spec) */}
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                onClick={() => onPlayOnline?.()}
+                style={{
+                  fontSize: 12,
+                  padding: "6px 14px",
+                  background: "transparent",
+                  border: "1px solid #555",
+                  color: VGA_PALETTE.ELECTRIC_CYAN,
+                  cursor: "pointer",
+                }}
+              >
+                {t("online_multiplayer_button")}
+              </button>
+            </div>
           </div>
 
           {/* Mentions légales en bas */}
