@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { secureRandom } from '../random.js';
+import { secureRandom, seedFromRoomRound, createSeededRNG } from '../random.js';
 
 describe('secureRandom', () => {
   beforeEach(() => {
@@ -59,5 +59,28 @@ describe('secureRandom', () => {
 
     const result = secureRandom();
     expect(result).toBe(arbitraryNumber / (0xffffffff + 1));
+  });
+});
+
+describe('seedFromRoomRound', () => {
+  it('is deterministic for the same room and round', () => {
+    expect(seedFromRoomRound('abc123', 2)).toBe(seedFromRoomRound('abc123', 2));
+  });
+
+  it('differs across round numbers for the same room', () => {
+    expect(seedFromRoomRound('abc123', 1)).not.toBe(seedFromRoomRound('abc123', 2));
+  });
+
+  it('differs across room ids for the same round number', () => {
+    expect(seedFromRoomRound('room-a', 1)).not.toBe(seedFromRoomRound('room-b', 1));
+  });
+
+  it('produces identical spawn draws on two fresh seeded RNG instances', () => {
+    const seed = seedFromRoomRound('room-xyz', 2);
+    const a = createSeededRNG(seed);
+    const b = createSeededRNG(seed);
+    const drawsA = [a.next(), a.next(), a.next(), a.next()];
+    const drawsB = [b.next(), b.next(), b.next(), b.next()];
+    expect(drawsA).toEqual(drawsB);
   });
 });

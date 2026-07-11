@@ -1,4 +1,4 @@
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
 import type { Player } from "../types/player";
 import { GameHUD } from "./GameHUD";
@@ -9,17 +9,39 @@ import { GameControlsExplanation } from "./GameControlsExplanation";
 import { GameOverOverlay } from "./GameOverOverlay";
 import { useGameSession } from "./useGameSession";
 import { MobileControls } from "./MobileControls";
+import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
   initialPlayers?: Player[];
   /** Permet de retourner à l'écran titre (démontage engine + ressources). */
   onReturnToMenu?: () => void;
+  /** Online multiplayer info (passed from lobby start) */
+  gameMode?: "local" | "online";
+  localPlayerId?: string;
+  roomId?: string;
+  initialHeights?: number[];
+  initialWind?: number;
+  initialCurrentPlayerIndex?: number;
+  resumeCanvas?: OnlineCanvasSnapshot;
+  slot?: number;
+  token?: string;
+  ws?: WebSocket;
 }
 
 export function GameCanvas({
   initialPlayers,
   onReturnToMenu,
+  gameMode,
+  localPlayerId,
+  roomId,
+  initialHeights,
+  initialWind,
+  initialCurrentPlayerIndex,
+  resumeCanvas,
+  slot,
+  token,
+  ws,
 }: GameCanvasProps = {}) {
   const { t } = useTranslation();
 
@@ -38,7 +60,10 @@ export function GameCanvas({
     handleAdjustPower,
     handleCycleWeapon,
     handleFire,
-  } = useGameSession({ initialPlayers, onReturnToMenu });
+    isLocalShopTurn,
+    shopDisplayPlayer,
+    localShopDone,
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,
@@ -90,6 +115,15 @@ export function GameCanvas({
         <canvas
           ref={canvasRef}
           onClick={handleCanvasClick}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleCanvasClick();
+            }
+          }}
+          tabIndex={0}
+          role="img"
+          aria-label={t("canvas_game_aria_label")}
           style={{
             border: `3px solid ${VGA_PALETTE.GRAY}`,
             imageRendering: "pixelated",
@@ -126,27 +160,63 @@ export function GameCanvas({
           />
         )}
 
-        {/* Weapon Shop overlay — full sequential boutique (humans one-by-one + AI auto) */}
+        {/* Weapon Shop — online: parallel (each human shops self); local: sequential index */}
         {gamePhase === "SHOP" && shopPlayers.length > 0 && (
           <>
-            {shopPlayers[currentShopIndex]?.isHuman ? (
-              <WeaponShop
-                player={shopPlayers[currentShopIndex]}
-                shopIndex={currentShopIndex}
-                totalShoppers={shopPlayers.length}
-                onBuySell={handleShopBuySell}
-                onReady={handleShopReady}
-              />
+            {gameMode === "online" ? (
+              isLocalShopTurn && shopDisplayPlayer ? (
+                <WeaponShop
+                  player={shopDisplayPlayer}
+                  shopIndex={Math.max(
+                    0,
+                    shopPlayers.findIndex((p) => p.id === shopDisplayPlayer.id),
+                  )}
+                  totalShoppers={shopPlayers.filter((p) => p.isHuman).length}
+                  onBuySell={handleShopBuySell}
+                  onReady={handleShopReady}
+                />
+              ) : (
+                <div className="retro-ai-overlay">
+                  {localShopDone
+                    ? t("shop_waiting_others")
+                    : t("shop_waiting_opponent", {
+                        name: shopPlayers[currentShopIndex]?.name ?? "",
+                      })}
+                </div>
+              )
+            ) : shopPlayers[currentShopIndex]?.isHuman ? (
+              isLocalShopTurn ? (
+                <WeaponShop
+                  player={shopPlayers[currentShopIndex]}
+                  shopIndex={currentShopIndex}
+                  totalShoppers={shopPlayers.length}
+                  onBuySell={handleShopBuySell}
+                  onReady={handleShopReady}
+                />
+              ) : (
+                <div className="retro-ai-overlay">
+                  {t("shop_waiting_opponent", {
+                    name: shopPlayers[currentShopIndex]?.name ?? "",
+                  })}
+                </div>
+              )
             ) : (
-              // Pendant qu'une IA achète automatiquement (très rapide)
               <div className="retro-ai-overlay">
-                L'IA{" "}
-                <strong
-                  style={{ color: shopPlayers[currentShopIndex]?.tank.color }}
-                >
-                  {shopPlayers[currentShopIndex]?.name}
-                </strong>{" "}
-                fait ses achats...
+                <Trans
+                  i18nKey="ai_shopping_status"
+                  values={{
+                    name: shopPlayers[currentShopIndex]?.name ?? "",
+                  }}
+                  components={{
+                    strong: (
+                      <strong
+                        style={{
+                          color: shopPlayers[currentShopIndex]?.tank.color ?? "#fff",
+                        }}
+                      />
+                    ),
+                  }}
+                />
               </div>
             )}
           </>

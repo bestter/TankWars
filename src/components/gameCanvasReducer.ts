@@ -28,7 +28,8 @@ export type GameCanvasAction =
   | { type: "FINISH_SHOP"; uiPlayers: Player[] }
   | { type: "END_MATCH_FROM_SHOP"; winner: Player | null }
   | { type: "SHOW_NEW_GAME_BUTTON"; show: boolean }
-  | { type: "RESET_GAME"; newPlayers: Player[] };
+  | { type: "RESET_GAME"; newPlayers: Player[] }
+  | { type: "RESUME_CANVAS"; snapshot: Pick<GameCanvasState, "gamePhase" | "currentManche" | "uiPlayers" | "shopPlayers" | "currentShopIndex" | "roundResult" | "lastRoundOutcome" | "wind"> };
 
 export const INITIAL_STATE: GameCanvasState = {
   gamePhase: "COMBAT",
@@ -128,6 +129,18 @@ export function gameCanvasReducer(
         uiPlayers: action.newPlayers,
         shopPlayers: [],
         currentShopIndex: 0,
+      };
+    case "RESUME_CANVAS":
+      return {
+        ...state,
+        gamePhase: action.snapshot.gamePhase,
+        currentManche: action.snapshot.currentManche,
+        uiPlayers: action.snapshot.uiPlayers,
+        shopPlayers: action.snapshot.shopPlayers,
+        currentShopIndex: action.snapshot.currentShopIndex,
+        roundResult: action.snapshot.roundResult,
+        lastRoundOutcome: action.snapshot.lastRoundOutcome,
+        wind: action.snapshot.wind,
       };
     default:
       return state;

@@ -34,6 +34,8 @@ export interface GameConfig {
   windForce: number;
   /** Base velocity multiplier for power (0-100). Tunable feel. */
   baseShotSpeed: number;
+  /** When true the engine runs without rAF, audio, input listeners or VFX. Used for authoritative server simulation. */
+  headless?: boolean;
 }
 
 interface HitEvent {
@@ -117,6 +119,17 @@ export class GameEngine {
 
   /** True while tanks are fighting within a single combat round (until <= 1 alive: last man standing). */
   private roundCombatActive = true;
+
+  public isRoundCombatActive(): boolean {
+    return this.roundCombatActive;
+  }
+
+  /** SUMMARY / SHOP / CELEBRATION — combat simulation paused until next round. */
+  public enterInterRoundPhase(): void {
+    this.roundCombatActive = false;
+    this.physicsEngine.clear(false);
+    this.turnManager.pauseForInterRound();
+  }
 
   // Enriched fireworks for winner celebration
   private fireworks: FireworkParticle[] = [];
@@ -301,6 +314,12 @@ export class GameEngine {
   /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy or AIByProfileStrategy for mixed v1/v2). */
   public setAIEngine(aiEngine: AIEngine): void {
     this.turnManager.setAIEngine(aiEngine);
+  }
+
+  /** For online multiplayer: tells the engine which player id is controlled by this client.
+   *  Used by TurnManager to lock input for other players' turns. */
+  public setLocalPlayerId(playerId: string | undefined): void {
+    this.turnManager.setLocalPlayerId(playerId);
   }
 
   /** Initialise les joueurs et place leurs tanks sur le terrain */
@@ -677,6 +696,36 @@ export class GameEngine {
         `[ROUND END] (player redacted) is the last tank standing this round`,
       );
     }
+
+    this.onRoundEnded?.({
+      survivors,
+      isDraw,
+      roundWinner,
+    });
+  }
+
+  /**
+   * Online multiplayer: apply round end from the peer that detected last-man-standing first.
+   * Keeps both clients in the same phase when local death counts diverge slightly.
+   */
+  public syncRoundEndFromRemote(
+    players: import("../../types/player").Player[],
+    roundWinnerId: string | null,
+    isDraw: boolean,
+  ): void {
+    if (!this.roundCombatActive || this.gameOver) return;
+
+    this.tankManager.setPlayers(players);
+    this.roundCombatActive = false;
+    this.physicsEngine.clear(false);
+    this.turnManager.pauseForInterRound();
+
+    const survivors = this.tankManager.getAlivePlayers();
+    const roundWinner = isDraw
+      ? null
+      : roundWinnerId
+        ? this.tankManager.getPlayers().find((p) => p.id === roundWinnerId) ?? null
+        : null;
 
     this.onRoundEnded?.({
       survivors,

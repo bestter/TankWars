@@ -33,6 +33,7 @@ const VOID_FALL_THRESHOLD = 12;
 export class TankManager {
   private players: Player[] = [];
   private playersMap: Map<string, Player> = new Map();
+  private playersMap: Map<string, Player> = new Map();
 
   /** Internal velocities for gradual falling (key = tank.id). Enables sliding + floor sounds. */
   private velocities: Map<string, number> = new Map();
@@ -68,10 +69,7 @@ export class TankManager {
   /** Remplace et prépare la liste des joueurs pour le combat */
   public setPlayers(players: Player[]): void {
     this.players = players;
-    this.playersMap.clear();
-    for (const p of players) {
-      this.playersMap.set(p.id, p);
-    }
+    this.playersMap = new Map(players.map((p) => [p.id, p]));
     this.invalidateAliveCache();
     this.velocities.clear();
     this.fallenDistances.clear();
@@ -89,6 +87,10 @@ export class TankManager {
     this.fallenDistances.clear();
     this.isVoidFall.clear();
     this.recoilState.clear();
+  }
+
+  public getPlayerById(id: string): Player | undefined {
+    return this.playerMap.get(id);
   }
 
   public getPlayers(): ReadonlyArray<Player> {
@@ -146,10 +148,7 @@ export class TankManager {
    */
   public spawnTanks(players: Player[], terrain: TerrainManager): void {
     this.players = players;
-    this.playersMap.clear();
-    for (const p of players) {
-      this.playersMap.set(p.id, p);
-    }
+    this.playersMap = new Map(players.map((p) => [p.id, p]));
     this.invalidateAliveCache();
 
     const count = players.length;

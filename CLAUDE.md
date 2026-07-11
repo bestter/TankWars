@@ -3,13 +3,20 @@
 **Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules; operational detail lives in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
 
 ## Build & Development Commands
+# Bestter's TankWars Project Guide
+
+**Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules; operational detail lives in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
+
+## Build & Development Commands
 
 - Install dependencies: `npm install`
 - Start dev server: `npm run dev` (http://localhost:5173)
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`)
+- Run tests: `npm run test` (or `vitest run`) — **207 tests** (25 files)
+- Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
+- Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
 
 Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must pass on every modification. If tests fail or require correction, they must be fixed. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
@@ -18,13 +25,14 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 - **Tech Stack:** React (functional components, hooks) + TypeScript + HTML5 Canvas.
 - **State Separation:** Keep React state (turns, shop, money, `GamePhase`) strictly decoupled from the Canvas 2D high-frequency loop (physics, rendering).
-- **Phase ownership:** `App.tsx` — `MENU` vs combat; `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `CELEBRATION` (round fireworks) → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
+- **Phase ownership:** `App.tsx` + `appReducer.ts` — `MENU` vs combat (session via `useReducer`); `GameCanvas.tsx` — in-match phases (`COMBAT` → `RESOLUTION` → `CELEBRATION` (round fireworks) → `SUMMARY` → `SHOP` → `GAME_OVER`). Types in `src/types/game.ts`.
 - **Type Safety:** Strict TypeScript. Zero `any`. Define structural types inside `src/types/`.
 - **Canvas Rendering:** Use `VGA_PALETTE` from `src/types/game.ts` (classic 16-color VGA + extended high-contrast neon/arcade colors for tank redesign) for all game visuals. Pure procedural drawing helpers live in `src/game/rendering/` (e.g. `drawTankSprite` — geometric chenilles, beveled chassis, independent turret/cannon, strict save/translate/rotate/restore transforms) and are integrated into the 120Hz engine loop (scaled up to 24x15 with matching hitboxes) with slope-aware chassis tilt.
 - **Step 4 Visual Polish (in engine):** Floating active-player indicator (colored inverted triangle, `Math.sin(Date.now()/200)*5` bob) drawn in `GameEngine.render`; projectiles use firer tank color via `ownerColor`; micro recoil (chassis offset opposite barrel) in `TankManager` + trigger from `GameEngine.fireProjectile`. All pure Canvas2D, cheap per-frame.
 - **Step 5 Tank Positioning:** Randomized spawn coordinates with shuffled starting order at each new round via `spawnTanks` in `TankManager` (100px minimum distance safety, 13% width margins, snapped vertically to `Y = groundY` surface).
 - **Step 6 Shell-Tank Collision:** Direct AABB shell-to-tank collision checking in `PhysicsEngine.updateProjectiles` (24x15 hitbox) with launch-time self-sabotage protection (ignores owner's hitbox until projectile exits it). Triggers explosions, damage, and projectile cleanup.
 - **Terrain Logic:** Custom destructible terrain (heightmap in `Terrain.ts`; optional `ImageData`-style mutations). No external physics engines.
+- **Online Multiplayer (`AddMultiplayer`):** Cloudflare Worker + `GameRoom` Durable Object (`worker/`) coordinates rooms, handles transactional state storage, and WS sync; client lobby (`OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`) + combat (`useGameSession.ts`, `onlineSession.ts`) keep local Canvas physics and automatic combat WS reconnect. Deployed via `deploy-cloudflare.ps1` with `VITE_API_BASE` integration.
 
 ## AI Strategy Pattern (Crucial)
 
@@ -42,6 +50,29 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - Do not store per-frame simulation data (projectiles, particles, raw terrain pixels) in React state.
 
 ## Recent Updates & Bug Fixes
+
+- **Online Multiplayer Stability & Shop Sync:** Fixed input locks after firing in online mode. Corrected useEffect memory leaks inside the WeaponShop component. Added buffering for online shop decisions and synchronization across phase transitions to avoid desyncs during rapid transitions. Fixed GAME_START catch-up and turn synchronization issues for hosts. Added a new regression test in [csp.test.ts](file:///d:/projects/Repos/TankWars/src/utils/__tests__/csp.test.ts) to verify CSP rules. — Antigravity (Gemini 3.5 Flash)
+- **Multiplayer Connection Hardening & Sync Fixes:** Resolved a critical multiplayer synchronization bug where slot connection cleanup was deleting the new combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Implemented reference check validation (`this.sockets.get(slot) === ws`) in the Durable Object's `handleSocketDisconnect` before deleting. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur. Fixed client-side unmount cleanup in `OnlineLobby.tsx` to safely close the active WebSocket using a copied ref parameter (`currentWsRef.current.close()`) to avoid state-related lifecycle warnings. Added missing translation key `link_instructions` to both `fr.json` and `en.json` to pass strict TypeScript i18n checks. All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100. — Antigravity (Gemini 3.5 Pro)
+
+- **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. — Antigravity (Gemini 3.5 Flash (High))
+
+- **Cloudflare Worker TypeScript & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`). — Antigravity (Gemini 3.5 Flash (High))
+
+- **Production deploy option B:** `VITE_API_BASE` → workers.dev via `onlineApi.ts`; CSP `*.workers.dev`; `deploy-cloudflare.ps1` updated locally (gitignored). 158 tests. — Grok 4.3 (xAI)
+
+- **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR locales). — Grok 4.3 (xAI)
+
+- **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json`. — Grok 4.3 (xAI)
+
+- **Online Multiplayer Unit Tests:** 16 new tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights, seedFromRoomRound. — Grok 4.3 (xAI)
+
+- **Documentation sync (v0.4.2):** Layout, worker commands, online architecture, 139 tests — see AGENTS.md. — Grok 4.3 (xAI)
+
+- **Worker `.gitignore` cleanup:** `worker/.wrangler/` excluded from Git; removed tracked Wrangler local SQLite/cache from index. Worker source stays versioned. — Grok 4.3 (xAI)
+
+- **Online Multiplayer Sync & Session Stability:** ROUND_END relay, remote fire by slot, shop WS sync, per-round RNG reseed, GAME_START catch-up, sessionStorage resume, no mid-match lobby return, combat WS reconnect, round 2 server reset. 139 tests. See AGENTS.md. — Grok 4.3 (xAI)
+
+- **Basic Online Multiplayer Foundation:** Host creates room with per-player URLs (human slots + optional AI), WS lobby (roster, auto-start), game-phase persistent WS for FIRE → server coordination + SHOT/STATE_UPDATE. Client: localPlayerId gating (TurnManager.isLocalHumanTurn + syncTurn lock), seeded RNG for identical spawns, load server heights. Worker/DO for rooms. CSP for dev worker. Verifs green. See AGENTS.md for details. — Grok 4.3 (xAI)
 
 - **React Doctor GitHub Action Fix:** Removed the invalid `project` parameter from the `millionco/react-doctor@v2` GitHub Action step in `.github/workflows/react-doctor.yml` since it expects a directory path rather than file paths, resolving the directory path error on GitHub CI.
 - **Complete Projectile Object Pooling (perf branch):** Wired Jules' `getProjectile` helper into `launchProjectile` + `splitCluster` (PhysicsEngine.ts), removing duplicated pool logic. All shots and clusters now recycle via the pool (GC reduction). Fixed build TS error, lint `any`, and fireworks test flakiness. lint+build+test (130) all green. — Grok 4.3 (xAI)

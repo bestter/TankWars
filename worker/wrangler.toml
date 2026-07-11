@@ -1,0 +1,32 @@
+# TankWars Online Multiplayer Worker + Durable Objects
+# Deploy with: cd worker && npx wrangler deploy
+# Local dev: cd worker && npx wrangler dev (or from root: npm run worker:dev)
+# This worker provides the game rooms (lobby + authoritative sim for online matches).
+# Compatible with existing Cloudflare Pages deployment (tankwars.pages.dev).
+# For production, deploy this worker separately and configure the client to point at its URL
+# (or use a single Worker that also serves assets, or custom routes on Pages).
+
+name = "tankwars-api"
+main = "src/index.ts"
+compatibility_date = "2026-06-16"
+
+# Important: We use the modern "cloudflare:workers" import for DurableObject.
+# This is required for the class to be recognized at runtime (avoids "DurableObject is not defined").
+
+# Durable Object binding for per-room game state + WebSocket connections
+[durable_objects]
+bindings = [
+  { name = "GAME_ROOM", class_name = "GameRoom" }
+]
+
+# Migrations for DO (create the class on first deploy)
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]
+
+# Optional but recommended for better local DX:
+# You can add a worker/package.json later with "@cloudflare/workers-types" for TypeScript.
+# For now the runtime provides the globals via the import above.
+
+# (Optional future) KV or D1 for persistent rooms/history can be added here.
+# For MVP: pure in-memory DO state is sufficient (ephemeral rooms).

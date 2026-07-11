@@ -6,13 +6,42 @@
 
 - Always begin by reading AGENTS.md + the current file.
 - Before any code change that affects visuals or engine: re-read `src/game/engine/GameEngine.ts` (render + fireProjectile), `TankManager.ts` (draw + recoil), `PhysicsEngine.ts` (draw + Projectile).
-- After edits: run `npm run lint && npm run build` (mandatory per AGENTS).
+- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **207 tests**).
+- Online work: run `npm run dev` + `npm run worker:dev` together; restart worker after `worker/src/game-room.ts` changes.
 - Use imperative commit style and sign with your exact model: e.g. `Add floating active indicator (Step 4) — Grok 4.3 (xAI)`.
 - The system prompt identifies you as "Grok 4.3 released by xAI in April 2026".
 
+## Worker folder (`worker/`)
+
+- **Versioned:** `worker/src/index.ts`, `worker/src/game-room.ts`, `worker/wrangler.toml`
+- **Gitignored:** `worker/.wrangler/` (local Wrangler SQLite/cache from `wrangler dev`)
+- **Role:** REST `/api/rooms` + WS to `GameRoom` DO — lobby, turn relay, `ROUND_END`, shop sync
+- **Deploy:** `npm run worker:deploy` (separate from Cloudflare Pages frontend)
+
 ## Recent Polish (Step 4, 5, 6 & 7)
 
+- **Multiplayer Connection Hardening & Sync Fixes:** Resolved a critical multiplayer synchronization bug where slot connection cleanup was deleting the new combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Implemented reference check validation (`this.sockets.get(slot) === ws`) in the Durable Object's `handleSocketDisconnect` before deleting. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur. Fixed client-side unmount cleanup in `OnlineLobby.tsx` to safely close the active WebSocket using a copied ref parameter (`currentWsRef.current.close()`) to avoid state-related lifecycle warnings. Added missing translation key `link_instructions` to both `fr.json` and `en.json` to pass strict TypeScript i18n checks. All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100. — Antigravity (Gemini 3.5 Pro)
+
+- **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. — Antigravity (Gemini 3.5 Flash (High))
+
+- **Cloudflare Worker TypeScript & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`). — Antigravity (Gemini 3.5 Flash (High))
+
+- **Production deploy option B:** `VITE_API_BASE` + `onlineApi.ts` for workers.dev API; CSP updated. 158 tests. — Grok 4.3 (xAI)
+
+- **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR). — Grok 4.3 (xAI)
+
+- **Game Version Bump:** Bumped game version to `0.5.0` in `package.json` and `package-lock.json`. — Grok 4.3 (xAI)
+
+- **Online Multiplayer Unit Tests:** +16 tests (155 total): onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights. — Grok 4.3 (xAI)
+
+- **Documentation sync (v0.4.2):** All agent docs + README updated (worker/, online, 139 tests, v0.4.2). — Grok 4.3 (xAI)
+
+- **Worker `.gitignore` cleanup:** `worker/.wrangler/` gitignored; removed tracked Wrangler local dev SQLite/cache from index. — Grok 4.3 (xAI)
+
+- **Online Multiplayer Sync & Session Stability:** ROUND_END relay, remote fire by slot, shop WS sync, per-round RNG reseed, GAME_START catch-up, sessionStorage resume, no mid-match lobby return, combat WS reconnect, round 2 server reset. 139 tests. See AGENTS.md. — Grok 4.3 (xAI)
 - **Service Worker and CSP Production Load Fix (v0.4.2):** Resolved critical production loading freeze at `tankwars.pages.dev` caused by aggressive Cache-First strategy on `/index.html` (which locked browsers into requests for stale and deleted Vite bundles like `index-CXsrA7Q7.js` that returned 404/HTML). Configured `sw.js` with a robust **Network-First** strategy for navigate requests, and restricted SW fetch interception strictly to local origin (`self.location.origin`) to bypass third-party requests. Fixed service worker crashes by properly propagating network errors (`throw err` instead of returning `undefined` which raised `TypeError`). Added `https://static.cloudflareinsights.com` to `connect-src` in both `public/_headers` and `index.html` to eliminate CSP beacon blocks. Reorganized SPA routing by creating `public/_redirects` and removing the stale `public/_redirects.txt`. Bumped cache version to `"tankwars-v2"`.
+- **Basic Online Multiplayer Foundation:** Host creates room with per-player URLs (human slots + optional AI), WS lobby (roster, auto-start), game-phase persistent WS for FIRE → server coordination + SHOT/STATE_UPDATE. Client: localPlayerId gating (TurnManager.isLocalHumanTurn + syncTurn lock), seeded RNG for identical spawns, load server heights. Worker/DO for rooms. CSP for dev worker. Verifs green. See AGENTS.md for details. — Grok 4.3 (xAI)
+
 - **React Doctor GitHub Action Fix:** Removed the invalid `project` parameter from the `millionco/react-doctor@v2` GitHub Action step in `.github/workflows/react-doctor.yml` since it expects a directory path rather than file paths, resolving the directory path error on GitHub CI.
 - **Complete Projectile Object Pooling (perf branch):** Wired the `getProjectile` pooling helper (Jules) into launch + cluster split paths in PhysicsEngine; removed duplication. Pool now active for every projectile (prevents GC churn). Fixed build/lint/test issues for clean verification. — Grok 4.3 (xAI)
 - **Terrain Partial Redraw Visual Fix (v0.4.1):** Fixed blue vertical lines, cut grass on slopes, and fuzzy fringe from partial offscreen updates (`Terrain.ts`: opaque sky, brown below grass, grass ribbon, sky clip). **113 unit tests**.

@@ -16,13 +16,13 @@ export function trackEvent(name: string, properties?: Record<string, unknown>): 
   if (window.zaraz && typeof window.zaraz.track === 'function') {
     try {
       window.zaraz.track(name, properties);
-      console.log(`[Analytics] Tracked event: "${name}"`, properties);
+      console.log('[Analytics] Tracked event:', name, properties);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`[Analytics] Failed to track event "${name}" via Zaraz:`, errorMessage);
+      console.error('[Analytics] Failed to track event via Zaraz:', name, errorMessage);
     }
   } else {
     // Fallback log en local ou si Zaraz n'est pas actif
-    console.log(`[Analytics] [Simulated] Tracked event: "${name}"`, properties);
+    console.log('[Analytics] [Simulated] Tracked event:', name, properties);
   }
 }
