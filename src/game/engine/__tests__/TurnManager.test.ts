@@ -148,4 +148,198 @@ describe('TurnManager', () => {
       expect(hudUpdates).not.toHaveBeenCalled();
     });
   });
+
+  describe('online multiplayer input gating', () => {
+    const player1 = makePlayer({
+      id: 'player-1',
+      name: 'Host',
+      isHuman: true,
+      tank: { ...makePlayer().tank, id: 'tank-1' },
+    });
+    const player2 = makePlayer({
+      id: 'player-2',
+      name: 'Guest',
+      isHuman: true,
+      tank: { ...makePlayer().tank, id: 'tank-2' },
+    });
+
+    beforeEach(() => {
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([player1, player2]);
+      turnManager = new TurnManager(
+        mockTankManager as TankManager,
+        mockTerrainManager as TerrainManager,
+        mockFireCallback,
+        mockAiEngine as AIEngine,
+      );
+    });
+
+    it('locks guest input on host turn after setLocalPlayerId + startFirstTurn', () => {
+      turnManager.setLocalPlayerId('player-2');
+      turnManager.startFirstTurn();
+
+      const info = turnManager.getCurrentTurnInfo();
+      expect(info?.playerId).toBe('player-1');
+      expect(info?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+    });
+
+    it('unlocks guest input when server syncs to their turn', () => {
+      turnManager.setLocalPlayerId('player-2');
+      turnManager.startFirstTurn();
+
+      turnManager.syncTurn(1);
+
+      const info = turnManager.getCurrentTurnInfo();
+      expect(info?.playerId).toBe('player-2');
+      expect(info?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes input lock when setLocalPlayerId is called after startFirstTurn', () => {
+      turnManager.startFirstTurn();
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+
+      turnManager.setLocalPlayerId('player-2');
+
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+    });
+
+    it('does not advance turn index locally after a local shot resolves in online mode', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(0);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+    });
+
+    it('replays remote fire from the correct slot even when turn index is desynced', () => {
+      turnManager.startFirstTurn();
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(0);
+
+      mockTankManager.anyTankIsFalling = vi.fn().mockReturnValue(true);
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'MISSILE' },
+        { fromSlot: 1 },
+      );
+
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(1);
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+      expect(mockFireCallback.mock.calls[0][2]).toBe('player-2');
+    });
+
+    it('replays remote fire while tanks are falling (bypasses local falling guard)', () => {
+      turnManager.syncTurn(1);
+      mockTankManager.anyTankIsFalling = vi.fn().mockReturnValue(true);
+
+      turnManager.executeRemoteFire(
+        { angle: 90, power: 70, weaponId: 'MISSILE' },
+        { fromSlot: 1 },
+      );
+
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it('replays remote fire by ownerId when fromSlot is omitted', () => {
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 12, power: 55, weaponId: 'GRENADE' },
+        { ownerId: 'player-2' },
+      );
+
+      expect(Reflect.get(turnManager, 'currentPlayerIndex')).toBe(1);
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+      expect(mockFireCallback.mock.calls[0][2]).toBe('player-2');
+    });
+
+    it('ignores remote fire when ownerId does not match any player', () => {
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 12, power: 55, weaponId: 'MISSILE' },
+        { ownerId: 'unknown-player' },
+      );
+
+      expect(mockFireCallback).not.toHaveBeenCalled();
+    });
+
+    it('does not emit onShotSettled when a remote replay settles after syncTurn advanced', () => {
+      const onShotSettled = vi.fn();
+      turnManager.setLocalPlayerId('player-2');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'MISSILE' },
+        { fromSlot: 0 },
+      );
+
+      // Server STATE_UPDATE arrives before the remote replay finishes on this client.
+      turnManager.syncTurn(1);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentTurnInfo()?.playerId).toBe('player-2');
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
+    it('stays locked when syncTurn repeats the same index after a local shot', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      // Stale GAME_START / reconnect with same index must not re-unlock the firer.
+      turnManager.syncTurn(0);
+
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+    });
+
+    it('unlocks only after server advances away then back to the local player', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+
+      // Server gives the turn to player 2
+      turnManager.syncTurn(1);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+
+      // Full cycle later: server returns the turn to player 1
+      turnManager.syncTurn(0);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
+    it('emits onShotSettled only for locally fired shots in online mode', () => {
+      const onShotSettled = vi.fn();
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).toHaveBeenCalledTimes(1);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+    });
+  });
 });

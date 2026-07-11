@@ -286,4 +286,35 @@ describe('TerrainManager', () => {
     });
   });
 
+  describe('loadHeights (online authoritative terrain)', () => {
+    const WIDTH = 50;
+    const HEIGHT = 100;
+
+    it('replaces heightmap when array length matches terrain width', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const internal = terrainInternals(terrain);
+      const serverHeights = Array.from({ length: WIDTH }, (_, i) => 40 + i);
+
+      terrain.loadHeights(serverHeights);
+
+      expect(terrain.getHeightAt(10)).toBe(50);
+      expect(terrain.getHeightAt(49)).toBe(89);
+      expect(internal.isDirty).toBe(true);
+      expect(internal.needsFullRedraw).toBe(true);
+      expect(internal.dirtyStartX).toBe(0);
+      expect(internal.dirtyEndX).toBe(WIDTH - 1);
+    });
+
+    it('ignores loadHeights when server array length mismatches', () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const before = terrain.getHeightAt(10);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      terrain.loadHeights([1, 2, 3]);
+
+      expect(terrain.getHeightAt(10)).toBe(before);
+      warnSpy.mockRestore();
+    });
+  });
+
 });

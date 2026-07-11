@@ -1,6 +1,9 @@
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws: wss: https://cloudflareinsights.com https://static.cloudflareinsights.com; font-src 'self' data:;
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss: http://localhost:8787 ws://localhost:8787 https://*.workers.dev wss://*.workers.dev https://cloudflareinsights.com https://static.cloudflareinsights.com; font-src 'self' data:; worker-src 'self' blob:;
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
+
+  Note: connect-src allows *.workers.dev for online multiplayer (option B: API on workers.dev, Pages on pages.dev).
+  For local development (worker on :8787), the <meta> CSP in index.html also allows localhost.

@@ -39,6 +39,7 @@
 - **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Full sequential weapon shop between rounds with money earned instantly from tank destructions ($300 standard, $600 for the last standing tank) and base survival ($500).
 - **Internationalization (i18n)** — Complete French (FR) and English (EN) translations for all UI text, settings, weapon descriptions, and game status messages. Features a retro-styled LanguageSwitcher component to toggle language on the fly.
 - **Mobile Playability & PWA Support** — Full touch controls (D-Pad for angle and power, fire, weapon cycling) with press & hold support. Progressive Web App (PWA) configuration (`manifest.json` + Service Worker `sw.js` for offline cache) enabling installability on iOS and Android home screens in fullscreen landscape mode.
+- **Online Multiplayer (AddMultiplayer branch)** — Host creates a room (2–4 players: human shareable URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn coordination, and transactional cross-client phase sync (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END` / shop relay). Client: `localPlayerId` turn gating, seeded RNG per round (`seedFromRoomRound`), `sessionStorage` session resume, and combat WS reconnect. Stable and hardened against desyncs and abrupt disconnects.
 
 ---
 
@@ -84,7 +85,20 @@ npm run lint
 
 # React health scan (before/after UI changes)
 npm run doctor
+
+# Run tests (159 unit tests across 23 files)
+npm run test
+
+# Online multiplayer backend (run alongside npm run dev)
+npm run worker:dev    # http://localhost:8787
+
+# Deploy worker to Cloudflare
+npm run worker:deploy
 ```
+
+**Online dev:** start both `npm run dev` (frontend, port 5173) and `npm run worker:dev` (API, port 8787). Restart the worker after editing `worker/src/game-room.ts`.
+
+**Production deploy (option B — Worker on workers.dev):** run `.\deploy-cloudflare.ps1`. It deploys the Worker first, injects `VITE_API_BASE` into the Vite build, then deploys Pages. The game on `tankwars.pages.dev` calls the API on `https://tankwars-api.<account>.workers.dev`. See `.env.production.example` for manual builds.
 
 ---
 
@@ -93,7 +107,8 @@ npm run doctor
 This project follows a strict separation of concerns:
 
 - **React Layer** (`src/components/`, `src/App.tsx`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop). Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
-- **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
+- **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
+- **Online layer** (`OnlineLobby.tsx`, `useGameSession.ts`, `worker/`): REST room creation + persistent WS to `GameRoom` Durable Object; server coordinates turns and relays state; each client runs local Canvas physics.
 - **Game Engine** (`src/game/engine/`): Owns the 120Hz fixed-timestep physics loop, terrain mutations, projectile simulation, and rendering. Communicates exclusively via callbacks.
 - **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate for future engine integration. Strict React/Canvas decoupling.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches based on `player.aiProfile`:
@@ -137,8 +152,17 @@ Fully working:
   - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
   - Configured React Doctor in CI with a GitHub Actions workflow.
 - **Content Security Policy (CSP) Update**: Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve browser console violations.
-- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.4.1`) in the footer of the retro Main Menu next to the license statement.
-- **Test Suite (v0.4.1)**: **113 unit tests** across 11 files (Vitest), including ballistic simulation, AI profile dispatcher, terrain dirty-band redraw, HUD throttle, and fireworks optimization coverage.
+- **Copyright attribution**: Legal footer in EN/FR locales credits **Martin Labelle** (was Bestter).
+- **Game Version Bump**: Bumped game version to `0.5.0` in `package.json` and `package-lock.json` (online multiplayer MVP on `AddMultiplayer` branch).
+- **Version Display on Main Menu**: Automatically imports and displays the current game version (`v0.5.0`) in the footer of the retro Main Menu next to the license statement.
+- **Multiplayer Connection Hardening & Sync Fixes**: Fixed a critical multiplayer synchronization bug where slot connection cleanup deleted the active combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur (resolving the issue where one screen remained stuck in the lobby while the other proceeded to the game due to server crashes). All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100.
+- **Documentation sync (v0.5.0)**: AGENTS.md, README, CLAUDE/GROK/CURSOR/.cursorrules aligned with online multiplayer layout, worker commands, v0.5.0, and 158 tests.
+- **Worker `.gitignore` cleanup**: `worker/.wrangler/` (Wrangler local dev SQLite/cache) excluded from Git; accidentally tracked artifacts removed from index. Worker source code (`worker/src/`, `wrangler.toml`) remains versioned.
+- **Cloudflare Worker TypeScript & Type checking**: Enabled full static type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`).
+- **Durable Object State Persistence**: Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation.
+- **Online Multiplayer (AddMultiplayer branch)**: Full cross-client flow — lobby WS + auto-start, combat WS (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END`), shop relay (`SHOP_BUY_SELL` / `SHOP_ADVANCE` / `SHOP_FINISH`), `localPlayerId` gating, `seedFromRoomRound`, remote fire by slot, `GAME_START` catch-up, `onlineSession.ts` resume, combat WS reconnect, round 2 server reset. MVP = client physics + server turn order; authoritative server sim still planned.
+- **Online Multiplayer Unit Tests**: 16 new tests — `onlineSession`, `GameEngine.online` (remote round end), TurnManager `ownerId` remote fire, Terrain `loadHeights`, `seedFromRoomRound` room isolation.
+- **Test Suite (v0.5.0)**: **159 unit tests** across 23 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP regression testing, and reducer coverage.
 - **Bullet and Nuke Direct Hit Damage Fix**: Fixed a bug where direct hits with `BULLET` and `NUKE` were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
@@ -147,11 +171,10 @@ Fully working:
 - Round summaries (CELEBRATION fireworks) + Game Over + next round / restart
 
 In progress / planned:
+- Online authoritative server simulation (terrain/damage/HP sync shot-by-shot)
 - Sound effects & particle polish
-- Local hotseat multiplayer polish (already supports up to 4 players)
 - More weapons and power-ups
 - Persistent high scores / match history
-- Further AI refinements (v1-v4 profiles implemented)
 
 ---
 
@@ -161,6 +184,8 @@ In progress / planned:
 - **Build**: Vite 8 + Rolldown
 - **Rendering**: HTML5 Canvas 2D (no WebGL, no external libs)
 - **Physics**: Hand-rolled fixed-timestep integrator (no Matter.js, Rapier, etc.)
+- **Online backend**: Cloudflare Workers + Durable Objects (`worker/`, deployed separately from Pages)
+- **Hosting**: Cloudflare Pages (`tankwars.pages.dev`) + optional Worker API
 - **Styling**: Inline styles + minimal CSS (monospace retro aesthetic)
 
 ---
@@ -186,6 +211,8 @@ To explore the codebase:
 - AI contract: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tank + recoil visuals: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectile color harmonization: `src/game/engine/PhysicsEngine.ts`
+- Online lobby + WS client: `src/components/OnlineLobby.tsx`, `src/components/useGameSession.ts`
+- Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent-oriented guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!

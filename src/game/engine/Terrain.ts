@@ -404,6 +404,22 @@ export class TerrainManager {
     return this.heights.slice();
   }
 
+  /** Load an authoritative heightmap sent by the server (online multiplayer).
+   *  Marks the terrain dirty so it will be redrawn. */
+  public loadHeights(newHeights: number[]): void {
+    if (!Array.isArray(newHeights) || newHeights.length !== this.width) {
+      console.warn('[TerrainManager] loadHeights: size mismatch, ignoring');
+      return;
+    }
+    for (let i = 0; i < this.width; i++) {
+      this.heights[i] = newHeights[i];
+    }
+    this.isDirty = true;
+    this.needsFullRedraw = true;
+    this.dirtyStartX = 0;
+    this.dirtyEndX = this.width - 1;
+  }
+
   /** Y position of the lava "floor" at the bottom of the map. Exposed when terrain heights reach or exceed this (no ground left). Tanks that reach this y die instantly. */
   public get lavaTop(): number {
     return this.height - LAVA_TOP_MARGIN;
