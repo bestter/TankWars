@@ -317,7 +317,8 @@ export function useOnlineLobby({
         connectWebSocket(data.roomId, hostSlot, u.searchParams.get('token') || '', t('default_player_name_1'));
       }
     } catch (e) {
-      console.error('[OnlineLobby] Failed to create room (is the worker running on port 8787?)', e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('[OnlineLobby] Failed to create room (is the worker running on port 8787?)', errorMessage);
       setError(t('room_error_generic'));
     } finally {
       setIsCreating(false);
@@ -334,7 +335,8 @@ export function useOnlineLobby({
       connectWebSocket(roomId, mySlotRef.current, myTokenRef.current, myName.trim());
       setView('waiting');
     } catch (e) {
-      console.error('[OnlineLobby] Failed to initiate join', e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('[OnlineLobby] Failed to initiate join', errorMessage);
       setError(t('room_error_generic'));
     } finally {
       setIsJoining(false);
