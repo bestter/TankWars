@@ -53,7 +53,8 @@ export function OnlineLobbyWaiting({
             placeholder={t('enter_name_placeholder')}
             aria-label={t('enter_name_placeholder')}
             value={myName}
-            onChange={(e) => setMyName(e.target.value)}
+            maxLength={16}
+            onChange={(e) => setMyName(e.target.value.slice(0, 16))}
             style={{ width: '100%', padding: 6, background: '#000', color: '#fff', border: '1px solid #555' }}
           />
           <button
