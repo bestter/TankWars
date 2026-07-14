@@ -25,14 +25,23 @@ export default {
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
 
+    const origin = request.headers.get('Origin');
+    const isAllowedOrigin = origin && (
+      origin === 'https://tankwars.pages.dev' ||
+      origin.endsWith('.tankwars.pages.dev') ||
+      /^http:\/\/localhost:\d+$/.test(origin) ||
+      /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
+    );
+    const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
+
     // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': allowedOrigin,
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Headers': 'Content-Type, x-room-id, x-slot, x-token',
           'Access-Control-Max-Age': '86400',
         },
       });
@@ -41,7 +50,7 @@ export default {
     // Helper to add CORS to all responses
     const withCors = (res: Response): Response => {
       const headers = new Headers(res.headers);
-      headers.set('Access-Control-Allow-Origin', '*');
+      headers.set('Access-Control-Allow-Origin', allowedOrigin);
       return new Response(res.body, {
         status: res.status,
         statusText: res.statusText,

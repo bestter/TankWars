@@ -41,3 +41,7 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The exact coordinates of projectile hits were being logged in `src/components/useGameSession.ts` via `console.log`.
 **Learning:** This is an extension of the existing Client-Side Data Exposure in Logs vulnerability pattern found earlier. Even seemingly harmless physics data like exact coordinates should be redacted to prevent leaking precise internal state and logic to clients.
 **Prevention:** Redact the exact `hit.x` and `hit.y` values and replace them with `(coordinates redacted)` in console output.
+## 2026-06-25 - [Overly Permissive CORS]
+**Vulnerability:** The API returned `Access-Control-Allow-Origin: '*'` which allows any origin to read data if the endpoint is called from the browser.
+**Learning:** While wildcard CORS might be necessary for fully public APIs, it introduces risks for APIs that handle user data or authenticated actions. Even if authentication isn't fully implemented yet, defaulting to wildcard CORS sets a bad precedent.
+**Prevention:** Validate the `Origin` request header against a whitelist of expected origins (like production domains and localhost for development) and echo the allowed origin instead of using the wildcard.
