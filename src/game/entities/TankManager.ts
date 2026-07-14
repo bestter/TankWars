@@ -33,7 +33,6 @@ const VOID_FALL_THRESHOLD = 12;
 export class TankManager {
   private players: Player[] = [];
   private playersMap: Map<string, Player> = new Map();
-  private playersMap: Map<string, Player> = new Map();
 
   /** Internal velocities for gradual falling (key = tank.id). Enables sliding + floor sounds. */
   private velocities: Map<string, number> = new Map();
@@ -87,10 +86,6 @@ export class TankManager {
     this.fallenDistances.clear();
     this.isVoidFall.clear();
     this.recoilState.clear();
-  }
-
-  public getPlayerById(id: string): Player | undefined {
-    return this.playerMap.get(id);
   }
 
   public getPlayers(): ReadonlyArray<Player> {
