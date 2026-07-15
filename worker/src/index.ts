@@ -28,7 +28,7 @@ export default {
     const origin = request.headers.get('Origin');
     const isAllowedOrigin = origin && (
       origin === 'https://tankwars.pages.dev' ||
-      origin.endsWith('.tankwars.pages.dev') ||
+      /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
       /^http:\/\/localhost:\d+$/.test(origin) ||
       /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
     );
