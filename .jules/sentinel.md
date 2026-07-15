@@ -45,3 +45,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The API returned `Access-Control-Allow-Origin: '*'` which allows any origin to read data if the endpoint is called from the browser.
 **Learning:** While wildcard CORS might be necessary for fully public APIs, it introduces risks for APIs that handle user data or authenticated actions. Even if authentication isn't fully implemented yet, defaulting to wildcard CORS sets a bad precedent.
 **Prevention:** Validate the `Origin` request header against a whitelist of expected origins (like production domains and localhost for development) and echo the allowed origin instead of using the wildcard.
+
+## 2026-07-15 - [Strict CORS Origin Validation]
+**Vulnerability:** CORS validation in the Cloudflare Worker used `origin.endsWith('.tankwars.pages.dev')`.
+**Learning:** Using `.endsWith` for CORS origin validation is overly permissive and can be bypassed by an attacker registering a domain that ends with the targeted string (e.g., `https://eviltankwars.pages.dev`). This allows unauthorized cross-origin requests.
+**Prevention:** Use a strict equality check for specific domains or a tight, anchored regular expression (e.g., `/^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/`) to properly validate subdomains.
