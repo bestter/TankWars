@@ -303,17 +303,20 @@ export class GameRoom extends DurableObject {
         server.accept();
         server.addEventListener('message', (evt) => {
           this.handleClientMessage(slot, evt.data).catch((err) => {
-            console.error('[GameRoom] Error handling client message from slot=', slot, ':', err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error('[GameRoom] Error handling client message from slot=', slot, ':', errorMessage);
           });
         });
         server.addEventListener('close', () => {
           this.handleSocketDisconnect(slot, server as any).catch((err) => {
-            console.error('[GameRoom] Error on socket disconnect for slot=', slot, ':', err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error('[GameRoom] Error on socket disconnect for slot=', slot, ':', errorMessage);
           });
         });
         server.addEventListener('error', () => {
           this.handleSocketDisconnect(slot, server as any).catch((err) => {
-            console.error('[GameRoom] Error on socket error for slot=', slot, ':', err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error('[GameRoom] Error on socket error for slot=', slot, ':', errorMessage);
           });
         });
 
@@ -335,7 +338,8 @@ export class GameRoom extends DurableObject {
                 resolve();
               })
               .catch((err) => {
-                console.error('[GameRoom] Error in post-connection setup for slot=', slot, ':', err);
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                console.error('[GameRoom] Error in post-connection setup for slot=', slot, ':', errorMessage);
                 resolve();
               });
           }, 0);
@@ -344,7 +348,8 @@ export class GameRoom extends DurableObject {
 
         return new Response(null, { status: 101, webSocket: client });
       } catch (err) {
-        console.error('[GameRoom] WebSocket upgrade failed:', err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error('[GameRoom] WebSocket upgrade failed:', errorMessage);
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
     }
@@ -694,7 +699,8 @@ export class GameRoom extends DurableObject {
           this.advanceTurnAndNotify()
             .then(resolve)
             .catch((err) => {
-              console.error('[GameRoom] Error advancing turn for AI shot:', err);
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              console.error('[GameRoom] Error advancing turn for AI shot:', errorMessage);
               resolve();
             });
         }, 4500);
@@ -717,7 +723,8 @@ export class GameRoom extends DurableObject {
           this.advanceTurnAndNotify()
             .then(resolve)
             .catch((err) => {
-              console.error('[GameRoom] Error in human shot safety timeout:', err);
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              console.error('[GameRoom] Error in human shot safety timeout:', errorMessage);
               resolve();
             });
         }, 8000);
@@ -802,7 +809,8 @@ export class GameRoom extends DurableObject {
         this.executeFire(idx, fakeCommand)
           .then(resolve)
           .catch((err) => {
-            console.error('[GameRoom] Error executing AI fire for slot=', idx, ':', err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error('[GameRoom] Error executing AI fire for slot=', idx, ':', errorMessage);
             resolve();
           });
       }, 1200);
