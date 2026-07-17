@@ -470,7 +470,18 @@ export class GameRoom extends DurableObject {
     const cfg = this.state.slotConfigs[slot];
     if (cfg.type !== 'human') return;
 
-    if (msg && msg.type === 'FIRE' && msg.command) {
+    if (msg && msg.type === 'FIRE') {
+      if (!msg.command || typeof msg.command !== 'object') {
+         console.warn(`[GameRoom] Missing or invalid command in FIRE from slot ${slot}`);
+         return;
+      }
+
+      const { angle, power, weaponId } = msg.command;
+      if (typeof angle !== 'number' || typeof power !== 'number' || typeof weaponId !== 'string') {
+         console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
+         return;
+      }
+
       // One shot in flight at a time — blocks double-fire on the same turn (client unlock races).
       if (this.shotInFlight || this.awaitingShotFromSlot != null) {
         console.warn(
