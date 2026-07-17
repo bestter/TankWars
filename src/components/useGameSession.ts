@@ -675,12 +675,24 @@ export function useGameSession({
       // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
     }
 
+    let humanCount = 0;
+    let aiCount = 0;
+    const aiProfiles: string[] = [];
+    for (const p of players) {
+      if (p.isHuman) {
+        humanCount++;
+      } else {
+        aiCount++;
+        aiProfiles.push(p.aiProfile ?? "v1-random");
+      }
+    }
+
     // Track game start event with Cloudflare Zaraz
     trackEvent("game_start", {
       playerCount: players.length,
-      humanCount: players.filter((p) => p.isHuman).length,
-      aiCount: players.filter((p) => !p.isHuman).length,
-      aiProfiles: players.reduce((acc, p) => (!p.isHuman ? [...acc, p.aiProfile ?? "v1-random"] : acc), [] as string[]),
+      humanCount,
+      aiCount,
+      aiProfiles,
     });
 
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
@@ -757,13 +769,20 @@ export function useGameSession({
       const winnerType = winner ? (winner.isHuman ? "human" : "ai") : "none";
       const winnerProfile = winner && !winner.isHuman ? (winner.aiProfile ?? "v1-random") : undefined;
 
+      let nextHumanCount = 0;
+      let nextAiCount = 0;
+      for (const p of nextPlayers) {
+        if (p.isHuman) nextHumanCount++;
+        else nextAiCount++;
+      }
+
       trackEvent("round_end", {
         roundNumber: currentMancheRef.current,
         winnerId: winner ? winner.id : null,
         winnerType,
         winnerProfile,
-        humanCount: nextPlayers.filter((p) => p.isHuman).length,
-        aiCount: nextPlayers.filter((p) => !p.isHuman).length,
+        humanCount: nextHumanCount,
+        aiCount: nextAiCount,
       });
 
       // Trigger the engine-level fireworks celebration
