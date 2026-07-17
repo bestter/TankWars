@@ -1,0 +1,15 @@
+🧹 [Code Health] Refactor redundant Set iteration in MainMenu
+
+🎯 What:
+Removed the O(N^2) manual `for` loop that generated the `unavailableColors` Set inside `playerConfigs.map()`.
+
+💡 Why:
+The nested loop logic was unnecessarily verbose and redundant. It was simplified by moving the array generation of all colors outside of the map, and cleanly filtering the array internally for each player configuration row, effectively reducing logic bloat while maintaining exact behavior.
+
+✅ Verification:
+1. Ran `npm run lint` - No new warnings/errors.
+2. Ran `npm run test` - All tests passed.
+3. The refactored code correctly mimics the mutual exclusion logic and skips the current index's color.
+
+✨ Result:
+Cleaned up lines of redundant state generation with standard JS array methods and slightly improved React component render logic.
