@@ -325,7 +325,7 @@ export class GameRoom extends DurableObject {
         // complete the WebSocket handshake before we try to perform any async database transactions
         // or send data down the socket. Prevents segment faults/unhandled errors in workerd.
         const nameFromQuery = url.searchParams.get('name');
-        const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
+        const name = (nameFromQuery || `Joueur-${slot + 1}`).trim().slice(0, 16);
         const postSetupPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
             this.claimHumanSlot(slot, name)
@@ -383,9 +383,9 @@ export class GameRoom extends DurableObject {
     }
 
     // Handle name identification / update (sent by client after WS open)
-    if (msg && msg.type === 'IDENTIFY' && msg.name) {
+    if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
       if (this.state.joinedHumans[slot]) {
-        this.state.joinedHumans[slot].name = msg.name.trim() || `Joueur-${slot + 1}`;
+        this.state.joinedHumans[slot].name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
         await this.saveState();
         this.sendRosterUpdate();
       }
@@ -577,7 +577,7 @@ export class GameRoom extends DurableObject {
   private async claimHumanSlot(slot: number, name: string): Promise<void> {
     if (!this.state) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
-    this.state.joinedHumans[slot] = { name: name.trim() || `Joueur-${slot + 1}`, joinedAt: Date.now() };
+    this.state.joinedHumans[slot] = { name: name.trim().slice(0, 16) || `Joueur-${slot + 1}`, joinedAt: Date.now() };
     await this.saveState();
     this.sendRosterUpdate();
     await this.maybeAutoStart();
