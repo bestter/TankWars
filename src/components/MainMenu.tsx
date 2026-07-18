@@ -227,20 +227,14 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
 
           {/* Liste des joueurs configurables */}
           <div style={{ marginBottom: 6 }}>
-            {playerConfigs.map((cfg, index) => {
-              const unavailableColors = new Set<Color>();
-              for (let pi = 0; pi < playerConfigs.length; pi++) {
-                if (pi !== index) {
-                  unavailableColors.add(playerConfigs[pi].color);
-                }
-              }
-
-              return (
+            {(() => {
+              const allColors = playerConfigs.map((p) => p.color);
+              return playerConfigs.map((cfg, index) => (
                 <PlayerConfigRow
                   key={cfg.id}
                   cfg={cfg}
                   index={index}
-                  unavailableColors={unavailableColors}
+                  unavailableColors={new Set(allColors.filter((_, pi) => pi !== index))}
                   colorPool={TANK_COLOR_POOL}
                   nameInputRef={(el) => {
                     nameInputRefs.current[index] = el;
@@ -250,8 +244,8 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
                   onTypeChange={handleTypeChange}
                   onUpdatePlayer={updatePlayer}
                 />
-              );
-            })}
+              ));
+            })()}
           </div>
 
           <div

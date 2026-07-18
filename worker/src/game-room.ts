@@ -325,7 +325,7 @@ export class GameRoom extends DurableObject {
         // complete the WebSocket handshake before we try to perform any async database transactions
         // or send data down the socket. Prevents segment faults/unhandled errors in workerd.
         const nameFromQuery = url.searchParams.get('name');
-        const name = (nameFromQuery || `Joueur-${slot + 1}`).trim();
+        const name = (nameFromQuery || `Joueur-${slot + 1}`).trim().slice(0, 16);
         const postSetupPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
             this.claimHumanSlot(slot, name)
@@ -383,9 +383,9 @@ export class GameRoom extends DurableObject {
     }
 
     // Handle name identification / update (sent by client after WS open)
-    if (msg && msg.type === 'IDENTIFY' && msg.name) {
+    if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
       if (this.state.joinedHumans[slot]) {
-        this.state.joinedHumans[slot].name = msg.name.trim() || `Joueur-${slot + 1}`;
+        this.state.joinedHumans[slot].name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
         await this.saveState();
         this.sendRosterUpdate();
       }
@@ -470,7 +470,18 @@ export class GameRoom extends DurableObject {
     const cfg = this.state.slotConfigs[slot];
     if (cfg.type !== 'human') return;
 
-    if (msg && msg.type === 'FIRE' && msg.command) {
+    if (msg && msg.type === 'FIRE') {
+      if (!msg.command || typeof msg.command !== 'object') {
+         console.warn(`[GameRoom] Missing or invalid command in FIRE from slot ${slot}`);
+         return;
+      }
+
+      const { angle, power, weaponId } = msg.command;
+      if (typeof angle !== 'number' || typeof power !== 'number' || typeof weaponId !== 'string') {
+         console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
+         return;
+      }
+
       // One shot in flight at a time — blocks double-fire on the same turn (client unlock races).
       if (this.shotInFlight || this.awaitingShotFromSlot != null) {
         console.warn(
@@ -566,7 +577,7 @@ export class GameRoom extends DurableObject {
   private async claimHumanSlot(slot: number, name: string): Promise<void> {
     if (!this.state) return;
     if (this.state.slotConfigs[slot]?.type !== 'human') return;
-    this.state.joinedHumans[slot] = { name: name.trim() || `Joueur-${slot + 1}`, joinedAt: Date.now() };
+    this.state.joinedHumans[slot] = { name: name.trim().slice(0, 16) || `Joueur-${slot + 1}`, joinedAt: Date.now() };
     await this.saveState();
     this.sendRosterUpdate();
     await this.maybeAutoStart();

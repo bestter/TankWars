@@ -125,7 +125,7 @@ export default {
       const slot = Number(searchParams.get('slot') ?? '-1');
       const token = searchParams.get('token') ?? '';
 
-      if (!roomId || slot < 0 || slot > 3 || !token) {
+      if (!roomId || Number.isNaN(slot) || slot < 0 || slot > 3 || !token) {
         return new Response('Missing or invalid room/slot/token', { status: 400 });
       }
 
