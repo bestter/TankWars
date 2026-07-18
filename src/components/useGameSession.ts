@@ -675,24 +675,24 @@ export function useGameSession({
       // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
     }
 
-    let humanCount = 0;
-    let aiCount = 0;
-    const aiProfiles: string[] = [];
-    for (const p of players) {
-      if (p.isHuman) {
-        humanCount++;
-      } else {
-        aiCount++;
-        aiProfiles.push(p.aiProfile ?? "v1-random");
-      }
-    }
+    const playerStats = players.reduce(
+      (acc, p) => {
+        if (p.isHuman) {
+          acc.humanCount++;
+        } else {
+          acc.aiProfiles.push(p.aiProfile ?? "v1-random");
+        }
+        return acc;
+      },
+      { humanCount: 0, aiProfiles: [] as string[] }
+    );
 
     // Track game start event with Cloudflare Zaraz
     trackEvent("game_start", {
       playerCount: players.length,
-      humanCount,
-      aiCount,
-      aiProfiles,
+      humanCount: playerStats.humanCount,
+      aiCount: players.length - playerStats.humanCount,
+      aiProfiles: playerStats.aiProfiles,
     });
 
     // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
@@ -769,12 +769,7 @@ export function useGameSession({
       const winnerType = winner ? (winner.isHuman ? "human" : "ai") : "none";
       const winnerProfile = winner && !winner.isHuman ? (winner.aiProfile ?? "v1-random") : undefined;
 
-      let nextHumanCount = 0;
-      let nextAiCount = 0;
-      for (const p of nextPlayers) {
-        if (p.isHuman) nextHumanCount++;
-        else nextAiCount++;
-      }
+      const nextHumanCount = nextPlayers.reduce((count, p) => count + (p.isHuman ? 1 : 0), 0);
 
       trackEvent("round_end", {
         roundNumber: currentMancheRef.current,
@@ -782,7 +777,7 @@ export function useGameSession({
         winnerType,
         winnerProfile,
         humanCount: nextHumanCount,
-        aiCount: nextAiCount,
+        aiCount: nextPlayers.length - nextHumanCount,
       });
 
       // Trigger the engine-level fireworks celebration
