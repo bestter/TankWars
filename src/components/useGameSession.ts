@@ -675,11 +675,16 @@ export function useGameSession({
       // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
     }
 
+    let humanCountStart = 0;
+    for (let i = 0; i < players.length; i++) {
+      if (players[i].isHuman) humanCountStart++;
+    }
+
     // Track game start event with Cloudflare Zaraz
     trackEvent("game_start", {
       playerCount: players.length,
-      humanCount: players.filter((p) => p.isHuman).length,
-      aiCount: players.filter((p) => !p.isHuman).length,
+      humanCount: humanCountStart,
+      aiCount: players.length - humanCountStart,
       aiProfiles: players.reduce((acc, p) => (!p.isHuman ? [...acc, p.aiProfile ?? "v1-random"] : acc), [] as string[]),
     });
 
@@ -757,13 +762,18 @@ export function useGameSession({
       const winnerType = winner ? (winner.isHuman ? "human" : "ai") : "none";
       const winnerProfile = winner && !winner.isHuman ? (winner.aiProfile ?? "v1-random") : undefined;
 
+      let humanCountEnd = 0;
+      for (let i = 0; i < nextPlayers.length; i++) {
+        if (nextPlayers[i].isHuman) humanCountEnd++;
+      }
+
       trackEvent("round_end", {
         roundNumber: currentMancheRef.current,
         winnerId: winner ? winner.id : null,
         winnerType,
         winnerProfile,
-        humanCount: nextPlayers.filter((p) => p.isHuman).length,
-        aiCount: nextPlayers.filter((p) => !p.isHuman).length,
+        humanCount: humanCountEnd,
+        aiCount: nextPlayers.length - humanCountEnd,
       });
 
       // Trigger the engine-level fireworks celebration
