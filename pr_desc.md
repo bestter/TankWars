@@ -1,9 +1,5 @@
-## ⚡ Performance Optimization: Cache getPlayers in render loop
+🔒 Fix inadequate validation of slot parameter
 
-💡 **What:** Lifted the call to `this.tankManager.getPlayers()` out of the two loop checks inside `src/game/engine/GameEngine.ts`'s `render()` method and saved it to a `players` variable.
-
-🎯 **Why:** `this.tankManager.getPlayers()` was being called twice inside the `render()` loop, which is executed every single frame (up to 120fps). Caching the result of the first call avoids unnecessary function overhead and getter execution, especially important in the hot path of the game engine.
-
-📊 **Measured Improvement:**
-Baseline (100,000 frames rendered): ~758.63ms (0.0076ms per frame)
-After optimization (estimation, although marginal due to simple getter overhead, it still contributes to less CPU load per frame over thousands of ticks).
+🎯 **What:** The `slot` query parameter was parsed as a Number, but if an invalid non-numeric string (like "NaN") was provided, `Number.isNaN()` was not checked. This meant that `NaN < 0` and `NaN > 3` would both evaluate to `false`, bypassing the check entirely.
+⚠️ **Risk:** By passing `slot=NaN`, an attacker could bypass the `slot` boundary constraints (`0` to `3`) and provide an invalid or uncontrolled slot identifier, potentially leading to unauthorized access, unexpected errors, or denial of service in the downstream WebSocket connection handler.
+🛡️ **Solution:** Added `Number.isNaN(slot)` to the validation condition. This ensures that any input resulting in `NaN` will be explicitly caught and rejected with a 400 Bad Request.
