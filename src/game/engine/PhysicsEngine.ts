@@ -353,10 +353,10 @@ export class PhysicsEngine {
     // Check if this contact should cause detonation rather than another bounce.
     // Explodes on the Nth bounce or when nearly stopped (prevents infinite micro-hops).
     // 4 allows 3 visible bounces which feels good for "grenade à rebond" on rough maps.
-    const speed = Math.hypot(p.vx, p.vy);
+    const speedSq = p.vx * p.vx + p.vy * p.vy;
     const MAX_BOUNCES = 4;
     const shouldExplode =
-      bounceCount >= MAX_BOUNCES || speed < 3.2 || Math.abs(p.vy) < 2.0;
+      bounceCount >= MAX_BOUNCES || speedSq < 10.24 || Math.abs(p.vy) < 2.0;
 
     if (shouldExplode) {
       // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
