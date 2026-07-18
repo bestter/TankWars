@@ -50,3 +50,9 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** CORS validation in the Cloudflare Worker used `origin.endsWith('.tankwars.pages.dev')`.
 **Learning:** Using `.endsWith` for CORS origin validation is overly permissive and can be bypassed by an attacker registering a domain that ends with the targeted string (e.g., `https://eviltankwars.pages.dev`). This allows unauthorized cross-origin requests.
 **Prevention:** Use a strict equality check for specific domains or a tight, anchored regular expression (e.g., `/^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/`) to properly validate subdomains.
+
+## Security Issue: Missing Input Validation on WebSocket Messages
+**Date**: 2024-05-18
+**Vulnerability Type**: Missing Input Validation / Unhandled Exception
+**Description**: The `handleClientMessage` handler in `worker/src/game-room.ts` did not validate the structure or payload types of the `FIRE` message `command` property before casting it and passing it to the core authoritative simulation (`executeFire`). This allowed malformed WebSocket payloads to crash or break the simulation via undefined reference exceptions.
+**Mitigation**: Added structural validation checks to the `FIRE` message handler to ensure the `command` property is an object and contains `angle` (number), `power` (number), and `weaponId` (string). Invalid payloads log a warning and return early. Always validate input structures from external client sockets before casting.
