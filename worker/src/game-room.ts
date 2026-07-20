@@ -226,8 +226,18 @@ export class GameRoom extends DurableObject {
     });
 
     // Use origin provided by client (for local dev it will be http://localhost:5173),
-    // otherwise fall back to production.
-    const origin = body.origin || 'https://tankwars.pages.dev';
+    // otherwise fall back to production. Validated to prevent XSS via malformed origin injection.
+    let origin = 'https://tankwars.pages.dev';
+    if (typeof body.origin === 'string') {
+      const isAllowedOrigin =
+        body.origin === 'https://tankwars.pages.dev' ||
+        /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(body.origin) ||
+        /^http:\/\/localhost:\d+$/.test(body.origin) ||
+        /^http:\/\/127\.0\.0\.1:\d+$/.test(body.origin);
+      if (isAllowedOrigin) {
+        origin = body.origin;
+      }
+    }
     const slots = slotConfigs.map((cfg, idx) => ({
       slot: idx,
       type: cfg.type,
