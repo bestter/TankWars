@@ -92,7 +92,7 @@ export default {
       // Delegate creation to the DO (it will store the config + generate per-slot secrets)
       const createResp = await stub.fetch('https://internal/create', {
         method: 'POST',
-        body: JSON.stringify({ roomId, numPlayers, slotConfigs, origin: body.origin }),
+        body: JSON.stringify({ roomId, numPlayers, slotConfigs, origin: allowedOrigin }),
         headers: { 'content-type': 'application/json' },
       });
 
