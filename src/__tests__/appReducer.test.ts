@@ -3,6 +3,7 @@ import { appReducer, createInitialAppState } from "../appReducer";
 import type { AppState, AppAction, OnlineMeta } from "../appReducer";
 import type { Player } from "../types/player";
 import type { PersistedOnlineSession } from "../utils/onlineSession";
+import { VGA_PALETTE } from "../types/game";
 
 describe("appReducer", () => {
   describe("createInitialAppState", () => {
@@ -22,22 +23,34 @@ describe("appReducer", () => {
       const mockPlayer: Player = {
         id: "p1",
         name: "Test Player",
-        color: "#ff0000",
-        type: "LOCAL",
+        isHuman: true,
+        money: 0,
+        inventory: {},
+        tank: {
+          id: "t1",
+          position: { x: 0, y: 0 },
+          angle: 45,
+          power: 50,
+          health: 100,
+          maxHealth: 100,
+          shield: 0,
+          maxShield: 100,
+          isDead: false,
+          color: VGA_PALETTE.RED,
+          currentWeapon: "MISSILE",
+        }
       };
 
       const mockMeta: OnlineMeta = {
         roomId: "room-123",
         localPlayerId: "p1",
+        slot: 1,
       };
 
       const mockSession: PersistedOnlineSession = {
-        roomId: "room-123",
-        localPlayerId: "p1",
-        meta: mockMeta,
+        meta: mockMeta as any,
         players: [mockPlayer],
-        lastUpdate: Date.now(),
-        canvas: null,
+        canvas: {} as any,
       };
 
       const state = createInitialAppState(mockSession);
@@ -45,10 +58,10 @@ describe("appReducer", () => {
       expect(state).toEqual({
         phase: "COMBAT",
         players: [mockPlayer],
-        onlineMeta: mockMeta,
+        onlineMeta: mockSession.meta,
         forceShowOnlineLobby: false,
         onlineMatchStarted: true,
-        resumeCanvas: null,
+        resumeCanvas: mockSession.canvas,
       });
     });
   });
@@ -66,8 +79,22 @@ describe("appReducer", () => {
     const mockPlayer: Player = {
       id: "p1",
       name: "Test Player",
-      color: "#ff0000",
-      type: "LOCAL",
+      isHuman: true,
+      money: 0,
+      inventory: {},
+      tank: {
+        id: "t1",
+        position: { x: 0, y: 0 },
+        angle: 45,
+        power: 50,
+        health: 100,
+        maxHealth: 100,
+        shield: 0,
+        maxShield: 100,
+        isDead: false,
+        color: VGA_PALETTE.RED,
+        currentWeapon: "MISSILE",
+      }
     };
 
     it("should handle START_LOCAL_GAME", () => {
@@ -110,7 +137,7 @@ describe("appReducer", () => {
         onlineMeta: { roomId: "room-123", localPlayerId: "p1" },
         forceShowOnlineLobby: true,
         onlineMatchStarted: true,
-        resumeCanvas: null, // we can test with this later or create a mock snapshot
+        resumeCanvas: null,
       };
 
       const action: AppAction = { type: "RETURN_TO_MENU" };
