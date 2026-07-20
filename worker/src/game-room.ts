@@ -365,6 +365,11 @@ export class GameRoom extends DurableObject {
 
   // --- Client message handler (only FIRE for now in MVP) ---
   private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
+    // Enforce payload size limit to prevent memory exhaustion / DoS
+    if (typeof raw === 'string' && raw.length > 8192) {
+      console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
+      return;
+    }
     let msg: any;
     try {
       msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -414,7 +419,10 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (msg?.type === 'ROUND_END' && Array.isArray(msg.players) && !this.state.roundEnded) {
+    const isValidPlayerArray = (arr: any): arr is Player[] =>
+      Array.isArray(arr) && arr.every(p => p && typeof p === 'object' && typeof p.id === 'string');
+
+    if (msg?.type === 'ROUND_END' && isValidPlayerArray(msg.players) && !this.state.roundEnded) {
       this.resetShotCoordination();
       this.shopSession = null;
       this.state.roundEnded = true;
@@ -442,23 +450,23 @@ export class GameRoom extends DurableObject {
     if (msg?.type === 'SHOP_ENTER') {
       await this.handleShopEnter(
         slot,
-        Array.isArray(msg.players) ? (msg.players as Player[]) : undefined,
+        isValidPlayerArray(msg.players) ? msg.players : undefined,
       );
       return;
     }
     if (msg?.type === 'SHOP_READY') {
-      await this.handleShopReady(slot, Array.isArray(msg.players) ? (msg.players as Player[]) : undefined);
+      await this.handleShopReady(slot, isValidPlayerArray(msg.players) ? msg.players : undefined);
       return;
     }
     // Legacy client relay (pre-authoritative shop). Prefer SHOP_READY; keep for mid-deploy compat.
     if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
       console.warn(`[GameRoom] Legacy SHOP_ADVANCE from slot ${slot} — treating as SHOP_READY`);
-      await this.handleShopReady(slot, Array.isArray(msg.players) ? (msg.players as Player[]) : undefined);
+      await this.handleShopReady(slot, isValidPlayerArray(msg.players) ? msg.players : undefined);
       return;
     }
-    if (msg?.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
+    if (msg?.type === 'SHOP_FINISH' && isValidPlayerArray(msg.players)) {
       // Legacy: only accept if shop session already completed or absent (belt-and-suspenders).
-      await this.completeShopPhase(msg.players as Player[], slot);
+      await this.completeShopPhase(msg.players, slot);
       return;
     }
 
@@ -846,10 +854,14 @@ export class GameRoom extends DurableObject {
     if (!this.state) return false;
     if (this.state.slotConfigs[slot]?.type !== 'human') return false;
 
+    const isValidPlayer = (p: any): p is Player => {
+      return p && typeof p === 'object' && typeof p.id === 'string';
+    }
+
     let patch: Player | undefined;
-    if (msg.player && typeof msg.player === 'object' && typeof msg.player.id === 'string') {
+    if (isValidPlayer(msg.player)) {
       patch = msg.player;
-    } else if (Array.isArray(msg.players) && msg.players[slot]) {
+    } else if (Array.isArray(msg.players) && isValidPlayer(msg.players[slot])) {
       patch = msg.players[slot];
     }
     if (!patch) return false;
