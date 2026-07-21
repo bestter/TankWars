@@ -48,9 +48,9 @@ describe("appReducer", () => {
       };
 
       const mockSession: PersistedOnlineSession = {
-        meta: mockMeta as any,
+        meta: mockMeta as unknown as PersistedOnlineSession["meta"],
         players: [mockPlayer],
-        canvas: {} as any,
+        canvas: {} as unknown as PersistedOnlineSession["canvas"],
       };
 
       const state = createInitialAppState(mockSession);

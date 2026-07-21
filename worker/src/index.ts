@@ -90,9 +90,10 @@ export default {
       const stub = env.GAME_ROOM.get(id);
 
       // Delegate creation to the DO (it will store the config + generate per-slot secrets)
+      // Use the server-validated allowedOrigin instead of trusting body.origin
       const createResp = await stub.fetch('https://internal/create', {
         method: 'POST',
-        body: JSON.stringify({ roomId, numPlayers, slotConfigs, origin: body.origin }),
+        body: JSON.stringify({ roomId, numPlayers, slotConfigs, origin: allowedOrigin }),
         headers: { 'content-type': 'application/json' },
       });
 
