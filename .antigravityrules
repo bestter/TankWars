@@ -32,7 +32,9 @@
 - Sniper AI Optimization (Step 7): Highly accurate numerical trajectory search in `AISniperStrategy.ts` replacing the vacuum trajectory equations. Features deliberate coordinate-shifting miss for the first shot (landing safely ~36px away) and 0-noise perfect hits for subsequent shots.
 - Round Transition Hang Fix: Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
 - Merge Compilation Issue (isNewTarget): Fixed a compilation error (`TS2304: Cannot find name 'isNewTarget'`) in `AISniperStrategy.ts` introduced by a recent merge. The variable `isNewTarget` is now properly defined before updating `mem.currentTargetId`, restoring clean builds and linting.
+- Migration du modèle d'agent (Gemini 3.6 Flash) : Installation de la compétence `gemini-interactions-api` et mise à jour de la configuration de l'agent de maintenance vers `Gemini 3.6 Flash` afin de prendre en charge les workflows agentiques et multimodaux avancés avec une meilleure efficacité de jetons. Validation réussie de la suite complète de 231 tests. — Antigravity (Gemini 3.6 Flash)
 - All effects are pure CanvasRenderingContext2D, extremely cheap (no allocations in render loops, small fixed Maps), fully retro/VGA style.
+
 
 ## AI Implementation Rule
 

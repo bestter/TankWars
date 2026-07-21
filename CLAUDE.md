@@ -58,6 +58,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 - **Cloudflare Worker TypeScript & Type checking:** Integrated type checking for the Cloudflare Worker directory (`worker/`) using a dedicated `worker/tsconfig.json` configuration linked as a project reference in the root `tsconfig.json`. Resolved all typescript compilation errors inside the Durable Object and worker index files (using global types `DurableObjectNamespace` / `DurableObjectState` instead of platform imports, typing the lobby `roster` correctly, and typing the `assignColor` return signature to strict `Color`). — Antigravity (Gemini 3.5 Flash (High))
 
+- **Agent Model Migration (Gemini 3.6 Flash):** Installed the `gemini-interactions-api` skill and updated the repository agent configuration to `Gemini 3.6 Flash` to support advanced agentic and multimodal workflows with improved token efficiency. Verified complete test suite success (231 tests passed). — Antigravity (Gemini 3.6 Flash)
+
 - **Production deploy option B:** `VITE_API_BASE` → workers.dev via `onlineApi.ts`; CSP `*.workers.dev`; `deploy-cloudflare.ps1` updated locally (gitignored). 158 tests. — Grok 4.3 (xAI)
 
 - **Copyright attribution:** Legal footer credits Martin Labelle (EN/FR locales). — Grok 4.3 (xAI)
