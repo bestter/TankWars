@@ -159,6 +159,13 @@ export function useOnlineLobby({
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      const cleanup = () => {
+        if (wsRef.current === ws) {
+          ws.close();
+          wsRef.current = null;
+        }
+      };
+
       ws.onopen = () => {
         setConnected(true);
         setError(null);
@@ -225,6 +232,8 @@ export function useOnlineLobby({
         }
       };
       setTimeout(sendIdentify, 50);
+
+      return cleanup;
     },
     [clearReconnectTimer, handleServerGameStart, isRosterReadyToStart, requestGameStartCatchUp, scheduleReconnect, t],
   );
