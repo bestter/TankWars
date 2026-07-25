@@ -74,3 +74,7 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The `POST /api/rooms` endpoint in the Cloudflare Worker passed a client-provided `body.origin` directly into the Durable Object's `/create` logic to generate invite links, acting as an open redirect/spoofing vulnerability.
 **Learning:** Client-provided origins in request bodies are inherently untrusted. Relying on them to build URLs (like invite links) allows an attacker to generate valid game states but surface malicious domains to users (e.g., for phishing).
 **Prevention:** Never trust client-provided payloads for origins. Always use the server-side validated origin (e.g., `allowedOrigin` derived from CORS checks against a whitelist) when constructing secure URLs or redirect links.
+## 2026-08-01 - [Missing Input Validation on Complex Object Arrays]
+**Vulnerability:** The `POST /api/rooms` endpoint in `worker/src/index.ts` verified `Array.isArray(body.slots)` and length but failed to validate the structure and content of the objects within the array.
+**Learning:** Blindly trusting the contents of an array (even if the array itself is verified) allows attackers to inject unexpected properties or invalid enums (like an unsupported `aiProfile`). This can lead to unhandled exceptions, corrupted state, or unexpected behavior downstream.
+**Prevention:** When accepting arrays of objects, use `Array.map` to explicitly validate, safely cast, and pick only the allowed properties for each element before processing them. Verify enums against a whitelist of valid values.
