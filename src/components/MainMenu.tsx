@@ -228,23 +228,28 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
           {/* Liste des joueurs configurables */}
           <div style={{ marginBottom: 6 }}>
             {(() => {
-              const allColors = playerConfigs.map((p) => p.color);
-              return playerConfigs.map((cfg, index) => (
-                <PlayerConfigRow
-                  key={cfg.id}
-                  cfg={cfg}
-                  index={index}
-                  unavailableColors={new Set(allColors.filter((_, pi) => pi !== index))}
-                  colorPool={TANK_COLOR_POOL}
-                  nameInputRef={(el) => {
-                    nameInputRefs.current[index] = el;
-                  }}
-                  onNameChange={handleNameChange}
-                  onColorSelect={handleColorSelect}
-                  onTypeChange={handleTypeChange}
-                  onUpdatePlayer={updatePlayer}
-                />
-              ));
+              const usedColors = new Set(playerConfigs.map((p) => p.color));
+              return playerConfigs.map((cfg, index) => {
+                const unavailableColors = new Set(usedColors);
+                unavailableColors.delete(cfg.color);
+
+                return (
+                  <PlayerConfigRow
+                    key={cfg.id}
+                    cfg={cfg}
+                    index={index}
+                    unavailableColors={unavailableColors}
+                    colorPool={TANK_COLOR_POOL}
+                    nameInputRef={(el) => {
+                      nameInputRefs.current[index] = el;
+                    }}
+                    onNameChange={handleNameChange}
+                    onColorSelect={handleColorSelect}
+                    onTypeChange={handleTypeChange}
+                    onUpdatePlayer={updatePlayer}
+                  />
+                );
+              });
             })()}
           </div>
 
