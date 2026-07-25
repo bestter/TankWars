@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PhysicsEngine } from '../PhysicsEngine';
 import { TerrainManager } from '../Terrain';
 
@@ -165,6 +165,55 @@ describe('PhysicsEngine', () => {
       const finalX = projectiles[0].x;
       
       expect(finalX).toBeGreaterThan(800);
+    });
+  });
+
+  describe('checkSettlement', () => {
+    it('does nothing when previousCount is 0 and current is 0', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
+      engine.checkSettlement();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when projectiles are added', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
+
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.checkSettlement();
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('calls onAllProjectilesSettled when projectiles drop to 0', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
+
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.checkSettlement(); // previousCount = 1
+
+      // Simulate projectile removal without resetting previousCount
+      (engine as any).projectiles.length = 0;
+
+      engine.checkSettlement(); // previous = 1, current = 0 -> calls spy
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('only calls onAllProjectilesSettled once when dropping to 0', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
+
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.checkSettlement();
+
+      (engine as any).projectiles.length = 0;
+
+      engine.checkSettlement(); // triggers
+      engine.checkSettlement(); // should not trigger again
+
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 });
