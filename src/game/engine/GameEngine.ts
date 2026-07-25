@@ -823,14 +823,15 @@ export class GameEngine {
     }
 
     // Huge impact explosions (THERMONUCLEAR etc.) + brief flash overlay
-    if (this.impactExplosions.length > 0 || this.thermoFlashLife > 0) {
-      if (this.thermoFlashLife > 0) {
-        ctx.globalAlpha = 0.24;
-        ctx.fillStyle = VGA_PALETTE.RED;
-        ctx.fillRect(0, 0, this.width, this.height);
-        ctx.globalAlpha = 1;
-        this.thermoFlashLife--;
-      }
+    if (this.thermoFlashLife > 0) {
+      ctx.globalAlpha = 0.24;
+      ctx.fillStyle = VGA_PALETTE.RED;
+      ctx.fillRect(0, 0, this.width, this.height);
+      ctx.globalAlpha = 1;
+      this.thermoFlashLife--;
+    }
+
+    if (this.impactExplosions.length > 0) {
       this.drawImpactExplosions(ctx);
     }
 
