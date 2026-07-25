@@ -77,9 +77,17 @@ export default {
       }
 
       const numPlayers = Math.max(2, Math.min(4, Number(body.numPlayers) || 2));
+      const validAiProfiles = ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'];
       const slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart' }> =
         Array.isArray(body.slots) && body.slots.length === numPlayers
-          ? body.slots
+          ? body.slots.map((s: unknown) => {
+              const obj = typeof s === 'object' && s !== null ? (s as Record<string, unknown>) : {};
+              const type = obj.type === 'ai' ? 'ai' : 'human';
+              const aiProfile = type === 'ai' && typeof obj.aiProfile === 'string' && validAiProfiles.includes(obj.aiProfile)
+                ? (obj.aiProfile as 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart')
+                : 'v1-random';
+              return type === 'ai' ? { type, aiProfile } : { type };
+            })
           : Array.from({ length: numPlayers }, (_, i) => ({ type: i === 0 ? 'human' : 'ai', aiProfile: 'v1-random' as const }));
 
       // Create a room code. Real token/secret is generated inside the DO.
