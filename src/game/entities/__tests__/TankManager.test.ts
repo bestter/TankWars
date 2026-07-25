@@ -236,4 +236,75 @@ describe("TankManager", () => {
       expect(p2LeftOfP1Count).toBeGreaterThan(0);
     });
   });
+
+
+  describe("checkTankCollision", () => {
+    it("returns true when point is inside tank bounding box", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      // Box is x: [88, 112], y: [85, 100]
+      expect(tankManager.checkTankCollision(100, 95)).toBe(true);
+    });
+
+    it("returns true when point is exactly on bounding box edges", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      // Box is x: [88, 112], y: [85, 100]
+      expect(tankManager.checkTankCollision(88, 95)).toBe(true); // Left edge
+      expect(tankManager.checkTankCollision(112, 95)).toBe(true); // Right edge
+      expect(tankManager.checkTankCollision(100, 85)).toBe(true); // Top edge
+      expect(tankManager.checkTankCollision(100, 100)).toBe(true); // Bottom edge
+    });
+
+    it("returns false when point is outside bounding box", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      // Box is x: [88, 112], y: [85, 100]
+      expect(tankManager.checkTankCollision(87, 95)).toBe(false); // Too far left
+      expect(tankManager.checkTankCollision(113, 95)).toBe(false); // Too far right
+      expect(tankManager.checkTankCollision(100, 84)).toBe(false); // Too far up
+      expect(tankManager.checkTankCollision(100, 101)).toBe(false); // Too far down
+    });
+
+    it("returns false when colliding with a dead tank", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", true); // Dead tank
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      expect(tankManager.checkTankCollision(100, 95)).toBe(false);
+    });
+
+    it("returns false when colliding with the ignored owner's tank", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      expect(tankManager.checkTankCollision(100, 95, "1")).toBe(false);
+    });
+
+    it("returns true when colliding with another alive tank despite ignoreOwnerId", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+
+      const p2 = createDummyPlayer("2", false);
+      p2.tank.position = { x: 200, y: 100 };
+
+      tankManager.setPlayers([p1, p2]);
+
+      // Ignored owner is p1, but we hit p2
+      expect(tankManager.checkTankCollision(200, 95, "1")).toBe(true);
+    });
+  });
 });
