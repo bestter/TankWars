@@ -90,8 +90,8 @@ export default {
             })
           : Array.from({ length: numPlayers }, (_, i) => ({ type: i === 0 ? 'human' : 'ai', aiProfile: 'v1-random' as const }));
 
-      // Create a short room code (human friendly). Real token/secret is generated inside the DO.
-      const roomId = crypto.randomUUID().slice(0, 8); // 8 char short id for URLs
+      // Create a room code. Real token/secret is generated inside the DO.
+      const roomId = crypto.randomUUID(); // Secure id for URLs
 
       // Get (or create) the DO instance for this roomId
       const id = env.GAME_ROOM.idFromName(roomId);
