@@ -194,7 +194,7 @@ describe('PhysicsEngine', () => {
       engine.checkSettlement(); // previousCount = 1
 
       // Simulate projectile removal without resetting previousCount
-      (engine as any).projectiles.length = 0;
+      (engine as unknown as { projectiles: unknown[] }).projectiles.length = 0;
 
       engine.checkSettlement(); // previous = 1, current = 0 -> calls spy
 
@@ -208,7 +208,7 @@ describe('PhysicsEngine', () => {
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
       engine.checkSettlement();
 
-      (engine as any).projectiles.length = 0;
+      (engine as unknown as { projectiles: unknown[] }).projectiles.length = 0;
 
       engine.checkSettlement(); // triggers
       engine.checkSettlement(); // should not trigger again

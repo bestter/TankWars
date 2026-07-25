@@ -1,15 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { GameEngine } from "../GameEngine";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { GameEngine } from '../GameEngine';
 
 type GameEngineInternals = {
   victoryOscillators: { stop: () => void }[];
+  ensureAudioContext: () => AudioContext | null;
+  audioContext: AudioContext | null;
 };
 
 function engineInternals(engine: GameEngine): GameEngineInternals {
   return engine as unknown as GameEngineInternals;
 }
 
-describe("GameEngine audio", () => {
+describe('GameEngine audio', () => {
   let engine: GameEngine;
   let internal: GameEngineInternals;
 
@@ -20,13 +22,34 @@ describe("GameEngine audio", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  describe("stopVictoryMusic", () => {
-    it("silently catches errors when oscillator stop() throws and clears the array", () => {
+  it('handles AudioContext initialization failure gracefully', () => {
+    const MockAudioContext = vi.fn(function() {
+      throw new Error('AudioContext not supported');
+    });
+
+    vi.stubGlobal('window', {
+      AudioContext: MockAudioContext
+    });
+
+    let result: AudioContext | null = null;
+
+    expect(() => {
+      result = internal.ensureAudioContext();
+    }).not.toThrow();
+
+    expect(result).toBeNull();
+    expect(internal.audioContext).toBeNull();
+    expect(MockAudioContext).toHaveBeenCalled();
+  });
+
+  describe('stopVictoryMusic', () => {
+    it('silently catches errors when oscillator stop() throws and clears the array', () => {
       const mockOscillator1 = {
         stop: vi.fn().mockImplementation(() => {
-          throw new Error("Invalid state");
+          throw new Error('Invalid state');
         }),
       };
 
