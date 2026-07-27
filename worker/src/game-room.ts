@@ -936,13 +936,16 @@ export class GameRoom extends DurableObject {
     }
     if (!patch) return false;
 
-    // Prefer index === slot (canonical). Fall back to id match.
-    let idx = slot;
-    if (!this.state.players[idx] || this.state.players[idx].id !== patch.id) {
-      const byId = this.state.players.findIndex((p) => p.id === patch!.id);
-      if (byId >= 0) idx = byId;
-    }
+    // Enforce that a slot can only update its own canonical player index.
+    // IDOR protection: Do not allow a client to modify another player's state by sending a different player ID.
+    const idx = slot;
     if (idx < 0 || idx >= this.state.numPlayers) return false;
+
+    // Ensure the patched ID matches the server's expected ID for this slot (if it exists yet).
+    if (this.state.players[idx] && this.state.players[idx].id !== patch.id) {
+      console.warn(`[GameRoom] IDOR prevented: Slot ${slot} attempted to update player ID ${patch.id}`);
+      return false;
+    }
 
     const next = [...this.state.players];
     // Ensure array length if server roster was still empty.
