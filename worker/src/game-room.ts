@@ -27,7 +27,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Player } from '../../src/types/player'; // share types from root (works in monorepo-style dev)
 import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
-import { DEFAULT_INVENTORY } from '../../src/types/weapon';
+import { DEFAULT_INVENTORY, ALL_WEAPON_IDS } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 
 // Very small serializable state for MVP (will be enriched with real engine state later)
@@ -71,6 +71,64 @@ function mulberry32(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+function sanitizePlayer(p: any): Player | null {
+  if (!p || typeof p !== 'object' || typeof p.id !== 'string') return null;
+
+  // Extract base player properties
+  const sanitized: Player = {
+    id: p.id,
+    name: typeof p.name === 'string' ? p.name.trim().slice(0, 32) : 'Unknown',
+    isHuman: Boolean(p.isHuman),
+    money: typeof p.money === 'number' && !Number.isNaN(p.money) ? Math.max(0, p.money) : 0,
+    aiProfile: undefined,
+    tank: {
+      id: '', position: { x: 0, y: 0 }, angle: 0, power: 0, health: 0, maxHealth: 0, shield: 0, maxShield: 0, isDead: false, color: '#FFFFFF', currentWeapon: 'MISSILE'
+    },
+    inventory: {},
+  };
+
+  if (['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'].includes(p.aiProfile)) {
+    sanitized.aiProfile = p.aiProfile as Player['aiProfile'];
+  }
+
+  // Extract and sanitize inventory
+  if (p.inventory && typeof p.inventory === 'object') {
+    ALL_WEAPON_IDS.forEach((wid) => {
+      if (typeof p.inventory[wid] === 'number' && !Number.isNaN(p.inventory[wid])) {
+        sanitized.inventory[wid] = Math.max(0, Math.floor(p.inventory[wid]));
+      }
+    });
+  }
+
+  // Extract and sanitize tank
+  const t = p.tank;
+  if (!t || typeof t !== 'object' || typeof t.id !== 'string') return null; // Tank is required and must have id
+
+  sanitized.tank = {
+    id: t.id,
+    position: {
+      x: typeof t.position?.x === 'number' && !Number.isNaN(t.position.x) ? t.position.x : 0,
+      y: typeof t.position?.y === 'number' && !Number.isNaN(t.position.y) ? t.position.y : 0,
+    },
+    angle: typeof t.angle === 'number' && !Number.isNaN(t.angle) ? t.angle : 0,
+    power: typeof t.power === 'number' && !Number.isNaN(t.power) ? Math.max(0, Math.min(100, t.power)) : 50,
+    health: typeof t.health === 'number' && !Number.isNaN(t.health) ? t.health : 0,
+    maxHealth: typeof t.maxHealth === 'number' && !Number.isNaN(t.maxHealth) ? Math.max(1, t.maxHealth) : 100,
+    shield: typeof t.shield === 'number' && !Number.isNaN(t.shield) ? Math.max(0, t.shield) : 0,
+    maxShield: typeof t.maxShield === 'number' && !Number.isNaN(t.maxShield) ? Math.max(0, t.maxShield) : 0,
+    isDead: Boolean(t.isDead),
+    color: typeof t.color === 'string' ? (t.color as Color) : '#FFFFFF', // In a real app we might validate against VGA_PALETTE
+    currentWeapon: ALL_WEAPON_IDS.includes(t.currentWeapon) ? (t.currentWeapon as WeaponId) : 'MISSILE',
+  };
+
+  if (typeof t.lastHitBy === 'string') {
+    sanitized.tank.lastHitBy = t.lastHitBy;
+  }
+
+  return sanitized;
+}
+
 
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
@@ -429,18 +487,18 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    const isValidPlayerArray = (arr: any): arr is Player[] =>
-      Array.isArray(arr) && arr.every(p => p && typeof p === 'object' && typeof p.id === 'string');
 
-    if (msg?.type === 'ROUND_END' && isValidPlayerArray(msg.players) && !this.state.roundEnded) {
+
+    const sanitizedPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : null;
+    if (msg?.type === 'ROUND_END' && sanitizedPlayers && sanitizedPlayers.length > 0 && !this.state.roundEnded) {
       this.resetShotCoordination();
       this.shopSession = null;
       this.state.roundEnded = true;
-      this.state.players = msg.players;
+      this.state.players = sanitizedPlayers as Player[];
       await this.saveState();
       this.broadcast({
         type: 'ROUND_END',
-        players: msg.players,
+        players: sanitizedPlayers,
         roundWinnerId: msg.roundWinnerId ?? null,
         isDraw: !!msg.isDraw,
         slot: typeof msg.slot === 'number' ? msg.slot : slot,
@@ -458,25 +516,29 @@ export class GameRoom extends DurableObject {
       return;
     }
     if (msg?.type === 'SHOP_ENTER') {
+      const enterPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : undefined;
       await this.handleShopEnter(
         slot,
-        isValidPlayerArray(msg.players) ? msg.players : undefined,
+        enterPlayers && enterPlayers.length > 0 ? (enterPlayers as Player[]) : undefined,
       );
       return;
     }
     if (msg?.type === 'SHOP_READY') {
-      await this.handleShopReady(slot, isValidPlayerArray(msg.players) ? msg.players : undefined);
+      const readyPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : undefined;
+      await this.handleShopReady(slot, readyPlayers && readyPlayers.length > 0 ? (readyPlayers as Player[]) : undefined);
       return;
     }
     // Legacy client relay (pre-authoritative shop). Prefer SHOP_READY; keep for mid-deploy compat.
     if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
       console.warn(`[GameRoom] Legacy SHOP_ADVANCE from slot ${slot} — treating as SHOP_READY`);
-      await this.handleShopReady(slot, isValidPlayerArray(msg.players) ? msg.players : undefined);
+      const legacyReadyPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : undefined;
+      await this.handleShopReady(slot, legacyReadyPlayers && legacyReadyPlayers.length > 0 ? (legacyReadyPlayers as Player[]) : undefined);
       return;
     }
-    if (msg?.type === 'SHOP_FINISH' && isValidPlayerArray(msg.players)) {
+    const finishPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : null;
+    if (msg?.type === 'SHOP_FINISH' && finishPlayers && finishPlayers.length > 0) {
       // Legacy: only accept if shop session already completed or absent (belt-and-suspenders).
-      await this.completeShopPhase(msg.players, slot);
+      await this.completeShopPhase(finishPlayers as Player[], slot);
       return;
     }
 
@@ -864,15 +926,13 @@ export class GameRoom extends DurableObject {
     if (!this.state) return false;
     if (this.state.slotConfigs[slot]?.type !== 'human') return false;
 
-    const isValidPlayer = (p: any): p is Player => {
-      return p && typeof p === 'object' && typeof p.id === 'string';
-    }
-
     let patch: Player | undefined;
-    if (isValidPlayer(msg.player)) {
-      patch = msg.player;
-    } else if (Array.isArray(msg.players) && isValidPlayer(msg.players[slot])) {
-      patch = msg.players[slot];
+    const sanitizedSingle = sanitizePlayer(msg.player);
+    if (sanitizedSingle) {
+      patch = sanitizedSingle;
+    } else if (Array.isArray(msg.players)) {
+      const sanitizedArrayEl = sanitizePlayer(msg.players[slot]);
+      if (sanitizedArrayEl) patch = sanitizedArrayEl;
     }
     if (!patch) return false;
 
