@@ -498,6 +498,10 @@ export class TurnManager {
     }
 
     if (!player || player.tank.isDead) return;
+    if (!ALL_WEAPON_IDS.includes(command.weaponId)) {
+      console.warn("[TurnManager] Ignoring remote fire with invalid weaponId", command.weaponId);
+      return;
+    }
 
     // A new authoritative shot supersedes any stale local settlement wait.
     this.clearAwaitingStabilization();
