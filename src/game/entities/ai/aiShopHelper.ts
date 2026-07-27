@@ -11,6 +11,13 @@ function hasForbiddenOwnKey(value: unknown): boolean {
   );
 }
 
+function isSafePlayerTarget(value: unknown): value is Player {
+  if (!value || typeof value !== "object") return false;
+  if (value === Object.prototype) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 function toSafeInventory(
   inventory: Player["inventory"],
 ): NonNullable<Player["inventory"]> {
@@ -29,7 +36,7 @@ function toSafeInventory(
  * Modifie directement l'objet joueur passé en paramètre.
  */
 export function autoBuyForAI(aiPlayer: Player): void {
-  if (!aiPlayer || aiPlayer.isHuman) return;
+  if (!isSafePlayerTarget(aiPlayer) || aiPlayer.isHuman) return;
   if (hasForbiddenOwnKey(aiPlayer)) return;
 
   const inventory = toSafeInventory(aiPlayer.inventory);
