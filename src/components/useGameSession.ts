@@ -1165,7 +1165,28 @@ export function useGameSession({
     const current = shopPlayersRef.current[idx];
     if (!current || current.isHuman) return;
 
-    autoBuyForAI(current);
+    const safeInventory = Object.create(null) as NonNullable<Player["inventory"]>;
+    if (current.inventory && typeof current.inventory === "object") {
+      for (const [k, v] of Object.entries(current.inventory)) {
+        if (k !== "__proto__" && k !== "prototype" && k !== "constructor") {
+          (safeInventory as Record<string, unknown>)[k] = v;
+        }
+      }
+    }
+
+    const safeAiPlayer = {
+      ...current,
+      inventory: safeInventory,
+    } as Player;
+
+    autoBuyForAI(safeAiPlayer);
+
+    shopPlayersRef.current[idx] = {
+      ...current,
+      money: safeAiPlayer.money,
+      inventory: safeAiPlayer.inventory,
+    };
+
     advanceToNextShopper();
   };
 
