@@ -32,8 +32,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
   if (!aiPlayer || aiPlayer.isHuman) return;
   if (hasForbiddenOwnKey(aiPlayer)) return;
 
-  aiPlayer.inventory = toSafeInventory(aiPlayer.inventory);
-
+  const inventory = toSafeInventory(aiPlayer.inventory);
   const profile = aiPlayer.aiProfile ?? "v1-random";
 
   // Configure budget and priorities depending on AI profile
@@ -63,7 +62,8 @@ export function autoBuyForAI(aiPlayer: Player): void {
   }
 
   let spent = 0;
-  const budget = Math.floor((aiPlayer.money ?? 0) * budgetRatio);
+  let money = aiPlayer.money ?? 0;
+  const budget = Math.floor(money * budgetRatio);
 
   for (const wid of preferredOrder) {
     if (wid === "BULLET" && profile !== "v3-sniper") {
@@ -77,15 +77,18 @@ export function autoBuyForAI(aiPlayer: Player): void {
 
     while (
       buysThisWeapon < maxBuysPerWeapon &&
-      (aiPlayer.money ?? 0) >= def.price &&
+      money >= def.price &&
       spent + def.price <= budget &&
-      (aiPlayer.money ?? 0) > 80 // garde un peu d'argent
+      money > 80 // garde un peu d'argent
     ) {
-      const currentStock = aiPlayer.inventory?.[wid] ?? 0;
-      aiPlayer.money = (aiPlayer.money ?? 0) - def.price;
-      aiPlayer.inventory = { ...toSafeInventory(aiPlayer.inventory), [wid]: currentStock + 1 };
+      const currentStock = inventory[wid] ?? 0;
+      money -= def.price;
+      inventory[wid] = currentStock + 1;
       spent += def.price;
       buysThisWeapon++;
     }
   }
+
+  aiPlayer.money = money;
+  aiPlayer.inventory = inventory;
 }
