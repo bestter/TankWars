@@ -624,7 +624,7 @@ export class TurnManager {
     const cur = player.inventory[weaponId] ?? 0;
     if (cur <= 0) return;
     const next = cur - 1;
-    player.inventory = { ...player.inventory, [weaponId]: next };
+    player.inventory[weaponId] = next;
     if (next === 0 && player.tank.currentWeapon === weaponId) {
       const available = ALL_WEAPON_IDS.filter(
         (id) => id === "MISSILE" || (player.inventory[id] ?? 0) > 0,
