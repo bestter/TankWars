@@ -337,7 +337,7 @@ export class GameRoom extends DurableObject {
       if (!this.state || this.state.roomId !== roomId) {
         return new Response('Room not found', { status: 404 });
       }
-      if (slot < 0 || slot >= this.state.numPlayers) {
+      if (!Number.isInteger(slot) || slot < 0 || slot >= this.state.numPlayers) {
         return new Response('Invalid slot', { status: 400 });
       }
 
