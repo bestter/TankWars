@@ -14,7 +14,7 @@ import { secureRandom } from "../../utils/random";
  */
 
 import { TerrainManager } from "./Terrain";
-import { PhysicsEngine, type Projectile } from "./PhysicsEngine";
+import { PhysicsEngine } from "./PhysicsEngine";
 import { TankManager } from "../entities/TankManager";
 import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
@@ -170,7 +170,7 @@ export class GameEngine {
   public onAllProjectilesSettled?: () => void;
   /** Fired when a new combat round rolls wind (React HUD). */
   public onWindChange?: (force: number) => void;
-  public onPhysicsStep?: (projectiles: ReadonlyArray<Projectile>) => void;
+  public onPhysicsStep?: (projectiles: ReadonlyArray<import("./PhysicsEngine").Projectile>) => void;
 
   /** Callback pour le HUD React (angle, puissance, joueur actif, etc.) */
   public onTurnHudUpdate?: (
@@ -329,7 +329,7 @@ export class GameEngine {
     this.turnManager.setupInputListeners();
   }
 
-  public getActiveProjectiles(): ReadonlyArray<Projectile> {
+  public getActiveProjectiles(): ReadonlyArray<import("./PhysicsEngine").Projectile> {
     return this.physicsEngine.getProjectiles();
   }
 
