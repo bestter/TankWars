@@ -251,7 +251,7 @@ export class GameRoom extends DurableObject {
     const numPlayers = body.numPlayers;
     const slotConfigs = body.slotConfigs;
 
-    if (!roomId || !numPlayers || !slotConfigs) {
+    if (!roomId || !numPlayers || !Number.isInteger(numPlayers) || !slotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
     }
 
