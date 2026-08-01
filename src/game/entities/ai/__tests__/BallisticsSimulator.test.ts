@@ -19,6 +19,45 @@ describe("BallisticsSimulator", () => {
 
   });
 
+  it("simulateShot handles angle=0 (horizontal right) correctly", () => {
+    const terrain = new TerrainManager(800, 480);
+    terrain.generate();
+
+    const result = simulateShot(400, 200, 0, 50, 0, 260, terrain);
+
+    expect(result.landX).toBeGreaterThan(400);
+  });
+
+  it("simulateShot handles angle=180 (horizontal left) correctly", () => {
+    const terrain = new TerrainManager(800, 480);
+    terrain.generate();
+
+    const result = simulateShot(400, 200, 180, 50, 0, 260, terrain);
+
+    expect(result.landX).toBeLessThan(400);
+  });
+
+  it("simulateShot handles angle=90 (straight up) correctly", () => {
+    const terrain = new TerrainManager(800, 480);
+    terrain.generate();
+
+    const result = simulateShot(400, 200, 90, 50, 0, 260, terrain);
+
+    expect(Math.abs(result.landX - 400)).toBeLessThan(1.0);
+  });
+
+  it("simulateShot handles power=0 (drop straight down) correctly", () => {
+    const terrain = new TerrainManager(800, 480);
+    terrain.generate();
+
+    const result = simulateShot(400, 200, 45, 0, 0, 260, terrain);
+
+    // With power 0, the projectile drops straight down from the barrel tip.
+    // The barrel is short (length 20), so the landing X should be close to launch X.
+    expect(Math.abs(result.landX - 400)).toBeLessThan(25.0);
+  });
+
+
   it("searchBallisticSolution finds a low-error shot on flat terrain", () => {
     const terrain = new TerrainManager(800, 480);
     terrain.generate();
