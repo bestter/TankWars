@@ -5,4 +5,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/',
+  resolve: {
+    alias: {
+      'cloudflare:workers': '/worker/__mocks__/cloudflare-workers.ts'
+    }
+  }
 })
