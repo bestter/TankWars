@@ -12,7 +12,7 @@ import { secureRandom } from '../../utils/random';
  * - Ballistic motion: gravity, horizontal wind acceleration, light air drag
  */
 
-import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
+import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
 import type { TerrainManager } from "./Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import type { TankManager } from "../entities/TankManager";
