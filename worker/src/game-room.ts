@@ -438,9 +438,14 @@ export class GameRoom extends DurableObject {
       console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
       return;
     }
-    let msg: any;
+    let msg: Record<string, unknown>;
     try {
-      msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        console.warn(`[GameRoom] Invalid message format from slot ${slot}`);
+        return;
+      }
+      msg = parsed as Record<string, unknown>;
     } catch {
       return;
     }
@@ -556,7 +561,8 @@ export class GameRoom extends DurableObject {
          return;
       }
 
-      const { angle, power, weaponId } = msg.command;
+      const cmdObj = msg.command as Record<string, unknown>;
+      const { angle, power, weaponId } = cmdObj;
       if (typeof angle !== 'number' || typeof power !== 'number' || typeof weaponId !== 'string') {
          console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
          return;
