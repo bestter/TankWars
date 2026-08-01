@@ -1056,12 +1056,13 @@ export function useGameSession({
 
     const currentStock = currentPlayer.inventory?.[weaponId] ?? 0;
 
+    let localUpdated = currentPlayer;
     const updatedPlayers = enginePlayers.map((p) => {
       if (p.id === currentPlayer.id) {
         if (delta > 0) {
           // Achat
           if ((p.money ?? 0) >= def.price) {
-            return {
+            const updated = {
               ...p,
               money: (p.money ?? 0) - def.price,
               inventory: {
@@ -1069,11 +1070,13 @@ export function useGameSession({
                 [weaponId]: currentStock + 1,
               },
             };
+            if (p.id === localPlayerId) localUpdated = updated;
+            return updated;
           }
         } else {
           // Vente
           if (currentStock > 0) {
-            return {
+            const updated = {
               ...p,
               money: (p.money ?? 0) + def.price,
               inventory: {
@@ -1081,6 +1084,8 @@ export function useGameSession({
                 [weaponId]: currentStock - 1,
               },
             };
+            if (p.id === localPlayerId) localUpdated = updated;
+            return updated;
           }
         }
       }
@@ -1094,8 +1099,6 @@ export function useGameSession({
 
     if (gameMode === 'online') {
       // Send only the local player so parallel buys merge cleanly on the server.
-      const localUpdated =
-        updatedPlayers.find((p) => p.id === localPlayerId) ?? currentPlayer;
       sendCombatMessage({ type: 'SHOP_BUY_SELL', player: localUpdated, slot });
     }
   };
@@ -1167,9 +1170,11 @@ export function useGameSession({
 
     const safeInventory = Object.create(null) as NonNullable<Player["inventory"]>;
     if (current.inventory && typeof current.inventory === "object") {
-      for (const [k, v] of Object.entries(current.inventory)) {
-        if (k !== "__proto__" && k !== "prototype" && k !== "constructor") {
-          (safeInventory as Record<string, unknown>)[k] = v;
+      for (const k in current.inventory) {
+        if (Object.prototype.hasOwnProperty.call(current.inventory, k)) {
+          if (k !== "__proto__" && k !== "prototype" && k !== "constructor") {
+            (safeInventory as Record<string, unknown>)[k] = (current.inventory as Record<string, unknown>)[k];
+          }
         }
       }
     }
