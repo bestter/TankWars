@@ -19,7 +19,8 @@
 import { useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
-import { VGA_PALETTE, type Color } from "../types/game";
+import { VGA_PALETTE } from "../types/game";
+type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
 import { DEFAULT_INVENTORY } from "../types/weapon";
 import { version } from "../../package.json";
 
