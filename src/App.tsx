@@ -45,7 +45,7 @@ function App() {
     const slotStr = p.get('slot');
     const token = p.get('token');
     const slot = slotStr !== null ? Number(slotStr) : null;
-    return { room, slot: Number.isFinite(slot) ? slot! : null, token };
+    return { room, slot: Number.isInteger(slot) ? slot! : null, token };
   });
 
   const isOnlineJoin = !!onlineParams.room && onlineParams.slot !== null && !!onlineParams.token;

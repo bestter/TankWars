@@ -76,7 +76,7 @@ export default {
         body = {};
       }
 
-      const numPlayers = Math.max(2, Math.min(4, Number(body.numPlayers) || 2));
+      const numPlayers = Math.floor(Math.max(2, Math.min(4, Number(body.numPlayers) || 2)));
       const validAiProfiles = ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'];
       const slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart' }> =
         Array.isArray(body.slots) && body.slots.length === numPlayers
