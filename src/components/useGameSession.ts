@@ -1167,9 +1167,11 @@ export function useGameSession({
 
     const safeInventory = Object.create(null) as NonNullable<Player["inventory"]>;
     if (current.inventory && typeof current.inventory === "object") {
-      for (const [k, v] of Object.entries(current.inventory)) {
-        if (k !== "__proto__" && k !== "prototype" && k !== "constructor") {
-          (safeInventory as Record<string, unknown>)[k] = v;
+      for (const k in current.inventory) {
+        if (Object.prototype.hasOwnProperty.call(current.inventory, k)) {
+          if (k !== "__proto__" && k !== "prototype" && k !== "constructor") {
+            (safeInventory as Record<string, unknown>)[k] = (current.inventory as Record<string, unknown>)[k];
+          }
         }
       }
     }
