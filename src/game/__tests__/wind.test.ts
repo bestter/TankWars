@@ -144,10 +144,6 @@ describe('rollRoundWind', () => {
 
   describe('deterministic distribution tests for rollRoundWind', () => {
     const mockRandomValues = (v1: number, v2: number, v3: number) => {
-      vi.spyOn(Math, 'random')
-        .mockReturnValueOnce(v1)
-        .mockReturnValueOnce(v2)
-        .mockReturnValueOnce(v3);
       vi.mocked(secureRandom)
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2)
@@ -157,7 +153,6 @@ describe('rollRoundWind', () => {
     it('always returns a value between WIND_ACCEL_MIN and WIND_ACCEL_MAX', () => {
       for (let i = 0; i < 10; i++) {
         for (let j = 0; j < 10; j++) {
-          vi.spyOn(Math, 'random').mockReset();
           vi.mocked(secureRandom).mockReset();
 
           const signRand = i / 10;
@@ -173,7 +168,6 @@ describe('rollRoundWind', () => {
     it('always returns a value with at most one decimal place', () => {
       for (let i = 0; i < 10; i++) {
         for (let j = 0; j < 10; j++) {
-          vi.spyOn(Math, 'random').mockReset();
           vi.mocked(secureRandom).mockReset();
 
           const signRand = i / 10;
@@ -192,13 +186,11 @@ describe('rollRoundWind', () => {
     });
 
     it('returns exact values for specific boundaries', () => {
-      vi.spyOn(Math, 'random').mockReset();
       vi.mocked(secureRandom).mockReset();
 
       mockRandomValues(0.15, 0.4, 0.5);
       expect(rollRoundWind()).toBe(-20.5);
 
-      vi.spyOn(Math, 'random').mockReset();
       vi.mocked(secureRandom).mockReset();
 
       mockRandomValues(0.15, 0.6, 0.1);
@@ -238,5 +230,39 @@ describe('rollRoundWind', () => {
         .mockReturnValueOnce(-0)
         .mockReturnValueOnce(-0);
       expect(rollRoundWind()).toBe(0);
+    });
+  });
+
+  describe('randomness source', () => {
+    it('uses secureRandom exactly 3 times when not calm', () => {
+      vi.mocked(secureRandom).mockReset();
+      const mathRandomSpy = vi.spyOn(Math, 'random');
+
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(0.15)
+        .mockReturnValueOnce(0.6)
+        .mockReturnValueOnce(0.5);
+
+      rollRoundWind();
+
+      expect(vi.mocked(secureRandom)).toHaveBeenCalledTimes(3);
+      expect(mathRandomSpy).not.toHaveBeenCalled();
+
+      mathRandomSpy.mockRestore();
+    });
+
+    it('uses secureRandom exactly 1 time when calm', () => {
+      vi.mocked(secureRandom).mockReset();
+      const mathRandomSpy = vi.spyOn(Math, 'random');
+
+      vi.mocked(secureRandom)
+        .mockReturnValueOnce(0.05); // < 0.1 CALM_CHANCE
+
+      rollRoundWind();
+
+      expect(vi.mocked(secureRandom)).toHaveBeenCalledTimes(1);
+      expect(mathRandomSpy).not.toHaveBeenCalled();
+
+      mathRandomSpy.mockRestore();
     });
   });
