@@ -71,7 +71,10 @@ export default {
       // For MVP we trust the payload (simple game, no auth yet).
       let body: Record<string, unknown> = {};
       try {
-        body = (await request.json()) as Record<string, unknown>;
+        const parsed = await request.json();
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          body = parsed as Record<string, unknown>;
+        }
       } catch {
         body = {};
       }
