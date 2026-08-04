@@ -80,7 +80,7 @@ function sanitizePlayer(p: any): Player | null {
     id: p.id,
     name: typeof p.name === 'string' ? p.name.trim().slice(0, 32) : 'Unknown',
     isHuman: Boolean(p.isHuman),
-    money: typeof p.money === 'number' && !Number.isNaN(p.money) ? Math.max(0, p.money) : 0,
+    money: typeof p.money === 'number' && Number.isFinite(p.money) ? Math.max(0, p.money) : 0,
     aiProfile: undefined,
     tank: {
       id: '', position: { x: 0, y: 0 }, angle: 0, power: 0, health: 0, maxHealth: 0, shield: 0, maxShield: 0, isDead: false, color: '#FFFFFF', currentWeapon: 'MISSILE'
@@ -95,7 +95,7 @@ function sanitizePlayer(p: any): Player | null {
   // Extract and sanitize inventory
   if (p.inventory && typeof p.inventory === 'object') {
     ALL_WEAPON_IDS.forEach((wid) => {
-      if (typeof p.inventory[wid] === 'number' && !Number.isNaN(p.inventory[wid])) {
+      if (typeof p.inventory[wid] === 'number' && Number.isFinite(p.inventory[wid])) {
         sanitized.inventory[wid] = Math.max(0, Math.floor(p.inventory[wid]));
       }
     });
@@ -108,15 +108,15 @@ function sanitizePlayer(p: any): Player | null {
   sanitized.tank = {
     id: t.id,
     position: {
-      x: typeof t.position?.x === 'number' && !Number.isNaN(t.position.x) ? t.position.x : 0,
-      y: typeof t.position?.y === 'number' && !Number.isNaN(t.position.y) ? t.position.y : 0,
+      x: typeof t.position?.x === 'number' && Number.isFinite(t.position.x) ? t.position.x : 0,
+      y: typeof t.position?.y === 'number' && Number.isFinite(t.position.y) ? t.position.y : 0,
     },
-    angle: typeof t.angle === 'number' && !Number.isNaN(t.angle) ? t.angle : 0,
-    power: typeof t.power === 'number' && !Number.isNaN(t.power) ? Math.max(0, Math.min(100, t.power)) : 50,
-    health: typeof t.health === 'number' && !Number.isNaN(t.health) ? t.health : 0,
-    maxHealth: typeof t.maxHealth === 'number' && !Number.isNaN(t.maxHealth) ? Math.max(1, t.maxHealth) : 100,
-    shield: typeof t.shield === 'number' && !Number.isNaN(t.shield) ? Math.max(0, t.shield) : 0,
-    maxShield: typeof t.maxShield === 'number' && !Number.isNaN(t.maxShield) ? Math.max(0, t.maxShield) : 0,
+    angle: typeof t.angle === 'number' && Number.isFinite(t.angle) ? t.angle : 0,
+    power: typeof t.power === 'number' && Number.isFinite(t.power) ? Math.max(0, Math.min(100, t.power)) : 50,
+    health: typeof t.health === 'number' && Number.isFinite(t.health) ? t.health : 0,
+    maxHealth: typeof t.maxHealth === 'number' && Number.isFinite(t.maxHealth) ? Math.max(1, t.maxHealth) : 100,
+    shield: typeof t.shield === 'number' && Number.isFinite(t.shield) ? Math.max(0, t.shield) : 0,
+    maxShield: typeof t.maxShield === 'number' && Number.isFinite(t.maxShield) ? Math.max(0, t.maxShield) : 0,
     isDead: Boolean(t.isDead),
     color: typeof t.color === 'string' ? (t.color as Color) : '#FFFFFF', // In a real app we might validate against VGA_PALETTE
     currentWeapon: ALL_WEAPON_IDS.includes(t.currentWeapon) ? (t.currentWeapon as WeaponId) : 'MISSILE',
@@ -563,7 +563,7 @@ export class GameRoom extends DurableObject {
 
       const cmdObj = msg.command as Record<string, unknown>;
       const { angle, power, weaponId } = cmdObj;
-      if (typeof angle !== 'number' || typeof power !== 'number' || typeof weaponId !== 'string') {
+      if (typeof angle !== 'number' || !Number.isFinite(angle) || typeof power !== 'number' || !Number.isFinite(power) || typeof weaponId !== 'string') {
          console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
          return;
       }
