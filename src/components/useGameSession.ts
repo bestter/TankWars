@@ -486,7 +486,7 @@ export function useGameSession({
             // For the firer, we already executed the full local fire for immediate feedback.
             // Replay for every other slot so observers always see the projectile.
             if (
-              !Number.isNaN(shotSlot) &&
+              Number.isFinite(shotSlot) &&
               shotSlot !== localSlotNum &&
               gamePhaseRef.current === 'COMBAT' &&
               !tm.isInterRoundPaused()
