@@ -345,6 +345,7 @@ export function useGameSession({
     }
   };
 
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -486,7 +487,7 @@ export function useGameSession({
             // For the firer, we already executed the full local fire for immediate feedback.
             // Replay for every other slot so observers always see the projectile.
             if (
-              Number.isFinite(shotSlot) &&
+              Number.isInteger(shotSlot) &&
               shotSlot !== localSlotNum &&
               gamePhaseRef.current === 'COMBAT' &&
               !tm.isInterRoundPaused()
@@ -823,32 +824,56 @@ export function useGameSession({
       isMounted = false;
       if (combatStartTimer !== null) {
         clearTimeout(combatStartTimer);
+        combatStartTimer = null;
       }
       if (combatReconnectTimer !== null) {
         clearTimeout(combatReconnectTimer);
+        combatReconnectTimer = null;
+      }
+      if (celebrationTimerRef.current !== null) {
+        clearTimeout(celebrationTimerRef.current);
+        celebrationTimerRef.current = null;
+      }
+      if (shopAiTimeoutRef.current !== null) {
+        clearTimeout(shopAiTimeoutRef.current);
+        shopAiTimeoutRef.current = null;
       }
       clearShopAiTimeout();
       clearCelebrationTimer();
-      // Defer close so React Strict Mode remount can reuse the same lobby/combat socket
-      // without dropping the DO mapping mid-handshake (which made P2 miss P1's SHOT).
+
       const wsToClose = gameWs;
       const genAtCleanup = effectGeneration;
+      // Defer close so React Strict Mode remount can reuse the same lobby/combat socket
+      // without dropping the DO mapping mid-handshake (which made P2 miss P1's SHOT).
       setTimeout(() => {
         if (combatWsEffectGen !== genAtCleanup) return; // a newer effect owns the session
-        if (wsToClose && (wsToClose.readyState === WebSocket.OPEN || wsToClose.readyState === WebSocket.CONNECTING)) {
-          try {
-            wsToClose.close();
-          } catch {
-            void 0;
+        if (wsToClose) {
+          wsToClose.onopen = null;
+          wsToClose.onmessage = null;
+          wsToClose.onclose = null;
+          wsToClose.onerror = null;
+          if (wsToClose.readyState === WebSocket.OPEN || wsToClose.readyState === WebSocket.CONNECTING) {
+            try {
+              wsToClose.close();
+            } catch {
+              void 0;
+            }
           }
         }
         if (gameWsRef.current === wsToClose) {
           gameWsRef.current = null;
         }
       }, 0);
+
       if (fireChannel) {
-        try { fireChannel.close(); } catch { void 0; /* ignore close errors */ }
+        fireChannel.onmessage = null;
+        try {
+          fireChannel.close();
+        } catch {
+          void 0;
+        }
       }
+
       engine.stop();
       engine.getTurnManager().removeInputListeners();
       if (rafId) cancelAnimationFrame(rafId);

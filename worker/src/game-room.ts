@@ -563,7 +563,7 @@ export class GameRoom extends DurableObject {
 
       const cmdObj = msg.command as Record<string, unknown>;
       const { angle, power, weaponId } = cmdObj;
-      if (typeof angle !== 'number' || typeof power !== 'number' || typeof weaponId !== 'string') {
+      if (typeof angle !== 'number' || !Number.isFinite(angle) || typeof power !== 'number' || !Number.isFinite(power) || typeof weaponId !== 'string') {
          console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
          return;
       }
