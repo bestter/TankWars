@@ -83,6 +83,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn btn-angle"
+            aria-label="Réduire l'angle"
             disabled={!canInteract}
             onMouseDown={() => startAction(() => onAdjustAngle(-1))}
             onMouseUp={stopAction}
@@ -99,6 +100,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn btn-angle"
+            aria-label="Augmenter l'angle"
             disabled={!canInteract}
             onMouseDown={() => startAction(() => onAdjustAngle(1))}
             onMouseUp={stopAction}
@@ -124,6 +126,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn btn-power"
+            aria-label="Réduire la puissance"
             disabled={!canInteract}
             onMouseDown={() => startAction(() => onAdjustPower(-1))}
             onMouseUp={stopAction}
@@ -140,6 +143,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn btn-power"
+            aria-label="Augmenter la puissance"
             disabled={!canInteract}
             onMouseDown={() => startAction(() => onAdjustPower(1))}
             onMouseUp={stopAction}
