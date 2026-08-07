@@ -102,6 +102,7 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts` and `src/components/useGameSession.ts`, untrusted numeric values from WebSocket payloads were validated using `!Number.isNaN(value)` or merely `typeof value === 'number'`. This allowed malicious clients to inject `Infinity` or `-Infinity` for properties like `health`, `money`, `angle`, and `power`.
 **Learning:** `typeof x === 'number'` and `!Number.isNaN(x)` both allow `Infinity` and `-Infinity`. If these values propagate into physics calculations, monetary balances, or entity stats, they can lead to Denial of Service (DoS via physics engine crashes/infinite loops) or severe logic bypasses (e.g., infinite money or health).
 **Prevention:** Always use `Number.isFinite()` when validating continuous numeric inputs from untrusted sources, and `Number.isInteger()` for indices or counts. Never rely on `!Number.isNaN()` alone for complete numeric safety.
+
 ## 2024-05-18 - [Infinity/-Infinity Injection via isNaN]
 **Vulnerability:** In `worker/src/game-room.ts`, untrusted numeric inputs inside `sanitizePlayer` were validated using `!Number.isNaN()`. This allows `Infinity` and `-Infinity` to pass the validation and be injected into the game state.
 **Learning:** `!Number.isNaN(x)` returns true for `Infinity` and `-Infinity`. If these values are used in calculations or bounding logic, they can cause unexpected behavior, out-of-bounds exceptions, or Denial of Service (DoS).
