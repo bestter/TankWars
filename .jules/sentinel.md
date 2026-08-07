@@ -107,3 +107,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, untrusted numeric inputs inside `sanitizePlayer` were validated using `!Number.isNaN()`. This allows `Infinity` and `-Infinity` to pass the validation and be injected into the game state.
 **Learning:** `!Number.isNaN(x)` returns true for `Infinity` and `-Infinity`. If these values are used in calculations or bounding logic, they can cause unexpected behavior, out-of-bounds exceptions, or Denial of Service (DoS).
 **Prevention:** Use `Number.isFinite()` instead of `!Number.isNaN()` when validating untrusted continuous numeric inputs (e.g., game stats, coordinates, physics parameters) to ensure they are safe finite numbers.
+
+## 2026-08-07 - [Information Exposure via Error Response and Logging]
+**Vulnerability:** The API Worker forwarded 500 error response bodies directly from the Durable Object to the frontend via `await createResp.text()`. Additionally, the frontend directly outputted this raw text to `console.error`. If an internal exception occurred in the Durable Object, its stack trace would be leaked to the client's network tab and console.
+**Learning:** Returning raw exception text or stack traces to a frontend client exposes the internal system details and creates a reconnaissance vector for attackers. The API Gateway should intercept backend 500 exceptions and return a sanitized JSON error. Frontends should avoid blindly logging raw response text.
+**Prevention:** Intercept failed internal `fetch` requests with `status >= 500` and respond with a generic `{"error": "Internal Server Error"}` to external clients. Remove verbose error body logging (`console.error(errorMessage)`) in production client apps.
