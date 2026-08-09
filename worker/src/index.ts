@@ -109,7 +109,12 @@ export default {
       });
 
       if (!createResp.ok) {
-        return withCors(new Response(await createResp.text(), { status: 500 }));
+        if (createResp.status >= 500) {
+          // Log internally but do not leak stack traces to client
+          console.error('[Worker API] /api/rooms DO proxy error', await createResp.text());
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500, headers: { 'content-type': 'application/json' } }));
+        }
+        return withCors(new Response(await createResp.text(), { status: createResp.status }));
       }
 
       const data = await createResp.json();
@@ -124,6 +129,15 @@ export default {
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
       const joinResp = await stub.fetch(request);
+
+      if (joinResp.status >= 500) {
+        console.error('[Worker API] /api/rooms/:id/join DO proxy error', await joinResp.text());
+        return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
+
       return withCors(new Response(await joinResp.text(), {
         status: joinResp.status,
         headers: { 'content-type': 'application/json' },

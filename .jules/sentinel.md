@@ -107,3 +107,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, untrusted numeric inputs inside `sanitizePlayer` were validated using `!Number.isNaN()`. This allows `Infinity` and `-Infinity` to pass the validation and be injected into the game state.
 **Learning:** `!Number.isNaN(x)` returns true for `Infinity` and `-Infinity`. If these values are used in calculations or bounding logic, they can cause unexpected behavior, out-of-bounds exceptions, or Denial of Service (DoS).
 **Prevention:** Use `Number.isFinite()` instead of `!Number.isNaN()` when validating untrusted continuous numeric inputs (e.g., game stats, coordinates, physics parameters) to ensure they are safe finite numbers.
+
+## 2026-08-10 - [Stack Trace Leakage in Durable Object Proxy]
+**Vulnerability:** The `/api/rooms` and `/join` endpoints in the Cloudflare Worker (`worker/src/index.ts`) acted as a proxy to the `GAME_ROOM` Durable Object. When the Durable Object encountered an internal error and returned a 500 status with an unhandled exception stack trace in the body, the Worker blindly forwarded this text response back to the client (`await createResp.text()`).
+**Learning:** Even if the underlying service (like a Durable Object or an internal microservice) is within the same trust boundary, proxying raw text responses for 500 errors can inadvertently expose internal stack traces, directory paths, or sensitive environmental details to the public internet.
+**Prevention:** When proxying requests to internal services or Durable Objects, always intercept HTTP 500 error responses and return a sanitized, predefined JSON payload (e.g., `{"error": "Internal Server Error"}`) to the client. Log the actual error response internally.
