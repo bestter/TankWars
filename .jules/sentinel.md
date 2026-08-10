@@ -107,3 +107,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, untrusted numeric inputs inside `sanitizePlayer` were validated using `!Number.isNaN()`. This allows `Infinity` and `-Infinity` to pass the validation and be injected into the game state.
 **Learning:** `!Number.isNaN(x)` returns true for `Infinity` and `-Infinity`. If these values are used in calculations or bounding logic, they can cause unexpected behavior, out-of-bounds exceptions, or Denial of Service (DoS).
 **Prevention:** Use `Number.isFinite()` instead of `!Number.isNaN()` when validating untrusted continuous numeric inputs (e.g., game stats, coordinates, physics parameters) to ensure they are safe finite numbers.
+
+## 2024-05-18 - [Internal Server Error Stack Trace Leakage in Cloudflare Worker]
+**Vulnerability:** The `/api/rooms` and `/api/rooms/:roomId/join` endpoints in the Cloudflare Worker directly forwarded the raw text response from the Durable Object if an internal server error (status >= 500) occurred.
+**Learning:** Forwarding raw error responses from backend services to the client can inadvertently expose sensitive information, such as stack traces, environment details, or internal application logic. In this case, `createResp.text()` or `joinResp.text()` would return raw server exceptions to the frontend, revealing internal workings.
+**Prevention:** Always intercept HTTP 5xx errors returned by internal backend services (like Durable Objects) and replace their payload with a sanitized, generic error message (e.g., `{"error": "Internal Server Error"}`) before returning the response to the client.
