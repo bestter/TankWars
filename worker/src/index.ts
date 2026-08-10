@@ -134,6 +134,7 @@ export default {
       const roomId = pathname.split('/')[3];
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
+      const joinResp = await stub.fetch(request);
       const joinText = await joinResp.text();
       if (!joinResp.ok) {
         if (joinResp.status >= 500) {
