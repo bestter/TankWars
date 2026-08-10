@@ -109,7 +109,18 @@ export default {
       });
 
       if (!createResp.ok) {
-        return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500, headers: { 'content-type': 'application/json' } }));
+        const errorText = await createResp.text();
+        if (createResp.status >= 500) {
+          console.error('[Worker] create room 500 error:', errorText);
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: createResp.status,
+            headers: { 'content-type': 'application/json' },
+          }));
+        }
+        return withCors(new Response(errorText || JSON.stringify({ error: 'Error creating room' }), {
+          status: createResp.status,
+          headers: { 'content-type': createResp.headers.get('content-type') || 'application/json' },
+        }));
       }
 
       const data = await createResp.json();
@@ -124,14 +135,21 @@ export default {
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
       const joinResp = await stub.fetch(request);
+      const joinText = await joinResp.text();
       if (!joinResp.ok) {
-        const joinText = await joinResp.text();
-        return withCors(new Response(JSON.stringify({ error: joinResp.status >= 500 ? 'Internal Server Error' : joinText || 'Error joining room' }), {
+        if (joinResp.status >= 500) {
+          console.error('[Worker] join room 500 error:', joinText);
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: joinResp.status,
+            headers: { 'content-type': 'application/json' },
+          }));
+        }
+        return withCors(new Response(JSON.stringify({ error: joinText || 'Error joining room' }), {
           status: joinResp.status,
           headers: { 'content-type': 'application/json' },
         }));
       }
-      return withCors(new Response(await joinResp.text(), {
+      return withCors(new Response(joinText, {
         status: joinResp.status,
         headers: { 'content-type': 'application/json' },
       }));
