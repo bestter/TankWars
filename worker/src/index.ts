@@ -114,12 +114,12 @@ export default {
           console.error('[Worker] create room 500 error:', errorText);
           return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
             status: createResp.status,
-            headers: { 'content-type': 'application/json' }
+            headers: { 'content-type': 'application/json' },
           }));
         }
-        return withCors(new Response(errorText, {
+        return withCors(new Response(errorText || JSON.stringify({ error: 'Error creating room' }), {
           status: createResp.status,
-          headers: { 'content-type': createResp.headers.get('content-type') || 'text/plain' }
+          headers: { 'content-type': createResp.headers.get('content-type') || 'application/json' },
         }));
       }
 
@@ -136,9 +136,15 @@ export default {
       const stub = env.GAME_ROOM.get(id);
       const joinResp = await stub.fetch(request);
       const joinText = await joinResp.text();
-      if (!joinResp.ok && joinResp.status >= 500) {
-        console.error('[Worker] join room 500 error:', joinText);
-        return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      if (!joinResp.ok) {
+        if (joinResp.status >= 500) {
+          console.error('[Worker] join room 500 error:', joinText);
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: joinResp.status,
+            headers: { 'content-type': 'application/json' },
+          }));
+        }
+        return withCors(new Response(JSON.stringify({ error: joinText || 'Error joining room' }), {
           status: joinResp.status,
           headers: { 'content-type': 'application/json' },
         }));
