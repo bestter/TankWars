@@ -109,7 +109,7 @@ export default {
       });
 
       if (!createResp.ok) {
-        return withCors(new Response(await createResp.text(), { status: 500 }));
+        return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500, headers: { 'content-type': 'application/json' } }));
       }
 
       const data = await createResp.json();
@@ -124,6 +124,13 @@ export default {
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
       const joinResp = await stub.fetch(request);
+      if (!joinResp.ok) {
+        const joinText = await joinResp.text();
+        return withCors(new Response(JSON.stringify({ error: joinResp.status >= 500 ? 'Internal Server Error' : joinText || 'Error joining room' }), {
+          status: joinResp.status,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
       return withCors(new Response(await joinResp.text(), {
         status: joinResp.status,
         headers: { 'content-type': 'application/json' },
