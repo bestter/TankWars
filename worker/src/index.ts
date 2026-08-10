@@ -109,12 +109,18 @@ export default {
       });
 
       if (!createResp.ok) {
+        const errorText = await createResp.text();
         if (createResp.status >= 500) {
-          // Log internally but do not leak stack traces to client
-          console.error('[Worker API] /api/rooms DO proxy error', await createResp.text());
-          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500, headers: { 'content-type': 'application/json' } }));
+          console.error('[Worker] create room 500 error:', errorText);
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: createResp.status,
+            headers: { 'content-type': 'application/json' },
+          }));
         }
-        return withCors(new Response(await createResp.text(), { status: createResp.status }));
+        return withCors(new Response(errorText || JSON.stringify({ error: 'Error creating room' }), {
+          status: createResp.status,
+          headers: { 'content-type': createResp.headers.get('content-type') || 'application/json' },
+        }));
       }
 
       const data = await createResp.json();
@@ -128,17 +134,21 @@ export default {
       const roomId = pathname.split('/')[3];
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
-      const joinResp = await stub.fetch(request);
-
-      if (joinResp.status >= 500) {
-        console.error('[Worker API] /api/rooms/:id/join DO proxy error', await joinResp.text());
-        return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
-          status: 500,
+      const joinText = await joinResp.text();
+      if (!joinResp.ok) {
+        if (joinResp.status >= 500) {
+          console.error('[Worker] join room 500 error:', joinText);
+          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: joinResp.status,
+            headers: { 'content-type': 'application/json' },
+          }));
+        }
+        return withCors(new Response(JSON.stringify({ error: joinText || 'Error joining room' }), {
+          status: joinResp.status,
           headers: { 'content-type': 'application/json' },
         }));
       }
-
-      return withCors(new Response(await joinResp.text(), {
+      return withCors(new Response(joinText, {
         status: joinResp.status,
         headers: { 'content-type': 'application/json' },
       }));
