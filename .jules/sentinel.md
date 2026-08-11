@@ -116,3 +116,7 @@ No security impact, strictly an internal performance cache.
 **Learning:** Returning unhandled or proxied 5xx status codes blindly from Durable Objects can expose sensitive server-side details (e.g. implementation details or stack traces) to untrusted clients.
 **Prevention:** In Cloudflare Workers, always intercept 5xx proxy responses. Log the raw error (`await response.text()`) securely using `console.error` and return a sanitized JSON error payload (e.g., `{"error":"Internal Server Error"}`) to the client.
 
+## 2024-05-18 - [TypeError DoS via Unvalidated JSON Parsing]
+**Vulnerability:** In `worker/src/game-room.ts`, the `fetchCreate` method parsed the JSON payload using `await request.json()` and immediately accessed its properties (e.g. `body.roomId`) without validating the parsed object's type. A malicious client could send a JSON payload like `"null"` or `[1, 2, 3]`, which parses successfully but causes a `TypeError` when properties are accessed, resulting in a Denial of Service.
+**Learning:** `request.json()` can return null or an array if the input is valid JSON of those types. Typecasting (`as Record<string, unknown>`) does not protect against runtime errors when accessing properties on null.
+**Prevention:** Always use strict runtime type checking (`typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)`) after parsing JSON before assigning or accessing properties.

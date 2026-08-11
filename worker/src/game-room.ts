@@ -240,16 +240,20 @@ export class GameRoom extends DurableObject {
 
   // --- REST entry from the Worker (create room) ---
   async fetchCreate(request: Request): Promise<Response> {
-    const body = (await request.json()) as {
-      roomId?: string;
-      numPlayers?: number;
-      slotConfigs?: Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
-      origin?: string;
-    };
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = await request.json();
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Failed to parse or body is empty
+      body = {};
+    }
 
-    const roomId = body.roomId;
-    const numPlayers = body.numPlayers;
-    const slotConfigs = body.slotConfigs;
+    const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
+    const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
+    const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
 
     if (!roomId || !numPlayers || !Number.isInteger(numPlayers) || !slotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
