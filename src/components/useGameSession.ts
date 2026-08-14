@@ -472,10 +472,10 @@ export function useGameSession({
           const msg = JSON.parse(ev.data);
           const tm = engine.getTurnManager();
 
-          if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number') {
+          if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number' && Number.isInteger(msg.currentPlayerIndex)) {
             console.log(`[Game] Received GAME_START: currentPlayerIndex=${msg.currentPlayerIndex}`);
             tm.syncTurn(msg.currentPlayerIndex);
-            if (typeof msg.wind === 'number') {
+            if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
               engine.setWindForce(msg.wind);
             }
           }
@@ -519,10 +519,10 @@ export function useGameSession({
               gamePhaseRef.current === 'COMBAT' &&
               !tm.isInterRoundPaused()
             ) {
-              if (typeof msg.currentPlayerIndex === 'number') {
+              if (typeof msg.currentPlayerIndex === 'number' && Number.isInteger(msg.currentPlayerIndex)) {
                 tm.syncTurn(msg.currentPlayerIndex);
               }
-              if (typeof msg.wind === 'number') {
+              if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
                 engine.setWindForce(msg.wind);
               }
             }
@@ -543,7 +543,7 @@ export function useGameSession({
                   ? msg.players
                   : undefined,
               );
-            } else if (typeof msg.shopIndex === 'number' && msg.mode !== 'parallel') {
+            } else if (typeof msg.shopIndex === 'number' && Number.isInteger(msg.shopIndex) && msg.mode !== 'parallel') {
               // Legacy sequential cursor (older server).
               shopSyncRef.current.applyRemoteAdvance(msg.shopIndex);
             }
@@ -551,7 +551,7 @@ export function useGameSession({
           }
 
           // Legacy advance relay (older server / mid-deploy). Prefer SHOP_STATE.
-          if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && msg.slot !== slot) {
+          if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && Number.isInteger(msg.nextIndex) && msg.slot !== slot) {
             shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
           }
 
@@ -651,7 +651,7 @@ export function useGameSession({
       if (resumed.gamePhase === 'COMBAT') {
         tm.resumeForCombat();
         tm.setupInputListeners();
-        if (typeof initialCurrentPlayerIndex === 'number') {
+        if (typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
           tm.syncTurn(initialCurrentPlayerIndex);
         }
       } else {
@@ -663,14 +663,14 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
       engine.setPlayers(players);
-      if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number') {
+      if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
       }
       dispatch({ type: "SET_UI_PLAYERS", players });
     }
 
     // Also set wind if provided (for HUD etc.; main sync will come from server updates)
-    if (gameMode === 'online' && typeof initialWind === 'number') {
+    if (gameMode === 'online' && typeof initialWind === 'number' && Number.isFinite(initialWind)) {
       // The engine has onWindChange but for initial we can set via internal if needed.
       // For now the first wind update will come, or we can dispatch it.
       // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
