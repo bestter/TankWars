@@ -222,6 +222,34 @@ describe('GameRoom Durable Object', () => {
       const roomState = Reflect.get(room, 'state') as { joinedHumans: Record<number, unknown> };
       expect(roomState.joinedHumans[0]).toBeUndefined();
     });
+
+    it('does not clean up slot when an old replaced socket disconnects after a new socket joined', async () => {
+      const wsHost = new MockWebSocket();
+      const internalSockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      internalSockets.set(0, wsHost as unknown as WebSocket);
+
+      const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
+      await claimMethod.call(room, 0, 'HostPlayer');
+
+      // New player connects to slot 0 (replacing host)
+      const wsNew = new MockWebSocket();
+      internalSockets.set(0, wsNew as unknown as WebSocket);
+      await claimMethod.call(room, 0, 'FirefoxPlayer');
+
+      // Now old host socket fires disconnect
+      const disconnectMethod = Reflect.get(room, 'handleSocketDisconnect') as (
+        slot: number,
+        ws: WebSocket
+      ) => Promise<void>;
+
+      await disconnectMethod.call(room, 0, wsHost as unknown as WebSocket);
+
+      // Active socket must remain intact
+      expect(internalSockets.get(0)).toBe(wsNew as unknown as WebSocket);
+      const roomState = Reflect.get(room, 'state') as { joinedHumans: Record<number, { name: string }> };
+      expect(roomState.joinedHumans[0]).toBeDefined();
+      expect(roomState.joinedHumans[0].name).toBe('FirefoxPlayer');
+    });
   });
 
   describe('Combat turn authority and FIRE handling', () => {
@@ -430,6 +458,98 @@ describe('GameRoom Durable Object', () => {
 
       shopFinish = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'SHOP_FINISH');
       expect(shopFinish).toBeDefined();
+    });
+
+    it('advances turn to slot 1 in round 2 when slot 1 died in round 1 and respawned', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+
+      // 1. Simulate Round 1 ending with Slot 1 dead
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({
+          type: 'ROUND_END',
+          roundWinnerId: 'player-1',
+          isDraw: false,
+          players: [
+            {
+              id: 'player-1',
+              name: 'Alice',
+              isHuman: true,
+              money: 300,
+              inventory: {},
+              tank: {
+                id: 'tank-1',
+                position: { x: 80, y: 280 },
+                angle: 45,
+                power: 50,
+                health: 100,
+                maxHealth: 100,
+                shield: 40,
+                maxShield: 40,
+                isDead: false,
+                color: '#5555FF',
+                currentWeapon: 'MISSILE',
+              },
+            },
+            {
+              id: 'player-2',
+              name: 'Bob',
+              isHuman: true,
+              money: 100,
+              inventory: {},
+              tank: {
+                id: 'tank-2',
+                position: { x: 600, y: 280 },
+                angle: 135,
+                power: 50,
+                health: 0,
+                maxHealth: 100,
+                shield: 0,
+                maxShield: 40,
+                isDead: true,
+                color: '#FF5555',
+                currentWeapon: 'MISSILE',
+              },
+            },
+          ],
+        })
+      );
+
+      // 2. Both players ready up in shop (Round 2 starts)
+      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'SHOP_READY', players: [] }));
+      await handleClientMessage.call(room, 1, JSON.stringify({ type: 'SHOP_READY', players: [] }));
+
+      // 3. Slot 0 fires in Round 2
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({
+          type: 'FIRE',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        })
+      );
+
+      // 4. Slot 0 sends SHOT_SETTLED
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({
+          type: 'SHOT_SETTLED',
+          deadSlots: [false, false],
+        })
+      );
+
+      // 5. Turn MUST advance to slot 1 (Player 2), NOT remain stuck on slot 0!
+      const lastStateUpdate = ws0
+        .getAllMessages<{ type: string; currentPlayerIndex: number }>()
+        .filter((m) => m.type === 'STATE_UPDATE')
+        .pop();
+
+      expect(lastStateUpdate?.currentPlayerIndex).toBe(1);
     });
   });
 

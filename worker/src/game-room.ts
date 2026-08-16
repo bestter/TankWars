@@ -356,10 +356,10 @@ export class GameRoom extends DurableObject {
       // Clean any previous connection for this slot (prevents ghost connections and multiple "lost" during lobby->game transition or re-joins)
       if (this.sockets.has(slot)) {
         const old = this.sockets.get(slot);
-        try {
-          (old as any).close(1000, 'replaced by new connection for same slot');
-        } catch {}
         this.sockets.delete(slot);
+        try {
+          (old as any).close(4001, 'replaced by new connection for same slot');
+        } catch {}
       }
 
       try {
@@ -487,6 +487,13 @@ export class GameRoom extends DurableObject {
       ) {
         console.log(`[GameRoom] SHOT_SETTLED accepted for active human shot. Advancing turn...`);
         this.clearShotSettledTimeout();
+        if (Array.isArray(msg.deadSlots) && msg.deadSlots.length === this.state.numPlayers) {
+          msg.deadSlots.forEach((isDead: unknown, idx: number) => {
+            if (typeof isDead === 'boolean' && this.state?.players[idx]?.tank) {
+              this.state.players[idx].tank.isDead = isDead;
+            }
+          });
+        }
         await this.advanceTurnAndNotify();
       } else {
         console.warn(
@@ -626,9 +633,15 @@ export class GameRoom extends DurableObject {
   }
 
   private async handleSocketDisconnect(slot: number, ws: WebSocket): Promise<void> {
-    if (this.sockets.get(slot) === ws) {
-      this.sockets.delete(slot);
+    if (this.sockets.get(slot) !== ws) {
+      try {
+        ws.close(1000, 'connection closed');
+      } catch {
+        // ignore if already closed
+      }
+      return;
     }
+    this.sockets.delete(slot);
     try {
       ws.close(1000, 'connection closed');
     } catch {
@@ -1048,13 +1061,20 @@ export class GameRoom extends DurableObject {
     this.resetShotCoordination();
     this.state.roundEnded = false;
     this.state.currentPlayerIndex = 0;
-    if (players.length > 0) {
-      this.state.players = players;
-    }
+    const roster = players.length > 0 ? players : this.state.players;
+    this.state.players = roster.map((p) => ({
+      ...p,
+      tank: {
+        ...p.tank,
+        isDead: false,
+        health: p.tank?.maxHealth ?? 100,
+        shield: p.tank?.maxShield ?? 40,
+      },
+    }));
     await this.saveState();
 
     // Single completion signal — clients must apply players only inside finishShopPhase
-    // (before startNextRound). A follow-up setPlayers after spawn re-applied isDead and desynced turns.
+    // (before startNextRound).
     this.broadcast({
       type: 'SHOP_FINISH',
       players: this.state.players,

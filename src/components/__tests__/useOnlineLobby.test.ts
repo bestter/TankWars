@@ -126,4 +126,55 @@ describe('useOnlineLobby', () => {
     expect(result.current.roomId).toBe('room-xyz');
     expect(result.current.slotsInfo.length).toBe(2);
   });
+
+  it('does not reconnect if websocket is closed with superseded code 4001 or replaced reason', async () => {
+    vi.useFakeTimers();
+    const mockWs = {
+      send: vi.fn(),
+      close: vi.fn(),
+      readyState: 1,
+      onopen: null as (() => void) | null,
+      onmessage: null as ((ev: { data: string }) => void) | null,
+      onerror: null as (() => void) | null,
+      onclose: null as ((ev: unknown) => void) | null,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wsConstructor = vi.fn().mockImplementation(() => mockWs) as any;
+    global.WebSocket = wsConstructor;
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        initialRoomId: 'room-123',
+        initialSlot: 0,
+        initialToken: 'TOK0',
+        onStartGame: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.setMyName('Player 1');
+    });
+
+    await act(async () => {
+      await result.current.handleJoin();
+    });
+
+    expect(wsConstructor).toHaveBeenCalledTimes(1);
+
+    // Simulate WebSocket closing because it was replaced by another connection
+    act(() => {
+      if (mockWs.onclose) {
+        mockWs.onclose({ code: 4001, reason: 'replaced by new connection for same slot' });
+      }
+    });
+
+    // Fast-forward timers
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    // Should NOT have attempted any reconnect
+    expect(wsConstructor).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });
