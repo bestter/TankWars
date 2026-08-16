@@ -76,7 +76,7 @@ export function OnlineLobbyWaiting({
           {slotsInfo.map((s) => (
             <div key={s.slot} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12 }}>
               <span style={{ color: s.type === 'human' ? VGA_PALETTE.FLASH_GREEN : '#888', width: 140 }}>
-                {t('slot_label', { num: s.slot + 1 })} — {s.type === 'human' ? 'HUMAIN' : `IA ${s.aiProfile || ''}`}
+                {t('slot_label', { num: s.slot + 1 })} — {s.type === 'human' ? (s.slot === 0 ? t('your_slot') : 'HUMAIN') : `IA ${s.aiProfile || ''}`}
               </span>
               {s.url && (
                 <>

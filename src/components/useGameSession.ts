@@ -576,10 +576,14 @@ export function useGameSession({
         }
       };
 
-      ws.onclose = () => {
-        console.log('[Game] Combat WS closed');
+      ws.onclose = (ev: CloseEvent) => {
+        console.log('[Game] Combat WS closed', ev.code, ev.reason);
         if (gameWsRef.current === ws) {
           gameWsRef.current = null;
+          if (ev.code === 4001 || (typeof ev.reason === 'string' && ev.reason.includes('replaced'))) {
+            console.log('[Game] Socket superseded by another connection, skipping reconnect');
+            return;
+          }
           if (gamePhaseRef.current !== 'GAME_OVER' && isMounted) {
             clearCombatReconnect();
             combatReconnectTimer = setTimeout(() => {
@@ -715,7 +719,8 @@ export function useGameSession({
           tm.isAwaitingServerTurnAfterLocalShot();
         if (shouldNotify) {
           console.log('[Game] Sending SHOT_SETTLED to server');
-          sendCombatMessage({ type: 'SHOT_SETTLED', slot });
+          const deadSlots = engine.getTankManager().getPlayers().map((p) => Boolean(p.tank.isDead));
+          sendCombatMessage({ type: 'SHOT_SETTLED', slot, deadSlots });
         }
       }
     };
