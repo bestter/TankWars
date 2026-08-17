@@ -1354,9 +1354,9 @@ export function useGameSession({
       finishShopPhase(finalPlayers);
     };
 
-    return () => {
-      clearShopAiTimeout();
-    };
+    // No cleanup here: this effect refreshes handler refs on every render.
+    // Clearing shopAiTimeout on each paint cancelled the local AI shop delay
+    // (human Ready → overlay "IA fait ses achats…" → stuck until next round).
   });
 
   const handleNewGame = () => {
