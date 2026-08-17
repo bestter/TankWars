@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TerrainManager } from '../Terrain';
 import { terrainInternals } from '../../__tests__/helpers';
+import { DRILLER_SHAFT_DEPTH } from '../../../types/weapon';
 
 describe('TerrainManager', () => {
   describe('getHeightAt', () => {
@@ -256,6 +257,92 @@ describe('TerrainManager', () => {
 
       expect(terrain.getHeightAt(10)).toBe(before);
       warnSpy.mockRestore();
+    });
+  });
+
+  describe("destroyTerrainShaft (DRILLER)", () => {
+    const WIDTH = 200;
+    const HEIGHT = 200;
+    const FLAT_Y = 80;
+    const RADIUS = 14;
+    const DEPTH = DRILLER_SHAFT_DEPTH;
+
+    function flatTerrain(): TerrainManager {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      return terrain;
+    }
+
+    it("creuse ~3× plus profond qu’un cratère circulaire du même rayon (impact vertical)", () => {
+      const bowl = flatTerrain();
+      bowl.destroyTerrain(100, FLAT_Y, RADIUS);
+      const bowlDepth = bowl.getHeightAt(100) - FLAT_Y;
+
+      const shaft = flatTerrain();
+      shaft.destroyTerrainShaft(100, FLAT_Y, 0, 1, DEPTH, RADIUS);
+      const shaftDepth = shaft.getHeightAt(100) - FLAT_Y;
+
+      expect(bowlDepth).toBeGreaterThan(0);
+      expect(shaftDepth).toBeGreaterThan(bowlDepth * 2.5);
+      expect(shaftDepth).toBeGreaterThanOrEqual(DEPTH - 2);
+      expect(shaftDepth).toBeLessThanOrEqual(DEPTH + 1);
+    });
+
+    it("à 45° vers la droite, le point le plus profond est décalé vers +x", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, 1, 1, DEPTH, RADIUS);
+
+      let deepestX = 100;
+      let deepestY = terrain.getHeightAt(100);
+      for (let x = 70; x <= 150; x++) {
+        const y = terrain.getHeightAt(x);
+        if (y > deepestY) {
+          deepestY = y;
+          deepestX = x;
+        }
+      }
+
+      expect(deepestX).toBeGreaterThan(100);
+      expect(terrain.getHeightAt(100)).toBeGreaterThan(FLAT_Y);
+      expect(terrain.getHeightAt(180)).toBe(FLAT_Y);
+    });
+
+    it("à 45° vers la gauche, le point le plus profond est décalé vers −x", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, -1, 1, DEPTH, RADIUS);
+
+      let deepestX = 100;
+      let deepestY = terrain.getHeightAt(100);
+      for (let x = 50; x <= 130; x++) {
+        const y = terrain.getHeightAt(x);
+        if (y > deepestY) {
+          deepestY = y;
+          deepestX = x;
+        }
+      }
+
+      expect(deepestX).toBeLessThan(100);
+    });
+
+    it("ne fait rien si depth ou radius ≤ 0", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, 0, 1, 0, RADIUS);
+      terrain.destroyTerrainShaft(100, FLAT_Y, 0, 1, DEPTH, 0);
+      expect(terrain.getHeightAt(100)).toBe(FLAT_Y);
+    });
+
+    it("marque une dirty band horizontale sans full redraw", () => {
+      const terrain = flatTerrain();
+      const internal = terrainInternals(terrain);
+      internal.needsFullRedraw = false;
+      internal.isDirty = false;
+
+      terrain.destroyTerrainShaft(40, FLAT_Y, 0, 1, DEPTH, RADIUS);
+
+      expect(internal.isDirty).toBe(true);
+      expect(internal.needsFullRedraw).toBe(false);
+      expect(internal.dirtyStartX).toBeLessThanOrEqual(40);
+      expect(internal.dirtyEndX).toBeGreaterThanOrEqual(40);
     });
   });
 

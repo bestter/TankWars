@@ -3,6 +3,7 @@ import { PhysicsEngine } from "../PhysicsEngine";
 import { TankManager } from "../../entities/TankManager";
 import { TerrainManager } from "../Terrain";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
+import { DRILLER_SHAFT_DEPTH } from "../../../types/weapon";
 
 function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
   return {
@@ -10,6 +11,7 @@ function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
     height: 480,
     checkCollision: () => false,
     destroyTerrain: vi.fn(),
+    destroyTerrainShaft: vi.fn(),
     getHeightAt: () => 400,
     ...overrides,
   } as unknown as TerrainManager;
@@ -134,5 +136,57 @@ describe("PhysicsEngine weapon behavior", () => {
     expect(physics.count).toBe(5);
     expect(physics.getProjectiles().every((p) => p.isSubmunition === true)).toBe(true);
     expect(physics.getProjectiles().every((p) => p.weaponId === "CLUSTER")).toBe(true);
+  });
+
+  it("DRILLER carves an angled shaft but keeps current splash damage", () => {
+    const enemy = makePlayer({
+      id: "enemy",
+      tank: makeTank("t-enemy", 200, 200),
+    });
+    const tanks = new TankManager();
+    tanks.setPlayers([enemy]);
+    const apply = vi.spyOn(tanks, "applyExplosionDamage");
+    const destroy = vi.fn();
+    const shaft = vi.fn();
+
+    const physics = new PhysicsEngine();
+    physics.launchProjectile(200, 195, 0, 20, "DRILLER", "owner");
+    const shell = physics.getProjectiles()[0];
+    shell.vx = 8;
+    shell.vy = 8;
+
+    physics.updateProjectiles(
+      1 / 120,
+      0,
+      0,
+      mockTerrain({ checkCollision: () => true, destroyTerrain: destroy, destroyTerrainShaft: shaft }),
+      tanks,
+    );
+
+    expect(destroy).not.toHaveBeenCalled();
+    expect(shaft).toHaveBeenCalledTimes(1);
+    const [, , dirX, dirY, depth, radius] = shaft.mock.calls[0] as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    expect(dirY).toBeGreaterThan(0);
+    expect(depth).toBe(DRILLER_SHAFT_DEPTH);
+    expect(radius).toBe(14);
+    void dirX;
+
+    expect(apply).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      14,
+      42,
+      "owner",
+      "DRILLER",
+      true,
+    );
+    expect(physics.count).toBe(0);
   });
 });

@@ -76,6 +76,7 @@ describe('PhysicsEngine', () => {
         height: 600,
         checkCollision: () => true,
         destroyTerrain: () => {},
+        destroyTerrainShaft: () => {},
       };
 
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');

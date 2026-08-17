@@ -12,7 +12,7 @@ import { secureRandom } from '../../utils/random';
  * - Ballistic motion: gravity, horizontal wind acceleration, light air drag
  */
 
-import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
+import { DRILLER_SHAFT_DEPTH, WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
 import type { TerrainManager } from "./Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import type { TankManager } from "../entities/TankManager";
@@ -258,8 +258,19 @@ export class PhysicsEngine {
       `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
     );
 
-    // 1. Détruire le terrain
-    terrainManager.destroyTerrain(p.x, p.y, blastRadius);
+    // 1. Détruire le terrain (DRILLER: puits orienté selon la vitesse, splash inchangé)
+    if (p.weaponId === "DRILLER") {
+      terrainManager.destroyTerrainShaft(
+        p.x,
+        p.y,
+        p.vx,
+        p.vy,
+        DRILLER_SHAFT_DEPTH,
+        blastRadius,
+      );
+    } else {
+      terrainManager.destroyTerrain(p.x, p.y, blastRadius);
+    }
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
