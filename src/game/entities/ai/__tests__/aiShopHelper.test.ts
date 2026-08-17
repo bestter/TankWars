@@ -47,6 +47,18 @@ describe("autoBuyForAI", () => {
     expect(player.money).toBe(1000 - 675);
   });
 
+  it("buys the v1 list for v2-heuristic and never auto-buys BULLET", () => {
+    const player = makePlayer({
+      isHuman: false,
+      aiProfile: "v2-heuristic",
+      money: 1000,
+      inventory: {},
+    });
+    autoBuyForAI(player);
+    expect(player.inventory["CLUSTER"]).toBe(5);
+    expect(player.inventory["BULLET"]).toBeUndefined();
+  });
+
   it("buys items for missing aiProfile (defaults to v1-random)", () => {
     const player = makePlayer({
       isHuman: false,

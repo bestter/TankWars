@@ -14,7 +14,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 207 tests, 25 fichiers) |
+| Tests | `npm run test` (vitest, 310 tests, 42 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -97,6 +97,7 @@ Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–
 | Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
 | Online sync combat | `useGameSession.ts`, `onlineSession.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
+| Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
 
 ## Compétences disponibles
 

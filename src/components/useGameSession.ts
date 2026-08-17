@@ -5,7 +5,8 @@ import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
-import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from "../types/weapon";
+import { DEFAULT_INVENTORY } from "../types/weapon";
+import { applyShopDelta } from "./shopBuySell";
 import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
@@ -1081,45 +1082,13 @@ export function useGameSession({
       return;
     }
 
-    const def = WEAPON_REGISTRY[weaponId];
-    if (!def) return;
-
-    const currentStock = currentPlayer.inventory?.[weaponId] ?? 0;
-
     let localUpdated = currentPlayer;
     const updatedPlayers = enginePlayers.map((p) => {
-      if (p.id === currentPlayer.id) {
-        if (delta > 0) {
-          // Achat
-          if ((p.money ?? 0) >= def.price) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) - def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock + 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        } else {
-          // Vente
-          if (currentStock > 0) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) + def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock - 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        }
-      }
-      return p;
+      if (p.id !== currentPlayer.id) return p;
+      const updated = applyShopDelta(p, weaponId, delta);
+      if (!updated) return p;
+      if (p.id === localPlayerId) localUpdated = updated;
+      return updated;
     });
 
     // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable

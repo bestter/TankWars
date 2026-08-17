@@ -6,7 +6,7 @@
 
 - Always begin by reading AGENTS.md + the current file.
 - Before any code change that affects visuals or engine: re-read `src/game/engine/GameEngine.ts` (render + fireProjectile), `TankManager.ts` (draw + recoil), `PhysicsEngine.ts` (draw + Projectile).
-- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **207 tests**).
+- After edits: run `npm run lint && npm run build && npm run test` (mandatory per AGENTS; **310 tests**).
 - Online work: run `npm run dev` + `npm run worker:dev` together; restart worker after `worker/src/game-room.ts` changes.
 - Use imperative commit style and sign with your exact model: e.g. `Add floating active indicator (Step 4) — Grok 4.3 (xAI)`.
 - The system prompt identifies you as "Grok 4.3 released by xAI in April 2026".
@@ -20,6 +20,7 @@
 
 ## Recent Polish (Step 4, 5, 6 & 7)
 
+- **Test audit:** Trimmed redundant predicate tests; added combat damage, earnings, ammo, shop `applyShopDelta`, worker auth/catch-up/persist, AI weapon gates, i18n parity, CSP/SW contracts. **310 tests** (42 files). — Grok 4.6 (xAI)
 - **Multiplayer Connection Hardening & Sync Fixes:** Resolved a critical multiplayer synchronization bug where slot connection cleanup was deleting the new combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Implemented reference check validation (`this.sockets.get(slot) === ws`) in the Durable Object's `handleSocketDisconnect` before deleting. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur. Fixed client-side unmount cleanup in `OnlineLobby.tsx` to safely close the active WebSocket using a copied ref parameter (`currentWsRef.current.close()`) to avoid state-related lifecycle warnings. Added missing translation key `link_instructions` to both `fr.json` and `en.json` to pass strict TypeScript i18n checks. All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100. — Antigravity (Gemini 3.5 Pro)
 
 - **Durable Object State Persistence:** Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation. — Antigravity (Gemini 3.5 Flash (High))

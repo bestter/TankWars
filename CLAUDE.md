@@ -14,7 +14,7 @@
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **207 tests** (25 files)
+- Run tests: `npm run test` (or `vitest run`) — **310 tests** (42 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -51,6 +51,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 ## Recent Updates & Bug Fixes
 
+- **Test audit:** Trimmed redundant projectile-count / wind-NaN / sprite-path tests. Added rule tests for explosion splash+shield, BULLET×3, NUKE/THERMO instakill, owner hitbox, grenade bounce, cluster split, fall/lava/burial, $300/$600/suicide, +$500 survival, ammo/MISSILE, `applyShopDelta`, worker token/invalid FIRE/REQUEST_GAME_START/persist, AI NUKE/THERMO gates, i18n key parity, CSP insights + SW network-first. **310 tests** (42 files). — Grok 4.6 (xAI)
 - **Online Multiplayer Stability & Shop Sync:** Fixed input locks after firing in online mode. Corrected useEffect memory leaks inside the WeaponShop component. Added buffering for online shop decisions and synchronization across phase transitions to avoid desyncs during rapid transitions. Fixed GAME_START catch-up and turn synchronization issues for hosts. Added a new regression test in [csp.test.ts](file:///d:/projects/Repos/TankWars/src/utils/__tests__/csp.test.ts) to verify CSP rules. — Antigravity (Gemini 3.5 Flash)
 - **Multiplayer Connection Hardening & Sync Fixes:** Resolved a critical multiplayer synchronization bug where slot connection cleanup was deleting the new combat WebSocket from the server's sockets map upon receiving the old lobby WebSocket's close event. Implemented reference check validation (`this.sockets.get(slot) === ws`) in the Durable Object's `handleSocketDisconnect` before deleting. Hardened combat WebSocket reconnection logic in `useGameSession.ts` to prevent client-side reconnection storms by validating active WebSocket references and checking for connection states (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Added try/catch error boundaries on all async handlers (WebSocket events, setTimeout triggers) in the Durable Object (`game-room.ts`) to intercept exceptions and prevent unhandled promise rejections from crashing the `workerd` process ("Network connection lost"). Deferred post-connection setup tasks (claiming slots and sending `GAME_START` messages) to the next event loop tick (`setTimeout(..., 0)`) in `game-room.ts` to guarantee that the `101 Switching Protocols` response is returned first, ensuring the WebSocket handshake is fully complete before any database/socket operations occur. Fixed client-side unmount cleanup in `OnlineLobby.tsx` to safely close the active WebSocket using a copied ref parameter (`currentWsRef.current.close()`) to avoid state-related lifecycle warnings. Added missing translation key `link_instructions` to both `fr.json` and `en.json` to pass strict TypeScript i18n checks. All 158 tests, build and lint check pass successfully with a React Doctor health score of 84/100. — Antigravity (Gemini 3.5 Pro)
 

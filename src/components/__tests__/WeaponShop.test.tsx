@@ -48,6 +48,7 @@ describe('WeaponShop', () => {
     expect(screen.getByText('Major Tom')).toBeDefined();
     expect(screen.getByText(/450/)).toBeDefined();
     expect(screen.getByText(/shop_header 1\/2/)).toBeDefined();
+    expect(screen.queryByText('weapons.MISSILE')).toBeNull();
   });
 
   it('triggers onBuySell when clicking purchase button on an affordable weapon', () => {

@@ -86,7 +86,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (207 unit tests across 25 files)
+# Run tests (310 unit tests across 42 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -162,7 +162,8 @@ Fully working:
 - **Durable Object State Persistence**: Implemented transactional state persistence for the `GameRoom` Durable Object using the platform's `storage.get` / `storage.put` API. Asynchronously restores the state on cold starts (via `ctx.blockConcurrencyWhile`), and made the main WS handlers, lobby updates, auto-start, and turn execution asynchronous to safely persist changes after each state mutation.
 - **Online Multiplayer (AddMultiplayer branch)**: Full cross-client flow — lobby WS + auto-start, combat WS (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END`), shop relay (`SHOP_BUY_SELL` / `SHOP_ADVANCE` / `SHOP_FINISH`), `localPlayerId` gating, `seedFromRoomRound`, remote fire by slot, `GAME_START` catch-up, `onlineSession.ts` resume, combat WS reconnect, round 2 server reset. MVP = client physics + server turn order; authoritative server sim still planned.
 - **Online Multiplayer Unit Tests**: 16 new tests — `onlineSession`, `GameEngine.online` (remote round end), TurnManager `ownerId` remote fire, Terrain `loadHeights`, `seedFromRoomRound` room isolation.
-- **Test Suite (v0.5.0)**: **207 unit tests** across 25 files (Vitest), including online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP regression testing, and reducer coverage.
+- **Test audit**: Cut redundant predicate tests (projectile counts, wind NaN matrix, sprite path spies). Added high-value rules: explosion/shield/BULLET×3/NUKE/THERMO, owner hitbox, grenade/cluster, fall/lava/burial, $300/$600/suicide, +$500 survival, ammo/MISSILE, shop `applyShopDelta`, worker token/FIRE/catch-up/persist, AI NUKE/THERMO gates, i18n parity, CSP insights + SW network-first. **310 unit tests** across 42 files (Vitest).
+- **Test Suite (v0.5.0)**: **310 unit tests** across 42 files (Vitest), including explosion/weapon rules, earnings, ammo, shop buy/sell, worker auth/catch-up, AI weapon gates, i18n parity, online session persistence, remote round sync, turn gating, ballistic simulation, AI dispatcher, terrain dirty-band/loadHeights, HUD throttle, fireworks, CSP/SW regression testing, and reducer coverage.
 - **Bullet and Nuke Direct Hit Damage Fix**: Fixed a bug where direct hits with `BULLET` and `NUKE` were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
 - **Custom Analytics Events via Cloudflare Zaraz**: Created an analytics utility to send custom events (`game_start`, `round_end`, `game_over`) to Cloudflare Zaraz (`window.zaraz.track`) for rich metrics tracking (game counts, player profiles, win ratios, and most used AIs).
 - **Randomized Tank Starting Order**: Tank starting positions are shuffled at the beginning of each round using a secure Fisher-Yates shuffle, so players spawn in different relative horizontal orders instead of a fixed layout.
