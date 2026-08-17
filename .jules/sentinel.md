@@ -125,3 +125,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The `/api/rooms/:roomId/ws` route in `worker/src/index.ts` accepted WebSocket upgrade requests without validating the `Origin` header, bypassing the CORS protections enforced on HTTP fetch routes.
 **Learning:** WebSocket connections do not adhere to CORS preflight restrictions. If a server does not explicitly validate the `Origin` header during the initial HTTP upgrade request, it is vulnerable to Cross-Site WebSocket Hijacking (CSWSH), allowing malicious sites to establish connections and interact with the server on behalf of authenticated/active users.
 **Prevention:** Always implement explicit `Origin` validation before granting a WebSocket connection upgrade, ensuring that the request originates from an allowed and trusted domain.
+
+## 2026-10-18 - [DoS via Unvalidated roomId length]
+**Vulnerability:** In `worker/src/index.ts`, the `roomId` parsed from the URL was passed directly into `env.GAME_ROOM.idFromName(roomId)` without length validation.
+**Learning:** Cloudflare Durable Object `idFromName` requires a string of 256 bytes or fewer. Passing an exceptionally large string (e.g., 1MB) causes an unhandled exception, which crashes the worker proxy loop and creates a Denial of Service risk.
+**Prevention:** Always perform length validation on dynamic identifiers from untrusted URL paths or headers before passing them to backend APIs with strict limits like `idFromName`.
