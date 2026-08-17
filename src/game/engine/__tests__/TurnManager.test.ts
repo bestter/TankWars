@@ -327,4 +327,96 @@ describe('TurnManager', () => {
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
     });
   });
+
+  describe('AI grenade settlement vs safety net', () => {
+    let human: ReturnType<typeof makePlayer>;
+    let ai: ReturnType<typeof makePlayer>;
+
+    function createPlayers() {
+      human = makePlayer({
+        id: 'player-1',
+        name: 'Joueur-1',
+        isHuman: true,
+        tank: { ...makePlayer().tank, id: 'tank-1' },
+      });
+      ai = makePlayer({
+        id: 'player-2',
+        name: 'CPU-1',
+        isHuman: false,
+        tank: {
+          ...makePlayer().tank,
+          id: 'tank-2',
+          currentWeapon: 'GRENADE',
+        },
+        inventory: { GRENADE: 5, MISSILE: 99 },
+      });
+    }
+
+    async function playHumanThenLetAiFire() {
+      turnManager.startFirstTurn();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('player-1');
+      expect(turnManager.tryFire()).toBe(true);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentPlayer()?.id).toBe('player-2');
+
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(mockFireCallback).toHaveBeenCalledTimes(2);
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      createPlayers();
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([human, ai]);
+      mockTankManager.anyTankIsFalling = vi.fn().mockReturnValue(false);
+      mockFireCallback.mockReset();
+      mockAiEngine = {
+        executeTurn: vi.fn().mockResolvedValue({
+          angle: 74.6,
+          power: 89,
+          weaponId: 'GRENADE',
+        }),
+      };
+      turnManager = new TurnManager(
+        mockTankManager as TankManager,
+        mockTerrainManager as TerrainManager,
+        mockFireCallback,
+        mockAiEngine as AIEngine,
+      );
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not skip the human when a late grenade settlement arrives after the AI safety net', async () => {
+      await playHumanThenLetAiFire();
+
+      // Grenade still bouncing: 4.5s safety net currently force-advances to human.
+      turnManager.update(5);
+      expect(turnManager.getCurrentPlayer()?.id).toBe('player-1');
+
+      // Real explosion + settlement arrives after the premature advance.
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(turnManager.getCurrentPlayer()?.id).toBe('player-1');
+      expect(turnManager.getCurrentTurnInfo()?.isHuman).toBe(true);
+    });
+
+    it('does not force-advance an AI turn while a grenade is still in flight', async () => {
+      const physics = {
+        hasActiveProjectiles: vi.fn().mockReturnValue(true),
+      };
+      turnManager.connectToPhysics(physics as never);
+
+      await playHumanThenLetAiFire();
+
+      turnManager.update(5);
+
+      expect(turnManager.getCurrentPlayer()?.id).toBe('player-2');
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+    });
+  });
 });
