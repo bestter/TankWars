@@ -1,0 +1,5 @@
+🎯 **What:** The WebSocket upgrade route (`/api/rooms/:roomId/ws`) in `worker/src/index.ts` was missing validation of the `Origin` header.
+
+⚠️ **Risk:** WebSocket connection requests do not adhere to standard HTTP CORS preflight mechanisms. Without explicit origin validation on the upgrade request, the server is vulnerable to Cross-Site WebSocket Hijacking (CSWSH). A malicious site could trick an authenticated or active user into establishing a WebSocket connection to the server on their behalf, allowing the attacker to intercept or manipulate real-time game traffic, bypassing standard cross-origin restrictions.
+
+🛡️ **Solution:** Added a strict `Origin` validation block before accepting the WebSocket connection upgrade. It verifies that the incoming request's origin (if present) matches the server-configured `isAllowedOrigin` criteria. Invalid or unauthorized origins receive a `403 Forbidden` response. Also added comprehensive unit tests for this specific fix.
