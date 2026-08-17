@@ -184,9 +184,10 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     // Record current known healths of all alive enemies for next comparison
-    mem.lastKnownHealth = {};
-    for (const e of enemies) {
-      mem.lastKnownHealth[e.id] = e.tank.health;
+    for (const p of gameState.players) {
+      if (p.id !== self.id) {
+        mem.lastKnownHealth[p.id] = p.tank.isDead ? 0 : p.tank.health;
+      }
     }
 
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
