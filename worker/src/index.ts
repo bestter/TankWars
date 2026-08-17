@@ -162,6 +162,11 @@ export default {
       const slot = Number(searchParams.get('slot') ?? '-1');
       const token = searchParams.get('token') ?? '';
 
+      // Strict origin validation for WebSocket to prevent CSRF/Cross-Site WebSocket Hijacking
+      if (origin !== null && !isAllowedOrigin) {
+        return new Response('Forbidden: Invalid Origin', { status: 403 });
+      }
+
       if (!roomId || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
         return new Response('Missing or invalid room/slot/token', { status: 400 });
       }

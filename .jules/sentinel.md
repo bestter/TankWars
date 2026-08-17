@@ -120,3 +120,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, the `fetchCreate` method parsed the JSON payload using `await request.json()` and immediately accessed its properties (e.g. `body.roomId`) without validating the parsed object's type. A malicious client could send a JSON payload like `"null"` or `[1, 2, 3]`, which parses successfully but causes a `TypeError` when properties are accessed, resulting in a Denial of Service.
 **Learning:** `request.json()` can return null or an array if the input is valid JSON of those types. Typecasting (`as Record<string, unknown>`) does not protect against runtime errors when accessing properties on null.
 **Prevention:** Always use strict runtime type checking (`typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)`) after parsing JSON before assigning or accessing properties.
+
+## 2026-08-08 - [Missing Origin Validation for WebSocket Upgrades]
+**Vulnerability:** The `/api/rooms/:roomId/ws` route in `worker/src/index.ts` accepted WebSocket upgrade requests without validating the `Origin` header, bypassing the CORS protections enforced on HTTP fetch routes.
+**Learning:** WebSocket connections do not adhere to CORS preflight restrictions. If a server does not explicitly validate the `Origin` header during the initial HTTP upgrade request, it is vulnerable to Cross-Site WebSocket Hijacking (CSWSH), allowing malicious sites to establish connections and interact with the server on behalf of authenticated/active users.
+**Prevention:** Always implement explicit `Origin` validation before granting a WebSocket connection upgrade, ensuring that the request originates from an allowed and trusted domain.
