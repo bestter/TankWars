@@ -308,6 +308,10 @@ export class GameEngine {
     this.turnManager.setAIEngine(aiEngine);
   }
 
+  public setRoundNumber(roundNumber: number): void {
+    this.turnManager.setRoundNumber(roundNumber);
+  }
+
   /** For online multiplayer: tells the engine which player id is controlled by this client.
    *  Used by TurnManager to lock input for other players' turns. */
   public setLocalPlayerId(playerId: string | undefined): void {
@@ -323,6 +327,7 @@ export class GameEngine {
     this.lastSlideTimes.clear();
     this.randomizeWindForRound();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
+    this.turnManager.setRoundNumber(1);
 
     // Initialise le système de tours
     this.turnManager.startFirstTurn();
@@ -349,8 +354,6 @@ export class GameEngine {
     console.log(`[WIND] New round wind: ${this.windForce.toFixed(1)} px/s²`);
   }
 
-  // Legacy setTanks removed - use setPlayers + TankManager instead
-  // public setTanks(...) { ... }
 
   /**
    * Fire a projectile. Called by human input or by AI strategy.

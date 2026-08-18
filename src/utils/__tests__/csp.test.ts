@@ -25,6 +25,11 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
 
     expect(styleSrcDirective).toBeDefined();
     expect(styleSrcDirective).toContain("'unsafe-inline'");
+
+    const scriptSrcDirective = directives.find((d: string) => d.startsWith('script-src'));
+    expect(scriptSrcDirective).toContain('https://static.cloudflareinsights.com');
+    expect(cspContent).toContain('https://cloudflareinsights.com');
+    expect(cspContent).toContain('https://static.cloudflareinsights.com');
   });
 
   it('should require style-src to allow unsafe-inline in public/_headers to prevent production UI breakage', () => {
@@ -41,5 +46,17 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
     expect(cspLine).toBeDefined();
     expect(cspLine).toContain('style-src');
     expect(cspLine).toContain("'unsafe-inline'");
+    expect(cspLine).toContain('https://static.cloudflareinsights.com');
+    expect(cspLine).toContain('https://cloudflareinsights.com');
+  });
+});
+
+describe('Service worker cache strategy', () => {
+  it('uses network-first for navigations and ignores cross-origin fetches', () => {
+    const swPath = path.resolve(process.cwd(), 'public/sw.js');
+    const content = fs.readFileSync(swPath, 'utf-8');
+    expect(content).toContain('e.request.mode === "navigate"');
+    expect(content).toContain('self.location.origin');
+    expect(content).toContain('throw err');
   });
 });

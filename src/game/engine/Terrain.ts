@@ -340,46 +340,47 @@ export class TerrainManager {
   ): void {
     if (radius <= 0) return;
 
-    const r = radius;
-    const r2 = r * r;
+    this.carveCircle(impactX, impactY, radius);
 
-    const startX = Math.max(0, Math.floor(impactX - r));
-    const endX = Math.min(this.width - 1, Math.floor(impactX + r));
-
-    for (let x = startX; x <= endX; x++) {
-      const dx = x - impactX;
-      const dx2 = dx * dx;
-
-      if (dx2 > r2) continue;
-
-      // Formule demandée : Pythagore pour cratère circulaire
-      const dy = Math.sqrt(r2 - dx2);
-
-      // Comme Y augmente vers le bas, creuser = augmenter la valeur de hauteur
-      const craterDepth = impactY + dy;
-
-      if (craterDepth > this.heights[x]) {
-        // Surface can be dug down to the canvas floor (y = height).
-        const maxSurfaceY = this.height - 1;
-        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
-      }
-    }
-
-    // Smooth crater edges only — never raise the surface (which would undo destruction).
+    const startX = Math.max(0, Math.floor(impactX - radius));
+    const endX = Math.min(this.width - 1, Math.floor(impactX + radius));
     const smoothStart = Math.max(0, startX - 3);
     const smoothEnd = Math.min(this.width - 1, endX + 3);
+    // Smooth crater edges only — never raise the surface (which would undo destruction).
     this.smoothHeights(0.35, smoothStart, smoothEnd, true);
+    this.markTerrainDirty(smoothStart, smoothEnd);
+  }
 
-    const bandStart = Math.max(0, smoothStart - 10);
-    const bandEnd = Math.min(this.width - 1, smoothEnd + 10);
-    if (!this.isDirty) {
-      this.dirtyStartX = bandStart;
-      this.dirtyEndX = bandEnd;
-    } else {
-      this.dirtyStartX = Math.min(this.dirtyStartX, bandStart);
-      this.dirtyEndX = Math.max(this.dirtyEndX, bandEnd);
+  /**
+   * Puits de forage le long d’une direction (heightmap).
+   * Tamponne carveCircle du point d’impact jusqu’à `depth` le long de (dirX, dirY).
+   * Pas de lissage: les parois restent raides.
+   */
+  public destroyTerrainShaft(
+    impactX: number,
+    impactY: number,
+    dirX: number,
+    dirY: number,
+    depth: number,
+    radius: number,
+  ): void {
+    if (radius <= 0 || depth <= 0) return;
+
+    const len = Math.hypot(dirX, dirY);
+    const nx = len > 1e-6 ? dirX / len : 0;
+    const ny = len > 1e-6 ? dirY / len : 1;
+
+    const travel = Math.max(0, depth - radius);
+    const steps = Math.max(1, Math.ceil(travel));
+
+    for (let i = 0; i <= steps; i++) {
+      const t = travel === 0 ? 0 : i / steps;
+      this.carveCircle(impactX + nx * travel * t, impactY + ny * travel * t, radius);
     }
-    this.isDirty = true;
+
+    const minX = Math.min(impactX, impactX + nx * travel) - radius;
+    const maxX = Math.max(impactX, impactX + nx * travel) + radius;
+    this.markTerrainDirty(Math.floor(minX), Math.ceil(maxX));
   }
 
   /**
@@ -426,6 +427,41 @@ export class TerrainManager {
   }
 
   // ==================== Méthodes privées ====================
+
+  /** Creuse un demi-disque (Pythagore) sans lissage ni dirty band. */
+  private carveCircle(impactX: number, impactY: number, radius: number): void {
+    if (radius <= 0) return;
+
+    const r = radius;
+    const r2 = r * r;
+    const startX = Math.max(0, Math.floor(impactX - r));
+    const endX = Math.min(this.width - 1, Math.floor(impactX + r));
+    const maxSurfaceY = this.height - 1;
+
+    for (let x = startX; x <= endX; x++) {
+      const dx = x - impactX;
+      const dx2 = dx * dx;
+      if (dx2 > r2) continue;
+      const dy = Math.sqrt(r2 - dx2);
+      const craterDepth = impactY + dy;
+      if (craterDepth > this.heights[x]) {
+        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
+      }
+    }
+  }
+
+  private markTerrainDirty(startX: number, endX: number): void {
+    const bandStart = Math.max(0, startX - 10);
+    const bandEnd = Math.min(this.width - 1, endX + 10);
+    if (!this.isDirty) {
+      this.dirtyStartX = bandStart;
+      this.dirtyEndX = bandEnd;
+    } else {
+      this.dirtyStartX = Math.min(this.dirtyStartX, bandStart);
+      this.dirtyEndX = Math.max(this.dirtyEndX, bandEnd);
+    }
+    this.isDirty = true;
+  }
 
   /**
    * Lissage de la heightmap (passe moyenne)

@@ -5,7 +5,8 @@ import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
-import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from "../types/weapon";
+import { DEFAULT_INVENTORY } from "../types/weapon";
+import { applyShopDelta } from "./shopBuySell";
 import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
@@ -648,6 +649,7 @@ export function useGameSession({
 
     if (resumed && resumed.uiPlayers.length >= 2) {
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
+      engine.setRoundNumber(resumed.currentManche);
       gamePhaseRef.current = resumed.gamePhase;
       shopPlayersRef.current = resumed.shopPlayers;
       currentShopIndexRef.current = resumed.currentShopIndex;
@@ -667,6 +669,7 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
       engine.setPlayers(players);
+      engine.setRoundNumber(1);
       if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
       }
@@ -1081,45 +1084,13 @@ export function useGameSession({
       return;
     }
 
-    const def = WEAPON_REGISTRY[weaponId];
-    if (!def) return;
-
-    const currentStock = currentPlayer.inventory?.[weaponId] ?? 0;
-
     let localUpdated = currentPlayer;
     const updatedPlayers = enginePlayers.map((p) => {
-      if (p.id === currentPlayer.id) {
-        if (delta > 0) {
-          // Achat
-          if ((p.money ?? 0) >= def.price) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) - def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock + 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        } else {
-          // Vente
-          if (currentStock > 0) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) + def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock - 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        }
-      }
-      return p;
+      if (p.id !== currentPlayer.id) return p;
+      const updated = applyShopDelta(p, weaponId, delta);
+      if (!updated) return p;
+      if (p.id === localPlayerId) localUpdated = updated;
+      return updated;
     });
 
     // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable
@@ -1272,6 +1243,7 @@ export function useGameSession({
     }
 
     const started = engine.startNextRound();
+    engine.setRoundNumber(currentMancheRef.current);
     if (!started) {
       shopFinishingRef.current = false;
       endMatchFromShop(engine, [...roster]);
@@ -1385,9 +1357,9 @@ export function useGameSession({
       finishShopPhase(finalPlayers);
     };
 
-    return () => {
-      clearShopAiTimeout();
-    };
+    // No cleanup here: this effect refreshes handler refs on every render.
+    // Clearing shopAiTimeout on each paint cancelled the local AI shop delay
+    // (human Ready → overlay "IA fait ses achats…" → stuck until next round).
   });
 
   const handleNewGame = () => {
@@ -1399,6 +1371,7 @@ export function useGameSession({
     const newPlayers = createDemoPlayers();
     engine.setAIEngine(new AIByProfileStrategy());
     engine.setPlayers(newPlayers);
+    engine.setRoundNumber(1);
 
     dispatch({ type: "RESET_GAME", newPlayers });
     shopPlayersRef.current = [];

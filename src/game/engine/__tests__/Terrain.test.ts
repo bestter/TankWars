@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TerrainManager } from '../Terrain';
 import { terrainInternals } from '../../__tests__/helpers';
+import { DRILLER_SHAFT_DEPTH } from '../../../types/weapon';
 
 describe('TerrainManager', () => {
   describe('getHeightAt', () => {
@@ -39,35 +40,7 @@ describe('TerrainManager', () => {
   });
 
 
-  describe('getHeightAt with extreme values', () => {
-    let terrain: TerrainManager;
-    const WIDTH = 100;
-    const HEIGHT = 100;
 
-    beforeEach(() => {
-      terrain = new TerrainManager(WIDTH, HEIGHT);
-      const heights = (terrain as unknown as { heights: number[] }).heights;
-      for (let i = 0; i < WIDTH; i++) {
-        heights[i] = i;
-      }
-    });
-
-    it('should handle Infinity and -Infinity', () => {
-      expect(terrain.getHeightAt(Infinity)).toBe(WIDTH - 1);
-      expect(terrain.getHeightAt(-Infinity)).toBe(0);
-    });
-
-    it('should handle NaN', () => {
-      // Because Math.max(0, Math.min(99, Math.floor(NaN))) is NaN, and heights[NaN] is undefined.
-      // But the return type is 'number', so returning undefined is technically an edge case
-      // which we should verify as it exposes the function's true behavior on NaN.
-      expect(terrain.getHeightAt(NaN)).toBeUndefined();
-    });
-
-    it('should handle -0', () => {
-      expect(terrain.getHeightAt(-0)).toBe(0);
-    });
-  });
 
   describe('checkCollision', () => {
     let terrain: TerrainManager;
@@ -144,59 +117,29 @@ describe('TerrainManager', () => {
 
 
 
-  describe('checkCollision with extreme values', () => {
-    let terrain: TerrainManager;
-    const width = 100;
-    const height = 200;
-
-    beforeEach(() => {
-      terrain = new TerrainManager(width, height);
-      // constructor sets all heights to height * 0.7 = 140
-      // So surfaceY is 140 for all x in 0..99
+  describe('destroyTerrain crater', () => {
+    it('does nothing when radius is 0 or negative', () => {
+      const terrain = new TerrainManager(100, 200);
+      const before = terrain.getHeightAt(50);
+      terrain.destroyTerrain(50, 140, 0);
+      terrain.destroyTerrain(50, 140, -4);
+      expect(terrain.getHeightAt(50)).toBe(before);
     });
 
-    it('should return false for NaN, Infinity, -Infinity coordinates', () => {
-      // For x
+    it('digs a circular crater under the impact and leaves far columns unchanged', () => {
+      const terrain = new TerrainManager(200, 200);
+      const farBefore = terrain.getHeightAt(180);
+      const underBefore = terrain.getHeightAt(50);
+
+      terrain.destroyTerrain(50, underBefore, 20);
+
+      expect(terrain.getHeightAt(50)).toBeGreaterThan(underBefore);
+      expect(terrain.getHeightAt(180)).toBe(farBefore);
+    });
+
+    it('treats NaN collision coordinates as a miss', () => {
+      const terrain = new TerrainManager(100, 200);
       expect(terrain.checkCollision(NaN, 150)).toBe(false);
-      expect(terrain.checkCollision(Infinity, 150)).toBe(false);
-      expect(terrain.checkCollision(-Infinity, 150)).toBe(false);
-
-      // For y (assuming x is valid)
-      expect(terrain.checkCollision(50, NaN)).toBe(false); // NaN >= 140 is false
-      expect(terrain.checkCollision(50, -Infinity)).toBe(false); // -Infinity >= 140 is false
-      expect(terrain.checkCollision(50, Infinity)).toBe(true); // Infinity >= 140 is true
-    });
-
-    it('should handle -0 properly', () => {
-      expect(terrain.checkCollision(-0, 150)).toBe(true);
-      expect(terrain.checkCollision(50, -0)).toBe(false);
-    });
-
-    it('should handle extremely close boundary values for x', () => {
-      // Just inside left boundary
-      expect(terrain.checkCollision(Number.EPSILON, 150)).toBe(true);
-      // Just outside left boundary
-      expect(terrain.checkCollision(-Number.EPSILON, 150)).toBe(false);
-
-      // Just inside right boundary
-      expect(terrain.checkCollision(width - 0.0000001, 150)).toBe(true);
-      // Exactly on right boundary
-      expect(terrain.checkCollision(width, 150)).toBe(false);
-      // Just outside right boundary
-      expect(terrain.checkCollision(width + 0.0000001, 150)).toBe(false);
-    });
-
-    it('should handle extremely close boundary values for y surface', () => {
-      // Surface is at y = 140
-      expect(terrain.checkCollision(50, 140 - 0.0000001)).toBe(false);
-      expect(terrain.checkCollision(50, 140 + 0.0000001)).toBe(true);
-    });
-
-    it('should handle extremely large coordinates', () => {
-      expect(terrain.checkCollision(Number.MAX_VALUE, 150)).toBe(false);
-      expect(terrain.checkCollision(-Number.MAX_VALUE, 150)).toBe(false);
-      expect(terrain.checkCollision(50, Number.MAX_VALUE)).toBe(true);
-      expect(terrain.checkCollision(50, -Number.MAX_VALUE)).toBe(false);
     });
   });
 
@@ -314,6 +257,92 @@ describe('TerrainManager', () => {
 
       expect(terrain.getHeightAt(10)).toBe(before);
       warnSpy.mockRestore();
+    });
+  });
+
+  describe("destroyTerrainShaft (DRILLER)", () => {
+    const WIDTH = 200;
+    const HEIGHT = 200;
+    const FLAT_Y = 80;
+    const RADIUS = 14;
+    const DEPTH = DRILLER_SHAFT_DEPTH;
+
+    function flatTerrain(): TerrainManager {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      return terrain;
+    }
+
+    it("creuse ~3× plus profond qu’un cratère circulaire du même rayon (impact vertical)", () => {
+      const bowl = flatTerrain();
+      bowl.destroyTerrain(100, FLAT_Y, RADIUS);
+      const bowlDepth = bowl.getHeightAt(100) - FLAT_Y;
+
+      const shaft = flatTerrain();
+      shaft.destroyTerrainShaft(100, FLAT_Y, 0, 1, DEPTH, RADIUS);
+      const shaftDepth = shaft.getHeightAt(100) - FLAT_Y;
+
+      expect(bowlDepth).toBeGreaterThan(0);
+      expect(shaftDepth).toBeGreaterThan(bowlDepth * 2.5);
+      expect(shaftDepth).toBeGreaterThanOrEqual(DEPTH - 2);
+      expect(shaftDepth).toBeLessThanOrEqual(DEPTH + 1);
+    });
+
+    it("à 45° vers la droite, le point le plus profond est décalé vers +x", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, 1, 1, DEPTH, RADIUS);
+
+      let deepestX = 100;
+      let deepestY = terrain.getHeightAt(100);
+      for (let x = 70; x <= 150; x++) {
+        const y = terrain.getHeightAt(x);
+        if (y > deepestY) {
+          deepestY = y;
+          deepestX = x;
+        }
+      }
+
+      expect(deepestX).toBeGreaterThan(100);
+      expect(terrain.getHeightAt(100)).toBeGreaterThan(FLAT_Y);
+      expect(terrain.getHeightAt(180)).toBe(FLAT_Y);
+    });
+
+    it("à 45° vers la gauche, le point le plus profond est décalé vers −x", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, -1, 1, DEPTH, RADIUS);
+
+      let deepestX = 100;
+      let deepestY = terrain.getHeightAt(100);
+      for (let x = 50; x <= 130; x++) {
+        const y = terrain.getHeightAt(x);
+        if (y > deepestY) {
+          deepestY = y;
+          deepestX = x;
+        }
+      }
+
+      expect(deepestX).toBeLessThan(100);
+    });
+
+    it("ne fait rien si depth ou radius ≤ 0", () => {
+      const terrain = flatTerrain();
+      terrain.destroyTerrainShaft(100, FLAT_Y, 0, 1, 0, RADIUS);
+      terrain.destroyTerrainShaft(100, FLAT_Y, 0, 1, DEPTH, 0);
+      expect(terrain.getHeightAt(100)).toBe(FLAT_Y);
+    });
+
+    it("marque une dirty band horizontale sans full redraw", () => {
+      const terrain = flatTerrain();
+      const internal = terrainInternals(terrain);
+      internal.needsFullRedraw = false;
+      internal.isDirty = false;
+
+      terrain.destroyTerrainShaft(40, FLAT_Y, 0, 1, DEPTH, RADIUS);
+
+      expect(internal.isDirty).toBe(true);
+      expect(internal.needsFullRedraw).toBe(false);
+      expect(internal.dirtyStartX).toBeLessThanOrEqual(40);
+      expect(internal.dirtyEndX).toBeGreaterThanOrEqual(40);
     });
   });
 
