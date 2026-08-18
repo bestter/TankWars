@@ -24,7 +24,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
-import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 
 interface AIMemory {
@@ -83,6 +83,7 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const skill = roundSkill(gameState.roundNumber);
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
@@ -180,7 +181,7 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
-    if (!revengeLocked && otherAi.length > 0 && maybeGaffe(0.25)) {
+    if (!revengeLocked && otherAi.length > 0 && scaledGaffe(0.25, skill)) {
       target = otherAi[Math.floor(secureRandom() * otherAi.length)];
     }
 
@@ -209,7 +210,7 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       gameState,
     );
-    if (chosenWeapon !== "MISSILE" && maybeGaffe(0.2)) {
+    if (chosenWeapon !== "MISSILE" && scaledGaffe(0.2, skill)) {
       chosenWeapon = "MISSILE";
     }
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
@@ -223,7 +224,7 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       attempts,
       mem,
-      roundSkill(gameState.roundNumber),
+      skill,
     );
 
     return {

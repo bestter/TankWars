@@ -105,7 +105,7 @@ describe("AI strategy executeTurn smoke", () => {
       roundNumber: 1,
     };
     const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.1).mockReturnValue(0);
+    spy.mockReturnValueOnce(0.15).mockReturnValue(0);
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
     expect(shot.angle).toBe(0);
     expect(shot.power).toBe(5);

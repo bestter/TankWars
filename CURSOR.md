@@ -37,11 +37,11 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | Profile | Class | Label |
 |---------|--------|-------|
 | `v1-random` | `AISimpleStrategy` | IA SIMPLE — naive, **no** `fallibleAim` |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK — miss curve 55–90 → 10 px |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER — lock at shot 4, 18 % slip after |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT — miss 24–42 → lock at shot 3 |
+| `v2-heuristic` | `AIHeuristicStrategy` | IA OK — miss curve 40–65 → 6 px |
+| `v3-sniper` | `AISniperStrategy` | IA SNIPER — lock at shot 4, 14 % slip after |
+| `v4-smart` | `AISmartStrategy` | IA EXPERT — miss 16–28 → lock at shot 3 |
 
-v2–v4 share `fallibleAim.ts`. Warmup: `roundSkill` starts at 10% on round 1 and reaches full spec at round 5. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+v2–v4 share `fallibleAim.ts`. Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
 ## Edit strategy
 

@@ -15,7 +15,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
-import { maybeGaffe, sniperImpactMagnitude } from "./fallibleAim";
+import { scaledGaffe, sniperImpactMagnitude } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 
 interface SniperMemory {
@@ -70,6 +70,7 @@ export class AISniperStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const skill = roundSkill(gameState.roundNumber);
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
@@ -155,7 +156,7 @@ export class AISniperStrategy implements AIEngine {
     const isNewTarget = target!.id !== mem.currentTargetId;
     if (isNewTarget) {
       const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
-      if (otherAi.length > 0 && maybeGaffe(0.1)) {
+      if (otherAi.length > 0 && scaledGaffe(0.1, skill)) {
         const intendedX = target!.tank.position.x;
         target = otherAi.toSorted(
           (a, b) =>
@@ -174,7 +175,7 @@ export class AISniperStrategy implements AIEngine {
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    const chosenWeapon = this.chooseSniperWeapon(self, attempts);
+    const chosenWeapon = this.chooseSniperWeapon(self, attempts, skill);
     self.tank.currentWeapon = chosenWeapon;
 
     const targetX = target!.tank.position.x;
@@ -185,7 +186,7 @@ export class AISniperStrategy implements AIEngine {
     if (attempts === 2) {
       offsetDir *= -1;
     }
-    const miss = sniperImpactMagnitude(attempts, roundSkill(gameState.roundNumber));
+    const miss = sniperImpactMagnitude(attempts, skill);
     // Mid-round slip: random side (wind / crater misread), not the usual open-space miss.
     if (attempts >= 4 && miss > 0) {
       offsetDir = secureRandom() < 0.5 ? -1 : 1;
@@ -208,11 +209,11 @@ export class AISniperStrategy implements AIEngine {
     };
   }
 
-  private chooseSniperWeapon(self: Player, attempts: number): WeaponId {
+  private chooseSniperWeapon(self: Player, attempts: number, skill: number): WeaponId {
     const hasBullet = (self.inventory?.BULLET ?? 0) > 0;
     const hasDriller = (self.inventory?.DRILLER ?? 0) > 0;
     if (attempts === 1) return "MISSILE";
-    if (hasBullet && maybeGaffe(0.15)) {
+    if (hasBullet && scaledGaffe(0.15, skill)) {
       return hasDriller ? "DRILLER" : "MISSILE";
     }
     if (hasBullet && secureRandom() < 0.5) return "BULLET";

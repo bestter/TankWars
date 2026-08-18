@@ -17,7 +17,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
-import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 
 interface SmartMemory {
@@ -58,6 +58,8 @@ export class AISmartStrategy implements AIEngine {
     if (!self || self.tank.isDead) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
+
+    const skill = roundSkill(gameState.roundNumber);
 
     const mem = this.getMem(self.id);
 
@@ -148,7 +150,7 @@ export class AISmartStrategy implements AIEngine {
     }
 
     const otherAi = livingAiEnemies.filter((e) => e.id !== target!.id);
-    if (otherAi.length > 0 && maybeGaffe(0.06)) {
+    if (otherAi.length > 0 && scaledGaffe(0.06, skill)) {
       const tx = target!.tank.position.x;
       target = otherAi.toSorted(
         (a, b) =>
@@ -188,7 +190,7 @@ export class AISmartStrategy implements AIEngine {
       chosenWeapon !== "GRENADE" &&
       chosenWeapon !== "CLUSTER" &&
       (hasGrenade || hasCluster) &&
-      maybeGaffe(0.07)
+      scaledGaffe(0.07, skill)
     ) {
       chosenWeapon = hasGrenade ? "GRENADE" : "CLUSTER";
     }
@@ -204,7 +206,7 @@ export class AISmartStrategy implements AIEngine {
       attempts,
       chosenWeapon,
       mem,
-      roundSkill(gameState.roundNumber),
+      skill,
     );
 
     return {
