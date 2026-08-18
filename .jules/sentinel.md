@@ -125,3 +125,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The `/api/rooms/:roomId/ws` route in `worker/src/index.ts` accepted WebSocket upgrade requests without validating the `Origin` header, bypassing the CORS protections enforced on HTTP fetch routes.
 **Learning:** WebSocket connections do not adhere to CORS preflight restrictions. If a server does not explicitly validate the `Origin` header during the initial HTTP upgrade request, it is vulnerable to Cross-Site WebSocket Hijacking (CSWSH), allowing malicious sites to establish connections and interact with the server on behalf of authenticated/active users.
 **Prevention:** Always implement explicit `Origin` validation before granting a WebSocket connection upgrade, ensuring that the request originates from an allowed and trusted domain.
+
+## 2026-08-09 - [Cloudflare API Unhandled Exception DoS]
+**Vulnerability:** The `worker/src/index.ts` endpoint passed an unvalidated, user-supplied `roomId` directly to `env.GAME_ROOM.idFromName(roomId)`.
+**Learning:** Cloudflare's `idFromName` API enforces a strict maximum length (256 bytes). Passing a string larger than this limit causes the API to throw an unhandled exception (`Error: idFromName must be 256 bytes or less`), which crashes the Worker execution for that request. Without a try-catch or length check, attackers can trigger this exception repeatedly, resulting in a Denial of Service (DoS) and excessive internal server errors.
+**Prevention:** Always validate the length of user-provided strings before passing them to strict internal APIs like Cloudflare's `idFromName`, restricting them to safe limits (e.g., `<= 256` bytes).
