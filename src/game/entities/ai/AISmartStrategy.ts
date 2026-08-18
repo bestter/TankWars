@@ -7,7 +7,7 @@ import { secureRandom } from "../../../utils/random";
  * - Simulates weapon-specific physics: bounces for GRENADE, apex-splits for CLUSTER.
  * - Self-preservation: Discards any shot parameters that would result in landing
  *   within the weapon's blast radius + 20px of its own tank.
- * - Adaptive precision: Starts with low aiming noise and ramps down to near-perfect accuracy quickly.
+ * - Adaptive precision: first shots miss by a modest margin; lock from shot 3.
  * - Tactical weapon selection: Uses nukes for long distance, grenades/clusters for hills or close range.
  */
 
@@ -17,10 +17,12 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
+import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 
 interface SmartMemory {
   currentTargetId?: string;
   targetAttempts: Record<string, number>;
+  lastKnownHealth: Record<string, number>;
   lastSelfHealth?: number;
   lastPowerBias: number;
 }
@@ -32,6 +34,7 @@ export class AISmartStrategy implements AIEngine {
     if (!this.memories.has(playerId)) {
       this.memories.set(playerId, {
         targetAttempts: {},
+        lastKnownHealth: {},
         lastPowerBias: 0,
       });
     }
@@ -41,6 +44,7 @@ export class AISmartStrategy implements AIEngine {
   private resetForNewRound(mem: SmartMemory): void {
     mem.currentTargetId = undefined;
     mem.targetAttempts = {};
+    mem.lastKnownHealth = {};
     mem.lastPowerBias = 0;
   }
 
@@ -116,15 +120,39 @@ export class AISmartStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    // Resolution in priority order
+    const livingAiEnemies = gameState.players.filter(
+      (p) => p.id !== self.id && !p.tank.isDead && !p.isHuman,
+    );
+
+    if (mem.currentTargetId) {
+      const prev = gameState.players.find((p) => p.id === mem.currentTargetId);
+      if (prev && !prev.tank.isDead) {
+        const prevHealth = mem.lastKnownHealth[prev.id];
+        if (prevHealth != null && prev.tank.health >= prevHealth - 0.1) {
+          const sign = secureRandom() < 0.5 ? -1 : 1;
+          mem.lastPowerBias += sign * (2 + secureRandom() * 2);
+        }
+      }
+    }
+
+    // Finish a wounded AI first. A wounded human is only finished when no AI remains.
     if (finishOffAi) {
       target = finishOffAi;
-    } else if (finishOffHuman) {
-      target = finishOffHuman;
-    } else if (currentTarget) {
+    } else if (currentTarget && !(currentTarget.isHuman && livingAiEnemies.length > 0)) {
       target = currentTarget;
+    } else if (finishOffHuman && livingAiEnemies.length === 0) {
+      target = finishOffHuman;
     } else {
       target = bestFallbackTarget;
+    }
+
+    const otherAi = livingAiEnemies.filter((e) => e.id !== target!.id);
+    if (otherAi.length > 0 && maybeGaffe(0.06)) {
+      const tx = target!.tank.position.x;
+      target = otherAi.toSorted(
+        (a, b) =>
+          Math.abs(a.tank.position.x - tx) - Math.abs(b.tank.position.x - tx),
+      )[0];
     }
 
     const isNewTarget = target!.id !== mem.currentTargetId;
@@ -138,13 +166,31 @@ export class AISmartStrategy implements AIEngine {
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
+    mem.lastKnownHealth = {};
+    for (const p of gameState.players) {
+      if (p.id !== self.id && !p.tank.isDead) {
+        mem.lastKnownHealth[p.id] = p.tank.health;
+      }
+    }
+
     // Weapon selection
-    const chosenWeapon = this.chooseTacticalWeapon(
+    let chosenWeapon = this.chooseTacticalWeapon(
       self,
       target!,
       terrainManager,
       gameState,
     );
+    const inv = self.inventory || {};
+    const hasGrenade = (inv.GRENADE ?? 0) > 0;
+    const hasCluster = (inv.CLUSTER ?? 0) > 0;
+    if (
+      chosenWeapon !== "GRENADE" &&
+      chosenWeapon !== "CLUSTER" &&
+      (hasGrenade || hasCluster) &&
+      maybeGaffe(0.07)
+    ) {
+      chosenWeapon = hasGrenade ? "GRENADE" : "CLUSTER";
+    }
     self.tank.currentWeapon = chosenWeapon; // Sync live snap for HUD display
 
     // Compute the shot
@@ -196,12 +242,12 @@ export class AISmartStrategy implements AIEngine {
 
     // 1. Thermonuclear - only if target is far enough away to not kill ourselves,
     // target has significant health, and passes a probability check (30%)
-    if (dist > 220 && has("THERMONUCLEAR") && targetHealthTotal >= 50 && secureRandom() < 0.30) {
+    if (dist > 220 && has("THERMONUCLEAR") && targetHealthTotal >= 50 && secureRandom() < 0.22) {
       return "THERMONUCLEAR";
     }
 
-    // 2. Baby Nuke for long range - only if target has enough health and passes a probability check (35%)
-    if (dist > 180 && has("NUKE") && targetHealthTotal >= 40 && secureRandom() < 0.35) {
+    // 2. Baby Nuke for long range - only if target has enough health and passes a probability check
+    if (dist > 180 && has("NUKE") && targetHealthTotal >= 40 && secureRandom() < 0.28) {
       return "NUKE";
     }
 
@@ -236,7 +282,7 @@ export class AISmartStrategy implements AIEngine {
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x;
+    const tx = target.tank.position.x + signedImpactOffset(attempts, "v4-smart");
     const ty = target.tank.position.y - 6;
     const dx = tx - sx;
     const isRight = dx > 0;
@@ -276,20 +322,6 @@ export class AISmartStrategy implements AIEngine {
 
     let angle = best.angle;
     let power = best.power + mem.lastPowerBias;
-
-    // Fast noise reduction:
-    // Attempt 1: small noise (1.8 deg max)
-    // Attempt 2: minimal noise (0.5 deg max)
-    // Attempt 3+: near-perfect precision (0.05 deg max)
-    let maxNoise = 1.8;
-    if (attempts === 2) maxNoise = 0.5;
-    else if (attempts >= 3) maxNoise = 0.05;
-
-    const angleNoise = (secureRandom() - 0.5) * maxNoise;
-    const powerNoise = (secureRandom() - 0.5) * (maxNoise * 0.6);
-
-    angle += angleNoise;
-    power += powerNoise;
 
     // Safe bounds
     angle = Math.max(6, Math.min(174, angle));
