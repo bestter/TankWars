@@ -4,7 +4,7 @@ import { secureRandom } from "../../../utils/random";
  *
  * Phase 2 "smarter but not sniper" AI per project guidelines + user spec.
  * - Implements AIEngine (new strategy class, no entanglement in core engine/tank).
- * - Can kill tanks (typically requires several shots; deliberately fallible).
+ * - Can kill tanks (locks on shot SHOTS_TO_HIT["v2-heuristic"] = 5 at spec).
  * - Revenge: if self.lastHitBy (set on damage), switch target to the attacker.
  * - Otherwise stick to last target for the round.
  * - New target selection: prefer weakest (lowest health), with slight human bias.
@@ -24,7 +24,8 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
-import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -82,6 +83,7 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const skill = roundSkill(gameState.roundNumber);
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
@@ -179,7 +181,7 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
-    if (!revengeLocked && otherAi.length > 0 && maybeGaffe(0.25)) {
+    if (!revengeLocked && otherAi.length > 0 && scaledGaffe(0.25, skill)) {
       target = otherAi[Math.floor(secureRandom() * otherAi.length)];
     }
 
@@ -208,7 +210,7 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       gameState,
     );
-    if (chosenWeapon !== "MISSILE" && maybeGaffe(0.2)) {
+    if (chosenWeapon !== "MISSILE" && scaledGaffe(0.2, skill)) {
       chosenWeapon = "MISSILE";
     }
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
@@ -222,6 +224,7 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       attempts,
       mem,
+      skill,
     );
 
     return {
@@ -291,10 +294,11 @@ export class AIHeuristicStrategy implements AIEngine {
     terrain: TerrainManager,
     attempts: number,
     mem: AIMemory,
+    skill: number,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic");
+    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic", undefined, skill);
     const ty = target.tank.position.y - 6; // aim slightly high on tank body
     const dx = tx - sx;
     const isRight = dx > 0;

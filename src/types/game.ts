@@ -91,6 +91,8 @@ export interface GameState {
    *  Provided to AIEngine (for wind-aware / terrain-aware smarter AI aiming). */
   windForce: number;
   gravity: number;
+  /** 1-based match round (manche). AI warmup; omit = full spec. */
+  roundNumber?: number;
 }
 
 /** Summary emitted after a RESOLUTION phase for logging / money rewards / UI. */

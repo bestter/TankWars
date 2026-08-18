@@ -29,6 +29,25 @@ describe('TurnManager', () => {
     );
   });
 
+  describe('AI GameState snapshot', () => {
+    it('passes currentRoundNumber to the AI GameState snapshot', async () => {
+      const onlyAi = makePlayer({
+        id: 'ai-1',
+        isHuman: false,
+        aiProfile: 'v1-random',
+      });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([onlyAi]);
+      const executeTurn = vi.fn().mockResolvedValue({ angle: 50, power: 60 });
+      turnManager.setAIEngine({ executeTurn });
+      turnManager.setRoundNumber(3);
+      turnManager.startFirstTurn();
+      await Promise.resolve();
+      expect(executeTurn).toHaveBeenCalled();
+      const state = executeTurn.mock.calls[0][1] as { roundNumber?: number };
+      expect(state.roundNumber).toBe(3);
+    });
+  });
+
   describe('reset', () => {
     it('restores turn 1 and lets a local human fire again', () => {
       const human = makePlayer({

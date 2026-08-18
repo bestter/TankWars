@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 334 tests, 45 fichiers) |
+| Tests | `npm run test` (vitest, 359 tests, 48 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -85,11 +85,13 @@ Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–
 Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
 | Profile | Courbe d’offset (px, par tentative sur la cible) |
 |---------|--------------------------------------------------|
-| `v2-heuristic` | 55–90 → 35–60 → 15–35 → 10 |
-| `v3-sniper` | 55–70 → 20–40 → 8–15 → 0, puis 18 % de glissade (20–42 px) au tir 4+ |
-| `v4-smart` | 24–42 → 10–20 → 0 |
+| `v2-heuristic` | 1er tir ≥ 36 px, lock au **5e** (`SHOTS_TO_HIT`) |
+| `v3-sniper` | 1er tir ≥ 36 px, lock au **4e**, 14 % de glissade après lock |
+| `v4-smart` | 1er tir ≥ 36 px, lock au **3e** |
 
 Les gaffes de personnalité restent dans chaque stratégie. `AIStrategy` est un contrat legacy, non branché au runtime.
+
+Warmup ease-out : manche 1 = 15 % (`AI_WARMUP_START_SKILL`), gros saut aux manches 2–3, palier du tableau à la manche 5. Après 5, `roundSkill` monte jusqu’à 1.35 (cap) et `aimMissScale` descend jusqu’à 0.55. Le 1er tir reste hors splash (`FIRST_SHOT_FLOOR_PX` = 36). Avant la manche 5, même le tir de lock peut rater (`EARLY_LOCK_LEFTOVER_PX`). Simple : P(alcoolique) = `1 − min(1, skill)`. `v1-random` reste hors `fallibleAim`.
 
 Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
 
@@ -120,7 +122,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + la stratégie concernée |
+| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles

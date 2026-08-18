@@ -649,6 +649,7 @@ export function useGameSession({
 
     if (resumed && resumed.uiPlayers.length >= 2) {
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
+      engine.setRoundNumber(resumed.currentManche);
       gamePhaseRef.current = resumed.gamePhase;
       shopPlayersRef.current = resumed.shopPlayers;
       currentShopIndexRef.current = resumed.currentShopIndex;
@@ -668,6 +669,7 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
       engine.setPlayers(players);
+      engine.setRoundNumber(1);
       if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
       }
@@ -1241,6 +1243,7 @@ export function useGameSession({
     }
 
     const started = engine.startNextRound();
+    engine.setRoundNumber(currentMancheRef.current);
     if (!started) {
       shopFinishingRef.current = false;
       endMatchFromShop(engine, [...roster]);
@@ -1368,6 +1371,7 @@ export function useGameSession({
     const newPlayers = createDemoPlayers();
     engine.setAIEngine(new AIByProfileStrategy());
     engine.setPlayers(newPlayers);
+    engine.setRoundNumber(1);
 
     dispatch({ type: "RESET_GAME", newPlayers });
     shopPlayersRef.current = [];

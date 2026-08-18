@@ -27,7 +27,7 @@
 - Spawns: shuffled X, 100 px gap, 13 % margins, `Y = groundY`.
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **334** across **45** files (`npm run test`).
+- Tests: **359** across **48** files (`npm run test`).
 - Version: `0.5.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
@@ -37,11 +37,11 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | Profile | Class | Label |
 |---------|--------|-------|
 | `v1-random` | `AISimpleStrategy` | IA SIMPLE — naive, **no** `fallibleAim` |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK — miss curve 55–90 → 10 px |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER — lock at shot 4, 18 % slip after |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT — miss 24–42 → lock at shot 3 |
+| `v2-heuristic` | `AIHeuristicStrategy` | IA OK — first shot ≥ 36 px, lock at shot 5 |
+| `v3-sniper` | `AISniperStrategy` | IA SNIPER — first shot ≥ 36 px, lock at shot 4, 14 % slip after |
+| `v4-smart` | `AISmartStrategy` | IA EXPERT — first shot ≥ 36 px, lock at shot 3 |
 
-v2–v4 share `fallibleAim.ts`. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts`. Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
 ## Edit strategy
 
