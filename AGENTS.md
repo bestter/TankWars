@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 334 tests, 45 fichiers) |
+| Tests | `npm run test` (vitest, 357 tests, 48 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -91,6 +91,8 @@ Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y to
 
 Les gaffes de personnalité restent dans chaque stratégie. `AIStrategy` est un contrat legacy, non branché au runtime.
 
+Warmup : `roundSkill` part de `AI_WARMUP_START_SKILL` (0.10) à la manche 1 et monte linéairement à 1.0 dès `AI_WARMUP_ROUNDS` (5). Extra miss = `(1 - skill) * AI_WARMUP_EXTRA_PX` (80). Simple : P(alcoolique) = `1 - skill`. Specs du tableau dès la 5e manche. `v1-random` reste hors `fallibleAim`.
+
 Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
 
 ## Pièges fréquents
@@ -120,7 +122,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + la stratégie concernée |
+| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles

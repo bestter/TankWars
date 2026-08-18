@@ -79,6 +79,25 @@ describe("fallibleAim", () => {
     expect(signedImpactOffset(1, "v3-sniper", 1)).toBe(55);
   });
 
+  it("adds no warmup extra when skill is omitted or 1", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    expect(impactOffsetMagnitude(1, "v2-heuristic")).toBe(55);
+    expect(impactOffsetMagnitude(1, "v2-heuristic", 1)).toBe(55);
+  });
+
+  it("adds 90% warmup extra at manche-1 skill (0.1)", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    expect(impactOffsetMagnitude(1, "v4-smart", 0.1)).toBe(24 + 72);
+    expect(signedImpactOffset(1, "v3-sniper", -1, 0.1)).toBe(-(55 + 72));
+  });
+
+  it("sniper slip also receives the warmup extra", () => {
+    const spy = vi.spyOn(random, "secureRandom");
+    spy.mockReturnValueOnce(0.05); // slip
+    spy.mockReturnValueOnce(0); // min slip 20
+    expect(sniperImpactMagnitude(5, 0.1)).toBe(20 + 72);
+  });
+
   it("signedImpactOffset picks a random sign when none is given", () => {
     const spy = vi.spyOn(random, "secureRandom");
     spy.mockReturnValueOnce(0); // magnitude → min

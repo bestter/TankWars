@@ -25,6 +25,7 @@ import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -222,6 +223,7 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       attempts,
       mem,
+      roundSkill(gameState.roundNumber),
     );
 
     return {
@@ -291,10 +293,11 @@ export class AIHeuristicStrategy implements AIEngine {
     terrain: TerrainManager,
     attempts: number,
     mem: AIMemory,
+    skill: number,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic");
+    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic", undefined, skill);
     const ty = target.tank.position.y - 6; // aim slightly high on tank body
     const dx = tx - sx;
     const isRight = dx > 0;

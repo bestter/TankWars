@@ -16,6 +16,7 @@ import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { maybeGaffe, sniperImpactMagnitude } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -184,7 +185,7 @@ export class AISniperStrategy implements AIEngine {
     if (attempts === 2) {
       offsetDir *= -1;
     }
-    const miss = sniperImpactMagnitude(attempts);
+    const miss = sniperImpactMagnitude(attempts, roundSkill(gameState.roundNumber));
     // Mid-round slip: random side (wind / crater misread), not the usual open-space miss.
     if (attempts >= 4 && miss > 0) {
       offsetDir = secureRandom() < 0.5 ? -1 : 1;

@@ -57,6 +57,8 @@ export class TurnManager {
   /** Environment snapshot for AI (wind/gravity change per round or config; passed via GameState to AIEngine). */
   private currentWindForce = 0;
   private currentGravity = 260;
+  /** 1-based match round (manche). Independent of intra-combat turnNumber. */
+  private currentRoundNumber = 1;
 
   public isInterRoundPaused(): boolean {
     return this.interRoundPaused;
@@ -154,6 +156,13 @@ export class TurnManager {
   public setEnvironment(windForce: number, gravity: number): void {
     this.currentWindForce = windForce;
     this.currentGravity = gravity;
+  }
+
+  public setRoundNumber(roundNumber: number): void {
+    this.currentRoundNumber =
+      Number.isFinite(roundNumber) && roundNumber >= 1
+        ? Math.floor(roundNumber)
+        : 1;
   }
 
   constructor(
@@ -963,6 +972,7 @@ export class TurnManager {
         turn: this.turnNumber,
         windForce: this.currentWindForce,
         gravity: this.currentGravity,
+        roundNumber: this.currentRoundNumber,
       };
 
       console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');

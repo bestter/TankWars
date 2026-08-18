@@ -97,6 +97,31 @@ describe("AI strategy executeTurn smoke", () => {
     expect(shot.power).toBeGreaterThan(50);
     expect(shot.weaponId).toBeDefined();
   });
+
+  it("AISimpleStrategy is alcoholic on manche 1 (full random, can aim at self)", async () => {
+    const strategy = new AISimpleStrategy();
+    const gameState = {
+      ...makeGameState({ ...aiShooter, aiProfile: "v1-random" }, enemy, "v1-random"),
+      roundNumber: 1,
+    };
+    const spy = vi.spyOn(random, "secureRandom");
+    spy.mockReturnValueOnce(0.1).mockReturnValue(0);
+    const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
+    expect(shot.angle).toBe(0);
+    expect(shot.power).toBe(5);
+    spy.mockRestore();
+  });
+
+  it("AISimpleStrategy uses current spec from manche 5", async () => {
+    const strategy = new AISimpleStrategy();
+    const gameState = {
+      ...makeGameState({ ...aiShooter, aiProfile: "v1-random" }, enemy, "v1-random"),
+      roundNumber: 5,
+    };
+    const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
+    expect(shot.angle).toBeGreaterThanOrEqual(45);
+    expect(shot.power).toBeGreaterThanOrEqual(60);
+  });
 });
 
 describe("AI weapon gates", () => {

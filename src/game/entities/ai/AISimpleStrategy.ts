@@ -11,6 +11,7 @@ import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
+import { roundSkill } from "./roundSkill";
 
 export class AISimpleStrategy implements AIEngine {
   async executeTurn(
@@ -22,6 +23,17 @@ export class AISimpleStrategy implements AIEngine {
     const currentPlayer = gameState.players.find((p) => p.tank.id === tankId);
     if (!currentPlayer) {
       return { angle: 45, power: 50 };
+    }
+
+    const skill = roundSkill(gameState.roundNumber);
+    if (secureRandom() >= skill) {
+      const angle = secureRandom() * 180;
+      const power = 5 + secureRandom() * 95;
+      return {
+        angle: Math.round(angle * 10) / 10,
+        power: Math.round(power),
+        weaponId: currentPlayer.tank.currentWeapon || "MISSILE",
+      };
     }
 
     // Find living enemies

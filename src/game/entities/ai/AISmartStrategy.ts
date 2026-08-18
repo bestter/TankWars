@@ -18,6 +18,7 @@ import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
 
 interface SmartMemory {
   currentTargetId?: string;
@@ -203,6 +204,7 @@ export class AISmartStrategy implements AIEngine {
       attempts,
       chosenWeapon,
       mem,
+      roundSkill(gameState.roundNumber),
     );
 
     return {
@@ -279,10 +281,11 @@ export class AISmartStrategy implements AIEngine {
     attempts: number,
     weaponId: WeaponId,
     mem: SmartMemory,
+    skill: number,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x + signedImpactOffset(attempts, "v4-smart");
+    const tx = target.tank.position.x + signedImpactOffset(attempts, "v4-smart", undefined, skill);
     const ty = target.tank.position.y - 6;
     const dx = tx - sx;
     const isRight = dx > 0;

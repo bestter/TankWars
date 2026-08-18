@@ -41,7 +41,7 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER — lock at shot 4, 18 % slip after |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT — miss 24–42 → lock at shot 3 |
 
-v2–v4 share `fallibleAim.ts`. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+v2–v4 share `fallibleAim.ts`. Warmup: `roundSkill` starts at 10% on round 1 and reaches full spec at round 5. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
 ## Edit strategy
 

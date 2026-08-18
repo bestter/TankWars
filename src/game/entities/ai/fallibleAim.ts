@@ -5,6 +5,7 @@
  */
 
 import { secureRandom } from "../../../utils/random";
+import { warmupImpactExtraPx } from "./roundSkill";
 
 export type FallibleProfile = "v2-heuristic" | "v3-sniper" | "v4-smart";
 
@@ -44,9 +45,11 @@ function bandFor(attempts: number, profile: FallibleProfile): OffsetBand {
 export function impactOffsetMagnitude(
   attempts: number,
   profile: FallibleProfile,
+  skill = 1,
 ): number {
   const band = bandFor(attempts, profile);
-  return band.min + secureRandom() * (band.max - band.min);
+  const base = band.min + secureRandom() * (band.max - band.min);
+  return base + warmupImpactExtraPx(skill);
 }
 
 /**
@@ -57,8 +60,9 @@ export function signedImpactOffset(
   attempts: number,
   profile: FallibleProfile,
   sign?: number,
+  skill = 1,
 ): number {
-  const magnitude = impactOffsetMagnitude(attempts, profile);
+  const magnitude = impactOffsetMagnitude(attempts, profile, skill);
   const dir = sign === undefined ? (secureRandom() < 0.5 ? -1 : 1) : Math.sign(sign) || 1;
   return dir * magnitude;
 }
@@ -76,9 +80,13 @@ const SNIPER_SLIP_MAX = 42;
  * Sniper impact miss. Follows the lock curve, then occasionally slips
  * on shot 4+ so a mid-round duel is not a perfect laser.
  */
-export function sniperImpactMagnitude(attempts: number): number {
+export function sniperImpactMagnitude(attempts: number, skill = 1): number {
   if (attempts >= 4 && maybeGaffe(SNIPER_MID_ROUND_SLIP_CHANCE)) {
-    return SNIPER_SLIP_MIN + secureRandom() * (SNIPER_SLIP_MAX - SNIPER_SLIP_MIN);
+    return (
+      SNIPER_SLIP_MIN +
+      secureRandom() * (SNIPER_SLIP_MAX - SNIPER_SLIP_MIN) +
+      warmupImpactExtraPx(skill)
+    );
   }
-  return impactOffsetMagnitude(attempts, "v3-sniper");
+  return impactOffsetMagnitude(attempts, "v3-sniper", skill);
 }

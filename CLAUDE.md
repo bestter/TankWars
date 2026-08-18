@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **334 tests** (45 files)
+- Run tests: `npm run test` (or `vitest run`) — **357 tests** (48 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -41,7 +41,7 @@ Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. Miss 55–70 → lock at shot 4, 18 % mid-round slip. |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. Miss 24–42 → lock at shot 3. |
 
-v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime.
+v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup: `roundSkill` starts at `AI_WARMUP_START_SKILL` (0.10) on round 1 and ramps linearly to 1.0 at `AI_WARMUP_ROUNDS` (5); extra miss is `(1 - skill) * AI_WARMUP_EXTRA_PX` (80); Simple P(alcoholic) = `1 - skill`. Table specs apply from round 5. `v1-random` stays off `fallibleAim`.
 
 New profile → new file under `game/entities/ai/`, register in `AIByProfileStrategy.ts` + `GameCanvas.tsx`.
 
