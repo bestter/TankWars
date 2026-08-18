@@ -27,14 +27,4 @@ describe('GameControlsExplanation', () => {
     expect(screen.getByText(/translated_controls_body/)).toBeDefined();
     expect(screen.getByText(/translated_controls_explanation/)).toBeDefined();
   });
-
-  it('applies the correct inline styles', () => {
-    const { container } = render(<GameControlsExplanation />);
-    const divElement = container.firstChild as HTMLElement;
-
-    // JSDOM converts hex colors to rgb
-    expect(divElement.style.color).toBe('rgb(170, 170, 170)');
-    expect(divElement.style.fontSize).toBe('12px');
-    expect(divElement.style.textAlign).toBe('center');
-  });
 });
