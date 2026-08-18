@@ -73,7 +73,7 @@ describe("autoBuyForAI", () => {
     expect(player.money).toBe(1000 - 675);
   });
 
-  it("buys items for v3-sniper profile", () => {
+  it("caps v3-sniper at 2 BULLET then spends leftover on DRILLER", () => {
     // BULLET (150), DRILLER (90)
     // Budget 70% of 1000 = 700.
     const player = makePlayer({
@@ -85,21 +85,15 @@ describe("autoBuyForAI", () => {
 
     autoBuyForAI(player);
 
-    // It should buy BULLET first (price 150)
-    // 700 / 150 = 4 BULLETs. 4 * 150 = 600 spent.
-    // Remaining budget = 100.
-    // Next is DRILLER (price 90).
-    // 100 / 90 = 1 DRILLER. 1 * 90 = 90 spent.
-    // Total spent = 690.
-
-    expect(player.inventory["BULLET"]).toBe(4);
-    expect(player.inventory["DRILLER"]).toBe(1);
-    expect(player.money).toBe(1000 - 690);
+    // Cap 2 BULLET = 300. Remaining budget 400 → 4 DRILLER = 360.
+    expect(player.inventory["BULLET"]).toBe(2);
+    expect(player.inventory["DRILLER"]).toBe(4);
+    expect(player.money).toBe(1000 - 660);
   });
 
-  it("buys items for v4-smart profile", () => {
-    // Budget 85% of 1000 = 850.
-    // CLUSTER (135), DRILLER (90)
+  it("buys items for v4-smart profile at 78% budget", () => {
+    // Budget 78% of 1000 = 780.
+    // 5 CLUSTER * 135 = 675, then 1 DRILLER * 90 = 765.
     const player = makePlayer({
       isHuman: false,
       aiProfile: "v4-smart",
@@ -109,13 +103,9 @@ describe("autoBuyForAI", () => {
 
     autoBuyForAI(player);
 
-    // Should buy CLUSTER first
-    // 850 / 135 = 6 CLUSTERs. 6 * 135 = 810 spent.
-    // Remaining budget = 40.
-    // Too low for DRILLER (90) or anything else.
-
-    expect(player.inventory["CLUSTER"]).toBe(6);
-    expect(player.money).toBe(1000 - 810);
+    expect(player.inventory["CLUSTER"]).toBe(5);
+    expect(player.inventory["DRILLER"]).toBe(1);
+    expect(player.money).toBe(1000 - 765);
   });
 
   it("respects the money reserve constraint (> 80)", () => {
@@ -155,9 +145,7 @@ describe("autoBuyForAI", () => {
     expect(player.money).toBe(65);
   });
 
-  it("limits max purchases per weapon to 12", () => {
-    // Sniper profile. Budget 70% of 10000 = 7000.
-    // BULLET (150).
+  it("limits max purchases per weapon to 12 except sniper BULLET", () => {
     const player = makePlayer({
       isHuman: false,
       aiProfile: "v3-sniper",
@@ -167,16 +155,13 @@ describe("autoBuyForAI", () => {
 
     autoBuyForAI(player);
 
-    // BULLET costs 150. Max buys = 12. Spent = 1800.
-    // Next is DRILLER (90). Max buys = 12. Spent = 1080.
-    // Total spent = 2880.
-
-    expect(player.inventory["BULLET"]).toBe(12);
+    // 2 BULLET * 150 = 300. 12 DRILLER * 90 = 1080. Spent = 1380.
+    expect(player.inventory["BULLET"]).toBe(2);
     expect(player.inventory["DRILLER"]).toBe(12);
-    expect(player.money).toBe(10000 - 2880);
+    expect(player.money).toBe(10000 - 1380);
   });
 
-  it("preserves existing inventory when buying", () => {
+  it("does not buy more BULLET when sniper already holds the cap", () => {
     const player = makePlayer({
       isHuman: false,
       aiProfile: "v3-sniper",
@@ -186,9 +171,8 @@ describe("autoBuyForAI", () => {
 
     autoBuyForAI(player);
 
-    // It should buy 4 more BULLETs.
-    // 3 + 4 = 7.
-    expect(player.inventory["BULLET"]).toBe(7);
-    expect(player.inventory["MISSILE"]).toBe(10); // unchanged
+    expect(player.inventory["BULLET"]).toBe(3);
+    expect(player.inventory["MISSILE"]).toBe(10);
+    expect(player.inventory["DRILLER"]).toBe(7);
   });
 });

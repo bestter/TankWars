@@ -24,6 +24,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
+import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -128,7 +129,7 @@ export class AIHeuristicStrategy implements AIEngine {
           } else {
             // Miss!
             mem.roundFails += 1;
-            mem.lastPowerBias += (secureRandom() - 0.5) * 1.2;
+            mem.lastPowerBias += (secureRandom() - 0.5) * 3.6;
             if (import.meta.env.DEV) {
               console.log(
                 `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
@@ -141,6 +142,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // === Target selection per spec ===
     let target: Player | undefined;
+    let revengeLocked = false;
 
     // 1. Revenge: if someone just tried to kill us, prioritize them
     const revengeId = self.tank.lastHitBy;
@@ -148,6 +150,7 @@ export class AIHeuristicStrategy implements AIEngine {
       const e = playerById.get(revengeId);
       if (e && e.id !== self.id && !e.tank.isDead) {
         target = e;
+        revengeLocked = true;
       }
     }
 
@@ -175,6 +178,11 @@ export class AIHeuristicStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
+    if (!revengeLocked && otherAi.length > 0 && maybeGaffe(0.25)) {
+      target = otherAi[Math.floor(secureRandom() * otherAi.length)];
+    }
+
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget && import.meta.env.DEV) {
@@ -193,12 +201,15 @@ export class AIHeuristicStrategy implements AIEngine {
     mem.targetAttempts[target!.id] = attempts;
 
     // === Choose weapon (OK AI opportunism) + compute improved shot ===
-    const chosenWeapon = this.chooseWeapon(
+    let chosenWeapon = this.chooseWeapon(
       self,
       target!,
       terrainManager,
       gameState,
     );
+    if (chosenWeapon !== "MISSILE" && maybeGaffe(0.2)) {
+      chosenWeapon = "MISSILE";
+    }
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
     self.tank.currentWeapon = chosenWeapon; // live ref from gameState snapshot of roster
 
@@ -250,14 +261,14 @@ export class AIHeuristicStrategy implements AIEngine {
         !p.tank.isDead &&
         Math.abs(p.tank.position.x - target.tank.position.x) < 70,
     ).length;
-    if (nearby >= 1 && has("CLUSTER")) return "CLUSTER";
+    if (nearby >= 2 && has("CLUSTER")) return "CLUSTER";
 
     const targetHealthTotal = target.tank.health + target.tank.shield;
     if (
       Math.abs(target.tank.position.x - self.tank.position.x) > 380 &&
       has("NUKE") &&
       targetHealthTotal >= 40 &&
-      secureRandom() < 0.35
+      secureRandom() < 0.2
     ) {
       return "NUKE";
     }
@@ -282,7 +293,7 @@ export class AIHeuristicStrategy implements AIEngine {
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x;
+    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic");
     const ty = target.tank.position.y - 6; // aim slightly high on tank body
     const dx = tx - sx;
     const isRight = dx > 0;
