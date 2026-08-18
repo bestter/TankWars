@@ -349,8 +349,6 @@ export class GameEngine {
     console.log(`[WIND] New round wind: ${this.windForce.toFixed(1)} px/s²`);
   }
 
-  // Legacy setTanks removed - use setPlayers + TankManager instead
-  // public setTanks(...) { ... }
 
   /**
    * Fire a projectile. Called by human input or by AI strategy.
