@@ -4,7 +4,6 @@ import { render, cleanup } from '@testing-library/react';
 import { TankPreview } from '../TankPreview';
 import type { Color } from '../../types/game';
 import { drawTankSprite } from '../../game/rendering/tankSprite';
-import * as React from 'react';
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
