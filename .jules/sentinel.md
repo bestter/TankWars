@@ -130,8 +130,3 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The `worker/src/index.ts` endpoint passed an unvalidated, user-supplied `roomId` directly to `env.GAME_ROOM.idFromName(roomId)`.
 **Learning:** Cloudflare's `idFromName` API enforces a strict maximum length (256 bytes). Passing a string larger than this limit causes the API to throw an unhandled exception (`Error: idFromName must be 256 bytes or less`), which crashes the Worker execution for that request. Without a try-catch or length check, attackers can trigger this exception repeatedly, resulting in a Denial of Service (DoS) and excessive internal server errors.
 **Prevention:** Always validate the length of user-provided strings before passing them to strict internal APIs like Cloudflare's `idFromName`, restricting them to safe limits (e.g., `<= 256` bytes).
-
-## 2026-10-18 - [DoS via Unvalidated roomId length]
-**Vulnerability:** In `worker/src/index.ts`, the `roomId` parsed from the URL was passed directly into `env.GAME_ROOM.idFromName(roomId)` without length validation.
-**Learning:** Cloudflare Durable Object `idFromName` requires a string of 256 bytes or fewer. Passing an exceptionally large string (e.g., 1MB) causes an unhandled exception, which crashes the worker proxy loop and creates a Denial of Service risk.
-**Prevention:** Always perform length validation on dynamic identifiers from untrusted URL paths or headers before passing them to backend APIs with strict limits like `idFromName`.

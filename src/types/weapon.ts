@@ -38,12 +38,6 @@ export interface Weapon {
   defaultAmmo: number;
 }
 
-/**
- * Profondeur du puits DRILLER le long de la vitesse d’impact, en pixels monde.
- * Éditer cette valeur pour retuner le forage — ne pas toucher à damage / blastRadius.
- */
-export const DRILLER_SHAFT_DEPTH = 53;
-
 /** Master registry. All weapon behavior is derived from these values. */
 export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
   MISSILE: {

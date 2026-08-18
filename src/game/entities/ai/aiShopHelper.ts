@@ -57,6 +57,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
     preferredOrder = ["BULLET", "DRILLER"];
     budgetRatio = 0.7;
   } else if (profile === "v4-smart") {
+    // Smart AI spends more aggressively (85% budget) on its tools
     preferredOrder = [
       "CLUSTER",
       "DRILLER",
@@ -64,7 +65,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
       "NUKE",
       "THERMONUCLEAR",
     ];
-    budgetRatio = 0.78;
+    budgetRatio = 0.85;
   }
 
   let spent = 0;
@@ -79,13 +80,10 @@ export function autoBuyForAI(aiPlayer: Player): void {
     if (!def) continue;
 
     let buysThisWeapon = 0;
-    const maxStock =
-      wid === "BULLET" && profile === "v3-sniper" ? 2 : Number.POSITIVE_INFINITY;
     const maxBuysPerWeapon = 12;
 
     while (
       buysThisWeapon < maxBuysPerWeapon &&
-      (inventory[wid] ?? 0) < maxStock &&
       money >= def.price &&
       spent + def.price <= budget &&
       money > 80 // garde un peu d'argent

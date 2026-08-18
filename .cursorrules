@@ -1,49 +1,112 @@
 # .cursorrules
 
-**For Cursor (and similar agents):** Primary guidance is [AGENTS.md](./AGENTS.md). Read it first. This file is a short, current-rules companion — not a changelog.
+**For Cursor (and similar agents):** Primary guidance is in [AGENTS.md](./AGENTS.md). Read it first. This file contains concise, Cursor-friendly rules that are kept in sync with the project.
 
 - Role: Senior Software Architect & Expert Game Developer
-- Stack: TypeScript (strict, zero `any`), React 19, HTML5 Canvas 2D
-- Styling: monospace retro; `App.css` / `index.css` (no UI kit, no Tailwind)
-- Language: reply in French (Québécois preferred), even if the user writes in English
+- Stack: TypeScript, React, HTML5 Canvas 2D
+- Styling: monospace retro aesthetic; inline styles + `App.css` / `index.css` (no UI kit dependency, no Tailwind)
 
 ## Core Principles
 
-1. Never mix React state with the Canvas high-frequency loop. React owns `GamePhase`, players, money, shop, HUD. GameEngine owns physics, terrain, projectiles, drawing, combat audio.
-2. Modular, strongly-typed TypeScript. Shared types go in `src/types/`.
-3. Physics at fixed 120 Hz, decoupled from display raf.
-4. RNG: `secureRandom` from `src/utils/random.ts` — never `Math.random`.
+1. Never mix React state with the Canvas high-frequency render loop. React drives the Game State (turns, shop, money); Canvas handles physics, drawing, and input.
+2. Write modular, strongly-typed TypeScript. Avoid `any`.
+3. Keep physics updates (fixed delta time) decoupled from rendering frame rates.
 
-## Game Specs (current)
+## TankWars Game Specifications
 
-- Loop: `requestAnimationFrame` + `PHYSICS_DT = 1/120` in `GameEngine`.
-- Terrain: custom heightmap in `Terrain.ts`. Circular craters with falloff. DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53) with unchanged splash.
-- Players: 2–4, any mix Human / `v1-random` (IA SIMPLE) / `v2-heuristic` (IA OK) / `v3-sniper` (IA SNIPER) / `v4-smart` (IA EXPERT).
-- Palette: `VGA_PALETTE` only (16 VGA + neon arcade extras).
-- Tanks: `drawTankSprite` only, 24×15, slope tilt, independent turret. Active triangle, `ownerColor` shells, micro recoil.
-- Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
-- Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
-- Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **334** across **45** files. Version `0.5.0`.
+- Game loop: Standard `requestAnimationFrame` with performance tracking.
+- Terrain: Destructible 2D terrain using custom heightmap algorithms in `Terrain.ts`; circular craters with falloff.
+- Players: 2 to 4 dynamic players (Humans or AI). Full support in MainMenu for mixing Human + v1-random ("IA SIMPLE"), v2-heuristic ("IA OK"), v3-sniper ("IA SNIPER"), v4-smart ("IA EXPERT").
+- Palette: Use `VGA_PALETTE` from `src/types/game.ts` for all game rendering (classic 16-color VGA + extended high-contrast arcade/neon colors for tank visual redesign: ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, ...).
+- Tank sprites: Pure procedural `drawTankSprite(ctx, x, y, width, height, angle, turretAngle, primaryColor)` in `src/game/rendering/tankSprite.ts` (geometric retro TankWars style: textured chenilles/tracks, beveled primaryColor chassis, arc dome turret, independent cannon via save/translate/rotate/restore). Fully integrated into the 120Hz loop (scaled up to 24x15 with matching hitboxes) with dynamic terrain slope-aware chassis tilt. Complete visual redesign + Step 4, 5 & 6 polish (lobby ColorPicker + TankPreview with mutual exclusion, active turn floating colored indicator, owner-colored projectiles, micro chassis recoil on fire, randomized tank positions at each round, and direct shell-tank collision detection).
+- State Machine: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (CELEBRATION for round-winner fireworks before SUMMARY; types in `src/types/game.ts`).
+- Weapons & Economy: Multiple weapons via `WEAPON_REGISTRY` in `src/types/weapon.ts` (Missile is unlimited and removed from shop; others have limited inventory that decrements on use). Shop between rounds. Includes advanced weapons like Thermonuclear Bomb (destroys ~1/4 map, inner kill zone, outer tanks fall, huge red-orange VFX + sounds in GameEngine).
+- Online Multiplayer (`AddMultiplayer`): `worker/` (Cloudflare Worker + `GameRoom` DO) + client (`OnlineLobby.tsx`, `useGameSession.ts`, `onlineSession.ts`). Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored. **155 tests** (onlineSession, GameEngine.online, TurnManager ownerId, Terrain loadHeights).
 
-## AI
+- ## Gameplay & Visual Polish (Step 4, 5, 6 & 7)
 
-All tank AI implements `AIEngine`. Router: `AIByProfileStrategy` in `GameCanvas.tsx`.
+- **Multiplayer Connection Hardening & Sync Fixes :** Résolution d'un bogue critique de synchronisation multijoueur où le nettoyage de connexion des slots supprimait le nouveau WebSocket de combat du dictionnaire des sockets actifs sur le serveur lors de la réception de l'événement de fermeture de l'ancien WebSocket du lobby. Validation par comparaison de référence (`this.sockets.get(slot) === ws`) ajoutée dans `handleSocketDisconnect` du Durable Object. Sécurisation de la logique de reconnexion dans `useGameSession.ts` pour empêcher les tempêtes de reconnexion en comparant la référence du WebSocket actif et en vérifiant l'état de connexion (`WebSocket.CONNECTING` / `WebSocket.OPEN`). Ajout de blocs `try/catch` sur tous les points d'entrée asynchrones du Durable Object (`game-room.ts`) pour intercepter les exceptions et éviter les crashs de `workerd` ("Network connection lost") causés par des promesses non gérées. Différé des tâches d'initialisation post-connexion (revendication des slots et envoi de `GAME_START`) au tick suivant (`setTimeout(..., 0)`) dans `game-room.ts` afin de s'assurer de renvoyer d'abord la réponse `101 Switching Protocols`, garantissant ainsi que la poignée de main WebSocket soit finalisée par le runtime avant toute opération réseau ou base de données (ce qui résout le cas où l'un des écrans restait bloqué dans le lobby suite au crash du serveur de développement). Correction du nettoyage client au démontage dans `OnlineLobby.tsx` en copiant la référence de l'objet ref (`currentWsRef.current.close()`) pour éviter les alertes de cycle de vie. Ajout de la clé de traduction `link_instructions` pour passer le typecheck TypeScript strict de l'i18n. Score de santé `react-doctor` à 84/100, l'ensemble des 158 tests passent au vert. — Antigravity (Gemini 3.5 Pro)
+- **Durable Object State Persistence :** Implémentation de la persistance d'état transactionnelle pour le Durable Object `GameRoom` via les API `storage.get` / `storage.put`. Restauration asynchrone lors des cold starts (`ctx.blockConcurrencyWhile`), et conversion des handlers WS principaux, de l'auto-démarrage et de l'exécution des tirs en méthodes asynchrones afin de persister de manière sécurisée les changements d'état. — Antigravity (Gemini 3.5 Flash (High))
+- **Cloudflare Worker TypeScript & Type checking :** Intégration du typechecking statique pour le dossier du Worker (`worker/`) via un fichier de configuration `worker/tsconfig.json` dédié référencé dans le `tsconfig.json` de la racine. Résolution de toutes les erreurs de typage TypeScript dans le Durable Object et l'index du worker (utilisation des types globaux `DurableObjectNamespace` / `DurableObjectState` au lieu d'imports de plateforme, typage correct du roster et signature de retour `Color` pour `assignColor`). — Antigravity (Gemini 3.5 Flash (High))
+- **Migration du modèle d'agent (Gemini 3.6 Flash) :** Installation de la compétence `gemini-interactions-api` et mise à jour de la configuration de l'agent de maintenance vers `Gemini 3.6 Flash` afin de prendre en charge les workflows agentiques et multimodaux avancés avec une meilleure efficacité de jetons. Validation réussie de la suite complète de 231 tests. — Antigravity (Gemini 3.6 Flash)
+- **Production deploy option B :** Client prod via `VITE_API_BASE` (workers.dev) dans `onlineApi.ts`; CSP `*.workers.dev`. 158 tests. — Grok 4.3 (xAI)
+- **Copyright attribution :** Pied de page légal — Martin Labelle (locales EN/FR). — Grok 4.3 (xAI)
+- **Game Version Bump :** Version `0.5.0` dans `package.json` et `package-lock.json`. — Grok 4.3 (xAI)
+- **Online Multiplayer Unit Tests :** +16 tests (155 total). — Grok 4.3 (xAI)
+- **Documentation sync (v0.4.2) : AGENTS.md + README + companions mis à jour (worker/, online, 139 tests). — Grok 4.3 (xAI)
+- **Worker `.gitignore` cleanup :** `worker/.wrangler/` ajouté au `.gitignore` ; retrait des artefacts SQLite/cache Wrangler locaux de l'index Git. Source worker (`worker/src/`, `wrangler.toml`) reste versionnée. — Grok 4.3 (xAI)
+- **Online Multiplayer Sync & Session Stability (AddMultiplayer) :** ROUND_END relay + `syncRoundEndFromRemote`, remote fire by slot, shop WS sync, per-round RNG reseed, GAME_START catch-up (`REQUEST_GAME_START`), `onlineSession.ts` sessionStorage resume, `onlineMatchStarted` blocks mid-match lobby return, combat WS reconnect, server `roundEnded` reset on SHOP_FINISH. 139 tests. — Grok 4.3 (xAI)
+- **Service Worker and CSP Production Load Fix (v0.4.2) :** Résolution d'un gel critique du chargement en production sur `tankwars.pages.dev` lié à la stratégie Cache-First agressive sur `/index.html` (qui bloquait le navigateur sur d'anciens bundles JS supprimés du serveur comme `index-CXsrA7Q7.js` renvoyant un 404/HTML). Configuration de `sw.js` avec une stratégie **Network-First** pour les navigations et limitation de l'interception aux requêtes de même origine (`self.location.origin`). Correction des plantages du Service Worker par propagation des erreurs (`throw err` au lieu de `undefined` générant une TypeError). Ajout de `https://static.cloudflareinsights.com` dans la directive `connect-src` de la CSP de `index.html` et `public/_headers`. Création de `public/_redirects` pour la réécriture SPA et suppression de `public/_redirects.txt` obsolète. Cache incrémenté en `"tankwars-v2"`.
+- **React Doctor GitHub Action Fix :** Retrait du paramètre invalide `project` dans l'action GitHub `millionco/react-doctor@v2` dans `.github/workflows/react-doctor.yml`, car il s'attend à un chemin de répertoire plutôt qu'à une liste de fichiers tsconfig, résolvant l'erreur de chemin sur GitHub CI.
+- **Complete Projectile Object Pooling (perf branch) :** Wired Jules' `getProjectile` helper into `launchProjectile` and `splitCluster` in PhysicsEngine.ts (removed inline duplication). Projectile pool now fully active for launches + clusters (GC churn reduction). Fixed blocking TS error + lint + fireworks test. lint/build/test all pass. — Grok 4.3 (xAI)
+- **Terrain Partial Redraw Visual Fix (v0.4.1) :** Fixed blue vertical lines, cut grass on curves, and fuzzy brown/green fringe from partial offscreen crater redraw (`Terrain.ts` layered paint). **113 unit tests**.
+- **Game Version Bump :** Bumped game version to `0.4.1` in `package.json` and `package-lock.json`.
+- **Performance Optimizations (v0.4.1) :** Shared `BallisticsSimulator.ts` + lazy AI chunks; terrain partial dirty redraw; HUD throttle + `React.memo`; fireworks 60 Hz optimization. **112 unit tests**.
+- **Game Version Bump :** Bumped game version to `0.4.0` in `package.json` and `package-lock.json`.
+- **Support Mobile et PWA :** Ajout de contrôles tactiles virtuels réactifs (D-Pad pour l'angle, D-Pad pour la puissance, tir direct, changement d'arme) avec support du maintien prolongé (press & hold) pour le défilement rapide sous le canvas de combat. Intégration PWA complète avec un manifeste (`manifest.json`) configuré pour le mode plein écran paysage (`standalone` + `landscape`) et un Service Worker (`sw.js`) gérant le cache hors-ligne et l'installabilité sur l'écran d'accueil mobile. Métadonnées Apple iOS intégrées dans `index.html` pour masquer les barres du navigateur Safari.
+- **AI Baby Nuke & Thermonuclear Usage Restriction:** Reduced the frequency and overuse of `NUKE` (Baby Nuke) and `THERMONUCLEAR` weapons by AI players. Lowered their purchase priorities in the automatic shop by moving them to the end of the preference list in [aiShopHelper.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/aiShopHelper.ts). Restricted their combat selection in [AISmartStrategy.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/AISmartStrategy.ts) and [AIHeuristicStrategy.ts](file:///D:/projects/Repos/TankWars/src/game/entities/ai/AIHeuristicStrategy.ts) by requiring a minimum health threshold on targets (40 HP for Nuke, 50 HP for Thermonuclear) to prevent waste on near-dead tanks, and introducing a random probability hurdle (35% selection chance for Nuke, 30% for Thermonuclear).
+- **Production Console Log Suppression:** Disabled all non-error console outputs (`console.log`, `warn`, `info`, `debug`, `trace`, `group`, etc.) in production builds by overriding them at the `src/main.tsx` entry point when `import.meta.env.PROD` is true, ensuring clean production console environments.
+- **Custom Analytics Events via Cloudflare Zaraz:** Created `analytics.ts` utility to send custom events to Cloudflare Zaraz (`window.zaraz.track`). Integrated tracking for `game_start` (tracking players, human/AI count, and chosen AI profiles), `round_end` (tracking round number, winner type, and winner AI profile), and `game_over` (tracking overall winner, winner type/profile, and total rounds). Added comprehensive unit tests in `analytics.test.ts`.
+- **Randomized Tank Starting Order:** Modified `spawnTanks` in `TankManager.ts` to shuffle the generated X positions using a secure Fisher-Yates shuffle algorithm. This ensures that the horizontal starting order of the tanks varies randomly on every round, preventing players (e.g. Player 1) from always spawning in the same relative horizontal order (e.g. always on the far left). Added comprehensive unit tests in `TankManager.test.ts`.
+- **Game Version Bump:** Bumped game version to `0.3.4` in `package.json` and `package-lock.json`.
+- **Version Display on Main Menu:** Imported game version from `package.json` and added it to the footer of `MainMenu.tsx` beside the license notice (e.g. `v0.3.4`).
+- **Bullet and Nuke Direct Hit Damage Fix:** Fixed a major bug where direct hits with the `BULLET` and `NUKE` weapons were often ignored or severely penalized. Bypassed the splash `distance > radius` check and linear falloff for direct hits on the target tank's bounding box, ensuring `BULLET` deals its intended 3x damage multiplier (75 dmg) and `NUKE` instantly destroys the target.
+- **Content Security Policy (CSP) Update:** Allowed Cloudflare Web Analytics script (`https://static.cloudflareinsights.com`) inside the `script-src` directive in `index.html` to resolve console security violations.
+- Active Player Indicator: Small inverted floating triangle (flèche) drawn in `GameEngine.render` above the current turn's tank (via `turnManager.getCurrentPlayer()`). Filled with the active player's primary tank color for instant recognition. Vertical oscillation: exactly `Math.sin(Date.now() / 200) * 5`.
+- Harmonized Projectiles: `Projectile` carries `ownerColor`. Set from the firing tank at `fireProjectile` time in GameEngine. Used in `PhysicsEngine.draw` (shells + cluster sub-munitions inherit the tank color instead of generic weapon/white).
+- Micro Recoil: On every shot, the tank chassis receives a small temporary world-space offset in the direction opposite the cannon (`TankManager.triggerRecoil`). Decayed per physics step (`decayRecoil`). Applied only to the sprite draw position in `draw` (health bars and names stay anchored). Short duration (~9 frames @120Hz). Cleared during SUMMARY/SHOP transitions.
+- Tank Spawn Positioning (Step 5): Tank X coordinates are randomized with shuffled starting order at each round via `spawnTanks` using rejection sampling (`generateRandomPositions` with 100px minimum distance and 13% width safety margins). Vertical coordinates are snapped exactly to the heightmap terrain surface (`Y = groundY`).
+- Shell-Tank Collision (Step 6): Direct AABB collision check in `PhysicsEngine.updateProjectiles` checking against active tank bounding boxes (24x15) with self-sabotage protection at launch (ignores owner's hitbox until it exits it).
+- Sniper AI Optimization (Step 7): Highly accurate numerical trajectory search in `AISniperStrategy.ts` replacing the vacuum trajectory equations. Features deliberate coordinate-shifting miss for the first shot (landing safely ~36px away) and 0-noise perfect hits for subsequent shots.
+- **Basic Online Multiplayer Foundation:** Hôte crée salle (URLs par joueur humain + IA optionnelles), lobby WS (roster, auto-start), WS jeu persistant pour FIRE serveur (coordination + SHOT/STATE_UPDATE). Client: localPlayerId gating + RNG seedé + load heights serveur. Worker/DO rooms. — Grok 4.3 (xAI)
 
-- `v1-random` / `AISimpleStrategy` — naive. Do not add `fallibleAim`.
-- `v2-heuristic` / `AIHeuristicStrategy` — miss 55–90 → 10 px.
-- `v3-sniper` / `AISniperStrategy` — miss 55–70 → lock at shot 4, 18 % slip (20–42 px) after.
-- `v4-smart` / `AISmartStrategy` — miss 24–42 → lock at shot 3.
+- React Doctor DevDependency Cleanup: Removed the unused `react-doctor` devDependency from `package.json` to resolve the `deslop/unused-dev-dependency` warning, achieving a perfect React Doctor score of `100/100`.
+- Projectile Velocity and Range Increase (Option A): Increased the standard `baseSpeed` multiplier from `4.2` to `6.0` in `PhysicsEngine.ts` to allow projectiles at maximum power (POW = 100) to travel from one side of the screen to the other (width 800px) even under adverse wind conditions. Synchronized the constant `BASE_SPEED` to `6.0` in all AI strategy modules (`AISmartStrategy.ts`, `AIHeuristicStrategy.ts`, `AISniperStrategy.ts`) to maintain perfect AI aiming calibration.
+- AI Aiming Correction (Left-side targeting): Fixed a major targeting bug in both `AISmartStrategy.ts` and `AIHeuristicStrategy.ts` where the binary search for power calculations did not account for left-facing shots. Corrected the dichotomy logic to conditionally adjust power boundaries based on the target direction (`isRight`), aligning with the proven logic in `AISniperStrategy.ts`. This restores high aiming accuracy for the Expert (v4) and Heuristic (v2) AIs when firing left, positioning the Expert profile firmly as the 2nd best AI behind the Sniper.
+- Round Transition Hang Fix: Fixed a deadlock where the game would freeze on round transitions if the starting player was an AI. The turn manager's `resumeForCombat` now properly locks input for AI players instead of unconditionally unlocking it, allowing the in-flight async AI turn to execute and fire successfully. Verbose console logs were also added to `TurnManager.ts` to trace AI execution flow.
+- AI Aiming/Trajectory Simulation Origin: Fixed a bug where all AI strategies (Sniper, Heuristic, Smart) simulated their shots starting at the center of the tank `(sx, sy)` instead of the actual barrel tip `(launchX, launchY)`. This created a vertical/horizontal offset discrepancy that caused the Sniper AIs to overshoot and miss perpetually in mutual combat. The simulation coordinates in `AISniperStrategy.ts`, `AIHeuristicStrategy.ts`, and `AISmartStrategy.ts` have been aligned with the engine's launch formulas.
+- AI Terrain Obstacle Avoidance: Implemented a new search penalty (10,000 points) in all ballistic trajectory search loops (`AISniperStrategy`, `AIHeuristicStrategy`, `AISmartStrategy`) when an early collision with the heightmap terrain is detected between the shooter and the target tank. This forces the AI to select high arcing trajectories to clear mountains and obstacles rather than blindly firing directly into intervening hills.
+- New Weapon BULLET: Added the `BULLET` weapon ($150, 10px blast radius) which inflicts a 3x damage multiplier in case of a direct hit on a tank hitbox. Auto-buy is restricted to the `AISniperStrategy` (Sniper v3) profile only.
+- Merge Compilation Issue (isNewTarget): Fixed a compilation error (`TS2304: Cannot find name 'isNewTarget'`) in `AISniperStrategy.ts` introduced by a recent merge. The variable `isNewTarget` is now properly defined before updating `mem.currentTargetId`, restoring clean builds and linting.
+- Internationalization (i18n): Extracted all hardcoded user-visible strings from components (MainMenu, ColorPicker, TankPreview, GameCanvas, GameHUD, RoundSummary, WeaponShop, WindBanner, and GameEngine canvas text) into English and French translation JSON files. Replaced strings with i18n translation tokens using the useTranslation hook (or global i18n for Canvas engine). Created a retro-styled LanguageSwitcher component to dynamically toggle languages.
+- Post-Merge Fixes: Resolved test failures and lint errors after the latest merge. Fixed duplicate test suites in `wind.test.ts` by merging them into a single suite that properly mocks `secureRandom` instead of `Math.random`, and cleaned up unused `afterEach` and `MockInstance` imports to satisfy ESLint. Also resolved unused `TerrainManager` import in `PhysicsEngine.test.ts` and resolved explicit `any` lint errors in `SEO.tsx`.
+- React Doctor Performance & Styling Fixes: Fixed the top 3 React Doctor warning types in the project:
+  - Caching `tank.position` to local references `pos` inside loops in `TankManager.ts` to prevent repeated prototype member access (`js-cache-property-access`).
+  - Pre-building a Player `Map` once outside the projectile update loop in `PhysicsEngine.ts` to replace nested `.find()` searches with O(1) key lookups (`js-index-maps`).
+  - Moving static inline style blocks in `TankPreview.tsx`, `WindBanner.tsx`, `RoundSummary.tsx`, `GameCanvas.tsx`, `LanguageSwitcher.tsx`, `ColorPicker.tsx`, and `MainMenu.tsx` into unified CSS classes in `src/App.css` to prevent unnecessary objects allocation on every render (`no-inline-exhaustive-style`).
+  - Configured React Doctor in CI with a GitHub Actions workflow.
+  - React Doctor Clean Code Refactoring: Fixed all major React Doctor warning types in the project (lifting the score from 72 to 95/100):
+    - Giant Components (`no-giant-component`): Refactored `MainMenu.tsx` by extracting the player row configuration into a dedicated `PlayerConfigRow.tsx` component. Refactored `GameCanvas.tsx` by extracting game overlays (`GameOverOverlay.tsx`, `GameControlsExplanation.tsx`), AI shop logic (`aiShopHelper.ts`), and the core loop/state handlers into a custom `useGameSession.ts` hook. Both components are now under the 300-line threshold.
+    - State Consolidation (`prefer-useReducer`): Replaced 11 disparate `useState` calls in `GameCanvas.tsx` with a single unified `useReducer` state machine (`gameCanvasReducer.ts`), reducing unnecessary render churn and structuring game phase transitions.
+    - Ref Cleanup Dependency (`exhaustive-deps`): Fixed a react-hooks warning by wrapping celebration timer cleanups into stable callbacks and listing them correctly in the hook dependency array, avoiding potential wrong-node reads at unmount time.
+    - Button Types (`button-has-type`): Added explicit `type="button"` attribute to 7 interactive buttons across `GameCanvas.tsx`, `RoundSummary.tsx`, and `WeaponShop.tsx` to prevent default form submission behaviors.
+    - Array Sorting (`js-tosorted-immutable`): Optimized sorting performance and syntax by replacing `[...array].sort()` with the native ES2023 `array.toSorted()` in `RoundSummary.tsx`, `AISniperStrategy.ts`, and `AIHeuristicStrategy.ts`.
+    - Chained Array Iterations (`js-combine-iterations`): Combined a chained `.filter().map()` call inside `MainMenu.tsx` into a single, high-performance loop to collect unavailable colors in a single pass.
+    - Font Size Accessibility (`no-tiny-text`): Increased compact font sizes (9px, 10px, 11px) to 12px in `PlayerConfigRow.tsx`, `GameCanvas.tsx`, and `MainMenu.tsx` to meet standard accessibility requirements.
+- Enhanced Fireworks Celebration: Completely redesigned the end-of-round and match-winning celebrations to launch multicolored rockets from the bottom of the screen alongside the winning tank's barrel shots. Added circular, rainbow, cascade, and crackling willow explosion patterns, trailing smoke paths, and falling swaying confetti. Integrated spatialized chiptune explosion sound effects mapped to horizontal coordinates. Enabled celebration fireworks on every combat round completion.
+- Tank Destruction Money Rewards: Added a real-time money reward of $300 immediately given to a player when they destroy another tank. Upon the destruction of the second-to-last tank (leaving exactly one survivor), the last tank standing receives a double reward of $600. The post-round earnings method is simplified to award base survival money only, and translations are updated accordingly.
+- Weapon Shop State Mutation Fix & Unit Tests: Fixed a bug in the weapon shop overlay where clicking `+` (buy) or `-` (sell) did not update the stock or money display. The `MUTATE_SHOP_PLAYERS` action in `gameCanvasReducer.ts` was corrected to accept and assign the updated player payload, ensuring proper React state propagation and re-rendering. Added a comprehensive test suite in `src/components/__tests__/gameCanvasReducer.test.ts` to cover all reducer action transitions.
+- Security Headers & CSP Update: Added standard HTTP security headers to Cloudflare Pages deployment via a new `public/_headers` file, configuring `Content-Security-Policy`, `Strict-Transport-Security`, and `X-Frame-Options` while explicitly allowing Cloudflare Web Analytics beacon (`https://static.cloudflareinsights.com` for script execution and `https://cloudflareinsights.com` for data transmission). Synchronized the `index.html` CSP meta tag accordingly.
 
-v2–v4 share `fallibleAim.ts`. New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
+- All effects are pure CanvasRenderingContext2D, extremely cheap (no allocations in render loops, small fixed Maps), fully retro/VGA style.
 
-## Response
+## AI Implementation Rule
 
-- Dry, production-ready. Paths, types, architecture — no fluff.
-- Before finishing: `npm run lint && npm run build && npm run test`. Fix failures immediately. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
-- Do not edit rule files unless the user asked.
+- All tank AI must implement the `AIEngine` interface (`src/game/entities/ai/AIEngine.ts`).
+- `AIByProfileStrategy` (wired in `GameCanvas.tsx` via `engine.setAIEngine(...)`) dispatches per-player based on `player.aiProfile` (supports mixed Human + AI types):
+  - `v1-random`: `AISimpleStrategy` ("IA SIMPLE" / "Mr. Simple") — deliberately naive.
+  - `v2-heuristic`: `AIHeuristicStrategy` ("IA OK") — wind/terrain-aware heuristic aiming, revenge targeting (`lastHitBy`), per-round memory + precision ramp, smart weapon selection.
+  - `v3-sniper`: `AISniperStrategy` ("IA SNIPER") — high-precision aiming.
+  - `v4-smart`: `AISmartStrategy` ("IA EXPERT") — adaptive.
+- Keep strategies pluggable and isolated; do not entangle AI logic inside `TankManager` or `GameEngine` internals. New strategies go in `game/entities/ai/`. Register in the profile dispatcher.
+
+## Response Strategy
+
+- Provide dry, concise, and production-ready code.
+- No introductory fluff. Focus on file paths, explicit types, and clean architectural patterns.
+- Before finishing any modification: run `npm run lint && npm run build && npm run test` (all must pass). If tests fail, they must be corrected immediately. See AGENTS.md verification checklist.
 
 ## Commit style
 
-- Imperative mood.
-- Sign with name + exact model.
+- Always sign your comments by your name, and your EXACT model name for each commit.
+- Use IMPERATIVE mood for commit messages.
