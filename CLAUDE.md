@@ -37,11 +37,11 @@ Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire
 | Profile | Class | Label | Notes |
 |---------|--------|-------|-------|
 | `v1-random` | `AISimpleStrategy` | IA SIMPLE | Deliberately naive. **No** `fallibleAim`. |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK | Heuristic + revenge + memory. Miss curve 40–65 → 6 px. |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. Miss 40–56 → lock at shot 4, 14 % mid-round slip. |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. Miss 16–28 → lock at shot 3. |
+| `v2-heuristic` | `AIHeuristicStrategy` | IA OK | Heuristic + revenge + memory. First shot ≥ 36 px, lock at shot 5. |
+| `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. First shot ≥ 36 px, lock at shot 4, 14 % slip after. |
+| `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. First shot ≥ 36 px, lock at shot 3. |
 
-v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim`.
+v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim`.
 
 New profile → new file under `game/entities/ai/`, register in `AIByProfileStrategy.ts` + `GameCanvas.tsx`.
 

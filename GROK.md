@@ -28,7 +28,7 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - DRILLER: oriented shaft (`DRILLER_SHAFT_DEPTH` = 53), splash unchanged.
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
-- AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table). Warmup ease-out: 15% on manche 1, table spec at manche 5, then late tighten (skill up to 1.35). Simple is alcoholic with P = `1 − min(1, skill)`.
+- AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`.
 - Online MVP: local physics + server turn order. Authoritative server sim is still planned.
 
 Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math.
