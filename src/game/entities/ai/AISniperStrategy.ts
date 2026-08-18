@@ -4,8 +4,9 @@ import { secureRandom } from "../../../utils/random";
  *
  * A cold, efficient sniper that aims with surgical precision.
  * - Restricts itself to clean single-target kinetic weapons (Missile, Driller).
- * - First shot on a target is a safe miss (55–70px). Shots 2–3 still carry impact
- *   offset; lock from shot 4 with occasional mid-round calculation slips.
+ * - First shot on a target is always imprecise (≥ FIRST_SHOT_FLOOR_PX).
+ *   Later shots tighten; lock from SHOTS_TO_HIT["v3-sniper"] (4) with occasional
+ *   mid-round slips after lock.
  * - Kinetic weapons only (Missile / Driller / Bullet). First shot is always Missile.
  */
 

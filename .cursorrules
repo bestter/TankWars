@@ -24,18 +24,18 @@
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **334** across **45** files. Version `0.5.0`.
+- Tests: **359** across **48** files. Version `0.5.0`.
 
 ## AI
 
 All tank AI implements `AIEngine`. Router: `AIByProfileStrategy` in `GameCanvas.tsx`.
 
-- `v1-random` / `AISimpleStrategy` — naive. Do not add `fallibleAim`.
-- `v2-heuristic` / `AIHeuristicStrategy` — miss 55–90 → 10 px.
-- `v3-sniper` / `AISniperStrategy` — miss 55–70 → lock at shot 4, 18 % slip (20–42 px) after.
-- `v4-smart` / `AISmartStrategy` — miss 24–42 → lock at shot 3.
+- `v1-random` / `AISimpleStrategy` — naive. Do not add `fallibleAim`. Early rounds alcoholic (`roundSkill`).
+- `v2-heuristic` / `AIHeuristicStrategy` — first shot ≥ 36 px, lock at shot 5 (`SHOTS_TO_HIT`).
+- `v3-sniper` / `AISniperStrategy` — first shot ≥ 36 px, lock at shot 4, 14 % slip after lock.
+- `v4-smart` / `AISmartStrategy` — first shot ≥ 36 px, lock at shot 3.
 
-v2–v4 share `fallibleAim.ts`. New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
 
 ## Response
 

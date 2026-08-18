@@ -7,7 +7,8 @@ import { secureRandom } from "../../../utils/random";
  * - Simulates weapon-specific physics: bounces for GRENADE, apex-splits for CLUSTER.
  * - Self-preservation: Discards any shot parameters that would result in landing
  *   within the weapon's blast radius + 20px of its own tank.
- * - Adaptive precision: first shots miss by a modest margin; lock from shot 3.
+ * - Adaptive precision: first shot always ≥ FIRST_SHOT_FLOOR_PX; lock from
+ *   SHOTS_TO_HIT["v4-smart"] (3).
  * - Tactical weapon selection: Uses nukes for long distance, grenades/clusters for hills or close range.
  */
 

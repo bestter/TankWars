@@ -4,7 +4,7 @@ import { secureRandom } from "../../../utils/random";
  *
  * Phase 2 "smarter but not sniper" AI per project guidelines + user spec.
  * - Implements AIEngine (new strategy class, no entanglement in core engine/tank).
- * - Can kill tanks (typically requires several shots; deliberately fallible).
+ * - Can kill tanks (locks on shot SHOTS_TO_HIT["v2-heuristic"] = 5 at spec).
  * - Revenge: if self.lastHitBy (set on damage), switch target to the attacker.
  * - Otherwise stick to last target for the round.
  * - New target selection: prefer weakest (lowest health), with slight human bias.

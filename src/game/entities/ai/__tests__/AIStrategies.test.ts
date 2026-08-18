@@ -300,7 +300,7 @@ describe("AI fallibility contracts", () => {
       260,
       terrain,
     );
-    // First-shot expert offset is 24–42px around the AI at x=240, not the human at 560.
+    // First-shot expert offset is ≥36 px around the AI at x=240, not the human at 560.
     expect(Math.abs(impact.landX - 240)).toBeLessThan(90);
     expect(Math.abs(impact.landX - 560)).toBeGreaterThan(150);
   });

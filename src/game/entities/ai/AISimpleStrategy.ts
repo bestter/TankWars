@@ -3,7 +3,8 @@ import { secureRandom } from "../../../utils/random";
  * TankWars - AISimpleStrategy (V1 - "Stupid" AI)
  *
  * Phase 1 implementation as required by project guidelines.
- * Deliberately naive and predictable for testing purposes.
+ * Deliberately naive. No fallibleAim. Early rounds fire alcoholic shots
+ * (P = 1 − min(1, roundSkill)); sober cone tightens after manche 5.
  */
 
 import type { AIEngine } from "./AIEngine";

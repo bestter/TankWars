@@ -27,11 +27,11 @@
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Unique VGA colors with live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
-  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — deliberately naive, no fallible-aim module.
-  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice, miss curve that tightens per attempt.
-  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search; first shots miss on purpose, lock later, occasional mid-round slip.
-  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive, tighter miss curve.
-  v2–v4 share `fallibleAim.ts`. Wired in MainMenu + GameCanvas.
+  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — deliberately naive, no `fallibleAim`. Early rounds: alcoholic shots (random 0°–180°, including self); sobers via `roundSkill`.
+  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
+  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
+  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
+  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten). Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
@@ -86,7 +86,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (334 unit tests across 45 files)
+# Run tests (359 unit tests across 48 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -116,7 +116,7 @@ This project follows a strict separation of concerns:
   - `v2-heuristic` → `AIHeuristicStrategy` ("IA OK")
   - `v3-sniper` → `AISniperStrategy` ("IA SNIPER")
   - `v4-smart` → `AISmartStrategy` ("IA EXPERT")
-  v2–v4 share `fallibleAim.ts`. Swap implementations without touching the core engine.
+  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (per-attempt lock + per-round warmup). Swap implementations without touching the core engine.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -139,13 +139,13 @@ In the build today:
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round; AABB shell-to-tank hits with owner-exit guard
 - Destructible heightmap, DRILLER oriented shaft, wind, `baseSpeed` 6.0 (full-width at POW 100)
-- Four AI profiles; v2–v4 use `fallibleAim` miss curves (v1 stays naive); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
+- Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + $300 / $600 / $500 economy; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **334 unit tests** across **45 files** (Vitest)
+- **359 unit tests** across **48 files** (Vitest)
 
 Still planned:
 
@@ -186,7 +186,7 @@ To explore the codebase:
 - Main game view + engine integration: `src/components/GameCanvas.tsx` + `useGameSession.ts`
 - Core simulation: `src/game/engine/GameEngine.ts` (indicator, recoil trigger, celebration, audio)
 - Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`)
-- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
+- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `roundSkill.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tanks: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectiles: `src/game/engine/PhysicsEngine.ts`
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
