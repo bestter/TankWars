@@ -507,6 +507,11 @@ export class GameRoom extends DurableObject {
 
     const sanitizedPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : null;
     if (msg?.type === 'ROUND_END' && sanitizedPlayers && sanitizedPlayers.length > 0 && !this.state.roundEnded) {
+      // SECURE: Enforce authorization - only the host (slot 0) can dictate the round end state for all players.
+      if (slot !== 0) {
+        console.warn(`[GameRoom] Unauthorized ROUND_END from non-host slot ${slot}`);
+        return;
+      }
       this.resetShotCoordination();
       this.shopSession = null;
       this.state.roundEnded = true;
@@ -553,6 +558,11 @@ export class GameRoom extends DurableObject {
     }
     const finishPlayers = Array.isArray(msg?.players) ? msg.players.map(sanitizePlayer).filter((p: any) => p !== null) : null;
     if (msg?.type === 'SHOP_FINISH' && finishPlayers && finishPlayers.length > 0) {
+      // SECURE: Enforce authorization - only the host (slot 0) can force-finish and dictate the full roster.
+      if (slot !== 0) {
+        console.warn(`[GameRoom] Unauthorized SHOP_FINISH from non-host slot ${slot}`);
+        return;
+      }
       // Legacy: only accept if shop session already completed or absent (belt-and-suspenders).
       await this.completeShopPhase(finishPlayers as Player[], slot);
       return;
@@ -990,7 +1000,8 @@ export class GameRoom extends DurableObject {
     }
 
     // Host often sends post-AI-buy roster on enter; accept first full snapshot.
-    if (players && players.length === this.state.numPlayers) {
+    // SECURE: Enforce authorization - only the host (slot 0) can override the full roster.
+    if (players && players.length === this.state.numPlayers && slot === 0) {
       this.state.players = players;
       await this.saveState();
     }

@@ -135,3 +135,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/index.ts`, the `roomId` parsed from the URL was passed directly into `env.GAME_ROOM.idFromName(roomId)` without length validation.
 **Learning:** Cloudflare Durable Object `idFromName` requires a string of 256 bytes or fewer. Passing an exceptionally large string (e.g., 1MB) causes an unhandled exception, which crashes the worker proxy loop and creates a Denial of Service risk.
 **Prevention:** Always perform length validation on dynamic identifiers from untrusted URL paths or headers before passing them to backend APIs with strict limits like `idFromName`.
+
+## 2026-08-10 - [IDOR / State Override via Unrestricted Phase Transitions]
+**Vulnerability:** In `worker/src/game-room.ts`, WebSocket payloads for phase transitions (`ROUND_END`, `SHOP_FINISH`, and `SHOP_ENTER`) unconditionally accepted a full array of players from *any* client to overwrite the server's authoritative game state (`this.state.players`).
+**Learning:** When a game architecture splits simulation responsibilities (e.g., relying on the host/slot 0 for authoritative full-roster snapshots during phase transitions), failing to enforce authorization checks allows any connected client to send spoofed transition messages. This results in an Insecure Direct Object Reference (IDOR) / State Override attack where a malicious player can modify other players' health, money, or inventory, or forcefully end rounds.
+**Prevention:** Strictly enforce that only the designated authoritative client (e.g., the host at `slot === 0`) can dictate full-roster state updates or trigger phase transitions that affect all players.
