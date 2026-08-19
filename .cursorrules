@@ -17,14 +17,14 @@
 ## Game Specs (current)
 
 - Loop: `requestAnimationFrame` + `PHYSICS_DT = 1/120` in `GameEngine`.
-- Terrain: custom heightmap in `Terrain.ts` (multi-octaves, bumps/creux). Materials (`src/types/terrain.ts`): `DIRT` (normal), `ROCK` (indestructible stone, +50% blast damage, radius unaffected), `SOFT` (2.5x destruction). DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53).
+- Terrain: custom heightmap in `Terrain.ts` (multi-octaves, bumps/creux). Materials (`src/types/terrain.ts`): `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast, radius unaffected), `SOFT` (2.5x destruction). DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53).
 - Players: 2–4, any mix Human / `v1-random` (IA SIMPLE) / `v2-heuristic` (IA OK) / `v3-sniper` (IA SNIPER) / `v4-smart` (IA EXPERT).
 - Palette: `VGA_PALETTE` only (16 VGA + neon arcade extras).
 - Tanks: `drawTankSprite` only, 24×15, slope tilt, independent turret. Active triangle, `ownerColor` shells, micro recoil.
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **389** across **49** files. Version `0.5.0`.
+- Tests: **392** across **49** files. Version `0.5.0`.
 
 ## AI
 

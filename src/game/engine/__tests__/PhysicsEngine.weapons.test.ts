@@ -15,6 +15,7 @@ function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
     destroyTerrainShaft: vi.fn(),
     getHeightAt: () => 400,
     getMaterialAt: () => TERRAIN_MATERIAL.DIRT,
+    isBlastOccludedByRock: () => false,
     ...overrides,
   } as unknown as TerrainManager;
 }
@@ -79,6 +80,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "MISSILE",
       true,
+      expect.anything(),
     );
     expect(destroy).toHaveBeenCalled();
   });
@@ -122,6 +124,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "GRENADE",
       true,
+      expect.anything(),
     );
     expect(physics.count).toBe(0);
   });
@@ -188,6 +191,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "DRILLER",
       true,
+      expect.anything(),
     );
     expect(physics.count).toBe(0);
   });

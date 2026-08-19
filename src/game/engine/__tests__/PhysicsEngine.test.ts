@@ -179,6 +179,7 @@ describe('PhysicsEngine', () => {
         undefined,
         'MISSILE',
         false,
+        expect.anything(),
       );
     });
   });

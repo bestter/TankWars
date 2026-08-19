@@ -542,6 +542,39 @@ export class TerrainManager {
     return this.materials[xi];
   }
 
+  /**
+   * Roche = mur pour le souffle. True si le segment (from → to) traverse le
+   * volume solide d'une colonne ROCK (y canvas >= surface).
+   * Explosion PAR DESSUS la roche (colonne d'impact ROCK) : pas d'occlusion.
+   * Rayon qui passe dans l'air au-dessus de la surface : pas d'occlusion.
+   */
+  public isBlastOccludedByRock(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): boolean {
+    if (this.getMaterialAt(fromX) === TERRAIN_MATERIAL.ROCK) {
+      return false;
+    }
+    const x0 = Math.floor(fromX);
+    const x1 = Math.floor(toX);
+    if (x0 === x1) return false;
+
+    const xStart = Math.min(x0, x1);
+    const xEnd = Math.max(x0, x1);
+    const spanX = toX - fromX;
+    if (spanX === 0) return false;
+
+    for (let x = xStart + 1; x < xEnd; x++) {
+      if (this.materials[x] !== TERRAIN_MATERIAL.ROCK) continue;
+      const t = (x - fromX) / spanX;
+      const rayY = fromY + (toY - fromY) * t;
+      if (rayY >= this.heights[x]) return true;
+    }
+    return false;
+  }
+
   /** Définit le matériau pour une colonne x */
   public setMaterialAt(x: number, material: TerrainMaterial): void {
     const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
@@ -669,6 +702,9 @@ export class TerrainManager {
     for (let x = startX; x <= endX; x++) {
       if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
         // Roche indestructible : aucune modification de hauteur
+        continue;
+      }
+      if (this.isBlastOccludedByRock(impactX, impactY, x, this.heights[x])) {
         continue;
       }
 

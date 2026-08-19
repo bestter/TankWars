@@ -15,7 +15,7 @@
 
 - **Destructible Heightmap Terrain & Diverse Topography** — Procedurally generated diverse terrain using multi-octaves layered sine waves, localized tactical hollows (shelters for tanks), and steep hills/ridges. Distinct terrain materials:
   - `DIRT` (Standard earth & grass with classic destruction)
-  - `ROCK` (Indestructible stone patches: unaffected by craters, but hard surface reflects blast wave dealing +50% explosion damage to nearby tanks with unchanged blast radius)
+  - `ROCK` (Indestructible stone wall: side blasts stop at the rock; exploding on top reflects the blast for +50% damage with unchanged radius)
   - `SOFT` (Loose sand/sediment: 2.5× more destructible for massive craters)
   - DRILLER also carves an oriented shaft along the impact velocity with unchanged splash.
 - **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, …) for the procedural tank sprites.
@@ -90,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (389 unit tests across 49 files)
+# Run tests (392 unit tests across 49 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -149,7 +149,7 @@ In the build today:
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **389 unit tests** across **49 files** (Vitest)
+- **392 unit tests** across **49 files** (Vitest)
 
 Still planned:
 

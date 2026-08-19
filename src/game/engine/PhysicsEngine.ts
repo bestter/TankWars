@@ -255,7 +255,8 @@ export class PhysicsEngine {
     const blastRadius = weapon?.blastRadius ?? 28;
     const baseDamage = weapon?.damage ?? 35;
 
-    // Sur la roche, le souffle de l'explosion est réfléchi : +50% de dégâts (distance inchangée)
+    // Explosion PAR DESSUS la roche : souffle réfléchi, +50% de dégâts (portée inchangée).
+    // Explosion d'un CÔTÉ : la roche sert de mur (occlusion dans applyExplosionDamage).
     const impactMaterial = terrainManager.getMaterialAt(p.x);
     const maxDamage =
       impactMaterial === TERRAIN_MATERIAL.ROCK
@@ -282,7 +283,16 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId, isDirectHit);
+      tankManager.applyExplosionDamage(
+        p.x,
+        p.y,
+        blastRadius,
+        maxDamage,
+        p.ownerId,
+        p.weaponId,
+        isDirectHit,
+        terrainManager,
+      );
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }

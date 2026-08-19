@@ -514,6 +514,7 @@ export class TankManager {
     killerId?: string,
     weaponId?: WeaponId,
     isDirectHit?: boolean,
+    terrain?: TerrainManager,
   ): number {
     let killsThisExplosion = 0;
 
@@ -540,6 +541,12 @@ export class TankManager {
       }
 
       const healthBefore = tank.health;
+
+      const blastBlockedByRock =
+        !!terrain &&
+        !isDirectHitOnThisTank &&
+        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y);
+      if (blastBlockedByRock) continue;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct
       if (weaponId === "BULLET" && isDirectHitOnThisTank) {

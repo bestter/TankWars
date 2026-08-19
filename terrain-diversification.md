@@ -1,7 +1,7 @@
 # Diversification du Terrain (Relief Varié, Roche Indestructible & Terrain Mou)
 
 ## Goal
-Enrichir la génération procédurale du terrain pour offrir un relief dynamique et varié (bosses, creux tactiques pour abriter les tanks, sans tunnels), introduire des zones de roche indestructibles bloquant la déformation sans annuler le souffle d'explosion, et ajouter un type de terrain mou 2 à 3 fois plus destructible.
+Enrichir la génération procédurale du terrain pour offrir un relief dynamique et varié (bosses, creux tactiques pour abriter les tanks, sans tunnels), introduire des zones de roche indestructibles bloquant la déformation et arrêtant le souffle latéral (mur), l'explosion par-dessus gardant le +50%, et ajouter un type de terrain mou 2 à 3 fois plus destructible.
 
 ## Tasks
 - [x] Task 1: Créer les types de matériaux et constantes de destruction (`src/types/terrain.ts` & `src/types/game.ts`) → Verify: `npm run build`
@@ -16,7 +16,7 @@ Enrichir la génération procédurale du terrain pour offrir un relief dynamique
 
 ## Done When
 - [x] Le relief du terrain est varié et aléatoire à chaque partie/manche avec bosses et creux tactiques sans formation de tunnels.
-- [x] Les zones en roche (`ROCK`) ne subissent aucune déformation sous les tirs, mais les explosions à proximité blessent normalement les tanks.
+- [x] Les zones en roche (`ROCK`) ne subissent aucune déformation sous les tirs. Le souffle latéral est arrêté par la roche (mur) ; une explosion par-dessus conserve le +50% et la portée actuelle.
 - [x] Les zones de terrain mou (`SOFT`) sont 2 à 3 fois plus destructibles selon la constante `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER`.
 - [x] Les différents types de terrain sont visuellement identifiables selon la palette VGA (`VGA_PALETTE`).
 - [x] Tous les tests passent (`npm run lint` → `npm run build` → `npm run test`).
@@ -24,5 +24,5 @@ Enrichir la génération procédurale du terrain pour offrir un relief dynamique
 
 ## Notes
 - Respect absolu de la règle d'or : zéro `any`, palette `VGA_PALETTE`, français québécois dans les messages.
-- Le souffle de l'explosion dans `PhysicsEngine` appelle déjà `tankManager.applyExplosionDamage` indépendamment de la hauteur modifiée par `TerrainManager` : la roche n'empêche donc pas les dégâts de souffle aux tanks proches.
+- Le souffle passe par `isBlastOccludedByRock` : mur si le segment traverse le volume ROCK, sauf explosion par-dessus (colonne d'impact ROCK) ou rayon dans l'air. `applyExplosionDamage` reçoit le `TerrainManager` pour appliquer l'occlusion.
 - Le modèle de heightmap garantit par conception l'absence de surplombs et de tunnels (une seule hauteur $y$ par colonne $x$).

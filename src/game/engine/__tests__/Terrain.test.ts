@@ -498,6 +498,32 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(45)).toBeGreaterThan(FLAT_Y);
     });
 
+    it("blocks a ground-level blast through a rock wall but not over it or on top of it", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      terrain.setMaterialRange(40, 60, "ROCK");
+
+      // Side impact: dirt → dirt beyond the wall
+      expect(terrain.isBlastOccludedByRock(20, FLAT_Y, 80, FLAT_Y)).toBe(true);
+      // Same side of the wall
+      expect(terrain.isBlastOccludedByRock(20, FLAT_Y, 30, FLAT_Y)).toBe(false);
+      // Exploding on top of the rock: current full blast
+      expect(terrain.isBlastOccludedByRock(50, FLAT_Y, 80, FLAT_Y)).toBe(false);
+      // Blast flies over the rock (ray stays in the air)
+      expect(terrain.isBlastOccludedByRock(20, 40, 80, 40)).toBe(false);
+    });
+
+    it("does not carve dirt on the far side of a rock wall", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      terrain.setMaterialRange(40, 60, "ROCK");
+
+      terrain.destroyTerrain(20, FLAT_Y, 70);
+
+      expect(terrain.getHeightAt(25)).toBeGreaterThan(FLAT_Y);
+      expect(terrain.getHeightAt(80)).toBe(FLAT_Y);
+    });
+
     it("preserves rock columns during driller shaft impacts", () => {
       const terrain = new TerrainManager(WIDTH, HEIGHT);
       terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
