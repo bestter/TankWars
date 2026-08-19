@@ -754,5 +754,159 @@ describe('GameRoom Durable Object', () => {
       expect(end).toBeDefined();
       expect((Reflect.get(room, 'state') as { roundEnded: boolean }).roundEnded).toBe(true);
     });
+
+    it('rejects unauthorized ROUND_END from non-host slot', async () => {
+      const payload = {
+        roomId: 'room-idor-round-end',
+        numPlayers: 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }],
+        origin: 'http://localhost:5173',
+      };
+      await room.fetchCreate(
+        new Request('http://localhost/api/room', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
+      );
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const internalSockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      internalSockets.set(0, ws0 as unknown as WebSocket);
+      internalSockets.set(1, ws1 as unknown as WebSocket);
+      const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
+      await claimMethod.call(room, 0, 'Alice');
+      await claimMethod.call(room, 1, 'Bob');
+      ws0.sent.length = 0;
+      ws1.sent.length = 0;
+
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const players = (
+        Reflect.get(room, 'state') as { players: Array<Record<string, unknown>> }
+      ).players;
+
+      // Slot 1 (non-host) attempts to forcefully trigger ROUND_END
+      await handleClientMessage.call(
+        room,
+        1,
+        JSON.stringify({
+          type: 'ROUND_END',
+          roundWinnerId: 'player-2',
+          isDraw: false,
+          players,
+        }),
+      );
+
+      // Round state must remain unchanged (not ended) and no ROUND_END broadcast
+      expect((Reflect.get(room, 'state') as { roundEnded: boolean }).roundEnded).toBe(false);
+      const roundEnd0 = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'ROUND_END');
+      const roundEnd1 = ws1.getAllMessages<{ type: string }>().find((m) => m.type === 'ROUND_END');
+      expect(roundEnd0).toBeUndefined();
+      expect(roundEnd1).toBeUndefined();
+    });
+
+    it('rejects unauthorized SHOP_FINISH from non-host slot', async () => {
+      const payload = {
+        roomId: 'room-idor-shop-finish',
+        numPlayers: 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }],
+        origin: 'http://localhost:5173',
+      };
+      await room.fetchCreate(
+        new Request('http://localhost/api/room', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
+      );
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const internalSockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      internalSockets.set(0, ws0 as unknown as WebSocket);
+      internalSockets.set(1, ws1 as unknown as WebSocket);
+      const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
+      await claimMethod.call(room, 0, 'Alice');
+      await claimMethod.call(room, 1, 'Bob');
+
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const currentPlayers = (
+        Reflect.get(room, 'state') as { players: Array<{ id: string; money: number; tank: { id: string } }> }
+      ).players;
+
+      const spoofedPlayers = currentPlayers.map((p, idx) => ({
+        ...p,
+        money: idx === 1 ? 99999 : 0,
+      }));
+
+      // Slot 1 (non-host) attempts to force SHOP_FINISH with spoofed players
+      await handleClientMessage.call(
+        room,
+        1,
+        JSON.stringify({
+          type: 'SHOP_FINISH',
+          players: spoofedPlayers,
+        }),
+      );
+
+      const postPlayers = (
+        Reflect.get(room, 'state') as { players: Array<{ id: string; money: number }> }
+      ).players;
+      expect(postPlayers[1].money).not.toBe(99999);
+    });
+
+    it('rejects unauthorized full roster override on SHOP_ENTER from non-host slot', async () => {
+      const payload = {
+        roomId: 'room-idor-shop-enter',
+        numPlayers: 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }],
+        origin: 'http://localhost:5173',
+      };
+      await room.fetchCreate(
+        new Request('http://localhost/api/room', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
+      );
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const internalSockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      internalSockets.set(0, ws0 as unknown as WebSocket);
+      internalSockets.set(1, ws1 as unknown as WebSocket);
+      const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
+      await claimMethod.call(room, 0, 'Alice');
+      await claimMethod.call(room, 1, 'Bob');
+
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const currentPlayers = (
+        Reflect.get(room, 'state') as { players: Array<{ id: string; money: number; tank: { id: string } }> }
+      ).players;
+
+      const spoofedPlayers = currentPlayers.map((p, idx) => ({
+        ...p,
+        money: idx === 1 ? 88888 : 0,
+      }));
+
+      // Slot 1 (non-host) sends SHOP_ENTER with a full spoofed roster
+      await handleClientMessage.call(
+        room,
+        1,
+        JSON.stringify({
+          type: 'SHOP_ENTER',
+          players: spoofedPlayers,
+        }),
+      );
+
+      const postPlayers = (
+        Reflect.get(room, 'state') as { players: Array<{ id: string; money: number }> }
+      ).players;
+      expect(postPlayers[1].money).not.toBe(88888);
+    });
   });
 });
