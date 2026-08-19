@@ -21,6 +21,52 @@ export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5;
 /** Multiplicateur de dégâts de souffle d'explosion sur la roche (+50% de dégâts, portée inchangée). */
 export const ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5;
 
+// === Constantes de lissage et de mélange (blend) ===
+
+/** Rayon de recherche (colonnes) pour le calcul du mélange progressif de friabilité entre sable et terre. */
+export const TERRAIN_SOFT_BLEND_RADIUS = 8;
+
+/** Facteur de lissage global appliqué lors de la génération procédurale du terrain. */
+export const TERRAIN_GENERATION_SMOOTH_STRENGTH = 0.42;
+
+/** Facteur de lissage appliqué aux bordures d'un cratère après creusement (sans combler la dépression). */
+export const TERRAIN_CRATER_SMOOTH_STRENGTH = 0.35;
+
+// === Constantes de distribution procédurale des matériaux ===
+
+/** Marge latérale relative (fraction de la largeur) exclue pour le placement des zones de matériaux spéciaux. */
+export const TERRAIN_MATERIAL_MARGIN_RATIO = 0.1;
+
+/** Nombre minimum et maximum de zones de roche générées par manche. */
+export const TERRAIN_ROCK_ZONE_COUNT_MIN = 1;
+export const TERRAIN_ROCK_ZONE_COUNT_MAX = 2;
+
+/** Largeur minimale et maximale (en pixels) d'une zone de roche (40 à 85px). */
+export const TERRAIN_ROCK_ZONE_WIDTH_MIN = 40;
+export const TERRAIN_ROCK_ZONE_WIDTH_MAX = 85;
+
+/** Nombre minimum et maximum de zones meubles (sable) générées par manche. */
+export const TERRAIN_SOFT_ZONE_COUNT_MIN = 1;
+export const TERRAIN_SOFT_ZONE_COUNT_MAX = 3;
+
+/** Largeur minimale et maximale (en pixels) d'une zone meuble (50 à 100px). */
+export const TERRAIN_SOFT_ZONE_WIDTH_MIN = 50;
+export const TERRAIN_SOFT_ZONE_WIDTH_MAX = 100;
+
+// === Constantes de spawn des tanks ===
+
+/** Marge latérale relative (fraction de la largeur) pour la zone d'apparition des tanks (13%). */
+export const TANK_SPAWN_MARGIN_RATIO = 0.13;
+
+/** Distance minimale (en pixels) requise entre deux points d'apparition de tanks. */
+export const TANK_SPAWN_MIN_DISTANCE = 100;
+
+/** Nombre maximal de tentatives globales pour trouver un placement valide de tank. */
+export const TANK_SPAWN_MAX_ATTEMPTS = 500;
+
+/** Nombre d'échantillons candidats évalués par position pour favoriser le meilleur creux tactique. */
+export const TANK_SPAWN_PER_POS_ATTEMPTS = 200;
+
 /** Skip this fraction of penalized spawn samples (humans vs SOFT in local, AI vs ROCK everywhere). */
 export const SPAWN_AVOID_MATERIAL_CHANCE = 0.25;
 

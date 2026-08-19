@@ -20,6 +20,18 @@ import { VGA_PALETTE } from "../../types/game";
 import {
   TERRAIN_MATERIAL,
   SOFT_TERRAIN_DESTRUCTION_MULTIPLIER,
+  TERRAIN_SOFT_BLEND_RADIUS,
+  TERRAIN_GENERATION_SMOOTH_STRENGTH,
+  TERRAIN_CRATER_SMOOTH_STRENGTH,
+  TERRAIN_MATERIAL_MARGIN_RATIO,
+  TERRAIN_ROCK_ZONE_COUNT_MIN,
+  TERRAIN_ROCK_ZONE_COUNT_MAX,
+  TERRAIN_ROCK_ZONE_WIDTH_MIN,
+  TERRAIN_ROCK_ZONE_WIDTH_MAX,
+  TERRAIN_SOFT_ZONE_COUNT_MIN,
+  TERRAIN_SOFT_ZONE_COUNT_MAX,
+  TERRAIN_SOFT_ZONE_WIDTH_MIN,
+  TERRAIN_SOFT_ZONE_WIDTH_MAX,
   type TerrainMaterial,
 } from "../../types/terrain";
 import { secureRandom } from "../../utils/random";
@@ -140,7 +152,7 @@ export class TerrainManager {
     }
 
     // Lissage pour des pentes jouables et harmonieuses
-    this.smoothHeights(0.42);
+    this.smoothHeights(TERRAIN_GENERATION_SMOOTH_STRENGTH);
 
     // 3. Distribution des matériaux (zones de roche et zones meubles)
     this.distributeMaterials();
@@ -150,14 +162,24 @@ export class TerrainManager {
    * Distribue aléatoirement des zones de roche indestructible et de terrain meuble.
    */
   private distributeMaterials(): void {
-    const margin = this.width * 0.1;
+    const margin = this.width * TERRAIN_MATERIAL_MARGIN_RATIO;
     const availableWidth = this.width - 2 * margin;
 
-    // 1 à 2 zones de roche (ROCK)
-    const rockZoneCount = 1 + Math.floor(secureRandom() * 2);
+    // Zones de roche (ROCK)
+    const rockZoneCount =
+      TERRAIN_ROCK_ZONE_COUNT_MIN +
+      Math.floor(
+        secureRandom() *
+          (TERRAIN_ROCK_ZONE_COUNT_MAX - TERRAIN_ROCK_ZONE_COUNT_MIN + 1),
+      );
     for (let i = 0; i < rockZoneCount; i++) {
       const center = margin + secureRandom() * availableWidth;
-      const zoneWidth = 40 + Math.floor(secureRandom() * 45); // 40 à 85px
+      const zoneWidth =
+        TERRAIN_ROCK_ZONE_WIDTH_MIN +
+        Math.floor(
+          secureRandom() *
+            (TERRAIN_ROCK_ZONE_WIDTH_MAX - TERRAIN_ROCK_ZONE_WIDTH_MIN + 1),
+        );
       const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
       const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
 
@@ -166,11 +188,21 @@ export class TerrainManager {
       }
     }
 
-    // 1 à 3 zones de terrain mou (SOFT)
-    const softZoneCount = 1 + Math.floor(secureRandom() * 3);
+    // Zones de terrain mou (SOFT)
+    const softZoneCount =
+      TERRAIN_SOFT_ZONE_COUNT_MIN +
+      Math.floor(
+        secureRandom() *
+          (TERRAIN_SOFT_ZONE_COUNT_MAX - TERRAIN_SOFT_ZONE_COUNT_MIN + 1),
+      );
     for (let i = 0; i < softZoneCount; i++) {
       const center = margin + secureRandom() * availableWidth;
-      const zoneWidth = 50 + Math.floor(secureRandom() * 50); // 50 à 100px
+      const zoneWidth =
+        TERRAIN_SOFT_ZONE_WIDTH_MIN +
+        Math.floor(
+          secureRandom() *
+            (TERRAIN_SOFT_ZONE_WIDTH_MAX - TERRAIN_SOFT_ZONE_WIDTH_MIN + 1),
+        );
       const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
       const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
 
@@ -482,7 +514,7 @@ export class TerrainManager {
     const smoothStart = Math.max(0, startX - 3);
     const smoothEnd = Math.min(this.width - 1, endX + 3);
     // Smooth crater edges only — never raise the surface (which would undo destruction).
-    this.smoothHeights(0.35, smoothStart, smoothEnd, true);
+    this.smoothHeights(TERRAIN_CRATER_SMOOTH_STRENGTH, smoothStart, smoothEnd, true);
     this.markTerrainDirty(smoothStart, smoothEnd);
   }
 
@@ -607,6 +639,7 @@ export class TerrainManager {
   }
 
   /** Load an authoritative heightmap and optional materials sent by the server.
+   *  Resets materials to DIRT if newMaterials is absent or mismatched to avoid a silent hybrid state.
    *  Marks the terrain dirty so it will be redrawn. */
   public loadHeights(
     newHeights: number[],
@@ -627,6 +660,16 @@ export class TerrainManager {
       for (let i = 0; i < this.width; i++) {
         this.materials[i] = newMaterials[i];
       }
+    } else {
+      if (
+        newMaterials !== undefined &&
+        (!Array.isArray(newMaterials) || newMaterials.length !== this.width)
+      ) {
+        console.warn(
+          "[TerrainManager] loadHeights: materials size mismatch, falling back to DIRT",
+        );
+      }
+      this.materials.fill(TERRAIN_MATERIAL.DIRT);
     }
     this.isDirty = true;
     this.needsFullRedraw = true;
@@ -660,7 +703,10 @@ export class TerrainManager {
    * Calcule la friabilité/douceur progressive du sol à la colonne x (0 = terre pure, 1 = sable pur).
    * Applique un mélange progressif sur les bordures sable-terre pour un comportement physique naturel.
    */
-  private getLocalSoftness(x: number, blendRadius: number = 8): number {
+  private getLocalSoftness(
+    x: number,
+    blendRadius: number = TERRAIN_SOFT_BLEND_RADIUS,
+  ): number {
     const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
     if (this.materials[xi] === TERRAIN_MATERIAL.ROCK) return 0;
 

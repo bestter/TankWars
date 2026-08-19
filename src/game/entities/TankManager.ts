@@ -11,7 +11,13 @@ import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import type { WeaponId } from "../../types/weapon";
 import { drawTankSprite } from "../rendering/tankSprite";
-import { spawnAcceptsMaterial } from "../../types/terrain";
+import {
+  spawnAcceptsMaterial,
+  TANK_SPAWN_MARGIN_RATIO,
+  TANK_SPAWN_MIN_DISTANCE,
+  TANK_SPAWN_MAX_ATTEMPTS,
+  TANK_SPAWN_PER_POS_ATTEMPTS,
+} from "../../types/terrain";
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -157,10 +163,10 @@ export class TankManager {
       console.warn("TankManager: recommended player count is between 2 and 4");
     }
 
-    const margin = terrain.width * 0.13;
+    const margin = terrain.width * TANK_SPAWN_MARGIN_RATIO;
     const minX = margin;
     const maxX = terrain.width - margin;
-    const minDist = 100;
+    const minDist = TANK_SPAWN_MIN_DISTANCE;
     const localMode = options?.localMode ?? true;
 
     const order = players.map((_, i) => i);
@@ -252,8 +258,8 @@ export class TankManager {
     localMode: boolean,
   ): number | null {
     const range = maxX - minX;
-    const maxAttempts = 500;
-    const perPosAttempts = 80;
+    const maxAttempts = TANK_SPAWN_MAX_ATTEMPTS;
+    const perPosAttempts = TANK_SPAWN_PER_POS_ATTEMPTS;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let best: number | null = null;

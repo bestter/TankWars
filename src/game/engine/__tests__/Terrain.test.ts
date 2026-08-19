@@ -403,6 +403,34 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(10)).toBe(120);
       expect(terrain.getMaterialAt(10)).toBe("ROCK");
     });
+
+    it("resets materials to DIRT when loadHeights is called without newMaterials to prevent hybrid state", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.setMaterialRange(0, WIDTH - 1, "ROCK");
+      expect(terrain.getMaterialAt(10)).toBe("ROCK");
+
+      const heights = Array.from({ length: WIDTH }, () => 130);
+      terrain.loadHeights(heights);
+
+      expect(terrain.getHeightAt(10)).toBe(130);
+      expect(terrain.getMaterialAt(10)).toBe("DIRT");
+      expect(terrain.getMaterials().every((m) => m === "DIRT")).toBe(true);
+    });
+
+    it("resets materials to DIRT and warns when loadHeights receives mismatched materials array", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.setMaterialRange(0, WIDTH - 1, "SOFT");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const heights = Array.from({ length: WIDTH }, () => 140);
+      terrain.loadHeights(heights, ["ROCK" as const, "SOFT" as const]); // length 2 !== WIDTH (100)
+
+      expect(terrain.getHeightAt(10)).toBe(140);
+      expect(terrain.getMaterialAt(10)).toBe("DIRT");
+      expect(terrain.getMaterials().every((m) => m === "DIRT")).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("materials size mismatch"));
+      warnSpy.mockRestore();
+    });
   });
 
   describe("Procedural Generation & Diversity", () => {
