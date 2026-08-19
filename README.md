@@ -149,7 +149,7 @@ In the build today:
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **394 unit tests** across **49 files** (Vitest)
+- **397 unit tests** across **50 files** (Vitest)
 
 Still planned:
 
