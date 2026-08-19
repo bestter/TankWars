@@ -24,7 +24,7 @@
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **402** across **51** files. Version `0.5.0`.
+- Tests: **402** across **51** files. Version `0.6.0`.
 
 ## AI
 

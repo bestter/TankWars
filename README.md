@@ -135,7 +135,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.5.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.6.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
