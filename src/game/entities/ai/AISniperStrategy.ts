@@ -18,6 +18,7 @@ import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, sniperImpactMagnitude } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -176,7 +177,15 @@ export class AISniperStrategy implements AIEngine {
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    const chosenWeapon = this.chooseSniperWeapon(self, attempts, skill);
+    let chosenWeapon = this.chooseSniperWeapon(self, attempts, skill);
+    // First shot stays MISSILE (sniper spec). Later shots respect ROCK/SOFT.
+    if (attempts > 1) {
+      chosenWeapon = adjustWeaponForMaterial(
+        chosenWeapon,
+        terrainManager.getMaterialAt(target!.tank.position.x),
+        (id) => (self.inventory?.[id] ?? 0) > 0,
+      );
+    }
     self.tank.currentWeapon = chosenWeapon;
 
     const targetX = target!.tank.position.x;

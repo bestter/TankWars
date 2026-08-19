@@ -5,6 +5,7 @@
 
 import type { Player } from './player';
 import type { WeaponId } from './weapon';
+import type { TerrainMaterial } from './terrain';
 
 /** Configuration chosen by the host when creating the room. */
 export interface RoomSlotConfig {
@@ -60,6 +61,8 @@ export interface ServerStateUpdate {
   players: Player[];
   /** Full heightmap (server is source of truth). Small enough (~800 numbers). */
   heights: number[];
+  /** Présent seulement quand le serveur a vraiment généré le terrain. */
+  materials?: TerrainMaterial[];
   wind: number;
   currentPlayerIndex: number;
   roundEnded: boolean;
@@ -70,6 +73,8 @@ export interface ServerGameStartMessage {
   type: 'GAME_START';
   players: Player[];
   heights: number[];
+  /** Présent seulement quand le serveur a vraiment généré le terrain. */
+  materials?: TerrainMaterial[];
   wind: number;
   currentPlayerIndex: number;
 }

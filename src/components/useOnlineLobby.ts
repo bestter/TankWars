@@ -113,6 +113,7 @@ export function useOnlineLobby({
         localPlayerId,
         gameMode: 'online',
         initialHeights: start.heights,
+        initialMaterials: start.materials,
         initialWind: start.wind,
         initialCurrentPlayerIndex: start.currentPlayerIndex,
         slot,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PhysicsEngine } from '../PhysicsEngine';
 import { TerrainManager } from '../Terrain';
+import { TERRAIN_MATERIAL } from '../../../types/terrain';
 
 describe('PhysicsEngine', () => {
   let engine: PhysicsEngine;
@@ -77,6 +78,7 @@ describe('PhysicsEngine', () => {
         checkCollision: () => true,
         destroyTerrain: () => {},
         destroyTerrainShaft: () => {},
+        getMaterialAt: () => TERRAIN_MATERIAL.DIRT,
       };
 
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');

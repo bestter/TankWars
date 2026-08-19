@@ -188,6 +188,7 @@ describe('GameRoom Durable Object', () => {
         type: string;
         players: unknown[];
         heights: number[];
+        materials?: string[];
       }
       const startMsg0 = ws0.getAllMessages<GameStartMsg>().find(
         (m) => m.type === 'GAME_START'
@@ -200,6 +201,30 @@ describe('GameRoom Durable Object', () => {
       expect(startMsg1).toBeDefined();
       expect(startMsg0?.players.length).toBe(2);
       expect(startMsg0?.heights.length).toBe(800);
+      expect(startMsg0?.materials).toBeUndefined();
+    });
+
+    it('includes materials on GAME_START when RoomState.materials matches heights', async () => {
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const internalSockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      internalSockets.set(0, ws0 as unknown as WebSocket);
+      internalSockets.set(1, ws1 as unknown as WebSocket);
+
+      const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
+      await claimMethod.call(room, 0, 'Alice');
+      await claimMethod.call(room, 1, 'Bob');
+
+      const state = Reflect.get(room, 'state') as { heights: number[]; materials: string[] };
+      state.materials = state.heights.map(() => 'DIRT');
+      const build = Reflect.get(room, 'buildGameStartMessage') as () => {
+        type: string;
+        heights: number[];
+        materials?: string[];
+      };
+      const msg = build.call(room);
+      expect(msg.materials).toHaveLength(800);
+      expect(msg.materials?.[0]).toBe('DIRT');
     });
 
     it('cleans up slot and notifies roster update on socket disconnect before game start', async () => {

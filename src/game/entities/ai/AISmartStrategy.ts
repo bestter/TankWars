@@ -17,6 +17,7 @@ import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
@@ -183,6 +184,11 @@ export class AISmartStrategy implements AIEngine {
       target!,
       terrainManager,
       gameState,
+    );
+    chosenWeapon = adjustWeaponForMaterial(
+      chosenWeapon,
+      terrainManager.getMaterialAt(target!.tank.position.x),
+      (id) => (self.inventory?.[id] ?? 0) > 0,
     );
     const inv = self.inventory || {};
     const hasGrenade = (inv.GRENADE ?? 0) > 0;

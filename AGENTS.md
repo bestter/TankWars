@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 378 tests, 48 fichiers) |
+| Tests | `npm run test` (vitest, 389 tests, 49 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -80,7 +80,7 @@ Profils (mixables dans une même partie) :
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT |
 
-Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.**
+Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE). **v1-random n’y touche pas.**
 
 Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
 | Profile | Courbe d’offset (px, par tentative sur la cible) |
@@ -122,7 +122,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + la stratégie concernée |
+| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `terrainMaterialTactics.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles

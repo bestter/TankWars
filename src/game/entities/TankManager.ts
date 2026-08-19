@@ -137,7 +137,7 @@ export class TankManager {
   }
 
   /**
-   * Place les tanks avec positions X aléatoires (distance minimale garantie).
+   * Place les tanks avec positions X aléatoires biaisées vers les creux (distance minimale garantie).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
    * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
@@ -156,8 +156,8 @@ export class TankManager {
     const maxX = terrain.width - margin;
     const minDist = 100;
 
-    // Génération de positions X aléatoires pour tous les joueurs
-    const xs = this.generateRandomPositions(count, minX, maxX, minDist);
+    // Génération de positions X aléatoires, biaisées vers les creux (Y canvas max)
+    const xs = this.generateRandomPositions(count, minX, maxX, minDist, terrain);
 
     // Mélange des positions X pour que la répartition des joueurs sur le terrain soit aléatoire à chaque manche
     const shuffledXs = [...xs];
@@ -209,14 +209,16 @@ export class TankManager {
   }
 
   /**
-   * Génère N positions X aléatoires dans [minX, maxX] avec |xi-xj| >= minDist pour tout i!=j.
-   * Retourne les positions triées. Utilise rejection sampling (N petit: 2-4).
+   * Génère N positions X dans [minX, maxX] avec |xi-xj| >= minDist.
+   * Parmi les candidats valides, préfère le Y canvas le plus élevé (creux tactique).
+   * Terrain plat → tirage aléatoire équivalent. Retourne les positions triées.
    */
   private generateRandomPositions(
     count: number,
     minX: number,
     maxX: number,
     minDist: number,
+    terrain: TerrainManager,
   ): number[] {
     if (count <= 0) return [];
     if (count === 1) return [minX + (maxX - minX) / 2];
@@ -237,16 +239,19 @@ export class TankManager {
       const positions: number[] = [];
 
       for (let i = 0; i < count; i++) {
-        let placed = false;
+        let best: number | null = null;
+        let bestHeight = -Infinity;
         for (let t = 0; t < perPosAttempts; t++) {
           const candidate = minX + secureRandom() * range;
-          if (positions.every((p) => Math.abs(p - candidate) >= minDist)) {
-            positions.push(candidate);
-            placed = true;
-            break;
+          if (!positions.every((p) => Math.abs(p - candidate) >= minDist)) continue;
+          const h = terrain.getHeightAt(candidate);
+          if (h > bestHeight) {
+            bestHeight = h;
+            best = candidate;
           }
         }
-        if (!placed) break;
+        if (best === null) break;
+        positions.push(best);
       }
 
       if (positions.length === count) {

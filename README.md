@@ -90,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (378 unit tests across 48 files)
+# Run tests (389 unit tests across 49 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -149,7 +149,7 @@ In the build today:
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **359 unit tests** across **48 files** (Vitest)
+- **389 unit tests** across **49 files** (Vitest)
 
 Still planned:
 

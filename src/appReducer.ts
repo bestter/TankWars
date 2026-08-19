@@ -1,5 +1,6 @@
 import type { GamePhase } from "./types/game";
 import type { Player } from "./types/player";
+import type { TerrainMaterial } from "./types/terrain";
 import type {
   OnlineCanvasSnapshot,
   PersistedOnlineSession,
@@ -9,6 +10,7 @@ export interface OnlineMeta {
   roomId: string;
   localPlayerId: string;
   initialHeights?: number[];
+  initialMaterials?: TerrainMaterial[];
   initialWind?: number;
   initialCurrentPlayerIndex?: number;
   slot?: number;

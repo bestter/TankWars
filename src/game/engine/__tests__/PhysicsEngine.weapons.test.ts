@@ -4,6 +4,7 @@ import { TankManager } from "../../entities/TankManager";
 import { TerrainManager } from "../Terrain";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 import { DRILLER_SHAFT_DEPTH } from "../../../types/weapon";
+import { TERRAIN_MATERIAL } from "../../../types/terrain";
 
 function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
   return {
@@ -13,6 +14,7 @@ function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
     destroyTerrain: vi.fn(),
     destroyTerrainShaft: vi.fn(),
     getHeightAt: () => 400,
+    getMaterialAt: () => TERRAIN_MATERIAL.DIRT,
     ...overrides,
   } as unknown as TerrainManager;
 }

@@ -9,7 +9,7 @@ Enrichir la génération procédurale du terrain pour offrir un relief dynamique
 - [x] Task 3: Implémenter la génération procédurale aléatoire avec relief riche (bosses, creux, multi-octaves) et distribution de zones (`Terrain.ts`) → Verify: Tests unitaires de variance et bornage
 - [x] Task 4: Implémenter la mécanique de destruction différentielle (roche indestructible, terrain mou multiplié par `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER`) dans `carveCircle` et `destroyTerrainShaft` (`Terrain.ts`) → Verify: Tests de creusement comparatif normal vs roche vs mou
 - [x] Task 5: Adapter le rendu Canvas2D / OffscreenCanvas avec palette VGA dédiée pour chaque matériau (`Terrain.ts`) → Verify: Rendu sans glitch lors des redessins partiels
-- [x] Task 6: Optimiser le spawn des tanks dans `TankManager.ts` pour exploiter les creux et bosses tout en garantissant la distance minimale → Verify: Tests de `spawnTanks`
+- [x] Task 6: Optimiser le spawn des tanks dans `TankManager.ts` : tirage aléatoire biaisé vers le Y canvas max (creux tactiques) parmi les candidats qui respectent `minDist` 100 px → Verify: Tests de `spawnTanks`
 - [x] Task 7: Ajouter la suite de tests unitaires complète pour la génération variée, la roche et le terrain mou (`src/game/engine/__tests__/Terrain.test.ts`, `PhysicsEngine.test.ts`) → Verify: `npm test`
 - [x] Task 8: Validation finale du pipeline de qualité (`npm run lint` → `npm run build` → `npm run test`) → Verify: Zéro erreur, zéro `any`, tous les tests au vert
 - [x] Task 9: Mise à jour de la documentation globale et IA (`README.md`, `AGENTS.md`, `CLAUDE.md`, `GROK.md`, `CURSOR.md`, `.cursorrules`) → Verify: Cohérence et synchronisation des guides d'architecture

@@ -27,6 +27,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Player } from '../../src/types/player'; // share types from root (works in monorepo-style dev)
 import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
+import type { TerrainMaterial } from '../../src/types/terrain';
 import { DEFAULT_INVENTORY, ALL_WEAPON_IDS } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 
@@ -44,6 +45,7 @@ interface RoomState {
   // Authoritative game state (MVP single round)
   players: Player[];
   heights: number[]; // full heightmap (server truth)
+  materials: TerrainMaterial[]; // [] until headless terrain.generate is wired
   wind: number;
   currentPlayerIndex: number;
   roundEnded: boolean;
@@ -206,6 +208,7 @@ export class GameRoom extends DurableObject {
       const stored = await this.ctx.storage.get<RoomState>("state");
       if (stored) {
         this.state = stored;
+        if (!this.state.materials) this.state.materials = [];
         // Restore AI profiles in memory if reloaded
         if (this.state.slotConfigs) {
           this.state.slotConfigs.forEach((cfg, idx) => {
@@ -313,6 +316,7 @@ export class GameRoom extends DurableObject {
       started: false,
       players: [],
       heights: [],
+      materials: [],
       wind: 0,
       currentPlayerIndex: 0,
       roundEnded: false,
@@ -711,12 +715,22 @@ export class GameRoom extends DurableObject {
     this.sendRosterUpdate();
   }
 
+  /** Include materials only when the server has a full parallel array (real generate). */
+  private terrainWireFields(): { heights: number[]; materials?: TerrainMaterial[] } {
+    const heights = this.state?.heights ?? [];
+    const materials = this.state?.materials ?? [];
+    if (materials.length === heights.length && heights.length > 0) {
+      return { heights, materials };
+    }
+    return { heights };
+  }
+
   private buildGameStartMessage() {
     if (!this.state?.started) return null;
     return {
       type: 'GAME_START' as const,
       players: this.state.players,
-      heights: this.state.heights,
+      ...this.terrainWireFields(),
       wind: this.state.wind,
       currentPlayerIndex: this.state.currentPlayerIndex,
     };
@@ -786,11 +800,13 @@ export class GameRoom extends DurableObject {
     });
 
     // TODO (next steps): call real headless terrain.generate + spawnTanks + roll wind
+    // and persist materials alongside heights. Until then GAME_START omits materials.
     // For skeleton we emit placeholder heights (flat) — real work happens in client engine step 6/7
     const placeholderHeights = Array.from({ length: 800 }, (_, x) => 300 + Math.sin(x / 30) * 20);
 
     this.state.players = players;
     this.state.heights = placeholderHeights;
+    this.state.materials = [];
     this.state.wind = 0; // real wind roll will be done when headless sim is wired
     this.state.currentPlayerIndex = 0;
     this.state.started = true;

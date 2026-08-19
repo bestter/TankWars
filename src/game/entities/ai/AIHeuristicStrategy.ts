@@ -26,6 +26,7 @@ import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -209,6 +210,11 @@ export class AIHeuristicStrategy implements AIEngine {
       target!,
       terrainManager,
       gameState,
+    );
+    chosenWeapon = adjustWeaponForMaterial(
+      chosenWeapon,
+      terrainManager.getMaterialAt(target!.tank.position.x),
+      (id) => (self.inventory?.[id] ?? 0) > 0,
     );
     if (chosenWeapon !== "MISSILE" && scaledGaffe(0.2, skill)) {
       chosenWeapon = "MISSILE";

@@ -33,6 +33,7 @@ function makeSession(overrides: Partial<PersistedOnlineSession> = {}): Persisted
       slot: 0,
       token: 'TOKEN1',
       initialHeights: [100, 101, 102],
+      initialMaterials: ['DIRT', 'ROCK'],
       initialWind: 12,
       initialCurrentPlayerIndex: 0,
     },

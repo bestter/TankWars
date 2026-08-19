@@ -256,10 +256,7 @@ export class PhysicsEngine {
     const baseDamage = weapon?.damage ?? 35;
 
     // Sur la roche, le souffle de l'explosion est réfléchi : +50% de dégâts (distance inchangée)
-    const impactMaterial =
-      typeof terrainManager.getMaterialAt === "function"
-        ? terrainManager.getMaterialAt(p.x)
-        : TERRAIN_MATERIAL.DIRT;
+    const impactMaterial = terrainManager.getMaterialAt(p.x);
     const maxDamage =
       impactMaterial === TERRAIN_MATERIAL.ROCK
         ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
