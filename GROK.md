@@ -1,6 +1,6 @@
 # Bestter's TankWars — Grok Guide
 
-**Grok agents (xAI):** read [AGENTS.md](./AGENTS.md) first. It is the operational source of truth (layout, commands, verification, file map, pitfalls). This file is Grok-specific workflow only — not a changelog. Overlaps: [CLAUDE.md](./CLAUDE.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
+**Grok agents (xAI):** read [AGENTS.md](./AGENTS.md) first. It is the operational source of truth (layout, commands, verification, file map, pitfalls). This file is Grok-specific workflow only — not a changelog. Overlaps: [CLAUDE.md](./CLAUDE.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules).
 
 ## Quick Start
 
@@ -24,14 +24,14 @@
 - Palette: `VGA_PALETTE` only. Tanks: `drawTankSprite`, 24×15, slope tilt.
 - Active indicator: inverted triangle, `Math.sin(Date.now() / 200) * 5`.
 - Shells inherit `ownerColor`. Recoil is a short chassis offset only.
-- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, snapped to `groundY`. Local humans: −25 % chance on SOFT. AI (all modes): −25 % chance on ROCK.
+- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, snapped to `groundY`. Local humans: −25 % chance on SOFT. AI (all modes): −25 % chance on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Terrain: multi-octaves procedural heightmap with bumps/creux. Materials: `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast damage, radius unaffected), `SOFT` (2.5x destruction multiplier).
 - DRILLER: oriented shaft (`DRILLER_SHAFT_DEPTH` = 53), splash unchanged.
 - GRENADE: ~2× bounce height on ROCK; first contact on SOFT sticks, digs, and detonates (`grenadeBounceParams`).
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
 - AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table) and pick weapons via `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`.
-- Online MVP: local physics + server turn order. Authoritative server sim is still planned.
+- Online MVP: local physics + server turn order. Authoritative server sim is still planned. `GAME_START` sends `materials` only when the server array matches `heights` length (headless generate still planned). `loadHeights` resets every column to `DIRT` if materials are omitted or mismatched.
 
 Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math.
 
@@ -49,7 +49,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (397 / 50)
+3. `npm run test` (402 / 51)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).

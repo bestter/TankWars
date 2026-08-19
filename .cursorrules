@@ -1,6 +1,6 @@
 # .cursorrules
 
-**For Cursor (and similar agents):** Primary guidance is [AGENTS.md](./AGENTS.md). Read it first. This file is a short, current-rules companion — not a changelog.
+**For Cursor (and similar agents):** Primary guidance is [AGENTS.md](./AGENTS.md). Read it first. This file is a short, current-rules companion — not a changelog. Mirror: [.antigravityrules](./.antigravityrules).
 
 - Role: Senior Software Architect & Expert Game Developer
 - Stack: TypeScript (strict, zero `any`), React 19, HTML5 Canvas 2D
@@ -17,13 +17,14 @@
 ## Game Specs (current)
 
 - Loop: `requestAnimationFrame` + `PHYSICS_DT = 1/120` in `GameEngine`.
-- Terrain: custom heightmap in `Terrain.ts` (multi-octaves, bumps/creux). Materials (`src/types/terrain.ts`): `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast, radius unaffected), `SOFT` (2.5x destruction). DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53).
+- Terrain: custom heightmap in `Terrain.ts` (multi-octaves, bumps/creux). Materials (`src/types/terrain.ts`): `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast, radius unaffected), `SOFT` (2.5x destruction). DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53). GRENADE: ~2× bounce on ROCK; first contact on SOFT sticks and detonates (`grenadeBounceParams`).
+- Spawns: shuffled X biased toward hollows, 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
 - Players: 2–4, any mix Human / `v1-random` (IA SIMPLE) / `v2-heuristic` (IA OK) / `v3-sniper` (IA SNIPER) / `v4-smart` (IA EXPERT).
 - Palette: `VGA_PALETTE` only (16 VGA + neon arcade extras).
 - Tanks: `drawTankSprite` only, 24×15, slope tilt, independent turret. Active triangle, `ownerColor` shells, micro recoil.
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
-- Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
+- Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Tests: **402** across **51** files. Version `0.6.0`.
 
 ## AI
@@ -35,7 +36,7 @@ All tank AI implements `AIEngine`. Router: `AIByProfileStrategy` in `GameCanvas.
 - `v3-sniper` / `AISniperStrategy` — first shot ≥ 36 px, lock at shot 4, 14 % slip after lock.
 - `v4-smart` / `AISmartStrategy` — first shot ≥ 36 px, lock at shot 3.
 
-v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten) and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
 
 ## Response
 

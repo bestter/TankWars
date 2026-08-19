@@ -1,6 +1,6 @@
 # Bestter's TankWars Project Guide
 
-**Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules. Operational detail and the file map live in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
+**Agents:** read [AGENTS.md](./AGENTS.md) first for layout, commands, verification, and task routing. This file holds non-negotiable project rules. Operational detail and the file map live in AGENTS.md. Companions: [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules).
 
 Do not turn this file into a changelog. Current facts only.
 
@@ -24,10 +24,10 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **State Separation:** React owns `GamePhase`, players, money, shop, HUD. GameEngine owns the 120 Hz fixed-timestep loop (physics, terrain, projectiles, drawing, combat audio). Never mutate canvas context inside a React render. Never put live projectiles, particles, or `ImageData` in `useState`.
 - **Phase ownership:** `App.tsx` + `appReducer.ts` — `MENU` vs a match session. `GameCanvas.tsx` — in-match phases: `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`. Types in `src/types/game.ts`.
 - **Rendering:** `VGA_PALETTE` only. Tanks via `drawTankSprite` (24×15, slope tilt, independent turret). Active-player triangle, `ownerColor` shells, micro recoil — all Canvas2D in the engine.
-- **Terrain:** Custom heightmap in `Terrain.ts` (multi-octaves procedural relief with bumps and tactical hollows, circular craters). Materials (`types/terrain.ts`): `DIRT` (standard grass/earth), `ROCK` (indestructible stone, no deformation; side blast is stopped by the rock wall; exploding on top: +50% via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, radius unaffected), `SOFT` (soft ground, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5`x destruction). DRILLER carves an oriented shaft (`destroyTerrainShaft`, depth `DRILLER_SHAFT_DEPTH`) and keeps the current splash. No third-party physics.
+- **Terrain:** Custom heightmap in `Terrain.ts` (multi-octaves procedural relief with bumps and tactical hollows, circular craters). Materials (`types/terrain.ts`): `DIRT` (standard grass/earth), `ROCK` (indestructible stone, no deformation; side blast is stopped by the rock wall; exploding on top: +50% via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, radius unaffected), `SOFT` (soft ground, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5`x destruction). DRILLER carves an oriented shaft (`destroyTerrainShaft`, depth `DRILLER_SHAFT_DEPTH`) and keeps the current splash. GRENADE bounces ~2× higher on ROCK; first contact on SOFT sticks, digs, and detonates (`grenadeBounceParams`). No third-party physics.
 - **Spawns:** `spawnTanks` shuffles X, prefers tactical hollows (max canvas Y among minDist candidates), 100 px minimum gap, 13 % width margins, `Y = groundY`. Local humans skip 25 % of SOFT samples; AI skip 25 % of ROCK samples in every mode (`spawnAcceptsMaterial`).
 - **Hits:** AABB 24×15 in `PhysicsEngine.updateProjectiles`, with launch-time owner hitbox ignore until the shell exits it.
-- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared living-player index: `src/game/online/turnOrder.ts`. Deploy via `deploy-cloudflare.ps1` with `VITE_API_BASE`. MVP = local Canvas physics + server turn order; authoritative server sim is still planned.
+- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared living-player index: `src/game/online/turnOrder.ts`. Deploy via `deploy-cloudflare.ps1` with `VITE_API_BASE`. MVP = local Canvas physics + server turn order; authoritative server sim is still planned. `GAME_START` includes `materials` only when the server array matches `heights` length (headless generate still planned). `loadHeights` resets to `DIRT` if materials are omitted or mismatched.
 - **RNG:** `secureRandom` from `src/utils/random.ts` — never `Math.random`.
 
 ## AI Strategy Pattern
@@ -53,6 +53,7 @@ New profile → new file under `game/entities/ai/`, register in `AIByProfileStra
 - `tsc -b` typechecks `worker/` via project references. Durable Object code uses global platform types (`DurableObjectNamespace`), not platform imports.
 - Local hotseat shop must stay usable for humans in round 2+ (`useGameSession.ts`).
 - Long GRENADE bounces: `TurnManager` must not let the AI take another turn after the settlement safety net fires.
+- `loadHeights` without `materials` (or a length mismatch) resets every column to `DIRT` — no hybrid leftover state.
 - Do not edit rule files (`AGENTS.md`, `CLAUDE.md`, etc.) unless the user asked.
 
 ## Commit style

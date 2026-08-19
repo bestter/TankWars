@@ -1,6 +1,6 @@
 # AGENTS.md — TankWars
 
-Lecture obligatoire avant toute modification. Companion docs: [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules).
+Lecture obligatoire avant toute modification. Companion docs: [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules).
 
 Ce fichier est la source opérationnelle (commandes, architecture, pièges, fichiers clés). Les compagnons reprennent les règles — pas le journal de commits.
 
@@ -48,7 +48,8 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 ### Rendu & terrain
 
 - **Palette:** `VGA_PALETTE` dans `src/types/game.ts` (16 couleurs VGA + néon). Seule palette autorisée.
-- **Terrain & Relief:** heightmap custom dans `Terrain.ts` (génération procédurale riche multi-octaves avec bosses et creux tactiques, sans tunnels). Matériaux de terrain (`src/types/terrain.ts`) : `DIRT` (standard, herbe verte + terre brune), `ROCK` (roche indestructible en gris, mur pour le souffle latéral via `isBlastOccludedByRock` ; explosion par-dessus : +50% de dégâts via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, portée inchangée), `SOFT` (terrain meuble sable/jaune, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5` fois plus destructible). DRILLER : puits orienté (`destroyTerrainShaft`, profondeur `DRILLER_SHAFT_DEPTH` dans `types/weapon.ts`) — le splash reste inchangé. Aucun moteur physique externe.
+- **Terrain & Relief:** heightmap custom dans `Terrain.ts` (génération procédurale riche multi-octaves avec bosses et creux tactiques, sans tunnels). Matériaux de terrain (`src/types/terrain.ts`) : `DIRT` (standard, herbe verte + terre brune), `ROCK` (roche indestructible en gris, mur pour le souffle latéral via `isBlastOccludedByRock` ; explosion par-dessus : +50% de dégâts via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, portée inchangée), `SOFT` (terrain meuble sable/jaune, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5` fois plus destructible). DRILLER : puits orienté (`destroyTerrainShaft`, profondeur `DRILLER_SHAFT_DEPTH` dans `types/weapon.ts`) — le splash reste inchangé. GRENADE : rebond ~2× plus haut sur ROCK ; premier contact sur SOFT : colle, creuse, explose (`grenadeBounceParams`). Aucun moteur physique externe.
+- **Spawns:** `spawnTanks` mélange les X, favorise les creux (max Y canvas parmi les candidats `minDist` 100 px), marges 13 %, `Y = groundY`. Humains locaux : skip 25 % des samples SOFT. IA (tous modes) : skip 25 % des samples ROCK (`spawnAcceptsMaterial`).
 - **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
 - **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).
 
@@ -61,6 +62,7 @@ Le multi est dans `main` (plus une branche `AddMultiplayer`). MVP = physique loc
 - Client combat : `useGameSession.ts`, `onlineSession.ts` (reconnexion WS combat et résilience aux coupures).
 - Ordre des tours vivant : `src/game/online/turnOrder.ts` (partagé client + worker, sans DOM ni APIs Workers).
 - Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
+- `GAME_START` n'envoie `materials` que si le tableau serveur a la même longueur que `heights` (generate headless pas encore branché). `Terrain.loadHeights` remet tout à `DIRT` si le tableau est absent ou mismatch (pas d'état hybride).
 - `worker/.wrangler/` est gitignoré (état local SQLite).
 - Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine pour la validation statique stricte des types.
 
@@ -105,6 +107,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 - Le worker DO utilise des types globaux (`DurableObjectNamespace`), pas d'imports de plateforme.
 - Boutique locale humain vs IA : ne pas rebloquer le shop humain en manche 2+ (`useGameSession.ts`).
 - Grenade longue : le filet de sécurité du `TurnManager` ne doit pas laisser l’IA rejouer après un bounce trop long.
+- `loadHeights` sans `materials` (ou longueur mismatch) : tout retombe sur `DIRT` — pas d’état hybride.
 - Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.
 
 ## Fichiers clés par tâche
@@ -115,7 +118,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | DRILLER / puits | `types/weapon.ts` (`DRILLER_SHAFT_DEPTH`), `Terrain.ts` (`destroyTerrainShaft`), `PhysicsEngine.ts` |
 | Nouveau cycle/manche | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physique/explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
-| Terrain & matériaux | `Terrain.ts`, `types/terrain.ts` |
+| Terrain & matériaux | `Terrain.ts`, `types/terrain.ts` (`spawnAcceptsMaterial`, `grenadeBounceParams`, constantes de blend/distribution) |
 | Phase globale | `App.tsx`, `appReducer.ts`, `types/game.ts` |
 | Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
 | Online sync combat | `useGameSession.ts`, `onlineSession.ts` |
