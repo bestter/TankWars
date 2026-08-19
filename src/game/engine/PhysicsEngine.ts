@@ -15,6 +15,7 @@ import { secureRandom } from '../../utils/random';
 import { DRILLER_SHAFT_DEPTH, WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
 import type { TerrainManager } from "./Terrain";
 import { VGA_PALETTE } from "../../types/game";
+import { TERRAIN_MATERIAL, ROCK_EXPLOSION_DAMAGE_MULTIPLIER } from "../../types/terrain";
 import type { TankManager } from "../entities/TankManager";
 
 export interface Projectile {
@@ -252,10 +253,20 @@ export class PhysicsEngine {
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
-    const maxDamage = weapon?.damage ?? 35;
+    const baseDamage = weapon?.damage ?? 35;
+
+    // Sur la roche, le souffle de l'explosion est réfléchi : +50% de dégâts (distance inchangée)
+    const impactMaterial =
+      typeof terrainManager.getMaterialAt === "function"
+        ? terrainManager.getMaterialAt(p.x)
+        : TERRAIN_MATERIAL.DIRT;
+    const maxDamage =
+      impactMaterial === TERRAIN_MATERIAL.ROCK
+        ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
+        : baseDamage;
 
     console.log(
-      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
+      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
     );
 
     // 1. Détruire le terrain (DRILLER: puits orienté selon la vitesse, splash inchangé)

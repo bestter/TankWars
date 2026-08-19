@@ -139,4 +139,46 @@ describe('PhysicsEngine', () => {
       expect(spy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Explosion damage on rock terrain', () => {
+    it('inflicts 50% more blast damage on rock with unchanged blast radius', () => {
+      const terrain = new TerrainManager(400, 300);
+      terrain.loadHeights(Array.from({ length: 400 }, () => 150));
+      terrain.setMaterialRange(80, 160, 'ROCK');
+
+      const tankManager = {
+        checkTankCollision: vi.fn().mockReturnValue(false),
+        applyExplosionDamage: vi.fn(),
+        updateTankPositions: vi.fn(),
+        checkTankBurial: vi.fn(),
+        getPlayerById: vi.fn().mockReturnValue(undefined),
+      };
+
+      // Launch a MISSILE (base damage 35, radius 28) that impacts at x=120, y=150 (on rock)
+      engine.launchProjectile(120, 140, 90, 10, 'MISSILE');
+      engine.updateProjectiles(
+        1.0,
+        260,
+        0,
+        terrain,
+        tankManager as unknown as import('../../entities/TankManager').TankManager,
+      );
+
+      // Verify rock was not carved
+      expect(terrain.getHeightAt(120)).toBe(150);
+
+      // Verify splash damage was 50% stronger (35 * 1.5 = 53) with unchanged blast radius (28)
+      expect(tankManager.applyExplosionDamage).toHaveBeenCalledTimes(1);
+      expect(tankManager.applyExplosionDamage).toHaveBeenCalledWith(
+        120,
+        expect.any(Number),
+        28, // Radius is NOT affected
+        53, // 50% increased damage (Math.round(35 * 1.5))
+        undefined,
+        'MISSILE',
+        false,
+      );
+    });
+  });
 });
+

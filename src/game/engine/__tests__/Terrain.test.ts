@@ -346,4 +346,244 @@ describe('TerrainManager', () => {
     });
   });
 
+  describe("Terrain Materials (DIRT, ROCK, SOFT)", () => {
+    const WIDTH = 100;
+    const HEIGHT = 200;
+
+    it("initializes default material to DIRT", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      expect(terrain.getMaterialAt(0)).toBe("DIRT");
+      expect(terrain.getMaterialAt(50)).toBe("DIRT");
+      expect(terrain.getMaterialAt(99)).toBe("DIRT");
+    });
+
+    it("allows getting and setting materials individually and in ranges", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.setMaterialAt(20, "ROCK");
+      expect(terrain.getMaterialAt(20)).toBe("ROCK");
+      expect(terrain.getMaterialAt(21)).toBe("DIRT");
+
+      terrain.setMaterialRange(30, 45, "SOFT");
+      for (let x = 30; x <= 45; x++) {
+        expect(terrain.getMaterialAt(x)).toBe("SOFT");
+      }
+      expect(terrain.getMaterialAt(29)).toBe("DIRT");
+      expect(terrain.getMaterialAt(46)).toBe("DIRT");
+    });
+
+    it("clamps out-of-bounds coordinates for getMaterialAt and setMaterialAt", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.setMaterialAt(-10, "ROCK");
+      expect(terrain.getMaterialAt(0)).toBe("ROCK");
+      expect(terrain.getMaterialAt(-5)).toBe("ROCK");
+
+      terrain.setMaterialAt(150, "SOFT");
+      expect(terrain.getMaterialAt(WIDTH - 1)).toBe("SOFT");
+      expect(terrain.getMaterialAt(200)).toBe("SOFT");
+    });
+
+    it("supports loading full material array via loadMaterials", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const mats = Array.from({ length: WIDTH }, (_, i) =>
+        i < 50 ? ("ROCK" as const) : ("SOFT" as const),
+      );
+      terrain.loadMaterials(mats);
+
+      expect(terrain.getMaterialAt(10)).toBe("ROCK");
+      expect(terrain.getMaterialAt(80)).toBe("SOFT");
+    });
+
+    it("supports loading heights and materials together in loadHeights", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const heights = Array.from({ length: WIDTH }, () => 120);
+      const mats = Array.from({ length: WIDTH }, () => "ROCK" as const);
+
+      terrain.loadHeights(heights, mats);
+
+      expect(terrain.getHeightAt(10)).toBe(120);
+      expect(terrain.getMaterialAt(10)).toBe("ROCK");
+    });
+  });
+
+  describe("Procedural Generation & Diversity", () => {
+    it("generates varied terrain heightmaps across multiple runs", () => {
+      const t1 = new TerrainManager(200, 300);
+      const t2 = new TerrainManager(200, 300);
+
+      t1.generate();
+      t2.generate();
+
+      const h1 = t1.getHeightmap();
+      const h2 = t2.getHeightmap();
+
+      let diffCount = 0;
+      for (let x = 0; x < 200; x++) {
+        if (Math.abs(h1[x] - h2[x]) > 1.0) {
+          diffCount++;
+        }
+      }
+
+      expect(diffCount).toBeGreaterThan(50);
+    });
+
+    it("generates terrain heights strictly within playable boundaries", () => {
+      const height = 400;
+      const terrain = new TerrainManager(300, height);
+
+      for (let run = 0; run < 5; run++) {
+        terrain.generate();
+        const minAllowed = height * 0.28 - 1e-4;
+        const maxAllowed = height * 0.86 + 1e-4;
+
+        for (let x = 0; x < 300; x++) {
+          const h = terrain.getHeightAt(x);
+          expect(h).toBeGreaterThanOrEqual(minAllowed);
+          expect(h).toBeLessThanOrEqual(maxAllowed);
+        }
+      }
+    });
+
+    it("generates rock (ROCK) and soft (SOFT) zones during generate()", () => {
+      const terrain = new TerrainManager(400, 300);
+      terrain.generate();
+
+      const mats = terrain.getMaterials();
+      const hasRock = mats.some((m) => m === "ROCK");
+      const hasSoft = mats.some((m) => m === "SOFT");
+      const hasDirt = mats.some((m) => m === "DIRT");
+
+      expect(hasRock).toBe(true);
+      expect(hasSoft).toBe(true);
+      expect(hasDirt).toBe(true);
+    });
+  });
+
+  describe("Indestructible Rock (ROCK)", () => {
+    const WIDTH = 100;
+    const HEIGHT = 200;
+    const FLAT_Y = 100;
+
+    it("does not deform or carve when explosions hit rock columns", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      terrain.setMaterialRange(40, 60, "ROCK");
+
+      // Explosion directly in the rock zone
+      terrain.destroyTerrain(50, FLAT_Y, 15);
+
+      for (let x = 40; x <= 60; x++) {
+        expect(terrain.getHeightAt(x)).toBe(FLAT_Y);
+      }
+    });
+
+    it("only carves non-rock columns when explosion spans across rock and dirt", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      // Rock on x: [50, 70], Dirt on x: [30, 49]
+      terrain.setMaterialRange(50, 70, "ROCK");
+
+      terrain.destroyTerrain(50, FLAT_Y, 15);
+
+      // Rock half (x >= 50) is intact
+      for (let x = 50; x <= 65; x++) {
+        expect(terrain.getHeightAt(x)).toBe(FLAT_Y);
+      }
+
+      // Dirt half (x < 50) is carved
+      expect(terrain.getHeightAt(45)).toBeGreaterThan(FLAT_Y);
+    });
+
+    it("preserves rock columns during driller shaft impacts", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      terrain.setMaterialRange(40, 60, "ROCK");
+
+      terrain.destroyTerrainShaft(50, FLAT_Y, 0, 1, 50, 10);
+
+      for (let x = 40; x <= 60; x++) {
+        expect(terrain.getHeightAt(x)).toBe(FLAT_Y);
+      }
+    });
+  });
+
+  describe("Soft Terrain (SOFT)", () => {
+    const WIDTH = 200;
+    const HEIGHT = 300;
+    const FLAT_Y = 100;
+    const RADIUS = 12;
+
+    it("carves deeper and wider on soft terrain than on normal dirt", () => {
+      const dirtTerrain = new TerrainManager(WIDTH, HEIGHT);
+      dirtTerrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      dirtTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
+      const dirtDepth = dirtTerrain.getHeightAt(50) - FLAT_Y;
+
+      const softTerrain = new TerrainManager(WIDTH, HEIGHT);
+      softTerrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      softTerrain.setMaterialRange(0, WIDTH - 1, "SOFT");
+      softTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
+      const softDepth = softTerrain.getHeightAt(50) - FLAT_Y;
+
+      expect(softDepth).toBeGreaterThan(dirtDepth * 2.0);
+      expect(softDepth).toBeLessThanOrEqual(dirtDepth * 2.6);
+    });
+
+    it("carves adjacent normal dirt appropriately when explosion occurs in soft terrain", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      // Soft from 0 to 50, Dirt from 51 to 100
+      terrain.setMaterialRange(0, 50, "SOFT");
+      terrain.setMaterialRange(51, 100, "DIRT");
+
+      // Impact at x=50 (in soft, right on border)
+      terrain.destroyTerrain(50, FLAT_Y, RADIUS);
+
+      // Soft side is deeply carved
+      expect(terrain.getHeightAt(45) - FLAT_Y).toBeGreaterThan(0);
+      // Dirt side is also carved (not left as flat untouched wall)
+      expect(terrain.getHeightAt(55) - FLAT_Y).toBeGreaterThan(0);
+      // But soft side is deeper than dirt side at equal distance from impact
+      expect(terrain.getHeightAt(45)).toBeGreaterThan(terrain.getHeightAt(55));
+    });
+
+    it("produces a smooth progressive crater gradient across sand-dirt boundary", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
+      terrain.setMaterialRange(0, 50, "SOFT");
+      terrain.setMaterialRange(51, WIDTH - 1, "DIRT");
+
+      // Impact at x=40 (inside sand near dirt border)
+      terrain.destroyTerrain(40, FLAT_Y, RADIUS);
+
+      // Verify that as x increases into dirt (x=41 to x=65), crater depth decreases smoothly
+      let prevHeight = terrain.getHeightAt(40);
+      for (let x = 41; x <= 65; x++) {
+        const h = terrain.getHeightAt(x);
+        // The surface height is never deeper than the preceding column closer to impact center
+        expect(h).toBeLessThanOrEqual(prevHeight + 0.1);
+        prevHeight = h;
+      }
+    });
+  });
+
+  describe("Canvas Rendering with Materials", () => {
+    it("draws fallback and full offscreen with mixed materials without error", () => {
+      const terrain = new TerrainManager(100, 100);
+      terrain.generate();
+
+      const mockCtx = {
+        fillStyle: "",
+        fillRect: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        fill: vi.fn(),
+        drawImage: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+
+      expect(() => terrain.draw(mockCtx)).not.toThrow();
+    });
+  });
 });
+

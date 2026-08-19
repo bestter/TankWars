@@ -13,7 +13,11 @@
 
 ## Features
 
-- **Destructible Heightmap Terrain** — Procedurally generated rolling hills using layered sine waves + high-frequency noise. Circular crater destruction with smooth falloff. DRILLER also carves an oriented shaft along the impact velocity.
+- **Destructible Heightmap Terrain & Diverse Topography** — Procedurally generated diverse terrain using multi-octaves layered sine waves, localized tactical hollows (shelters for tanks), and steep hills/ridges. Distinct terrain materials:
+  - `DIRT` (Standard earth & grass with classic destruction)
+  - `ROCK` (Indestructible stone patches: unaffected by craters, but hard surface reflects blast wave dealing +50% explosion damage to nearby tanks with unchanged blast radius)
+  - `SOFT` (Loose sand/sediment: 2.5× more destructible for massive craters)
+  - DRILLER also carves an oriented shaft along the impact velocity with unchanged splash.
 - **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, …) for the procedural tank sprites.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters). Object pool recycles launches and cluster sub-munitions.
 - **Multiple Weapons**
@@ -86,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (359 unit tests across 48 files)
+# Run tests (378 unit tests across 48 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
