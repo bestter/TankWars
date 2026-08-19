@@ -21,3 +21,32 @@ export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5;
 /** Multiplicateur de dégâts de souffle d'explosion sur la roche (+50% de dégâts, portée inchangée). */
 export const ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5;
 
+/** Hauteur de rebond GRENADE sur ROCK ≈ 2× la terre (restitution × √2). */
+export const GRENADE_ROCK_BOUNCE_SCALE = Math.SQRT2;
+export const GRENADE_MAX_RESTITUTION = 0.98;
+export const GRENADE_DIRT_RESTITUTION_MIN = 0.58;
+export const GRENADE_DIRT_RESTITUTION_SPAN = 0.12;
+export const GRENADE_DIRT_FRICTION = 0.78;
+export const GRENADE_ROCK_FRICTION = 0.9;
+export const GRENADE_MAX_BOUNCES = 4;
+
+export function grenadeBounceParams(
+  material: TerrainMaterial,
+  rng: () => number,
+): { explodeOnContact: boolean; restitution: number; friction: number } {
+  if (material === TERRAIN_MATERIAL.SOFT) {
+    return { explodeOnContact: true, restitution: 0, friction: 0 };
+  }
+  let restitution =
+    GRENADE_DIRT_RESTITUTION_MIN + rng() * GRENADE_DIRT_RESTITUTION_SPAN;
+  let friction = GRENADE_DIRT_FRICTION;
+  if (material === TERRAIN_MATERIAL.ROCK) {
+    restitution = Math.min(
+      GRENADE_MAX_RESTITUTION,
+      restitution * GRENADE_ROCK_BOUNCE_SCALE,
+    );
+    friction = GRENADE_ROCK_FRICTION;
+  }
+  return { explodeOnContact: false, restitution, friction };
+}
+

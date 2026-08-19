@@ -5,6 +5,7 @@
 
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
+import { GRENADE_MAX_BOUNCES, grenadeBounceParams } from "../../../types/terrain";
 
 const BALLISTICS_BASE_SPEED = 6.0;
 const BALLISTICS_DT = 1 / 120;
@@ -166,17 +167,21 @@ export function simulateSmartShot(
         const surfaceY = terrain.getHeightAt(x);
         y = surfaceY - 1.2;
         bounceCount++;
+        const bounce = grenadeBounceParams(terrain.getMaterialAt(x), () => 0.5);
 
         const speed = Math.hypot(vx, vy);
         const shouldExplode =
-          bounceCount >= 4 || speed < 3.2 || Math.abs(vy) < 2.0;
+          bounce.explodeOnContact ||
+          bounceCount >= GRENADE_MAX_BOUNCES ||
+          speed < 3.2 ||
+          Math.abs(vy) < 2.0;
         if (shouldExplode) {
           landX = x;
           landY = y;
           break;
         }
-        vy = -vy * 0.64;
-        vx *= 0.78;
+        vy = -vy * bounce.restitution;
+        vx *= bounce.friction;
       } else {
         landX = x;
         landY = y;

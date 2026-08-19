@@ -28,7 +28,7 @@
 - Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`.
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **392** across **49** files (`npm run test`).
+- Tests: **394** across **49** files (`npm run test`).
 - Version: `0.5.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

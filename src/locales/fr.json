@@ -70,7 +70,7 @@
     "BULLET": "Balle",
     "desc": {
       "MISSILE": "Missile standard - trajectoire précise",
-      "GRENADE": "Grenade à rebond - utile en terrain accidenté",
+      "GRENADE": "Grenade à rebond — 2× plus haut sur la roche, s'enfonce dans le sable",
       "CLUSTER": "MIRV / Sous-munitions - multiple impacts",
       "NUKE": "Mini-Nuke - gros dégâts + large cratère",
       "THERMONUCLEAR": "Bombe thermonucléaire - détruit ~1/4 de la carte, mort instantanée au centre + énorme cratère",

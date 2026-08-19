@@ -22,7 +22,7 @@
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters). Object pool recycles launches and cluster sub-munitions.
 - **Multiple Weapons**
   - Missile (balanced, unlimited)
-  - Grenade (arcing + bounces on terrain)
+  - Grenade (arcing + bounces ~2× higher on rock; sticks, digs, and explodes in sand)
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast; direct hit instakill)
   - Driller (oriented shaft + current splash; depth `DRILLER_SHAFT_DEPTH`)
@@ -90,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (392 unit tests across 49 files)
+# Run tests (394 unit tests across 49 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -149,7 +149,7 @@ In the build today:
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **392 unit tests** across **49 files** (Vitest)
+- **394 unit tests** across **49 files** (Vitest)
 
 Still planned:
 
