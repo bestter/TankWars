@@ -21,6 +21,22 @@ export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5;
 /** Multiplicateur de dégâts de souffle d'explosion sur la roche (+50% de dégâts, portée inchangée). */
 export const ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5;
 
+/** Skip this fraction of penalized spawn samples (humans vs SOFT in local, AI vs ROCK everywhere). */
+export const SPAWN_AVOID_MATERIAL_CHANCE = 0.25;
+
+export function spawnAcceptsMaterial(
+  material: TerrainMaterial,
+  isHuman: boolean,
+  localMode: boolean,
+  rng: () => number,
+): boolean {
+  const avoid =
+    (localMode && isHuman && material === TERRAIN_MATERIAL.SOFT) ||
+    (!isHuman && material === TERRAIN_MATERIAL.ROCK);
+  if (!avoid) return true;
+  return rng() >= SPAWN_AVOID_MATERIAL_CHANCE;
+}
+
 /** Hauteur de rebond GRENADE sur ROCK ≈ 2× la terre (restitution × √2). */
 export const GRENADE_ROCK_BOUNCE_SCALE = Math.SQRT2;
 export const GRENADE_MAX_RESTITUTION = 0.98;

@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**394 tests**, 49 files).
+- After edits: `npm run lint && npm run build && npm run test` (**397 tests**, 50 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -24,7 +24,7 @@
 - Palette: `VGA_PALETTE` only. Tanks: `drawTankSprite`, 24×15, slope tilt.
 - Active indicator: inverted triangle, `Math.sin(Date.now() / 200) * 5`.
 - Shells inherit `ownerColor`. Recoil is a short chassis offset only.
-- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, snapped to `groundY`.
+- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, snapped to `groundY`. Local humans: −25 % chance on SOFT. AI (all modes): −25 % chance on ROCK.
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Terrain: multi-octaves procedural heightmap with bumps/creux. Materials: `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast damage, radius unaffected), `SOFT` (2.5x destruction multiplier).
 - DRILLER: oriented shaft (`DRILLER_SHAFT_DEPTH` = 53), splash unchanged.
@@ -49,7 +49,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (394 / 49)
+3. `npm run test` (397 / 50)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).

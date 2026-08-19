@@ -11,6 +11,7 @@ import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import type { WeaponId } from "../../types/weapon";
 import { drawTankSprite } from "../rendering/tankSprite";
+import { spawnAcceptsMaterial } from "../../types/terrain";
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -138,10 +139,15 @@ export class TankManager {
 
   /**
    * Place les tanks avec positions X aléatoires biaisées vers les creux (distance minimale garantie).
+   * Local : humains 25 % moins souvent sur le sable. IA : 25 % moins souvent sur la roche (tous modes).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
    * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
-  public spawnTanks(players: Player[], terrain: TerrainManager): void {
+  public spawnTanks(
+    players: Player[],
+    terrain: TerrainManager,
+    options?: { localMode?: boolean },
+  ): void {
     this.players = players;
     this.playersMap = new Map(players.map((p) => [p.id, p]));
     this.invalidateAliveCache();
@@ -155,24 +161,48 @@ export class TankManager {
     const minX = margin;
     const maxX = terrain.width - margin;
     const minDist = 100;
+    const localMode = options?.localMode ?? true;
 
-    // Génération de positions X aléatoires, biaisées vers les creux (Y canvas max)
-    const xs = this.generateRandomPositions(count, minX, maxX, minDist, terrain);
-
-    // Mélange des positions X pour que la répartition des joueurs sur le terrain soit aléatoire à chaque manche
-    const shuffledXs = [...xs];
-    for (let i = shuffledXs.length - 1; i > 0; i--) {
+    const order = players.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) {
       const j = Math.floor(secureRandom() * (i + 1));
-      const temp = shuffledXs[i];
-      shuffledXs[i] = shuffledXs[j];
-      shuffledXs[j] = temp;
+      const temp = order[i];
+      order[i] = order[j];
+      order[j] = temp;
+    }
+
+    const placed: number[] = [];
+    const xs: number[] = new Array(count);
+    let failed = false;
+    for (const idx of order) {
+      const x = this.pickSpawnX(
+        minX,
+        maxX,
+        minDist,
+        terrain,
+        placed,
+        players[idx],
+        localMode,
+      );
+      if (x === null) {
+        failed = true;
+        break;
+      }
+      placed.push(x);
+      xs[idx] = x;
+    }
+
+    if (failed) {
+      const span = count === 1 ? 0 : (maxX - minX) / (count - 1);
+      for (let i = 0; i < count; i++) {
+        xs[i] = minX + span * i;
+      }
     }
 
     players.forEach((player, index) => {
       const tank = player.tank;
 
-      // Position X aléatoire et mélangée
-      const x = shuffledXs[index];
+      const x = xs[index];
 
       // Ancrage vertical exact sur le terrain
       const groundY = terrain.getHeightAt(x);
@@ -209,60 +239,47 @@ export class TankManager {
   }
 
   /**
-   * Génère N positions X dans [minX, maxX] avec |xi-xj| >= minDist.
-   * Parmi les candidats valides, préfère le Y canvas le plus élevé (creux tactique).
-   * Terrain plat → tirage aléatoire équivalent. Retourne les positions triées.
+   * Tire un X dans [minX, maxX] à minDist des positions déjà posées.
+   * Préfère le Y canvas max (creux). Applique le skip matériau 25 %.
    */
-  private generateRandomPositions(
-    count: number,
+  private pickSpawnX(
     minX: number,
     maxX: number,
     minDist: number,
     terrain: TerrainManager,
-  ): number[] {
-    if (count <= 0) return [];
-    if (count === 1) return [minX + (maxX - minX) / 2];
-
+    placed: number[],
+    player: Player,
+    localMode: boolean,
+  ): number | null {
     const range = maxX - minX;
-    const minSpan = (count - 1) * minDist;
-
-    // Si la plage est trop petite pour garantir minDist → fallback équitable
-    if (minSpan > range) {
-      const step = range / (count - 1);
-      return Array.from({ length: count }, (_, i) => minX + step * i);
-    }
-
     const maxAttempts = 500;
     const perPosAttempts = 80;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const positions: number[] = [];
-
-      for (let i = 0; i < count; i++) {
-        let best: number | null = null;
-        let bestHeight = -Infinity;
-        for (let t = 0; t < perPosAttempts; t++) {
-          const candidate = minX + secureRandom() * range;
-          if (!positions.every((p) => Math.abs(p - candidate) >= minDist)) continue;
-          const h = terrain.getHeightAt(candidate);
-          if (h > bestHeight) {
-            bestHeight = h;
-            best = candidate;
-          }
+      let best: number | null = null;
+      let bestHeight = -Infinity;
+      for (let t = 0; t < perPosAttempts; t++) {
+        const candidate = minX + secureRandom() * range;
+        if (!placed.every((p) => Math.abs(p - candidate) >= minDist)) continue;
+        if (
+          !spawnAcceptsMaterial(
+            terrain.getMaterialAt(candidate),
+            player.isHuman,
+            localMode,
+            secureRandom,
+          )
+        ) {
+          continue;
         }
-        if (best === null) break;
-        positions.push(best);
+        const h = terrain.getHeightAt(candidate);
+        if (h > bestHeight) {
+          bestHeight = h;
+          best = candidate;
+        }
       }
-
-      if (positions.length === count) {
-        positions.sort((a, b) => a - b);
-        return positions;
-      }
+      if (best !== null) return best;
     }
-
-    // Fallback: répartition équitable (garantie de ne jamais bloquer)
-    const step = range / (count - 1);
-    return Array.from({ length: count }, (_, i) => minX + step * i);
+    return null;
   }
 
   public updateTankPositions(terrain: TerrainManager): void {

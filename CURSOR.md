@@ -25,10 +25,10 @@
 - Terrain: heightmap custom dans `Terrain.ts` (relief diversifié multi-octaves avec bosses et creux tactiques). Matériaux (`src/types/terrain.ts`) : `DIRT` (normal), `ROCK` (roche indestructible, mur pour le souffle latéral ; explosion par-dessus : +50% dégâts, portée inchangée), `SOFT` (terrain meuble, multiplicateur 2.5x).
 - Weapons (`WEAPON_REGISTRY` in `src/types/weapon.ts`): Missile unlimited (not in shop). Others decrement. DRILLER carves an oriented shaft of depth `DRILLER_SHAFT_DEPTH` (53 px); splash stays as registered. BULLET ×3 on direct hitbox hit. NUKE / THERMONUCLEAR have special VFX/audio in `GameEngine`.
 - Economy: $300 per destroy, $600 when only one tank remains, $500 survival after the round.
-- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`.
+- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK.
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **394** across **49** files (`npm run test`).
+- Tests: **397** across **50** files (`npm run test`).
 - Version: `0.5.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

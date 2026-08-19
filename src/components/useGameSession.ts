@@ -645,6 +645,7 @@ export function useGameSession({
         : createDemoPlayers();
 
     // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
+    engine.setLocalMatch(gameMode !== "online");
     if (localPlayerId) {
       engine.setLocalPlayerId(localPlayerId);
     }

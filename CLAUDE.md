@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **394 tests** (49 files)
+- Run tests: `npm run test` (or `vitest run`) — **397 tests** (50 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -25,7 +25,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **Phase ownership:** `App.tsx` + `appReducer.ts` — `MENU` vs a match session. `GameCanvas.tsx` — in-match phases: `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`. Types in `src/types/game.ts`.
 - **Rendering:** `VGA_PALETTE` only. Tanks via `drawTankSprite` (24×15, slope tilt, independent turret). Active-player triangle, `ownerColor` shells, micro recoil — all Canvas2D in the engine.
 - **Terrain:** Custom heightmap in `Terrain.ts` (multi-octaves procedural relief with bumps and tactical hollows, circular craters). Materials (`types/terrain.ts`): `DIRT` (standard grass/earth), `ROCK` (indestructible stone, no deformation; side blast is stopped by the rock wall; exploding on top: +50% via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, radius unaffected), `SOFT` (soft ground, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5`x destruction). DRILLER carves an oriented shaft (`destroyTerrainShaft`, depth `DRILLER_SHAFT_DEPTH`) and keeps the current splash. No third-party physics.
-- **Spawns:** `spawnTanks` shuffles X, prefers tactical hollows (max canvas Y among minDist candidates), 100 px minimum gap, 13 % width margins, `Y = groundY`.
+- **Spawns:** `spawnTanks` shuffles X, prefers tactical hollows (max canvas Y among minDist candidates), 100 px minimum gap, 13 % width margins, `Y = groundY`. Local humans skip 25 % of SOFT samples; AI skip 25 % of ROCK samples in every mode (`spawnAcceptsMaterial`).
 - **Hits:** AABB 24×15 in `PhysicsEngine.updateProjectiles`, with launch-time owner hitbox ignore until the shell exits it.
 - **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared living-player index: `src/game/online/turnOrder.ts`. Deploy via `deploy-cloudflare.ps1` with `VITE_API_BASE`. MVP = local Canvas physics + server turn order; authoritative server sim is still planned.
 - **RNG:** `secureRandom` from `src/utils/random.ts` — never `Math.random`.
