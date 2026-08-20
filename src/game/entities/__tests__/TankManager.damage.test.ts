@@ -205,4 +205,42 @@ describe("TankManager.applyGravity and burial", () => {
 
     expect(tank.isDead).toBe(true);
   });
+
+  it("sets wasDirectHit on hitReaction on direct collision, but not on splash-only damage", () => {
+    const directTarget = makePlayer({
+      id: "direct",
+      tank: makeTank("t-direct", 100, 200, { health: 100, shield: 0 }),
+    });
+    const splashTarget = makePlayer({
+      id: "splash",
+      tank: makeTank("t-splash", 120, 200, { health: 100, shield: 0 }),
+    });
+    const tm = managerWith(directTarget, splashTarget);
+
+    // Direct collision on directTarget at (100, 195) with isDirectHit = true
+    tm.applyExplosionDamage(100, 195, 40, 25, "attacker", "MISSILE", true);
+
+    expect(directTarget.tank.hitReaction?.wasDirectHit).toBe(true);
+    expect(splashTarget.tank.hitReaction?.wasDirectHit).toBeUndefined();
+    expect(splashTarget.tank.health).toBeLessThan(100); // took splash damage
+  });
+
+  it("accumulates fallDistance on hitReaction during gravity fall and spawnTanks clears it", () => {
+    const terrain = new TerrainManager(200, 200);
+    terrain.loadHeights(Array.from({ length: 200 }, () => 150));
+
+    const fallingTank = makeTank("t-fall", 100, 100, { health: 100, shield: 0 });
+    const fallingPlayer = makePlayer({ id: "falling", tank: fallingTank });
+    const tm = managerWith(fallingPlayer);
+
+    tm.updateTankPositions(terrain);
+    tm.applyGravity(1 / 60, terrain);
+
+    expect(fallingTank.hitReaction?.fallDistance).toBeGreaterThan(0);
+    expect(fallingTank.hitReaction?.shotStep).toBe(0);
+
+    // spawnTanks clears hitReaction
+    tm.spawnTanks([fallingPlayer], terrain);
+    expect(fallingTank.hitReaction).toBeUndefined();
+  });
 });

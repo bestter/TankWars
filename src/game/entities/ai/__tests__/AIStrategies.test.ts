@@ -380,4 +380,37 @@ describe("AI fallibility contracts", () => {
     expect(Math.abs(impact.landX - 240)).toBeLessThan(90);
     expect(Math.abs(impact.landX - 560)).toBeGreaterThan(150);
   });
+
+  it("advances hitReaction state after executeTurn across strategies", async () => {
+    const terrain = flatTerrain(800, 480);
+    const shooter = makePlayer({
+      id: "ai-shooter",
+      isHuman: false,
+      aiProfile: "v3-sniper",
+      tank: makeTank("shooter-tank", 100, 336, {
+        hitReaction: { wasDirectHit: true, fallDistance: 60, shotStep: 0 },
+      }),
+    });
+    const target = makePlayer({
+      id: "target",
+      isHuman: true,
+      tank: makeTank("target-tank", 500, 336),
+    });
+    const strategy = new AISniperStrategy();
+    const gameState = makeGameState(shooter, target, "v3-sniper");
+
+    // Turn 1 (Shot 1 after hit/fall)
+    await strategy.executeTurn("shooter-tank", gameState, terrain);
+    expect(shooter.tank.hitReaction?.wasDirectHit).toBe(false);
+    expect(shooter.tank.hitReaction?.fallDistance).toBe(0);
+    expect(shooter.tank.hitReaction?.shotStep).toBe(1);
+
+    // Turn 2 (Shot 2 after hit/fall)
+    await strategy.executeTurn("shooter-tank", gameState, terrain);
+    expect(shooter.tank.hitReaction?.shotStep).toBe(2);
+
+    // Turn 3 (Fully recovered)
+    await strategy.executeTurn("shooter-tank", gameState, terrain);
+    expect(shooter.tank.hitReaction?.shotStep).toBe(0);
+  });
 });

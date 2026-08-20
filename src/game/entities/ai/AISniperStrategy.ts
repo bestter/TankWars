@@ -19,6 +19,7 @@ import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, sniperImpactMagnitude } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -187,6 +188,10 @@ export class AISniperStrategy implements AIEngine {
       );
     }
     self.tank.currentWeapon = chosenWeapon;
+    const penalty = getHitReactionPenalty(
+      self.aiProfile ?? "v3-sniper",
+      self.tank.hitReaction,
+    );
 
     const targetX = target!.tank.position.x;
     const spaceToLeft = targetX;
@@ -196,8 +201,8 @@ export class AISniperStrategy implements AIEngine {
     if (attempts === 2) {
       offsetDir *= -1;
     }
-    const miss = sniperImpactMagnitude(attempts, skill);
-    // Mid-round slip: random side (wind / crater misread), not the usual open-space miss.
+    const miss = sniperImpactMagnitude(attempts, skill, penalty);
+    // Mid-round slip / disturbance: random side (wind / crater misread), not the usual open-space miss.
     if (attempts >= 4 && miss > 0) {
       offsetDir = secureRandom() < 0.5 ? -1 : 1;
     }
@@ -211,6 +216,8 @@ export class AISniperStrategy implements AIEngine {
       gameState.gravity,
       terrainManager,
     );
+
+    advanceHitReaction(self.tank.hitReaction);
 
     return {
       angle: Math.round(angle * 10) / 10,

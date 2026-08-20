@@ -229,8 +229,9 @@ export class TankManager {
       tank.power = 50;
       tank.currentWeapon = "MISSILE";
 
-      // Clear per-round AI revenge data
+      // Clear per-round AI revenge data and hit reaction
       tank.lastHitBy = undefined;
+      tank.hitReaction = undefined;
     });
 
     // Initialize velocities and fall tracking for new spawns
@@ -392,6 +393,14 @@ export class TankManager {
         // === Fall damage: 1 point per damageLevelHeight pixels of downward travel ===
         const deltaFall = pos.y - prevY;
         if (deltaFall > 0) {
+          tank.hitReaction = tank.hitReaction ?? {
+            wasDirectHit: false,
+            fallDistance: 0,
+            shotStep: 0,
+          };
+          tank.hitReaction.fallDistance += deltaFall;
+          tank.hitReaction.shotStep = 0;
+
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
 
@@ -561,6 +570,15 @@ export class TankManager {
           explosionX <= pos.x + tankWidth / 2 &&
           explosionY >= pos.y - tankHeight &&
           explosionY <= pos.y;
+        if (isDirectHitOnThisTank) {
+          tank.hitReaction = tank.hitReaction ?? {
+            wasDirectHit: false,
+            fallDistance: 0,
+            shotStep: 0,
+          };
+          tank.hitReaction.wasDirectHit = true;
+          tank.hitReaction.shotStep = 0;
+        }
       }
 
       const healthBefore = tank.health;

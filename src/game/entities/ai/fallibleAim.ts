@@ -60,17 +60,20 @@ export function impactOffsetMagnitude(
   attempts: number,
   profile: FallibleProfile,
   skill = 1,
+  penalty = 0,
 ): number {
   const n = SHOTS_TO_HIT[profile];
   if (attempts >= n) {
-    if (skill >= 1) return 0;
-    return (1 - skill) * EARLY_LOCK_LEFTOVER_PX;
+    const baseLockResidual =
+      skill >= 1 ? 0 : (1 - skill) * EARLY_LOCK_LEFTOVER_PX;
+    if (penalty <= 0) return baseLockResidual;
+    return baseLockResidual + PRE_LOCK_BAND[profile].max * 1.5 * penalty;
   }
   const band = missBand(attempts, profile);
   const base = band.min + secureRandom() * (band.max - band.min);
-  let mag = base * aimMissScale(skill);
+  let mag = base * aimMissScale(skill) * (1 + penalty);
   if (attempts <= 1) {
-    mag = Math.max(mag, FIRST_SHOT_FLOOR_PX);
+    mag = Math.max(mag, FIRST_SHOT_FLOOR_PX * (1 + penalty));
   }
   return mag;
 }
@@ -84,8 +87,9 @@ export function signedImpactOffset(
   profile: FallibleProfile,
   sign?: number,
   skill = 1,
+  penalty = 0,
 ): number {
-  const magnitude = impactOffsetMagnitude(attempts, profile, skill);
+  const magnitude = impactOffsetMagnitude(attempts, profile, skill, penalty);
   const dir = sign === undefined ? (secureRandom() < 0.5 ? -1 : 1) : Math.sign(sign) || 1;
   return dir * magnitude;
 }
@@ -107,15 +111,19 @@ const SNIPER_SLIP_MAX = 28;
  * Sniper impact miss. Follows the lock curve, then occasionally slips
  * on the lock shot and after so a mid-round duel is not a perfect laser.
  */
-export function sniperImpactMagnitude(attempts: number, skill = 1): number {
+export function sniperImpactMagnitude(
+  attempts: number,
+  skill = 1,
+  penalty = 0,
+): number {
   if (
     attempts >= SHOTS_TO_HIT["v3-sniper"] &&
     scaledGaffe(SNIPER_MID_ROUND_SLIP_CHANCE, skill)
   ) {
-    return (
+    const slip =
       (SNIPER_SLIP_MIN + secureRandom() * (SNIPER_SLIP_MAX - SNIPER_SLIP_MIN)) *
-      aimMissScale(skill)
-    );
+      aimMissScale(skill);
+    return slip * (1 + penalty);
   }
-  return impactOffsetMagnitude(attempts, "v3-sniper", skill);
+  return impactOffsetMagnitude(attempts, "v3-sniper", skill, penalty);
 }

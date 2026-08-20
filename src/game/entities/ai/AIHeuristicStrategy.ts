@@ -27,6 +27,7 @@ import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -220,7 +221,11 @@ export class AIHeuristicStrategy implements AIEngine {
       chosenWeapon = "MISSILE";
     }
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
-    self.tank.currentWeapon = chosenWeapon; // live ref from gameState snapshot of roster
+    self.tank.currentWeapon = chosenWeapon;
+    const penalty = getHitReactionPenalty(
+      self.aiProfile ?? "v2-heuristic",
+      self.tank.hitReaction,
+    );
 
     const { angle, power } = this.computeImprovedShot(
       self,
@@ -231,7 +236,10 @@ export class AIHeuristicStrategy implements AIEngine {
       attempts,
       mem,
       skill,
+      penalty,
     );
+
+    advanceHitReaction(self.tank.hitReaction);
 
     return {
       angle: Math.round(angle * 10) / 10,
@@ -301,10 +309,13 @@ export class AIHeuristicStrategy implements AIEngine {
     attempts: number,
     mem: AIMemory,
     skill: number,
+    penalty = 0,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x + signedImpactOffset(attempts, "v2-heuristic", undefined, skill);
+    const tx =
+      target.tank.position.x +
+      signedImpactOffset(attempts, "v2-heuristic", undefined, skill, penalty);
     const ty = target.tank.position.y - 6; // aim slightly high on tank body
     const dx = tx - sx;
     const isRight = dx > 0;
@@ -340,7 +351,8 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // "Always more precise": noise shrinks with attempts on this target
     const precision = Math.min(0.88, attempts * 0.13);
-    const noise = (1 - precision) * (7.5 + secureRandom() * 5.5);
+    const noise =
+      (1 - precision) * (7.5 + secureRandom() * 5.5) * (1 + penalty);
 
     angle += (secureRandom() - 0.5) * noise;
     power += (secureRandom() - 0.5) * (noise * 0.65);

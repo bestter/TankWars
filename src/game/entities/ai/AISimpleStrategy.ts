@@ -13,6 +13,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
 import { AI_LATE_SKILL_CAP, clamp01, roundSkill } from "./roundSkill";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 export class AISimpleStrategy implements AIEngine {
   async executeTurn(
@@ -27,7 +28,14 @@ export class AISimpleStrategy implements AIEngine {
     }
 
     const skill = roundSkill(gameState.roundNumber);
-    if (secureRandom() >= Math.min(1, skill)) {
+    const penalty = getHitReactionPenalty(
+      currentPlayer.aiProfile,
+      currentPlayer.tank.hitReaction,
+    );
+
+    const erraticChance = (1 - Math.min(1, skill)) + penalty * 0.5;
+    if (secureRandom() < erraticChance) {
+      advanceHitReaction(currentPlayer.tank.hitReaction);
       const angle = secureRandom() * 180;
       const power = 5 + secureRandom() * 95;
       return {
@@ -67,8 +75,9 @@ export class AISimpleStrategy implements AIEngine {
 
     // Safer trajectories (higher arc, more power). After manche 5 the cone tightens.
     const late = clamp01((skill - 1) / (AI_LATE_SKILL_CAP - 1));
-    const angleSpread = (isTargetToTheRight ? 30 : 45) * (1 - 0.5 * late);
-    const powerSpread = 30 * (1 - 0.5 * late);
+    const angleSpread =
+      (isTargetToTheRight ? 30 : 45) * (1 - 0.5 * late) * (1 + penalty);
+    const powerSpread = 30 * (1 - 0.5 * late) * (1 + penalty);
     if (isTargetToTheRight) {
       angle = 45 + secureRandom() * angleSpread;
     } else {
@@ -76,6 +85,8 @@ export class AISimpleStrategy implements AIEngine {
     }
 
     const power = 60 + secureRandom() * powerSpread;
+
+    advanceHitReaction(currentPlayer.tank.hitReaction);
 
     const weaponId = currentPlayer.tank.currentWeapon || "MISSILE";
     return {

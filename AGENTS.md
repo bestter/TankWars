@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 402 tests, 51 fichiers) |
+| Tests | `npm run test` (vitest, 417 tests, 52 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -95,6 +95,11 @@ Les gaffes de personnalité restent dans chaque stratégie. `AIStrategy` est un 
 
 Warmup ease-out : manche 1 = 15 % (`AI_WARMUP_START_SKILL`), gros saut aux manches 2–3, palier du tableau à la manche 5. Après 5, `roundSkill` monte jusqu’à 1.35 (cap) et `aimMissScale` descend jusqu’à 0.55. Le 1er tir reste hors splash (`FIRST_SHOT_FLOOR_PX` = 36). Avant la manche 5, même le tir de lock peut rater (`EARLY_LOCK_LEFTOVER_PX`). Simple : P(alcoolique) = `1 − min(1, skill)`. `v1-random` reste hors `fallibleAim`.
 
+Courbe de réaction après coup/chute (`hitReaction.ts`, Issue 174) :
+- **1er tir après l'événement :** Coup direct de projectile sur la hitbox (`wasDirectHit`) = +50% d'imprécision ; chute de terrain (`fallDistance`) = +1% à +25% d'imprécision (échelle 0 à 120 px). Les deux sont **cumulables**.
+- **2e tir après l'événement (sans nouveau coup) :** SNIPER = 0% (précision normale/chirurgicale) ; EXPERT = 12% d'imprécision ; OK et SIMPLE = 25% d'imprécision.
+- **3e tir :** Retour complet à 0% d'imprécision.
+
 Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
 
 ## Pièges fréquents
@@ -125,7 +130,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `terrainMaterialTactics.ts` + la stratégie concernée |
+| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles
