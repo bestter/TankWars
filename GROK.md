@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**410 tests**, 51 files).
+- After edits: `npm run lint && npm run build && npm run test` (**413 tests**, 51 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -24,7 +24,7 @@
 - Palette: `VGA_PALETTE` only. Tanks: `drawTankSprite`, 24×15, slope tilt.
 - Active indicator: inverted triangle, `Math.sin(Date.now() / 200) * 5`.
 - Shells inherit `ownerColor`. Recoil is a short chassis offset only.
-- Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas: single red bar at $y-24$ when shield > 0 and health is full; stacked dual bars (red shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0.
+- Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas (constants `TANK_GAUGE_*`): single dark cyan bar (`VGA_PALETTE.DARK_CYAN`) at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0 (red if $\le 40\%$).
 - Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, snapped to `groundY`. Local humans: −25 % chance on SOFT. AI (all modes): −25 % chance on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Terrain: multi-octaves procedural heightmap with bumps/creux. Materials: `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast damage, radius unaffected), `SOFT` (2.5x destruction multiplier).

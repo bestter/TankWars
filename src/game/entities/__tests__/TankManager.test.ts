@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { TankManager } from "../TankManager";
+import {
+  TankManager,
+  TANK_GAUGE_SINGLE_Y_OFFSET,
+  TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET,
+  TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET,
+} from "../TankManager";
 import type { Player } from "../../../types/player";
 import { VGA_PALETTE } from "../../../types/game";
 import { TerrainManager } from "../../engine/Terrain";
@@ -369,8 +374,13 @@ describe("TankManager", () => {
       tankManager.draw(ctx, true);
 
       const ys = fillRectCalls.map((c) => c.y);
-      expect(ys).toContain(72); // shieldBarY (100 - 28)
-      expect(ys).toContain(77); // healthBarY (100 - 23)
+      expect(ys).toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET); // shieldBarY (100 - 28)
+      expect(ys).toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET); // healthBarY (100 - 23)
+
+      const shieldCall = fillRectCalls.find(
+        (c) => c.y === 100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET && c.fillStyle === VGA_PALETTE.DARK_CYAN,
+      );
+      expect(shieldCall).toBeDefined();
     });
 
     it("draws only shield bar when shield > 0 and health is full", () => {
@@ -387,9 +397,14 @@ describe("TankManager", () => {
       tankManager.draw(ctx, true);
 
       const ys = fillRectCalls.map((c) => c.y);
-      expect(ys).toContain(76); // single barY (100 - 24)
-      expect(ys).not.toContain(72);
-      expect(ys).not.toContain(77);
+      expect(ys).toContain(100 - TANK_GAUGE_SINGLE_Y_OFFSET); // single barY (100 - 24)
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET);
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET);
+
+      const shieldCall = fillRectCalls.find(
+        (c) => c.y === 100 - TANK_GAUGE_SINGLE_Y_OFFSET && c.fillStyle === VGA_PALETTE.DARK_CYAN,
+      );
+      expect(shieldCall).toBeDefined();
     });
 
     it("draws only health bar when shield is 0", () => {
@@ -406,9 +421,9 @@ describe("TankManager", () => {
       tankManager.draw(ctx, true);
 
       const ys = fillRectCalls.map((c) => c.y);
-      expect(ys).toContain(76); // single barY (100 - 24)
-      expect(ys).not.toContain(72);
-      expect(ys).not.toContain(77);
+      expect(ys).toContain(100 - TANK_GAUGE_SINGLE_Y_OFFSET); // single barY (100 - 24)
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET);
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET);
     });
   });
 });

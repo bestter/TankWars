@@ -202,6 +202,58 @@ describe("TankManager.applyExplosionDamage", () => {
     expect(target.tank.shield).toBe(10);
     expect(target.tank.health).toBe(100);
   });
+
+  it("handles odd shield = 1 on direct hit damage = 1 (shield = 0, health intact)", () => {
+    // shield = 1, direct hit damage = 1 → shield = 0, health intact
+    // Math.ceil(1 / 2) = 1 damage absorbable by shield
+    // Absorbing 1 damage consumes 1 shield (clamped at 0) -> shield = 0.
+    // Remaining damage to health = 0 -> health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 1, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 1, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.health).toBe(100);
+    expect(target.tank.isDead).toBe(false);
+  });
+
+  it("handles odd shield = 39 on direct hit with non-multiple-of-2 damage = 25", () => {
+    // Shield can absorb up to Math.ceil(39 / 2) = 20 damage points.
+    // Absorbing 20 points consumes 39 shield -> shield = 0.
+    // Remaining damage 25 - 20 = 5 is dealt 1x to health -> health = 95.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 25, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.health).toBe(95);
+    expect(target.tank.isDead).toBe(false);
+  });
+
+  it("handles odd shield = 39 on direct hit with damage = 15 without touching health", () => {
+    // Direct hit with damage 15:
+    // Absorbing 15 damage consumes 15 * 2 = 30 shield -> shield = 39 - 30 = 9.
+    // Remaining damage to health = 0 -> health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 15, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(9);
+    expect(target.tank.health).toBe(100);
+    expect(target.tank.isDead).toBe(false);
+  });
 });
 
 describe("TankManager.applyGravity and burial", () => {

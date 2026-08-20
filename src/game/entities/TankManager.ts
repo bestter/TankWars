@@ -37,6 +37,16 @@ const TERMINAL_V_VOID = 24.0; // accelerated terminal velocity for void fall
 /** Vertical gap threshold (in pixels) to distinguish falling in the void from sliding down a slope. */
 const VOID_FALL_THRESHOLD = 12;
 
+/** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
+export const TANK_GAUGE_SINGLE_Y_OFFSET = 24; // Barre unique (bouclier ou vie) : y - 24
+export const TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET = 28; // Barre de bouclier (mode double) : y - 28
+export const TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET = 23; // Barre de vie (mode double) : y - 23
+export const TANK_NAME_SINGLE_GAUGE_Y_OFFSET = 34; // Nom du joueur (jauge unique) : y - 34
+export const TANK_NAME_DOUBLE_GAUGE_Y_OFFSET = 36; // Nom du joueur (jauge double) : y - 36
+export const TANK_GAUGE_BAR_WIDTH = 16;
+export const TANK_GAUGE_BAR_HEIGHT = 3;
+export const TANK_GAUGE_BORDER_WIDTH = 0.5;
+
 export class TankManager {
   private players: Player[] = [];
   private playersMap: Map<string, Player> = new Map();
@@ -601,8 +611,16 @@ export class TankManager {
 
       if (tank.shield > 0) {
         if (isDirectHitOnThisTank) {
-          // Coup direct : le bouclier prend 2x plus de dégâts (consomme 2 pts de bouclier par pt de dégât absorbé)
-          const maxDamageShieldCanAbsorb = tank.shield / 2;
+          /**
+           * Contrat dégât direct :
+           * - Le bouclier absorbe les dégâts à un ratio 2:1 (consomme 2 points de bouclier par point de dégât absorbé).
+           * - Le multiplicateur x2 s'applique EXCLUSIVEMENT à l'absorption par le bouclier.
+           * - Dès que le bouclier tombe à 0, tout surplus de dégâts restant (`remainingDamage`)
+           *   est appliqué à la santé au ratio standard 1:1 sans AUCUNE amplification.
+           * - Pour un bouclier impair (ex. 1 ou 39), `Math.ceil(tank.shield / 2)` permet au dernier
+           *   point de bouclier d'absorber 1 point de dégât entrant avant de se briser.
+           */
+          const maxDamageShieldCanAbsorb = Math.ceil(tank.shield / 2);
           const damageAbsorbed = Math.min(
             remainingDamage,
             maxDamageShieldCanAbsorb,
@@ -697,30 +715,30 @@ export class TankManager {
       );
 
       // === Jauge de vie / bouclier miniature ===
-      const barWidth = 16;
-      const barHeight = 3;
+      const barWidth = TANK_GAUGE_BAR_WIDTH;
+      const barHeight = TANK_GAUGE_BAR_HEIGHT;
       const barX = x - barWidth / 2;
 
       const showShield = tank.shield > 0;
       const showHealth = tank.shield <= 0 || tank.health < tank.maxHealth;
 
-      let nameY = y - 34;
+      let nameY = y - TANK_NAME_SINGLE_GAUGE_Y_OFFSET;
 
       if (showShield && showHealth) {
-        // Deux barres superposées : Bouclier (rouge) au-dessus, Vie (verte) en-dessous
-        const shieldBarY = y - 28;
-        const healthBarY = y - 23;
-        nameY = y - 36;
+        // Deux barres superposées : Bouclier (cyan foncé) au-dessus, Vie (verte/rouge) en-dessous
+        const shieldBarY = y - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET;
+        const healthBarY = y - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET;
+        nameY = y - TANK_NAME_DOUBLE_GAUGE_Y_OFFSET;
 
         // 1. Barre de bouclier (en haut)
         const maxS = tank.maxShield ?? 40;
         const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
         ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
         ctx.fillRect(barX, shieldBarY, barWidth, barHeight);
-        ctx.fillStyle = VGA_PALETTE.RED;
+        ctx.fillStyle = VGA_PALETTE.DARK_CYAN;
         ctx.fillRect(barX, shieldBarY, barWidth * shieldRatio, barHeight);
         ctx.strokeStyle = VGA_PALETTE.WHITE;
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
         ctx.strokeRect(barX, shieldBarY, barWidth, barHeight);
 
         // 2. Barre de vie (en bas)
@@ -733,11 +751,11 @@ export class TankManager {
         ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
         ctx.fillRect(barX, healthBarY, barWidth * healthRatio, barHeight);
         ctx.strokeStyle = VGA_PALETTE.WHITE;
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
         ctx.strokeRect(barX, healthBarY, barWidth, barHeight);
       } else {
-        // Une seule barre à y - 24
-        const barY = y - 24;
+        // Une seule barre à y - TANK_GAUGE_SINGLE_Y_OFFSET
+        const barY = y - TANK_GAUGE_SINGLE_Y_OFFSET;
         ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
         ctx.fillRect(barX, barY, barWidth, barHeight);
 
@@ -745,7 +763,7 @@ export class TankManager {
           // Uniquement le bouclier (vie encore à 100%)
           const maxS = tank.maxShield ?? 40;
           const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
-          ctx.fillStyle = VGA_PALETTE.RED;
+          ctx.fillStyle = VGA_PALETTE.DARK_CYAN;
           ctx.fillRect(barX, barY, barWidth * shieldRatio, barHeight);
         } else {
           // Uniquement la vie (bouclier détruit)
@@ -759,7 +777,7 @@ export class TankManager {
 
         // Bordure
         ctx.strokeStyle = VGA_PALETTE.WHITE;
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
         ctx.strokeRect(barX, barY, barWidth, barHeight);
       }
 
