@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 402 tests, 51 fichiers) |
+| Tests | `npm run test` (vitest, 413 tests, 51 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -45,10 +45,15 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 - `App.tsx` + `appReducer.ts` : `MENU` vs le reste (session React via `useReducer`).
 - `GameCanvas.tsx` : phases intra-match (COMBAT → GAME_OVER).
 
-### Rendu & terrain
+### Rendu, Terrain & Boucliers
 
 - **Palette:** `VGA_PALETTE` dans `src/types/game.ts` (16 couleurs VGA + néon). Seule palette autorisée.
 - **Terrain & Relief:** heightmap custom dans `Terrain.ts` (génération procédurale riche multi-octaves avec bosses et creux tactiques, sans tunnels). Matériaux de terrain (`src/types/terrain.ts`) : `DIRT` (standard, herbe verte + terre brune), `ROCK` (roche indestructible en gris, mur pour le souffle latéral via `isBlastOccludedByRock` ; explosion par-dessus : +50% de dégâts via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, portée inchangée), `SOFT` (terrain meuble sable/jaune, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5` fois plus destructible). DRILLER : puits orienté (`destroyTerrainShaft`, profondeur `DRILLER_SHAFT_DEPTH` dans `types/weapon.ts`) — le splash reste inchangé. GRENADE : rebond ~2× plus haut sur ROCK ; premier contact sur SOFT : colle, creuse, explose (`grenadeBounceParams`). Aucun moteur physique externe.
+- **Boucliers & Dégâts (`TankManager.ts`):** 40 PV de bouclier inné par manche. Tir direct (`isDirectHitOnThisTank`) : le bouclier subit $2\times$ plus de dégâts (consomme 2 pts de bouclier par pt de dégât absorbé, calculé via `Math.ceil(shield / 2)`) ; le surplus de dégâts est appliqué sans amplification ($1\times$) sur `health`. Souffle indirect : absorption $1\times$. Dégâts de chute : réduisent directement `health` sans toucher à `shield` ; élimination immédiate si `health <= 0`.
+- **Jauges au-dessus du tank (`TankManager.ts`):** Constantes exportées `TANK_GAUGE_*`.
+  - `shield > 0 && health === maxHealth` : barre unique cyan foncé (`VGA_PALETTE.DARK_CYAN`) à $y - 24$ (`TANK_GAUGE_SINGLE_Y_OFFSET`).
+  - `shield > 0 && health < maxHealth` : double jauge superposée — bouclier cyan foncé en haut ($y - 28$, `TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET`) et santé verte en bas ($y - 23$, `TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET`), avec nom du joueur rehaussé à $y - 36$ (`TANK_NAME_DOUBLE_GAUGE_Y_OFFSET`).
+  - `shield <= 0` : barre unique verte à $y - 24$ (santé, rouge si $\le 40\%$).
 - **Spawns:** `spawnTanks` mélange les X, favorise les creux (max Y canvas parmi les candidats `minDist` 100 px), marges 13 %, `Y = groundY`. Humains locaux : skip 25 % des samples SOFT. IA (tous modes) : skip 25 % des samples ROCK (`spawnAcceptsMaterial`).
 - **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
 - **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).

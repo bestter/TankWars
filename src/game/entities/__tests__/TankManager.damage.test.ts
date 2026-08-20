@@ -146,6 +146,114 @@ describe("TankManager.applyExplosionDamage", () => {
     expect(behind.tank.health).toBeLessThan(100);
     expect(sameSide.tank.health).toBeLessThan(100);
   });
+
+  it("deals 2x damage to shield on direct hit, and normal damage to health on overflow", () => {
+    // Tank has 40 shield and 100 health.
+    // Direct hit with damage 30:
+    // Shield can absorb at most 40 / 2 = 20 damage points.
+    // Absorbing 20 points consumes 20 * 2 = 40 shield -> shield = 0.
+    // Remaining 10 damage is dealt 1x to health -> health = 90.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    // Hitbox is [100 - 12, 100 + 12] and [200 - 15, 200].
+    // Direct hit at x=100, y=200 (distance 0):
+    tm.applyExplosionDamage(100, 200, 28, 30, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.health).toBe(90);
+    expect(target.tank.isDead).toBe(false);
+  });
+
+  it("deals 2x damage to shield on direct hit without damaging health if shield suffices", () => {
+    // Tank has 40 shield and 100 health.
+    // Direct hit with damage 15:
+    // Absorbing 15 damage consumes 15 * 2 = 30 shield -> shield = 10.
+    // Remaining damage to health is 0 -> health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 15, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(10);
+    expect(target.tank.health).toBe(100);
+  });
+
+  it("deals 1x damage to shield on indirect splash hit", () => {
+    // Tank has 40 shield and 100 health.
+    // Indirect splash damage 30:
+    // Shield absorbs 30 -> shield = 10.
+    // Health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    // Indirect explosion at distance 0 (radius=40, damage=30, isDirectHit=false)
+    tm.applyExplosionDamage(100, 200, 40, 30, "killer", "MISSILE", false);
+
+    expect(target.tank.shield).toBe(10);
+    expect(target.tank.health).toBe(100);
+  });
+
+  it("handles odd shield = 1 on direct hit damage = 1 (shield = 0, health intact)", () => {
+    // shield = 1, direct hit damage = 1 → shield = 0, health intact
+    // Math.ceil(1 / 2) = 1 damage absorbable by shield
+    // Absorbing 1 damage consumes 1 shield (clamped at 0) -> shield = 0.
+    // Remaining damage to health = 0 -> health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 1, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 1, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.health).toBe(100);
+    expect(target.tank.isDead).toBe(false);
+  });
+
+  it("handles odd shield = 39 on direct hit with non-multiple-of-2 damage = 25", () => {
+    // Shield can absorb up to Math.ceil(39 / 2) = 20 damage points.
+    // Absorbing 20 points consumes 39 shield -> shield = 0.
+    // Remaining damage 25 - 20 = 5 is dealt 1x to health -> health = 95.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 25, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.health).toBe(95);
+    expect(target.tank.isDead).toBe(false);
+  });
+
+  it("handles odd shield = 39 on direct hit with damage = 15 without touching health", () => {
+    // Direct hit with damage 15:
+    // Absorbing 15 damage consumes 15 * 2 = 30 shield -> shield = 39 - 30 = 9.
+    // Remaining damage to health = 0 -> health remains 100.
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(100, 200, 28, 15, "killer", "MISSILE", true);
+
+    expect(target.tank.shield).toBe(9);
+    expect(target.tank.health).toBe(100);
+    expect(target.tank.isDead).toBe(false);
+  });
 });
 
 describe("TankManager.applyGravity and burial", () => {
@@ -161,6 +269,40 @@ describe("TankManager.applyGravity and burial", () => {
     }
 
     expect(tank.health).toBeLessThan(100);
+  });
+
+  it("reduces health directly during fall damage while keeping shield untouched", () => {
+    const tank = makeTank("t-v", 50, 80, { health: 100, shield: 40, maxShield: 40 });
+    const player = makePlayer({ id: "victim", tank });
+    const tm = managerWith(player);
+    const terrain = flatTerrain(200, 200, 0.9);
+
+    tm.updateTankPositions(terrain);
+    for (let i = 0; i < 80; i++) {
+      tm.applyGravity(1 / 60, terrain);
+    }
+
+    expect(tank.shield).toBe(40);
+    expect(tank.health).toBeLessThan(100);
+  });
+
+  it("kills tank when fall damage reduces health to 0 even if shield is intact", () => {
+    const tank = makeTank("t-v", 50, 80, { health: 1, shield: 40, maxShield: 40 });
+    const player = makePlayer({ id: "victim", tank });
+    const tm = managerWith(player);
+    const died = vi.fn();
+    tm.onPlayerDied = died;
+    const terrain = flatTerrain(200, 200, 0.9);
+
+    tm.updateTankPositions(terrain);
+    for (let i = 0; i < 80; i++) {
+      tm.applyGravity(1 / 60, terrain);
+    }
+
+    expect(tank.health).toBe(0);
+    expect(tank.shield).toBe(40);
+    expect(tank.isDead).toBe(true);
+    expect(died).toHaveBeenCalledWith("victim", "burial", expect.stringContaining("fall damage"));
   });
 
   it("kills instantly when the tank touches lava", () => {
