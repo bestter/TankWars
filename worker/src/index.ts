@@ -47,10 +47,13 @@ export default {
       });
     }
 
-    // Helper to add CORS to all responses
+    // Helper to add CORS and Security headers to all responses
     const withCors = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
+      headers.set('X-Content-Type-Options', 'nosniff');
+      headers.set('X-Frame-Options', 'DENY');
+      headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       return new Response(res.body, {
         status: res.status,
         statusText: res.statusText,
