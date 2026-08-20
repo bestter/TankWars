@@ -25,6 +25,26 @@ describe("applyShopDelta", () => {
     expect(applyShopDelta(player, "GRENADE", 1)).toBeNull();
   });
 
+  it("requires the full 420 dollars to buy a NUKE", () => {
+    const shortPlayer = makePlayer({ money: 419, inventory: { NUKE: 0 } });
+    expect(applyShopDelta(shortPlayer, "NUKE", 1)).toBeNull();
+
+    const fundedPlayer = makePlayer({ money: 420, inventory: { NUKE: 0 } });
+    const updated = applyShopDelta(fundedPlayer, "NUKE", 1);
+
+    expect(WEAPON_REGISTRY.NUKE.price).toBe(420);
+    expect(updated?.money).toBe(0);
+    expect(updated?.inventory.NUKE).toBe(1);
+  });
+
+  it("refunds the updated NUKE price when selling", () => {
+    const player = makePlayer({ money: 80, inventory: { NUKE: 1 } });
+    const updated = applyShopDelta(player, "NUKE", -1);
+
+    expect(updated?.money).toBe(500);
+    expect(updated?.inventory.NUKE).toBe(0);
+  });
+
   it("refuses a sell when stock is 0", () => {
     const player = makePlayer({ money: 500, inventory: { GRENADE: 0 } });
     expect(applyShopDelta(player, "GRENADE", -1)).toBeNull();

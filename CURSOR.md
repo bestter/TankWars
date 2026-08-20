@@ -24,12 +24,12 @@
 - State machine (`src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas (constants `TANK_GAUGE_*`): single dark cyan bar (`VGA_PALETTE.DARK_CYAN`) at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0 (red if $\le 40\%$).
 - Terrain: heightmap custom dans `Terrain.ts` (relief diversifié multi-octaves avec bosses et creux tactiques). Matériaux (`src/types/terrain.ts`) : `DIRT` (normal), `ROCK` (roche indestructible, mur pour le souffle latéral ; explosion par-dessus : +50% dégâts, portée inchangée), `SOFT` (terrain meuble, multiplicateur 2.5x). GRENADE : rebond ~2× sur ROCK ; colle et explose au premier contact sur SOFT (`grenadeBounceParams`).
-- Weapons (`WEAPON_REGISTRY` in `src/types/weapon.ts`): Missile unlimited (not in shop). Others decrement. DRILLER carves an oriented shaft of depth `DRILLER_SHAFT_DEPTH` (53 px); splash stays as registered. BULLET ×3 on direct hitbox hit. NUKE / THERMONUCLEAR have special VFX/audio in `GameEngine`.
+- Weapons (`WEAPON_REGISTRY` in `src/types/weapon.ts`): Missile unlimited (not in shop). Others decrement. Baby Nuke (`NUKE`) costs $420. DRILLER carves an oriented shaft of depth `DRILLER_SHAFT_DEPTH` (53 px); splash stays as registered. BULLET ×3 on direct hitbox hit. NUKE / THERMONUCLEAR have special VFX/audio in `GameEngine`.
 - Economy: $300 per destroy, $600 when only one tank remains, $500 survival after the round.
 - Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **428** across **52** files (`npm run test`).
+- Tests: **430** across **52** files (`npm run test`).
 - Version: `0.6.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

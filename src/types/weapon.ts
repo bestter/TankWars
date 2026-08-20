@@ -79,7 +79,7 @@ export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
   NUKE: {
     id: "NUKE",
     name: "Baby Nuke",
-    price: 210,
+    price: 420,
     damage: 75,
     blastRadius: 62,
     physicsType: "projectile",

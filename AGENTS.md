@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 428 tests, 52 fichiers) |
+| Tests | `npm run test` (vitest, 430 tests, 52 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -56,6 +56,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
   - `shield <= 0` : barre unique verte à $y - 24$ (santé, rouge si $\le 40\%$).
 - **Spawns:** `spawnTanks` mélange les X, favorise les creux (max Y canvas parmi les candidats `minDist` 100 px), marges 13 %, `Y = groundY`. Humains locaux : skip 25 % des samples SOFT. IA (tous modes) : skip 25 % des samples ROCK (`spawnAcceptsMaterial`).
 - **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
+- **Armes:** `WEAPON_REGISTRY` dans `src/types/weapon.ts` est la source unique des caractéristiques et des prix. La Mini-Nuke (`NUKE`) coûte 420 $.
 - **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).
 
 ### Online multiplayer

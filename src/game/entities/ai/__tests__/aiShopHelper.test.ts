@@ -25,7 +25,7 @@ describe("autoBuyForAI", () => {
   });
 
   it("buys items for v1-random (default) AI profile", () => {
-    // CLUSTER (135), DRILLER (90), GRENADE (75), NUKE (210), THERMONUCLEAR (2500)
+    // CLUSTER (135), DRILLER (90), GRENADE (75), NUKE (420), THERMONUCLEAR (2500)
     // Budget 70% of 1000 = 700.
     const player = makePlayer({
       isHuman: false,
