@@ -38,7 +38,7 @@
   v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten) and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
-- **Shields + Health** — Tanks have both health and shield layers.
+- **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: red shield bar above tank while shield > 0; if health is also reduced, a green health bar appears below the red shield bar; when shield is depleted, only the green health bar is shown.
 - **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Sequential shop between rounds. Money: $300 per destroy, $600 for the last tank standing, $500 survival.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
@@ -90,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (402 unit tests across 51 files)
+# Run tests (410 unit tests across 51 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)

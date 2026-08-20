@@ -597,13 +597,24 @@ export class TankManager {
 
       if (damage <= 0 && tank.health > 0) continue;
 
-      // Bouclier en priorité (skipped or no-op for nuke direct which already zeroed)
       let remainingDamage = damage;
 
       if (tank.shield > 0) {
-        const absorbed = Math.min(remainingDamage, tank.shield);
-        tank.shield -= absorbed;
-        remainingDamage -= absorbed;
+        if (isDirectHitOnThisTank) {
+          // Coup direct : le bouclier prend 2x plus de dégâts (consomme 2 pts de bouclier par pt de dégât absorbé)
+          const maxDamageShieldCanAbsorb = tank.shield / 2;
+          const damageAbsorbed = Math.min(
+            remainingDamage,
+            maxDamageShieldCanAbsorb,
+          );
+          tank.shield = Math.max(0, tank.shield - damageAbsorbed * 2);
+          remainingDamage -= damageAbsorbed;
+        } else {
+          // Souffle indirect : ratio standard 1:1
+          const absorbed = Math.min(remainingDamage, tank.shield);
+          tank.shield -= absorbed;
+          remainingDamage -= absorbed;
+        }
       }
 
       if (remainingDamage > 0) {
@@ -673,9 +684,7 @@ export class TankManager {
         spriteY += rec.dy;
       }
 
-      // Dessine le sprite de tank détaillé de l'Étape 1
-      // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
-      // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
+      // Dessin vectoriel procédural du tank
       drawTankSprite(
         ctx,
         spriteX,
@@ -687,33 +696,78 @@ export class TankManager {
         color,
       );
 
-      // === Jauge de vie miniature ===
+      // === Jauge de vie / bouclier miniature ===
       const barWidth = 16;
       const barHeight = 3;
       const barX = x - barWidth / 2;
-      const barY = y - 24; // au-dessus du dôme de la tourelle
 
-      const healthRatio = Math.max(0, tank.health / tank.maxHealth);
+      const showShield = tank.shield > 0;
+      const showHealth = tank.shield <= 0 || tank.health < tank.maxHealth;
 
-      // Fond de la jauge
-      ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.fillRect(barX, barY, barWidth, barHeight);
+      let nameY = y - 34;
 
-      // Vie restante
-      ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
-      ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+      if (showShield && showHealth) {
+        // Deux barres superposées : Bouclier (rouge) au-dessus, Vie (verte) en-dessous
+        const shieldBarY = y - 28;
+        const healthBarY = y - 23;
+        nameY = y - 36;
 
-      // Bordure
-      ctx.strokeStyle = VGA_PALETTE.WHITE;
-      ctx.lineWidth = 0.5;
-      ctx.strokeRect(barX, barY, barWidth, barHeight);
+        // 1. Barre de bouclier (en haut)
+        const maxS = tank.maxShield ?? 40;
+        const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, shieldBarY, barWidth, barHeight);
+        ctx.fillStyle = VGA_PALETTE.RED;
+        ctx.fillRect(barX, shieldBarY, barWidth * shieldRatio, barHeight);
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(barX, shieldBarY, barWidth, barHeight);
+
+        // 2. Barre de vie (en bas)
+        const healthRatio = Math.max(
+          0,
+          Math.min(1, tank.health / tank.maxHealth),
+        );
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, healthBarY, barWidth, barHeight);
+        ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
+        ctx.fillRect(barX, healthBarY, barWidth * healthRatio, barHeight);
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(barX, healthBarY, barWidth, barHeight);
+      } else {
+        // Une seule barre à y - 24
+        const barY = y - 24;
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+
+        if (showShield) {
+          // Uniquement le bouclier (vie encore à 100%)
+          const maxS = tank.maxShield ?? 40;
+          const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
+          ctx.fillStyle = VGA_PALETTE.RED;
+          ctx.fillRect(barX, barY, barWidth * shieldRatio, barHeight);
+        } else {
+          // Uniquement la vie (bouclier détruit)
+          const healthRatio = Math.max(
+            0,
+            Math.min(1, tank.health / tank.maxHealth),
+          );
+          ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
+          ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+        }
+
+        // Bordure
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(barX, barY, barWidth, barHeight);
+      }
 
       // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
       if (showPlayerNames) {
         ctx.font = "12px monospace";
         ctx.fillStyle = color;
         ctx.textAlign = "center";
-        const nameY = y - 34; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
     }

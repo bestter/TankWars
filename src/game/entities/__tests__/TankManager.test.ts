@@ -327,4 +327,88 @@ describe("TankManager", () => {
       expect(tankManager.checkTankCollision(200, 95, "1")).toBe(true);
     });
   });
+
+  describe("draw gauge rendering", () => {
+    function mockContext() {
+      const fillRectCalls: { x: number; y: number; w: number; h: number; fillStyle: string }[] = [];
+      const ctx: Partial<CanvasRenderingContext2D> = {
+        fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 0,
+        fillRect(this: Partial<CanvasRenderingContext2D>, x: number, y: number, w: number, h: number) {
+          fillRectCalls.push({ x, y, w, h, fillStyle: String(this.fillStyle ?? "") });
+        },
+        strokeRect: () => {},
+        beginPath: () => {},
+        arc: () => {},
+        fill: () => {},
+        stroke: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
+        save: () => {},
+        restore: () => {},
+        translate: () => {},
+        rotate: () => {},
+        fillText: () => {},
+      };
+      return { ctx: ctx as CanvasRenderingContext2D, fillRectCalls };
+    }
+
+    it("draws two bars when shield > 0 and health < maxHealth", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 30;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 70;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(72); // shieldBarY (100 - 28)
+      expect(ys).toContain(77); // healthBarY (100 - 23)
+    });
+
+    it("draws only shield bar when shield > 0 and health is full", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 40;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 100;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(76); // single barY (100 - 24)
+      expect(ys).not.toContain(72);
+      expect(ys).not.toContain(77);
+    });
+
+    it("draws only health bar when shield is 0", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 0;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 50;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(76); // single barY (100 - 24)
+      expect(ys).not.toContain(72);
+      expect(ys).not.toContain(77);
+    });
+  });
 });

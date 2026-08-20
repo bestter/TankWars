@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **402 tests** (51 files)
+- Run tests: `npm run test` (or `vitest run`) — **410 tests** (51 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -24,6 +24,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **State Separation:** React owns `GamePhase`, players, money, shop, HUD. GameEngine owns the 120 Hz fixed-timestep loop (physics, terrain, projectiles, drawing, combat audio). Never mutate canvas context inside a React render. Never put live projectiles, particles, or `ImageData` in `useState`.
 - **Phase ownership:** `App.tsx` + `appReducer.ts` — `MENU` vs a match session. `GameCanvas.tsx` — in-match phases: `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`. Types in `src/types/game.ts`.
 - **Rendering:** `VGA_PALETTE` only. Tanks via `drawTankSprite` (24×15, slope tilt, independent turret). Active-player triangle, `ownerColor` shells, micro recoil — all Canvas2D in the engine.
+- **Shields & Gauges:** 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas: single red bar at $y-24$ when shield > 0 and health is full; stacked dual bars (red shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0.
 - **Terrain:** Custom heightmap in `Terrain.ts` (multi-octaves procedural relief with bumps and tactical hollows, circular craters). Materials (`types/terrain.ts`): `DIRT` (standard grass/earth), `ROCK` (indestructible stone, no deformation; side blast is stopped by the rock wall; exploding on top: +50% via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, radius unaffected), `SOFT` (soft ground, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5`x destruction). DRILLER carves an oriented shaft (`destroyTerrainShaft`, depth `DRILLER_SHAFT_DEPTH`) and keeps the current splash. GRENADE bounces ~2× higher on ROCK; first contact on SOFT sticks, digs, and detonates (`grenadeBounceParams`). No third-party physics.
 - **Spawns:** `spawnTanks` shuffles X, prefers tactical hollows (max canvas Y among minDist candidates), 100 px minimum gap, 13 % width margins, `Y = groundY`. Local humans skip 25 % of SOFT samples; AI skip 25 % of ROCK samples in every mode (`spawnAcceptsMaterial`).
 - **Hits:** AABB 24×15 in `PhysicsEngine.updateProjectiles`, with launch-time owner hitbox ignore until the shell exits it.
