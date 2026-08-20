@@ -120,3 +120,23 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, the `fetchCreate` method parsed the JSON payload using `await request.json()` and immediately accessed its properties (e.g. `body.roomId`) without validating the parsed object's type. A malicious client could send a JSON payload like `"null"` or `[1, 2, 3]`, which parses successfully but causes a `TypeError` when properties are accessed, resulting in a Denial of Service.
 **Learning:** `request.json()` can return null or an array if the input is valid JSON of those types. Typecasting (`as Record<string, unknown>`) does not protect against runtime errors when accessing properties on null.
 **Prevention:** Always use strict runtime type checking (`typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)`) after parsing JSON before assigning or accessing properties.
+
+## 2026-08-08 - [Missing Origin Validation for WebSocket Upgrades]
+**Vulnerability:** The `/api/rooms/:roomId/ws` route in `worker/src/index.ts` accepted WebSocket upgrade requests without validating the `Origin` header, bypassing the CORS protections enforced on HTTP fetch routes.
+**Learning:** WebSocket connections do not adhere to CORS preflight restrictions. If a server does not explicitly validate the `Origin` header during the initial HTTP upgrade request, it is vulnerable to Cross-Site WebSocket Hijacking (CSWSH), allowing malicious sites to establish connections and interact with the server on behalf of authenticated/active users.
+**Prevention:** Always implement explicit `Origin` validation before granting a WebSocket connection upgrade, ensuring that the request originates from an allowed and trusted domain.
+
+## 2026-08-09 - [Cloudflare API Unhandled Exception DoS]
+**Vulnerability:** The `worker/src/index.ts` endpoint passed an unvalidated, user-supplied `roomId` directly to `env.GAME_ROOM.idFromName(roomId)`.
+**Learning:** Cloudflare's `idFromName` API enforces a strict maximum length (256 bytes). Passing a string larger than this limit causes the API to throw an unhandled exception (`Error: idFromName must be 256 bytes or less`), which crashes the Worker execution for that request. Without a try-catch or length check, attackers can trigger this exception repeatedly, resulting in a Denial of Service (DoS) and excessive internal server errors.
+**Prevention:** Always validate the length of user-provided strings before passing them to strict internal APIs like Cloudflare's `idFromName`, restricting them to safe limits (e.g., `<= 256` bytes).
+
+## 2026-10-18 - [DoS via Unvalidated roomId length]
+**Vulnerability:** In `worker/src/index.ts`, the `roomId` parsed from the URL was passed directly into `env.GAME_ROOM.idFromName(roomId)` without length validation.
+**Learning:** Cloudflare Durable Object `idFromName` requires a string of 256 bytes or fewer. Passing an exceptionally large string (e.g., 1MB) causes an unhandled exception, which crashes the worker proxy loop and creates a Denial of Service risk.
+**Prevention:** Always perform length validation on dynamic identifiers from untrusted URL paths or headers before passing them to backend APIs with strict limits like `idFromName`.
+
+## 2026-08-10 - [IDOR / State Override via Unrestricted Phase Transitions]
+**Vulnerability:** In `worker/src/game-room.ts`, WebSocket payloads for phase transitions (`ROUND_END`, `SHOP_FINISH`, and `SHOP_ENTER`) unconditionally accepted a full array of players from *any* client to overwrite the server's authoritative game state (`this.state.players`).
+**Learning:** When a game architecture splits simulation responsibilities (e.g., relying on the host/slot 0 for authoritative full-roster snapshots during phase transitions), failing to enforce authorization checks allows any connected client to send spoofed transition messages. This results in an Insecure Direct Object Reference (IDOR) / State Override attack where a malicious player can modify other players' health, money, or inventory, or forcefully end rounds.
+**Prevention:** Strictly enforce that only the designated authoritative client (e.g., the host at `slot === 0`) can dictate full-roster state updates or trigger phase transitions that affect all players.

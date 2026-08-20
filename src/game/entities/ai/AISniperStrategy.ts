@@ -4,10 +4,10 @@ import { secureRandom } from "../../../utils/random";
  *
  * A cold, efficient sniper that aims with surgical precision.
  * - Restricts itself to clean single-target kinetic weapons (Missile, Driller).
- * - "Never one-shot": The first shot at any target in a round will deliberately
- *   miss by a safe horizontal margin (e.g., 30px offset). This guarantees it takes
- *   exactly 2 to 3 shots to destroy a tank (never 1).
- * - Second shot onwards targets the tank directly with zero aiming noise.
+ * - First shot on a target is always imprecise (≥ FIRST_SHOT_FLOOR_PX).
+ *   Later shots tighten; lock from SHOTS_TO_HIT["v3-sniper"] (4) with occasional
+ *   mid-round slips after lock.
+ * - Kinetic weapons only (Missile / Driller / Bullet). First shot is always Missile.
  */
 
 import type { AIEngine } from "./AIEngine";
@@ -16,6 +16,10 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
+import { scaledGaffe, sniperImpactMagnitude } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface SniperMemory {
   currentTargetId?: string;
@@ -49,10 +53,10 @@ export class AISniperStrategy implements AIEngine {
     const purchases: WeaponId[] = [];
     let currentMoney = player.money ?? 0;
     const BULLET_COST = 150;
+    const already = player.inventory?.BULLET ?? 0;
 
-    // Le sniper achète autant de BULLET que ses finances le lui permettent
-    while (currentMoney >= BULLET_COST) {
-      purchases.push('BULLET');
+    while (currentMoney >= BULLET_COST && already + purchases.length < 2) {
+      purchases.push("BULLET");
       currentMoney -= BULLET_COST;
     }
 
@@ -69,6 +73,7 @@ export class AISniperStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const skill = roundSkill(gameState.roundNumber);
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
@@ -152,6 +157,17 @@ export class AISniperStrategy implements AIEngine {
     }
 
     const isNewTarget = target!.id !== mem.currentTargetId;
+    if (isNewTarget) {
+      const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
+      if (otherAi.length > 0 && scaledGaffe(0.1, skill)) {
+        const intendedX = target!.tank.position.x;
+        target = otherAi.toSorted(
+          (a, b) =>
+            Math.abs(a.tank.position.x - intendedX) -
+            Math.abs(b.tank.position.x - intendedX),
+        )[0];
+      }
+    }
     mem.currentTargetId = target!.id;
     if (isNewTarget && import.meta.env.DEV) {
       console.log(
@@ -159,42 +175,67 @@ export class AISniperStrategy implements AIEngine {
       );
     }
 
-    // 👈 Accumulation persistante des essais au sein de la même manche
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    let chosenWeapon: WeaponId = 'MISSILE';
-    if ((self.inventory?.BULLET ?? 0) > 0) {
-      chosenWeapon = 'BULLET';
-    } else if ((self.inventory?.DRILLER ?? 0) > 0) {
-      chosenWeapon = 'DRILLER';
+    let chosenWeapon = this.chooseSniperWeapon(self, attempts, skill);
+    // First shot stays MISSILE (sniper spec). Later shots respect ROCK/SOFT.
+    if (attempts > 1) {
+      chosenWeapon = adjustWeaponForMaterial(
+        chosenWeapon,
+        terrainManager.getMaterialAt(target!.tank.position.x),
+        (id) => (self.inventory?.[id] ?? 0) > 0,
+      );
     }
     self.tank.currentWeapon = chosenWeapon;
+    const penalty = getHitReactionPenalty(
+      self.aiProfile ?? "v3-sniper",
+      self.tank.hitReaction,
+    );
 
-    // Compute the shot solution
-    // If it is the first attempt on this target, deliberately miss by a safe horizontal margin.
-    let targetX = target!.tank.position.x;
-    if (attempts === 1) {
-      const spaceToLeft = targetX;
-      const spaceToRight = terrainManager.width - targetX;
-      const offsetDir = spaceToLeft > spaceToRight ? -1 : 1;
-      targetX += offsetDir * 36;
+    const targetX = target!.tank.position.x;
+    const spaceToLeft = targetX;
+    const spaceToRight = terrainManager.width - targetX;
+    let offsetDir = spaceToLeft > spaceToRight ? -1 : 1;
+    // After the designed first miss, overcorrect to the opposite side.
+    if (attempts === 2) {
+      offsetDir *= -1;
     }
+    const miss = sniperImpactMagnitude(attempts, skill, penalty);
+    // Mid-round slip / disturbance: random side (wind / crater misread), not the usual open-space miss.
+    if (attempts >= 4 && miss > 0) {
+      offsetDir = secureRandom() < 0.5 ? -1 : 1;
+    }
+    const aimX = targetX + offsetDir * miss;
 
     const { angle, power } = this.computePrecisionShot(
       self,
-      targetX,
+      aimX,
       target!.tank.position.y - 6,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
     );
 
+    advanceHitReaction(self.tank.hitReaction);
+
     return {
       angle: Math.round(angle * 10) / 10,
       power: Math.round(power),
       weaponId: chosenWeapon,
     };
+  }
+
+  private chooseSniperWeapon(self: Player, attempts: number, skill: number): WeaponId {
+    const hasBullet = (self.inventory?.BULLET ?? 0) > 0;
+    const hasDriller = (self.inventory?.DRILLER ?? 0) > 0;
+    if (attempts === 1) return "MISSILE";
+    if (hasBullet && scaledGaffe(0.15, skill)) {
+      return hasDriller ? "DRILLER" : "MISSILE";
+    }
+    if (hasBullet && secureRandom() < 0.5) return "BULLET";
+    if (hasDriller) return "DRILLER";
+    return "MISSILE";
   }
 
   private computePrecisionShot(

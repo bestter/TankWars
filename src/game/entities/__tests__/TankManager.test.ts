@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { TankManager } from "../TankManager";
+import {
+  TankManager,
+  TANK_GAUGE_SINGLE_Y_OFFSET,
+  TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET,
+  TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET,
+} from "../TankManager";
 import type { Player } from "../../../types/player";
 import { VGA_PALETTE } from "../../../types/game";
 import { TerrainManager } from "../../engine/Terrain";
@@ -235,6 +240,26 @@ describe("TankManager", () => {
       expect(p1LeftOfP2Count).toBeGreaterThan(0);
       expect(p2LeftOfP1Count).toBeGreaterThan(0);
     });
+
+    it("prefers tactical hollows while keeping minDist and margins", () => {
+      const tankManager = new TankManager();
+      const terrain = new TerrainManager(800, 600);
+      const heights = (terrain as unknown as { heights: number[] }).heights;
+      heights.fill(200);
+      for (let x = 180; x <= 220; x++) heights[x] = 420;
+      for (let x = 580; x <= 620; x++) heights[x] = 420;
+
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
+      tankManager.spawnTanks([p1, p2], terrain);
+
+      const xs = [p1.tank.position.x, p2.tank.position.x].sort((a, b) => a - b);
+      const inLeft = (x: number) => x >= 180 && x <= 220;
+      const inRight = (x: number) => x >= 580 && x <= 620;
+      expect(inLeft(xs[0])).toBe(true);
+      expect(inRight(xs[1])).toBe(true);
+      expect(xs[1] - xs[0]).toBeGreaterThanOrEqual(100);
+    });
   });
 
 
@@ -305,6 +330,100 @@ describe("TankManager", () => {
 
       // Ignored owner is p1, but we hit p2
       expect(tankManager.checkTankCollision(200, 95, "1")).toBe(true);
+    });
+  });
+
+  describe("draw gauge rendering", () => {
+    function mockContext() {
+      const fillRectCalls: { x: number; y: number; w: number; h: number; fillStyle: string }[] = [];
+      const ctx: Partial<CanvasRenderingContext2D> = {
+        fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 0,
+        fillRect(this: Partial<CanvasRenderingContext2D>, x: number, y: number, w: number, h: number) {
+          fillRectCalls.push({ x, y, w, h, fillStyle: String(this.fillStyle ?? "") });
+        },
+        strokeRect: () => {},
+        beginPath: () => {},
+        arc: () => {},
+        fill: () => {},
+        stroke: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
+        save: () => {},
+        restore: () => {},
+        translate: () => {},
+        rotate: () => {},
+        fillText: () => {},
+      };
+      return { ctx: ctx as CanvasRenderingContext2D, fillRectCalls };
+    }
+
+    it("draws two bars when shield > 0 and health < maxHealth", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 30;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 70;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET); // shieldBarY (100 - 28)
+      expect(ys).toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET); // healthBarY (100 - 23)
+
+      const shieldCall = fillRectCalls.find(
+        (c) => c.y === 100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET && c.fillStyle === VGA_PALETTE.DARK_CYAN,
+      );
+      expect(shieldCall).toBeDefined();
+    });
+
+    it("draws only shield bar when shield > 0 and health is full", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 40;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 100;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(100 - TANK_GAUGE_SINGLE_Y_OFFSET); // single barY (100 - 24)
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET);
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET);
+
+      const shieldCall = fillRectCalls.find(
+        (c) => c.y === 100 - TANK_GAUGE_SINGLE_Y_OFFSET && c.fillStyle === VGA_PALETTE.DARK_CYAN,
+      );
+      expect(shieldCall).toBeDefined();
+    });
+
+    it("draws only health bar when shield is 0", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      p1.tank.shield = 0;
+      p1.tank.maxShield = 40;
+      p1.tank.health = 50;
+      p1.tank.maxHealth = 100;
+      tankManager.setPlayers([p1]);
+
+      const { ctx, fillRectCalls } = mockContext();
+      tankManager.draw(ctx, true);
+
+      const ys = fillRectCalls.map((c) => c.y);
+      expect(ys).toContain(100 - TANK_GAUGE_SINGLE_Y_OFFSET); // single barY (100 - 24)
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET);
+      expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET);
     });
   });
 });

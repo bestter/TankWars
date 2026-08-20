@@ -57,6 +57,8 @@ export class TurnManager {
   /** Environment snapshot for AI (wind/gravity change per round or config; passed via GameState to AIEngine). */
   private currentWindForce = 0;
   private currentGravity = 260;
+  /** 1-based match round (manche). Independent of intra-combat turnNumber. */
+  private currentRoundNumber = 1;
 
   public isInterRoundPaused(): boolean {
     return this.interRoundPaused;
@@ -95,6 +97,16 @@ export class TurnManager {
    * This makes the game wait (keeping input locked, no shooting possible) until all tanks have stopped falling.
    */
   private awaitingTankStabilization = false;
+
+  /**
+   * True from the moment a shot is launched until finishShotResolution consumes it.
+   * Prevents a late onAllProjectilesSettled from advancing a second time after the
+   * AI settlement safety net already forced the turn (long-bounce GRENADE).
+   */
+  private hasUnresolvedShot = false;
+
+  /** Physics engine used to detect in-flight projectiles (set via connectToPhysics). */
+  private physicsEngine: PhysicsEngine | null = null;
 
   private wasFallingForHud = false;
 
@@ -144,6 +156,13 @@ export class TurnManager {
   public setEnvironment(windForce: number, gravity: number): void {
     this.currentWindForce = windForce;
     this.currentGravity = gravity;
+  }
+
+  public setRoundNumber(roundNumber: number): void {
+    this.currentRoundNumber =
+      Number.isFinite(roundNumber) && roundNumber >= 1
+        ? Math.floor(roundNumber)
+        : 1;
   }
 
   constructor(
@@ -203,7 +222,11 @@ export class TurnManager {
         this.clearSettlementSafetyTimeout();
         this.clearTurnLockSafetyTimeout();
         this.aiTurnGeneration++;
-        this.finishShotResolution();
+        if (this.hasUnresolvedShot) {
+          this.finishShotResolution();
+        } else {
+          this.nextTurn();
+        }
       }
     }
 
@@ -238,6 +261,7 @@ export class TurnManager {
             power: player.tank.power,
             weaponId: player.tank.currentWeapon,
           };
+          this.hasUnresolvedShot = true;
           this.fireCallback(player.tank.position, command, player.id);
           this.consumeAmmo(player, player.tank.currentWeapon);
         } else {
@@ -248,18 +272,22 @@ export class TurnManager {
           this.clearResolutionTimeout();
           this.clearSettlementSafetyTimeout();
           this.clearTurnLockSafetyTimeout();
-          this.finishShotResolution();
+          this.nextTurn();
         }
       }
     }
 
     // 3. Sécurité de stabilisation du tir de l'IA
+    // Do not force-resolve while a shell is still in flight (GRENADE bounces easily
+    // exceed SETTLEMENT_SAFETY_LIMIT). The real settlement callback will advance
+    // the turn; firing now would let the later callback skip the next player.
     if (
       this.isSettlementSafetyArmed &&
       this.isInputLocked &&
       this.settlementPlayerId &&
       !this.awaitingTankStabilization &&
-      !this.tankManager.anyTankIsFalling()
+      !this.tankManager.anyTankIsFalling() &&
+      !this.hasActiveProjectiles()
     ) {
       this.settlementAccumulatedTime += dt;
       if (this.settlementAccumulatedTime >= this.SETTLEMENT_SAFETY_LIMIT) {
@@ -310,6 +338,7 @@ export class TurnManager {
 
   /** Connecte le TurnManager au système de physique pour détecter la fin des projectiles */
   public connectToPhysics(physicsEngine: PhysicsEngine): void {
+    this.physicsEngine = physicsEngine;
     physicsEngine.onAllProjectilesSettled = () => {
       this.clearPhysicsSettlementTimeout();
       // Do not advance immediately. Set flag so update() will wait until no tanks are falling
@@ -346,6 +375,7 @@ export class TurnManager {
     this.isProcessingAI = false;
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.hasUnresolvedShot = false;
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
@@ -521,6 +551,7 @@ export class TurnManager {
   /** Launch a replayed remote shot — bypasses local turn lock and falling-tank guards. */
   private fireRemote(player: Player, command: FireCommand): void {
     this.settlingShotWasLocal = false;
+    this.hasUnresolvedShot = true;
     this.fireCallback(player.tank.position, command, player.id);
     this.consumeAmmo(player, command.weaponId);
     this.isInputLocked = true;
@@ -558,6 +589,7 @@ export class TurnManager {
     this.lastLocalFireCommand = { ...command };
 
     this.settlingShotWasLocal = true;
+    this.hasUnresolvedShot = true;
     this.fireCallback(tank.position, command, player.id);
 
     // Consume 1 from inventory for limited weapons (MISSILE is unlimited).
@@ -725,6 +757,12 @@ export class TurnManager {
    * In online mode the server is authoritative — only refresh the input lock for the current index.
    */
   private finishShotResolution(): void {
+    if (!this.hasUnresolvedShot) {
+      this.clearAwaitingStabilization();
+      return;
+    }
+    this.hasUnresolvedShot = false;
+
     const wasLocalShot = this.settlingShotWasLocal;
     this.settlingShotWasLocal = false;
 
@@ -839,6 +877,7 @@ export class TurnManager {
     this.turnNumber = 1;
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.hasUnresolvedShot = false;
     this.isInputLocked = !this.isLocalHumanTurn();
 
     const players = this.tankManager.getPlayers();
@@ -886,6 +925,7 @@ export class TurnManager {
     this.turnNumber = 1;
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.hasUnresolvedShot = false;
     this.isInputLocked = !this.isLocalHumanTurn();
     this.isProcessingAI = false;
     this.interRoundPaused = false;
@@ -932,6 +972,7 @@ export class TurnManager {
         turn: this.turnNumber,
         windForce: this.currentWindForce,
         gravity: this.currentGravity,
+        roundNumber: this.currentRoundNumber,
       };
 
       console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');
@@ -975,6 +1016,7 @@ export class TurnManager {
         weaponId: player.tank.currentWeapon,
       };
 
+      this.hasUnresolvedShot = true;
       this.fireCallback(player.tank.position, command, player.id);
       this.consumeAmmo(player, player.tank.currentWeapon);
 
@@ -1043,6 +1085,10 @@ export class TurnManager {
   private clearTurnLockSafetyTimeout(): void {
     this.isTurnLockWatchdogArmed = false;
     this.turnLockAccumulatedTime = 0;
+  }
+
+  private hasActiveProjectiles(): boolean {
+    return this.physicsEngine?.hasActiveProjectiles() ?? false;
   }
 
   /**

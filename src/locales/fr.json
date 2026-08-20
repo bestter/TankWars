@@ -1,6 +1,6 @@
 {
   "ai_auto_buy_note": "Les IA achètent automatiquement",
-  "ai_shopping_status": "L'IA <strong style=\"color: {{color}}\">{{name}}</strong> fait ses achats...",
+  "ai_shopping_status": "L'IA <strong>{{name}}</strong> fait ses achats...",
   "battle_configuration": "CONFIGURATION DE LA BATAILLE",
   "btn_go_to_shop": "Aller à la boutique → manche suivante",
   "btn_menu": "MENU",
@@ -29,7 +29,6 @@
   "default_cpu_name_n": "CPU-{{num}}",
   "default_player_name_1": "Joueur-1",
   "default_player_name_n": "Joueur {{num}}",
-  "default_value": "Valeur par défaut",
   "earnings_detail": " (base 500 si vivant, +300/kill, double pour le vainqueur)",
   "game_over": "Fin de partie",
   "hud_turn": "TOUR",
@@ -71,7 +70,7 @@
     "BULLET": "Balle",
     "desc": {
       "MISSILE": "Missile standard - trajectoire précise",
-      "GRENADE": "Grenade à rebond - utile en terrain accidenté",
+      "GRENADE": "Grenade à rebond — 2× plus haut sur la roche, s'enfonce dans le sable",
       "CLUSTER": "MIRV / Sous-munitions - multiple impacts",
       "NUKE": "Mini-Nuke - gros dégâts + large cratère",
       "THERMONUCLEAR": "Bombe thermonucléaire - détruit ~1/4 de la carte, mort instantanée au centre + énorme cratère",

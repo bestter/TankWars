@@ -6,6 +6,8 @@
  * - TypeScript strict, zéro any
  * - Palette VGA 16 couleurs (via VGA_PALETTE)
  * - Algorithme de terrain custom via heightmap (pas de moteur physique externe)
+ * - Relief riche et diversifié (bosses, creux stratégiques, pas de tunnels)
+ * - Matériaux de terrain : DIRT (normal), ROCK (indestructible), SOFT (meuble / 2 à 3x plus destructible)
  *
  * Coordinate system:
  *   - (0,0) = top-left
@@ -15,6 +17,24 @@
  */
 
 import { VGA_PALETTE } from "../../types/game";
+import {
+  TERRAIN_MATERIAL,
+  SOFT_TERRAIN_DESTRUCTION_MULTIPLIER,
+  TERRAIN_SOFT_BLEND_RADIUS,
+  TERRAIN_GENERATION_SMOOTH_STRENGTH,
+  TERRAIN_CRATER_SMOOTH_STRENGTH,
+  TERRAIN_MATERIAL_MARGIN_RATIO,
+  TERRAIN_ROCK_ZONE_COUNT_MIN,
+  TERRAIN_ROCK_ZONE_COUNT_MAX,
+  TERRAIN_ROCK_ZONE_WIDTH_MIN,
+  TERRAIN_ROCK_ZONE_WIDTH_MAX,
+  TERRAIN_SOFT_ZONE_COUNT_MIN,
+  TERRAIN_SOFT_ZONE_COUNT_MAX,
+  TERRAIN_SOFT_ZONE_WIDTH_MIN,
+  TERRAIN_SOFT_ZONE_WIDTH_MAX,
+  type TerrainMaterial,
+} from "../../types/terrain";
+import { secureRandom } from "../../utils/random";
 
 /** Margin from canvas bottom for the lava "floor" level. When terrain is destroyed to/beyond this, lava is exposed visually and tanks touching it die instantly. */
 const LAVA_TOP_MARGIN = 6;
@@ -22,8 +42,8 @@ const LAVA_TOP_MARGIN = 6;
 /** Must match GameEngine sky fill (#0000AA) so offscreen pixels are always opaque. */
 const SKY_COLOR = VGA_PALETTE.DARK_BLUE;
 
-/** Vertical depth of the green grass ribbon along the terrain surface. */
-const GRASS_THICKNESS = 3;
+/** Vertical depth of the grass / surface cap ribbon along the terrain surface. */
+const CAP_THICKNESS = 3;
 
 export class TerrainManager {
   public readonly width: number;
@@ -31,6 +51,9 @@ export class TerrainManager {
 
   /** Tableau privé des hauteurs de surface (taille = width) */
   private readonly heights: number[];
+
+  /** Tableau des matériaux de surface par colonne (taille = width) */
+  private readonly materials: TerrainMaterial[];
 
   // === Performance Optimization: Offscreen Canvas Caching ===
   private offscreenCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
@@ -52,44 +75,144 @@ export class TerrainManager {
     this.width = Math.floor(width);
     this.height = Math.floor(height);
     this.heights = new Array(this.width).fill(this.height * 0.7);
+    this.materials = new Array(this.width).fill(TERRAIN_MATERIAL.DIRT);
   }
 
   /**
-   * Génère un paysage vallonné fluide en utilisant des ondes sinusoïdales cumulées.
-   * Ajoute un offset vertical pour positionner correctement le terrain.
+   * Génère un paysage riche, varié et aléatoire à chaque manche :
+   * - Superposition multi-octaves d'ondes sinusoïdales à paramètres aléatoires (amplitudes, fréquences, phases)
+   * - Relief accidenté avec bosses (pics) et creux stratégiques abritant les tanks
+   * - Distribution aléatoire de zones de roche indestructible (ROCK) et de terrain meuble (SOFT)
    */
   public generate(): void {
     this.needsFullRedraw = true;
     this.isDirty = true;
     this.dirtyStartX = 0;
     this.dirtyEndX = this.width - 1;
-    const base = this.height * 0.62; // offset vertical principal
-    const amp1 = this.height * 0.11; // grandes collines
-    const amp2 = this.height * 0.065; // collines moyennes
-    const amp3 = this.height * 0.032; // détails fins
 
-    for (let x = 0; x < this.width; x++) {
-      const nx = x * 0.012; // fréquence de base
+    // 1. Paramètres aléatoires de base et d'harmoniques
+    const base = this.height * (0.58 + secureRandom() * 0.08); // 58% à 66% de la hauteur
+    const f1 = 0.006 + secureRandom() * 0.007; // Macro relief
+    const f2 = 0.014 + secureRandom() * 0.012; // Relief moyen (bosses)
+    const f3 = 0.028 + secureRandom() * 0.016; // Micro relief (crêtes)
 
-      // Ondes sinusoïdales cumulées (superposition)
-      let h =
-        base +
-        Math.sin(nx * 0.9) * amp1 +
-        Math.sin(nx * 1.85 + 1.2) * amp2 +
-        Math.sin(nx * 3.7 + 2.7) * amp3;
+    const amp1 = this.height * (0.09 + secureRandom() * 0.07);
+    const amp2 = this.height * (0.05 + secureRandom() * 0.045);
+    const amp3 = this.height * (0.02 + secureRandom() * 0.025);
 
-      // Léger bruit haute fréquence pour du relief naturel
-      h += Math.sin(x * 0.47) * 2.8;
+    const phi1 = secureRandom() * Math.PI * 2;
+    const phi2 = secureRandom() * Math.PI * 2;
+    const phi3 = secureRandom() * Math.PI * 2;
 
-      // Bornage pour éviter un terrain trop extrême
-      const minH = this.height * 0.28;
-      const maxH = this.height * 0.86;
+    // 2. Génération de creux tactiques et de bosses prononcées (Gaussian features)
+    const featureCount = 3 + Math.floor(secureRandom() * 3); // 3 à 5 reliefs locaux
+    interface TerrainFeature {
+      cx: number;
+      sigma: number;
+      amplitude: number; // positif = creux (vers le bas en canvas Y), négatif = bosse
+    }
+    const features: TerrainFeature[] = [];
+    const minFeatureX = this.width * 0.12;
+    const maxFeatureX = this.width * 0.88;
 
-      this.heights[x] = Math.max(minH, Math.min(maxH, h));
+    for (let i = 0; i < featureCount; i++) {
+      const cx = minFeatureX + secureRandom() * (maxFeatureX - minFeatureX);
+      const sigma = 35 + secureRandom() * 45; // largeur
+      // Alternance ou choix aléatoire creux vs bosse
+      const isDip = secureRandom() > 0.45;
+      const amplitude = isDip
+        ? (this.height * (0.06 + secureRandom() * 0.08)) // creux (descend en Y)
+        : -(this.height * (0.06 + secureRandom() * 0.08)); // bosse (monte en Y)
+      features.push({ cx, sigma, amplitude });
     }
 
-    // Lissage léger pour un rendu plus fluide
-    this.smoothHeights(0.55);
+    const minH = this.height * 0.28;
+    const maxH = this.height * 0.86;
+
+    for (let x = 0; x < this.width; x++) {
+      let h =
+        base +
+        Math.sin(x * f1 + phi1) * amp1 +
+        Math.sin(x * f2 + phi2) * amp2 +
+        Math.sin(x * f3 + phi3) * amp3;
+
+      // Ajout des bosses et creux gaussiens
+      for (let f = 0; f < features.length; f++) {
+        const feat = features[f];
+        const dist = x - feat.cx;
+        const g = Math.exp(-(dist * dist) / (2 * feat.sigma * feat.sigma));
+        h += feat.amplitude * g;
+      }
+
+      // Micro texture haute fréquence
+      h += Math.sin(x * 0.45 + phi1) * 2.2;
+
+      this.heights[x] = Math.max(minH, Math.min(maxH, h));
+      this.materials[x] = TERRAIN_MATERIAL.DIRT;
+    }
+
+    // Lissage pour des pentes jouables et harmonieuses
+    this.smoothHeights(TERRAIN_GENERATION_SMOOTH_STRENGTH);
+
+    // 3. Distribution des matériaux (zones de roche et zones meubles)
+    this.distributeMaterials();
+  }
+
+  /**
+   * Distribue aléatoirement des zones de roche indestructible et de terrain meuble.
+   */
+  private distributeMaterials(): void {
+    const margin = this.width * TERRAIN_MATERIAL_MARGIN_RATIO;
+    const availableWidth = this.width - 2 * margin;
+
+    // Zones de roche (ROCK)
+    const rockZoneCount =
+      TERRAIN_ROCK_ZONE_COUNT_MIN +
+      Math.floor(
+        secureRandom() *
+          (TERRAIN_ROCK_ZONE_COUNT_MAX - TERRAIN_ROCK_ZONE_COUNT_MIN + 1),
+      );
+    for (let i = 0; i < rockZoneCount; i++) {
+      const center = margin + secureRandom() * availableWidth;
+      const zoneWidth =
+        TERRAIN_ROCK_ZONE_WIDTH_MIN +
+        Math.floor(
+          secureRandom() *
+            (TERRAIN_ROCK_ZONE_WIDTH_MAX - TERRAIN_ROCK_ZONE_WIDTH_MIN + 1),
+        );
+      const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
+      const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
+
+      for (let x = startX; x <= endX; x++) {
+        this.materials[x] = TERRAIN_MATERIAL.ROCK;
+      }
+    }
+
+    // Zones de terrain mou (SOFT)
+    const softZoneCount =
+      TERRAIN_SOFT_ZONE_COUNT_MIN +
+      Math.floor(
+        secureRandom() *
+          (TERRAIN_SOFT_ZONE_COUNT_MAX - TERRAIN_SOFT_ZONE_COUNT_MIN + 1),
+      );
+    for (let i = 0; i < softZoneCount; i++) {
+      const center = margin + secureRandom() * availableWidth;
+      const zoneWidth =
+        TERRAIN_SOFT_ZONE_WIDTH_MIN +
+        Math.floor(
+          secureRandom() *
+            (TERRAIN_SOFT_ZONE_WIDTH_MAX - TERRAIN_SOFT_ZONE_WIDTH_MIN + 1),
+        );
+      const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
+      const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
+
+      for (let x = startX; x <= endX; x++) {
+        // Ne pas écraser la roche
+        if (this.materials[x] !== TERRAIN_MATERIAL.ROCK) {
+          this.materials[x] = TERRAIN_MATERIAL.SOFT;
+        }
+      }
+    }
   }
 
   /**
@@ -144,8 +267,11 @@ export class TerrainManager {
   }
 
   /**
-   * Brown earth strictly below the grass ribbon (never above the surface).
-   * Per-column fill avoids 1px sky gaps on curves; grass is drawn on top separately.
+   * Earth / Rock / Soft body strictly below the surface ribbon.
+   * Visual rendering depends on the material of each column:
+   * - DIRT: VGA_PALETTE.BROWN
+   * - ROCK: VGA_PALETTE.DARK_GRAY + subtle stone specks
+   * - SOFT: VGA_PALETTE.BROWN + VGA_PALETTE.YELLOW sand specks
    */
   private drawTerrainFillBandColumns(
     ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -153,13 +279,34 @@ export class TerrainManager {
     bandEnd: number,
     lavaTop: number,
   ): void {
-    ctx.fillStyle = VGA_PALETTE.BROWN;
     for (let x = bandStart; x <= bandEnd; x++) {
       const surfaceY = Math.min(this.heights[x], lavaTop);
       if (surfaceY >= lavaTop) continue;
-      const brownTop = Math.min(surfaceY + GRASS_THICKNESS, lavaTop);
-      if (brownTop >= lavaTop) continue;
-      ctx.fillRect(x, brownTop, 1, lavaTop - brownTop);
+      const bodyTop = Math.min(surfaceY + CAP_THICKNESS, lavaTop);
+      if (bodyTop >= lavaTop) continue;
+
+      const mat = this.materials[x];
+      if (mat === TERRAIN_MATERIAL.ROCK) {
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(x, bodyTop, 1, lavaTop - bodyTop);
+        // Texture pierre rétro
+        if ((x + Math.floor(surfaceY)) % 6 === 0) {
+          ctx.fillStyle = VGA_PALETTE.GRAY;
+          ctx.fillRect(x, bodyTop + 2, 1, Math.min(5, lavaTop - bodyTop - 2));
+        }
+      } else if (mat === TERRAIN_MATERIAL.SOFT) {
+        // Sous-sol complet en jaune sable jusqu'à la lave
+        ctx.fillStyle = VGA_PALETTE.YELLOW;
+        ctx.fillRect(x, bodyTop, 1, lavaTop - bodyTop);
+        // Grains de sable / sédiments rétro
+        if ((x * 7 + Math.floor(surfaceY)) % 6 === 0) {
+          ctx.fillStyle = VGA_PALETTE.BROWN;
+          ctx.fillRect(x, bodyTop + 2, 1, Math.min(4, lavaTop - bodyTop - 2));
+        }
+      } else {
+        ctx.fillStyle = VGA_PALETTE.BROWN;
+        ctx.fillRect(x, bodyTop, 1, lavaTop - bodyTop);
+      }
     }
   }
 
@@ -190,8 +337,11 @@ export class TerrainManager {
   }
 
   /**
-   * Filled grass ribbon that follows terrain curves with uniform thickness.
-   * Stroke/column fills look jagged or "cut" on slopes after partial offscreen updates.
+   * Filled ribbon that follows terrain curves with uniform thickness.
+   * Renders color corresponding to material:
+   * - DIRT: VGA_PALETTE.GREEN (herbe)
+   * - ROCK: VGA_PALETTE.LIGHT_GRAY (crête de pierre)
+   * - SOFT: VGA_PALETTE.YELLOW (sable / sédiment meuble)
    */
   private drawGrassBand(
     ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -199,15 +349,22 @@ export class TerrainManager {
     bandEnd: number,
     lavaTop: number,
   ): void {
-    ctx.fillStyle = VGA_PALETTE.GREEN;
-
     let segmentStart: number | null = null;
+    let currentMat: TerrainMaterial = TERRAIN_MATERIAL.DIRT;
 
-    const flushSegment = (segmentEnd: number): void => {
+    const flushSegment = (segmentEnd: number, mat: TerrainMaterial): void => {
       if (segmentStart === null) return;
 
       const start = segmentStart;
       const end = segmentEnd;
+
+      if (mat === TERRAIN_MATERIAL.ROCK) {
+        ctx.fillStyle = VGA_PALETTE.GRAY;
+      } else if (mat === TERRAIN_MATERIAL.SOFT) {
+        ctx.fillStyle = VGA_PALETTE.YELLOW;
+      } else {
+        ctx.fillStyle = VGA_PALETTE.GREEN;
+      }
 
       ctx.beginPath();
       for (let x = start; x <= end; x++) {
@@ -220,7 +377,7 @@ export class TerrainManager {
       }
       for (let x = end; x >= start; x--) {
         const h = Math.min(this.heights[x], lavaTop);
-        ctx.lineTo(x, Math.min(h + GRASS_THICKNESS, lavaTop));
+        ctx.lineTo(x, Math.min(h + CAP_THICKNESS, lavaTop));
       }
       ctx.closePath();
       ctx.fill();
@@ -230,16 +387,24 @@ export class TerrainManager {
 
     for (let x = bandStart; x <= bandEnd; x++) {
       if (this.heights[x] < lavaTop) {
+        const mat = this.materials[x];
         if (segmentStart === null) {
           segmentStart = x;
+          currentMat = mat;
+        } else if (mat !== currentMat) {
+          flushSegment(x - 1, currentMat);
+          segmentStart = x;
+          currentMat = mat;
         }
       } else {
-        flushSegment(x - 1);
+        if (segmentStart !== null) {
+          flushSegment(x - 1, currentMat);
+        }
       }
     }
 
     if (segmentStart !== null) {
-      flushSegment(bandEnd);
+      flushSegment(bandEnd, currentMat);
     }
   }
 
@@ -309,11 +474,10 @@ export class TerrainManager {
     const lavaTop = this.lavaTop;
 
     // Draw lava at the absolute bottom (the "floor level" when all ground is destroyed)
-    // Retro VGA-style lava using DARK_RED base + RED/YELLOW accents for bubbly look
     ctx.fillStyle = VGA_PALETTE.DARK_RED;
     ctx.fillRect(0, lavaTop, this.width, this.height - lavaTop);
 
-    // Simple pixel-art lava texture / bubbles (static for perf + retro feel)
+    // Simple pixel-art lava texture / bubbles
     ctx.fillStyle = VGA_PALETTE.RED;
     for (let x = 0; x < this.width; x += 3) {
       const offset = x % 5;
@@ -330,8 +494,10 @@ export class TerrainManager {
   }
 
   /**
-   * Creuse un cratère circulaire parfait dans le terrain.
-   * Utilise la formule de Pythagore : Δy = √(radius² - (x - impactX)²)
+   * Creuse un cratère dans le terrain :
+   * - Ignore les colonnes ROCK (roche indestructible).
+   * - Multiplie le creusement par SOFT_TERRAIN_DESTRUCTION_MULTIPLIER sur les colonnes SOFT.
+   * - Creuse normalement sur les colonnes DIRT.
    */
   public destroyTerrain(
     impactX: number,
@@ -340,46 +506,49 @@ export class TerrainManager {
   ): void {
     if (radius <= 0) return;
 
-    const r = radius;
-    const r2 = r * r;
+    this.carveCircle(impactX, impactY, radius);
 
-    const startX = Math.max(0, Math.floor(impactX - r));
-    const endX = Math.min(this.width - 1, Math.floor(impactX + r));
-
-    for (let x = startX; x <= endX; x++) {
-      const dx = x - impactX;
-      const dx2 = dx * dx;
-
-      if (dx2 > r2) continue;
-
-      // Formule demandée : Pythagore pour cratère circulaire
-      const dy = Math.sqrt(r2 - dx2);
-
-      // Comme Y augmente vers le bas, creuser = augmenter la valeur de hauteur
-      const craterDepth = impactY + dy;
-
-      if (craterDepth > this.heights[x]) {
-        // Surface can be dug down to the canvas floor (y = height).
-        const maxSurfaceY = this.height - 1;
-        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
-      }
-    }
-
-    // Smooth crater edges only — never raise the surface (which would undo destruction).
+    const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
+    const startX = Math.max(0, Math.floor(impactX - maxReach));
+    const endX = Math.min(this.width - 1, Math.floor(impactX + maxReach));
     const smoothStart = Math.max(0, startX - 3);
     const smoothEnd = Math.min(this.width - 1, endX + 3);
-    this.smoothHeights(0.35, smoothStart, smoothEnd, true);
+    // Smooth crater edges only — never raise the surface (which would undo destruction).
+    this.smoothHeights(TERRAIN_CRATER_SMOOTH_STRENGTH, smoothStart, smoothEnd, true);
+    this.markTerrainDirty(smoothStart, smoothEnd);
+  }
 
-    const bandStart = Math.max(0, smoothStart - 10);
-    const bandEnd = Math.min(this.width - 1, smoothEnd + 10);
-    if (!this.isDirty) {
-      this.dirtyStartX = bandStart;
-      this.dirtyEndX = bandEnd;
-    } else {
-      this.dirtyStartX = Math.min(this.dirtyStartX, bandStart);
-      this.dirtyEndX = Math.max(this.dirtyEndX, bandEnd);
+  /**
+   * Puits de forage le long d’une direction (heightmap).
+   * Tamponne carveCircle du point d’impact jusqu’à `depth` le long de (dirX, dirY).
+   * Pas de lissage: les parois restent raides.
+   */
+  public destroyTerrainShaft(
+    impactX: number,
+    impactY: number,
+    dirX: number,
+    dirY: number,
+    depth: number,
+    radius: number,
+  ): void {
+    if (radius <= 0 || depth <= 0) return;
+
+    const len = Math.hypot(dirX, dirY);
+    const nx = len > 1e-6 ? dirX / len : 0;
+    const ny = len > 1e-6 ? dirY / len : 1;
+
+    const travel = Math.max(0, depth - radius);
+    const steps = Math.max(1, Math.ceil(travel));
+
+    for (let i = 0; i <= steps; i++) {
+      const t = travel === 0 ? 0 : i / steps;
+      this.carveCircle(impactX + nx * travel * t, impactY + ny * travel * t, radius);
     }
-    this.isDirty = true;
+
+    const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
+    const minX = Math.min(impactX, impactX + nx * travel) - maxReach;
+    const maxX = Math.max(impactX, impactX + nx * travel) + maxReach;
+    this.markTerrainDirty(Math.floor(minX), Math.ceil(maxX));
   }
 
   /**
@@ -399,20 +568,123 @@ export class TerrainManager {
     return this.heights[xi];
   }
 
+  /** Retourne le type de matériau à la position x (borné) */
+  public getMaterialAt(x: number): TerrainMaterial {
+    const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
+    return this.materials[xi];
+  }
+
+  /**
+   * Roche = mur pour le souffle. True si le segment (from → to) traverse le
+   * volume solide d'une colonne ROCK (y canvas >= surface).
+   * Explosion PAR DESSUS la roche (colonne d'impact ROCK) : pas d'occlusion.
+   * Rayon qui passe dans l'air au-dessus de la surface : pas d'occlusion.
+   */
+  public isBlastOccludedByRock(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): boolean {
+    if (this.getMaterialAt(fromX) === TERRAIN_MATERIAL.ROCK) {
+      return false;
+    }
+    const x0 = Math.floor(fromX);
+    const x1 = Math.floor(toX);
+    if (x0 === x1) return false;
+
+    const xStart = Math.min(x0, x1);
+    const xEnd = Math.max(x0, x1);
+    const spanX = toX - fromX;
+    if (spanX === 0) return false;
+
+    for (let x = xStart + 1; x < xEnd; x++) {
+      if (this.materials[x] !== TERRAIN_MATERIAL.ROCK) continue;
+      const t = (x - fromX) / spanX;
+      const rayY = fromY + (toY - fromY) * t;
+      if (rayY >= this.heights[x]) return true;
+    }
+    return false;
+  }
+
+  /** Définit le matériau pour une colonne x */
+  public setMaterialAt(x: number, material: TerrainMaterial): void {
+    const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
+    this.materials[xi] = material;
+    this.markTerrainDirty(xi, xi);
+  }
+
+  /** Définit le matériau pour une plage de colonnes [startX, endX] */
+  public setMaterialRange(
+    startX: number,
+    endX: number,
+    material: TerrainMaterial,
+  ): void {
+    const s = Math.max(0, Math.floor(startX));
+    const e = Math.min(this.width - 1, Math.floor(endX));
+    for (let x = s; x <= e; x++) {
+      this.materials[x] = material;
+    }
+    this.markTerrainDirty(s, e);
+  }
+
   /** Retourne une copie en lecture seule de la heightmap */
   public getHeightmap(): ReadonlyArray<number> {
     return this.heights.slice();
   }
 
-  /** Load an authoritative heightmap sent by the server (online multiplayer).
+  /** Retourne une copie en lecture seule du tableau de matériaux */
+  public getMaterials(): ReadonlyArray<TerrainMaterial> {
+    return this.materials.slice();
+  }
+
+  /** Load an authoritative heightmap and optional materials sent by the server.
+   *  Resets materials to DIRT if newMaterials is absent or mismatched to avoid a silent hybrid state.
    *  Marks the terrain dirty so it will be redrawn. */
-  public loadHeights(newHeights: number[]): void {
+  public loadHeights(
+    newHeights: number[],
+    newMaterials?: TerrainMaterial[],
+  ): void {
     if (!Array.isArray(newHeights) || newHeights.length !== this.width) {
-      console.warn('[TerrainManager] loadHeights: size mismatch, ignoring');
+      console.warn("[TerrainManager] loadHeights: size mismatch, ignoring");
       return;
     }
     for (let i = 0; i < this.width; i++) {
       this.heights[i] = newHeights[i];
+    }
+    if (
+      newMaterials &&
+      Array.isArray(newMaterials) &&
+      newMaterials.length === this.width
+    ) {
+      for (let i = 0; i < this.width; i++) {
+        this.materials[i] = newMaterials[i];
+      }
+    } else {
+      if (
+        newMaterials !== undefined &&
+        (!Array.isArray(newMaterials) || newMaterials.length !== this.width)
+      ) {
+        console.warn(
+          "[TerrainManager] loadHeights: materials size mismatch, falling back to DIRT",
+        );
+      }
+      this.materials.fill(TERRAIN_MATERIAL.DIRT);
+    }
+    this.isDirty = true;
+    this.needsFullRedraw = true;
+    this.dirtyStartX = 0;
+    this.dirtyEndX = this.width - 1;
+  }
+
+  /** Load materials array. */
+  public loadMaterials(newMaterials: TerrainMaterial[]): void {
+    if (!Array.isArray(newMaterials) || newMaterials.length !== this.width) {
+      console.warn("[TerrainManager] loadMaterials: size mismatch, ignoring");
+      return;
+    }
+    for (let i = 0; i < this.width; i++) {
+      this.materials[i] = newMaterials[i];
     }
     this.isDirty = true;
     this.needsFullRedraw = true;
@@ -428,10 +700,106 @@ export class TerrainManager {
   // ==================== Méthodes privées ====================
 
   /**
-   * Lissage de la heightmap (passe moyenne)
+   * Calcule la friabilité/douceur progressive du sol à la colonne x (0 = terre pure, 1 = sable pur).
+   * Applique un mélange progressif sur les bordures sable-terre pour un comportement physique naturel.
    */
+  private getLocalSoftness(
+    x: number,
+    blendRadius: number = TERRAIN_SOFT_BLEND_RADIUS,
+  ): number {
+    const xi = Math.max(0, Math.min(this.width - 1, Math.floor(x)));
+    if (this.materials[xi] === TERRAIN_MATERIAL.ROCK) return 0;
+
+    let softCount = 0;
+    let totalCount = 0;
+    const s = Math.max(0, xi - blendRadius);
+    const e = Math.min(this.width - 1, xi + blendRadius);
+
+    for (let i = s; i <= e; i++) {
+      if (this.materials[i] === TERRAIN_MATERIAL.ROCK) continue;
+      totalCount++;
+      if (this.materials[i] === TERRAIN_MATERIAL.SOFT) {
+        softCount++;
+      }
+    }
+
+    if (totalCount === 0) return 0;
+    return softCount / totalCount;
+  }
+
   /**
-   * @param preserveDepth When true, smoothing never shallowens the surface (keeps craters open).
+   * Creuse un cratère avec transition progressive entre matériaux :
+   * - ROCK : préservé intact (aucun creusement).
+   * - SOFT / DIRT : la friabilité s'interpole en douceur (comme si la terre était mêlée à du sable),
+   *   produisant un cratère organique et continu sans falaise artificielle.
+   */
+  private carveCircle(impactX: number, impactY: number, radius: number): void {
+    if (radius <= 0) return;
+
+    const r = radius;
+    const maxMult = SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
+    const maxReach = r * maxMult;
+    const startX = Math.max(0, Math.floor(impactX - maxReach));
+    const endX = Math.min(this.width - 1, Math.floor(impactX + maxReach));
+    const maxSurfaceY = this.height - 1;
+
+    const impactSoftness = this.getLocalSoftness(impactX);
+
+    for (let x = startX; x <= endX; x++) {
+      if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
+        // Roche indestructible : aucune modification de hauteur
+        continue;
+      }
+      if (this.isBlastOccludedByRock(impactX, impactY, x, this.heights[x])) {
+        continue;
+      }
+
+      const dx = x - impactX;
+      const absDx = Math.abs(dx);
+
+      // Friabilité locale (mélange progressif sable-terre)
+      const localSoftness = this.getLocalSoftness(x);
+
+      // Si l'impact est dans le sable, le souffle transmet une énergie dégressive vers l'extérieur
+      const blastSoftness =
+        impactSoftness > 0
+          ? impactSoftness * Math.max(0, 1 - absDx / maxReach)
+          : 0;
+
+      // Degré de friabilité effectif pour cette colonne (entre 0 et 1)
+      const effectiveSoftness = Math.max(localSoftness, blastSoftness);
+
+      // Multiplicateur continu entre 1.0 (terre pure) et maxMult (sable pur)
+      const mult = 1.0 + (maxMult - 1.0) * effectiveSoftness;
+      const effectiveR = r * mult;
+
+      if (absDx > effectiveR) continue;
+
+      const dy = Math.sqrt(effectiveR * effectiveR - dx * dx);
+      const craterDepth = impactY + dy;
+      if (craterDepth > this.heights[x]) {
+        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
+      }
+    }
+  }
+
+  private markTerrainDirty(startX: number, endX: number): void {
+    const bandStart = Math.max(0, startX - 10);
+    const bandEnd = Math.min(this.width - 1, endX + 10);
+    if (!this.isDirty) {
+      this.dirtyStartX = bandStart;
+      this.dirtyEndX = bandEnd;
+    } else {
+      this.dirtyStartX = Math.min(this.dirtyStartX, bandStart);
+      this.dirtyEndX = Math.max(this.dirtyEndX, bandEnd);
+    }
+    this.isDirty = true;
+  }
+
+  /**
+   * Lissage de la heightmap (passe moyenne).
+   * @param preserveDepth When true, smoothing never shallowens the surface (keeps craters open)
+   *                      et n'érode pas les colonnes de roche indestructible.
    */
   private smoothHeights(
     strength: number = 0.5,
@@ -454,9 +822,16 @@ export class TerrainManager {
 
     for (let i = 1; i < len - 1; i++) {
       const idx = s + i;
+      // Ne pas éroder la roche lors du lissage des cratères
+      if (preserveDepth && this.materials[idx] === TERRAIN_MATERIAL.ROCK) {
+        continue;
+      }
       const cur = this.smoothScratch[i];
       const avg =
-        (this.smoothScratch[i - 1] + this.smoothScratch[i] + this.smoothScratch[i + 1]) / 3;
+        (this.smoothScratch[i - 1] +
+          this.smoothScratch[i] +
+          this.smoothScratch[i + 1]) /
+        3;
       const blended = cur * (1 - strength) + avg * strength;
       this.heights[idx] = preserveDepth ? Math.max(cur, blended) : blended;
     }

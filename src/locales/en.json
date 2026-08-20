@@ -1,6 +1,6 @@
 {
   "ai_auto_buy_note": "AIs purchase automatically",
-  "ai_shopping_status": "AI <strong style=\"color: {{color}}\">{{name}}</strong> is shopping...",
+  "ai_shopping_status": "AI <strong>{{name}}</strong> is shopping...",
   "battle_configuration": "BATTLE CONFIGURATION",
   "btn_go_to_shop": "Go to the shop → next round",
   "btn_menu": "MENU",
@@ -70,7 +70,7 @@
     "BULLET": "Bullet",
     "desc": {
       "MISSILE": "Standard missile - precise trajectory",
-      "GRENADE": "Bouncing grenade - useful on rough terrain",
+      "GRENADE": "Bouncing grenade — 2× higher on rock, buries in sand",
       "CLUSTER": "MIRV / Sub-munitions - multiple impacts",
       "NUKE": "Baby Nuke - heavy damage + wide crater",
       "THERMONUCLEAR": "Thermonuclear Bomb - destroys ~1/4 of the map, instant death at center + massive crater",

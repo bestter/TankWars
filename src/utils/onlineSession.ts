@@ -5,6 +5,7 @@
 
 import type { GamePhase, RoundResult } from '../types/game';
 import type { Player } from '../types/player';
+import type { TerrainMaterial } from '../types/terrain';
 
 export interface OnlineSessionMeta {
   roomId: string;
@@ -12,6 +13,7 @@ export interface OnlineSessionMeta {
   slot: number;
   token: string;
   initialHeights?: number[];
+  initialMaterials?: TerrainMaterial[];
   initialWind?: number;
   initialCurrentPlayerIndex?: number;
 }

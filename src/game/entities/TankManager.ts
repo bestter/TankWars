@@ -11,6 +11,13 @@ import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import type { WeaponId } from "../../types/weapon";
 import { drawTankSprite } from "../rendering/tankSprite";
+import {
+  spawnAcceptsMaterial,
+  TANK_SPAWN_MARGIN_RATIO,
+  TANK_SPAWN_MIN_DISTANCE,
+  TANK_SPAWN_MAX_ATTEMPTS,
+  TANK_SPAWN_PER_POS_ATTEMPTS,
+} from "../../types/terrain";
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -29,6 +36,16 @@ const TERMINAL_V_VOID = 24.0; // accelerated terminal velocity for void fall
 
 /** Vertical gap threshold (in pixels) to distinguish falling in the void from sliding down a slope. */
 const VOID_FALL_THRESHOLD = 12;
+
+/** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
+export const TANK_GAUGE_SINGLE_Y_OFFSET = 24; // Barre unique (bouclier ou vie) : y - 24
+export const TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET = 28; // Barre de bouclier (mode double) : y - 28
+export const TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET = 23; // Barre de vie (mode double) : y - 23
+export const TANK_NAME_SINGLE_GAUGE_Y_OFFSET = 34; // Nom du joueur (jauge unique) : y - 34
+export const TANK_NAME_DOUBLE_GAUGE_Y_OFFSET = 36; // Nom du joueur (jauge double) : y - 36
+export const TANK_GAUGE_BAR_WIDTH = 16;
+export const TANK_GAUGE_BAR_HEIGHT = 3;
+export const TANK_GAUGE_BORDER_WIDTH = 0.5;
 
 export class TankManager {
   private players: Player[] = [];
@@ -137,11 +154,16 @@ export class TankManager {
   }
 
   /**
-   * Place les tanks avec positions X aléatoires (distance minimale garantie).
+   * Place les tanks avec positions X aléatoires biaisées vers les creux (distance minimale garantie).
+   * Local : humains 25 % moins souvent sur le sable. IA : 25 % moins souvent sur la roche (tous modes).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
    * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
-  public spawnTanks(players: Player[], terrain: TerrainManager): void {
+  public spawnTanks(
+    players: Player[],
+    terrain: TerrainManager,
+    options?: { localMode?: boolean },
+  ): void {
     this.players = players;
     this.playersMap = new Map(players.map((p) => [p.id, p]));
     this.invalidateAliveCache();
@@ -151,28 +173,52 @@ export class TankManager {
       console.warn("TankManager: recommended player count is between 2 and 4");
     }
 
-    const margin = terrain.width * 0.13;
+    const margin = terrain.width * TANK_SPAWN_MARGIN_RATIO;
     const minX = margin;
     const maxX = terrain.width - margin;
-    const minDist = 100;
+    const minDist = TANK_SPAWN_MIN_DISTANCE;
+    const localMode = options?.localMode ?? true;
 
-    // Génération de positions X aléatoires pour tous les joueurs
-    const xs = this.generateRandomPositions(count, minX, maxX, minDist);
-
-    // Mélange des positions X pour que la répartition des joueurs sur le terrain soit aléatoire à chaque manche
-    const shuffledXs = [...xs];
-    for (let i = shuffledXs.length - 1; i > 0; i--) {
+    const order = players.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) {
       const j = Math.floor(secureRandom() * (i + 1));
-      const temp = shuffledXs[i];
-      shuffledXs[i] = shuffledXs[j];
-      shuffledXs[j] = temp;
+      const temp = order[i];
+      order[i] = order[j];
+      order[j] = temp;
+    }
+
+    const placed: number[] = [];
+    const xs: number[] = new Array(count);
+    let failed = false;
+    for (const idx of order) {
+      const x = this.pickSpawnX(
+        minX,
+        maxX,
+        minDist,
+        terrain,
+        placed,
+        players[idx],
+        localMode,
+      );
+      if (x === null) {
+        failed = true;
+        break;
+      }
+      placed.push(x);
+      xs[idx] = x;
+    }
+
+    if (failed) {
+      const span = count === 1 ? 0 : (maxX - minX) / (count - 1);
+      for (let i = 0; i < count; i++) {
+        xs[i] = minX + span * i;
+      }
     }
 
     players.forEach((player, index) => {
       const tank = player.tank;
 
-      // Position X aléatoire et mélangée
-      const x = shuffledXs[index];
+      const x = xs[index];
 
       // Ancrage vertical exact sur le terrain
       const groundY = terrain.getHeightAt(x);
@@ -193,8 +239,9 @@ export class TankManager {
       tank.power = 50;
       tank.currentWeapon = "MISSILE";
 
-      // Clear per-round AI revenge data
+      // Clear per-round AI revenge data and hit reaction
       tank.lastHitBy = undefined;
+      tank.hitReaction = undefined;
     });
 
     // Initialize velocities and fall tracking for new spawns
@@ -209,55 +256,47 @@ export class TankManager {
   }
 
   /**
-   * Génère N positions X aléatoires dans [minX, maxX] avec |xi-xj| >= minDist pour tout i!=j.
-   * Retourne les positions triées. Utilise rejection sampling (N petit: 2-4).
+   * Tire un X dans [minX, maxX] à minDist des positions déjà posées.
+   * Préfère le Y canvas max (creux). Applique le skip matériau 25 %.
    */
-  private generateRandomPositions(
-    count: number,
+  private pickSpawnX(
     minX: number,
     maxX: number,
     minDist: number,
-  ): number[] {
-    if (count <= 0) return [];
-    if (count === 1) return [minX + (maxX - minX) / 2];
-
+    terrain: TerrainManager,
+    placed: number[],
+    player: Player,
+    localMode: boolean,
+  ): number | null {
     const range = maxX - minX;
-    const minSpan = (count - 1) * minDist;
-
-    // Si la plage est trop petite pour garantir minDist → fallback équitable
-    if (minSpan > range) {
-      const step = range / (count - 1);
-      return Array.from({ length: count }, (_, i) => minX + step * i);
-    }
-
-    const maxAttempts = 500;
-    const perPosAttempts = 80;
+    const maxAttempts = TANK_SPAWN_MAX_ATTEMPTS;
+    const perPosAttempts = TANK_SPAWN_PER_POS_ATTEMPTS;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const positions: number[] = [];
-
-      for (let i = 0; i < count; i++) {
-        let placed = false;
-        for (let t = 0; t < perPosAttempts; t++) {
-          const candidate = minX + secureRandom() * range;
-          if (positions.every((p) => Math.abs(p - candidate) >= minDist)) {
-            positions.push(candidate);
-            placed = true;
-            break;
-          }
+      let best: number | null = null;
+      let bestHeight = -Infinity;
+      for (let t = 0; t < perPosAttempts; t++) {
+        const candidate = minX + secureRandom() * range;
+        if (!placed.every((p) => Math.abs(p - candidate) >= minDist)) continue;
+        if (
+          !spawnAcceptsMaterial(
+            terrain.getMaterialAt(candidate),
+            player.isHuman,
+            localMode,
+            secureRandom,
+          )
+        ) {
+          continue;
         }
-        if (!placed) break;
+        const h = terrain.getHeightAt(candidate);
+        if (h > bestHeight) {
+          bestHeight = h;
+          best = candidate;
+        }
       }
-
-      if (positions.length === count) {
-        positions.sort((a, b) => a - b);
-        return positions;
-      }
+      if (best !== null) return best;
     }
-
-    // Fallback: répartition équitable (garantie de ne jamais bloquer)
-    const step = range / (count - 1);
-    return Array.from({ length: count }, (_, i) => minX + step * i);
+    return null;
   }
 
   public updateTankPositions(terrain: TerrainManager): void {
@@ -364,6 +403,14 @@ export class TankManager {
         // === Fall damage: 1 point per damageLevelHeight pixels of downward travel ===
         const deltaFall = pos.y - prevY;
         if (deltaFall > 0) {
+          tank.hitReaction = tank.hitReaction ?? {
+            wasDirectHit: false,
+            fallDistance: 0,
+            shotStep: 0,
+          };
+          tank.hitReaction.fallDistance += deltaFall;
+          tank.hitReaction.shotStep = 0;
+
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
 
@@ -509,6 +556,7 @@ export class TankManager {
     killerId?: string,
     weaponId?: WeaponId,
     isDirectHit?: boolean,
+    terrain?: TerrainManager,
   ): number {
     let killsThisExplosion = 0;
 
@@ -532,9 +580,24 @@ export class TankManager {
           explosionX <= pos.x + tankWidth / 2 &&
           explosionY >= pos.y - tankHeight &&
           explosionY <= pos.y;
+        if (isDirectHitOnThisTank) {
+          tank.hitReaction = tank.hitReaction ?? {
+            wasDirectHit: false,
+            fallDistance: 0,
+            shotStep: 0,
+          };
+          tank.hitReaction.wasDirectHit = true;
+          tank.hitReaction.shotStep = 0;
+        }
       }
 
       const healthBefore = tank.health;
+
+      const blastBlockedByRock =
+        !!terrain &&
+        !isDirectHitOnThisTank &&
+        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y);
+      if (blastBlockedByRock) continue;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct
       if (weaponId === "BULLET" && isDirectHitOnThisTank) {
@@ -562,13 +625,32 @@ export class TankManager {
 
       if (damage <= 0 && tank.health > 0) continue;
 
-      // Bouclier en priorité (skipped or no-op for nuke direct which already zeroed)
       let remainingDamage = damage;
 
       if (tank.shield > 0) {
-        const absorbed = Math.min(remainingDamage, tank.shield);
-        tank.shield -= absorbed;
-        remainingDamage -= absorbed;
+        if (isDirectHitOnThisTank) {
+          /**
+           * Contrat dégât direct :
+           * - Le bouclier absorbe les dégâts à un ratio 2:1 (consomme 2 points de bouclier par point de dégât absorbé).
+           * - Le multiplicateur x2 s'applique EXCLUSIVEMENT à l'absorption par le bouclier.
+           * - Dès que le bouclier tombe à 0, tout surplus de dégâts restant (`remainingDamage`)
+           *   est appliqué à la santé au ratio standard 1:1 sans AUCUNE amplification.
+           * - Pour un bouclier impair (ex. 1 ou 39), `Math.ceil(tank.shield / 2)` permet au dernier
+           *   point de bouclier d'absorber 1 point de dégât entrant avant de se briser.
+           */
+          const maxDamageShieldCanAbsorb = Math.ceil(tank.shield / 2);
+          const damageAbsorbed = Math.min(
+            remainingDamage,
+            maxDamageShieldCanAbsorb,
+          );
+          tank.shield = Math.max(0, tank.shield - damageAbsorbed * 2);
+          remainingDamage -= damageAbsorbed;
+        } else {
+          // Souffle indirect : ratio standard 1:1
+          const absorbed = Math.min(remainingDamage, tank.shield);
+          tank.shield -= absorbed;
+          remainingDamage -= absorbed;
+        }
       }
 
       if (remainingDamage > 0) {
@@ -638,9 +720,7 @@ export class TankManager {
         spriteY += rec.dy;
       }
 
-      // Dessine le sprite de tank détaillé de l'Étape 1
-      // Pivot à y - 8 pour caler exactement le bas des chenilles sur y (niveau du sol)
-      // Conversion de l'angle du canon (degrés trigo) en coordonnées Canvas (-tank.angle)
+      // Dessin vectoriel procédural du tank
       drawTankSprite(
         ctx,
         spriteX,
@@ -652,33 +732,78 @@ export class TankManager {
         color,
       );
 
-      // === Jauge de vie miniature ===
-      const barWidth = 16;
-      const barHeight = 3;
+      // === Jauge de vie / bouclier miniature ===
+      const barWidth = TANK_GAUGE_BAR_WIDTH;
+      const barHeight = TANK_GAUGE_BAR_HEIGHT;
       const barX = x - barWidth / 2;
-      const barY = y - 24; // au-dessus du dôme de la tourelle
 
-      const healthRatio = Math.max(0, tank.health / tank.maxHealth);
+      const showShield = tank.shield > 0;
+      const showHealth = tank.shield <= 0 || tank.health < tank.maxHealth;
 
-      // Fond de la jauge
-      ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
-      ctx.fillRect(barX, barY, barWidth, barHeight);
+      let nameY = y - TANK_NAME_SINGLE_GAUGE_Y_OFFSET;
 
-      // Vie restante
-      ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
-      ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+      if (showShield && showHealth) {
+        // Deux barres superposées : Bouclier (cyan foncé) au-dessus, Vie (verte/rouge) en-dessous
+        const shieldBarY = y - TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET;
+        const healthBarY = y - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET;
+        nameY = y - TANK_NAME_DOUBLE_GAUGE_Y_OFFSET;
 
-      // Bordure
-      ctx.strokeStyle = VGA_PALETTE.WHITE;
-      ctx.lineWidth = 0.5;
-      ctx.strokeRect(barX, barY, barWidth, barHeight);
+        // 1. Barre de bouclier (en haut)
+        const maxS = tank.maxShield ?? 40;
+        const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, shieldBarY, barWidth, barHeight);
+        ctx.fillStyle = VGA_PALETTE.DARK_CYAN;
+        ctx.fillRect(barX, shieldBarY, barWidth * shieldRatio, barHeight);
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
+        ctx.strokeRect(barX, shieldBarY, barWidth, barHeight);
+
+        // 2. Barre de vie (en bas)
+        const healthRatio = Math.max(
+          0,
+          Math.min(1, tank.health / tank.maxHealth),
+        );
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, healthBarY, barWidth, barHeight);
+        ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
+        ctx.fillRect(barX, healthBarY, barWidth * healthRatio, barHeight);
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
+        ctx.strokeRect(barX, healthBarY, barWidth, barHeight);
+      } else {
+        // Une seule barre à y - TANK_GAUGE_SINGLE_Y_OFFSET
+        const barY = y - TANK_GAUGE_SINGLE_Y_OFFSET;
+        ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+
+        if (showShield) {
+          // Uniquement le bouclier (vie encore à 100%)
+          const maxS = tank.maxShield ?? 40;
+          const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
+          ctx.fillStyle = VGA_PALETTE.DARK_CYAN;
+          ctx.fillRect(barX, barY, barWidth * shieldRatio, barHeight);
+        } else {
+          // Uniquement la vie (bouclier détruit)
+          const healthRatio = Math.max(
+            0,
+            Math.min(1, tank.health / tank.maxHealth),
+          );
+          ctx.fillStyle = healthRatio > 0.4 ? VGA_PALETTE.GREEN : VGA_PALETTE.RED;
+          ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+        }
+
+        // Bordure
+        ctx.strokeStyle = VGA_PALETTE.WHITE;
+        ctx.lineWidth = TANK_GAUGE_BORDER_WIDTH;
+        ctx.strokeRect(barX, barY, barWidth, barHeight);
+      }
 
       // === Nom du joueur (police rétro 12px monospace, couleur VGA du joueur) ===
       if (showPlayerNames) {
         ctx.font = "12px monospace";
         ctx.fillStyle = color;
         ctx.textAlign = "center";
-        const nameY = y - 34; // au-dessus de la jauge de vie
         ctx.fillText(player.name, x, nameY);
       }
     }

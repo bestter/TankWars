@@ -113,6 +113,7 @@ export function useOnlineLobby({
         localPlayerId,
         gameMode: 'online',
         initialHeights: start.heights,
+        initialMaterials: start.materials,
         initialWind: start.wind,
         initialCurrentPlayerIndex: start.currentPlayerIndex,
         slot,
@@ -216,10 +217,14 @@ export function useOnlineLobby({
         setConnected(false);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev: CloseEvent) => {
         setConnected(false);
         if (wsRef.current === ws) {
           wsRef.current = null;
+        }
+        if (ev.code === 4001 || (typeof ev.reason === 'string' && ev.reason.includes('replaced'))) {
+          connectionRef.current = null;
+          return;
         }
         if (!gameStartedRef.current && connectionRef.current) {
           scheduleReconnect();

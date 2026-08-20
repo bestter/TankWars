@@ -4,7 +4,7 @@ import { secureRandom } from "../../../utils/random";
  *
  * Phase 2 "smarter but not sniper" AI per project guidelines + user spec.
  * - Implements AIEngine (new strategy class, no entanglement in core engine/tank).
- * - Can kill tanks (typically requires several shots; deliberately fallible).
+ * - Can kill tanks (locks on shot SHOTS_TO_HIT["v2-heuristic"] = 5 at spec).
  * - Revenge: if self.lastHitBy (set on damage), switch target to the attacker.
  * - Otherwise stick to last target for the round.
  * - New target selection: prefer weakest (lowest health), with slight human bias.
@@ -24,6 +24,10 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
 import { searchBallisticSolution } from "./BallisticsSimulator";
+import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
+import { roundSkill } from "./roundSkill";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface AIMemory {
   currentTargetId?: string;
@@ -81,6 +85,7 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const skill = roundSkill(gameState.roundNumber);
     const mem = this.getMem(self.id);
 
     // Detect round respawn (health reset to full) and clear per-round memory
@@ -128,7 +133,7 @@ export class AIHeuristicStrategy implements AIEngine {
           } else {
             // Miss!
             mem.roundFails += 1;
-            mem.lastPowerBias += (secureRandom() - 0.5) * 1.2;
+            mem.lastPowerBias += (secureRandom() - 0.5) * 3.6;
             if (import.meta.env.DEV) {
               console.log(
                 `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
@@ -141,6 +146,7 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // === Target selection per spec ===
     let target: Player | undefined;
+    let revengeLocked = false;
 
     // 1. Revenge: if someone just tried to kill us, prioritize them
     const revengeId = self.tank.lastHitBy;
@@ -148,6 +154,7 @@ export class AIHeuristicStrategy implements AIEngine {
       const e = playerById.get(revengeId);
       if (e && e.id !== self.id && !e.tank.isDead) {
         target = e;
+        revengeLocked = true;
       }
     }
 
@@ -175,6 +182,11 @@ export class AIHeuristicStrategy implements AIEngine {
       target = sorted[0];
     }
 
+    const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
+    if (!revengeLocked && otherAi.length > 0 && scaledGaffe(0.25, skill)) {
+      target = otherAi[Math.floor(secureRandom() * otherAi.length)];
+    }
+
     const isNewTarget = target!.id !== mem.currentTargetId;
     mem.currentTargetId = target!.id;
     if (isNewTarget && import.meta.env.DEV) {
@@ -184,23 +196,36 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     // Record current known healths of all alive enemies for next comparison
-    mem.lastKnownHealth = {};
-    for (const e of enemies) {
-      mem.lastKnownHealth[e.id] = e.tank.health;
+    for (const p of gameState.players) {
+      if (p.id !== self.id) {
+        mem.lastKnownHealth[p.id] = p.tank.isDead ? 0 : p.tank.health;
+      }
     }
 
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
     // === Choose weapon (OK AI opportunism) + compute improved shot ===
-    const chosenWeapon = this.chooseWeapon(
+    let chosenWeapon = this.chooseWeapon(
       self,
       target!,
       terrainManager,
       gameState,
     );
+    chosenWeapon = adjustWeaponForMaterial(
+      chosenWeapon,
+      terrainManager.getMaterialAt(target!.tank.position.x),
+      (id) => (self.inventory?.[id] ?? 0) > 0,
+    );
+    if (chosenWeapon !== "MISSILE" && scaledGaffe(0.2, skill)) {
+      chosenWeapon = "MISSILE";
+    }
     // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
-    self.tank.currentWeapon = chosenWeapon; // live ref from gameState snapshot of roster
+    self.tank.currentWeapon = chosenWeapon;
+    const penalty = getHitReactionPenalty(
+      self.aiProfile ?? "v2-heuristic",
+      self.tank.hitReaction,
+    );
 
     const { angle, power } = this.computeImprovedShot(
       self,
@@ -210,7 +235,11 @@ export class AIHeuristicStrategy implements AIEngine {
       terrainManager,
       attempts,
       mem,
+      skill,
+      penalty,
     );
+
+    advanceHitReaction(self.tank.hitReaction);
 
     return {
       angle: Math.round(angle * 10) / 10,
@@ -250,14 +279,14 @@ export class AIHeuristicStrategy implements AIEngine {
         !p.tank.isDead &&
         Math.abs(p.tank.position.x - target.tank.position.x) < 70,
     ).length;
-    if (nearby >= 1 && has("CLUSTER")) return "CLUSTER";
+    if (nearby >= 2 && has("CLUSTER")) return "CLUSTER";
 
     const targetHealthTotal = target.tank.health + target.tank.shield;
     if (
       Math.abs(target.tank.position.x - self.tank.position.x) > 380 &&
       has("NUKE") &&
       targetHealthTotal >= 40 &&
-      secureRandom() < 0.35
+      secureRandom() < 0.2
     ) {
       return "NUKE";
     }
@@ -279,10 +308,14 @@ export class AIHeuristicStrategy implements AIEngine {
     terrain: TerrainManager,
     attempts: number,
     mem: AIMemory,
+    skill: number,
+    penalty = 0,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x;
+    const tx =
+      target.tank.position.x +
+      signedImpactOffset(attempts, "v2-heuristic", undefined, skill, penalty);
     const ty = target.tank.position.y - 6; // aim slightly high on tank body
     const dx = tx - sx;
     const isRight = dx > 0;
@@ -318,7 +351,8 @@ export class AIHeuristicStrategy implements AIEngine {
 
     // "Always more precise": noise shrinks with attempts on this target
     const precision = Math.min(0.88, attempts * 0.13);
-    const noise = (1 - precision) * (7.5 + secureRandom() * 5.5);
+    const noise =
+      (1 - precision) * (7.5 + secureRandom() * 5.5) * (1 + penalty);
 
     angle += (secureRandom() - 0.5) * noise;
     power += (secureRandom() - 0.5) * (noise * 0.65);

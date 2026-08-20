@@ -10,6 +10,7 @@ import { GameOverOverlay } from "./GameOverOverlay";
 import { useGameSession } from "./useGameSession";
 import { MobileControls } from "./MobileControls";
 import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
+import type { TerrainMaterial } from "../types/terrain";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -21,6 +22,7 @@ export interface GameCanvasProps {
   localPlayerId?: string;
   roomId?: string;
   initialHeights?: number[];
+  initialMaterials?: TerrainMaterial[];
   initialWind?: number;
   initialCurrentPlayerIndex?: number;
   resumeCanvas?: OnlineCanvasSnapshot;
@@ -36,6 +38,7 @@ export function GameCanvas({
   localPlayerId,
   roomId,
   initialHeights,
+  initialMaterials,
   initialWind,
   initialCurrentPlayerIndex,
   resumeCanvas,
@@ -63,7 +66,7 @@ export function GameCanvas({
     isLocalShopTurn,
     shopDisplayPlayer,
     localShopDone,
-  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialMaterials, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,

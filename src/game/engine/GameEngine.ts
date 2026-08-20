@@ -120,6 +120,13 @@ export class GameEngine {
   /** True while tanks are fighting within a single combat round (until <= 1 alive: last man standing). */
   private roundCombatActive = true;
 
+  /** Local hotseat / vs-AI. Online match sets this to false (humans keep sand spawns). */
+  private localMatch = true;
+
+  public setLocalMatch(local: boolean): void {
+    this.localMatch = local;
+  }
+
   public isRoundCombatActive(): boolean {
     return this.roundCombatActive;
   }
@@ -308,6 +315,10 @@ export class GameEngine {
     this.turnManager.setAIEngine(aiEngine);
   }
 
+  public setRoundNumber(roundNumber: number): void {
+    this.turnManager.setRoundNumber(roundNumber);
+  }
+
   /** For online multiplayer: tells the engine which player id is controlled by this client.
    *  Used by TurnManager to lock input for other players' turns. */
   public setLocalPlayerId(playerId: string | undefined): void {
@@ -319,10 +330,13 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.gameOver = false;
     this.winner = null;
-    this.tankManager.spawnTanks(players, this.terrain);
+    this.tankManager.spawnTanks(players, this.terrain, {
+      localMode: this.localMatch,
+    });
     this.lastSlideTimes.clear();
     this.randomizeWindForRound();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
+    this.turnManager.setRoundNumber(1);
 
     // Initialise le système de tours
     this.turnManager.startFirstTurn();
@@ -349,8 +363,6 @@ export class GameEngine {
     console.log(`[WIND] New round wind: ${this.windForce.toFixed(1)} px/s²`);
   }
 
-  // Legacy setTanks removed - use setPlayers + TankManager instead
-  // public setTanks(...) { ... }
 
   /**
    * Fire a projectile. Called by human input or by AI strategy.
@@ -550,7 +562,9 @@ export class GameEngine {
     this.celebrationAngleDir = 1;
 
     this.terrain.generate();
-    this.tankManager.spawnTanks(roster, this.terrain);
+    this.tankManager.spawnTanks(roster, this.terrain, {
+      localMode: this.localMatch,
+    });
     this.lastSlideTimes.clear(); // fresh per round for throttle maps
     this.randomizeWindForRound();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);

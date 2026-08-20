@@ -19,10 +19,12 @@ bindings = [
   { name = "GAME_ROOM", class_name = "GameRoom" }
 ]
 
-# Migrations for DO (create the class on first deploy)
+# Migrations for DO (create the class on first deploy).
+# Free plan + new accounts require SQLite-backed namespaces (`new_sqlite_classes`).
+# `ctx.storage.get` / `put` stay valid on that backend.
 [[migrations]]
 tag = "v1"
-new_classes = ["GameRoom"]
+new_sqlite_classes = ["GameRoom"]
 
 # Optional but recommended for better local DX:
 # You can add a worker/package.json later with "@cloudflare/workers-types" for TypeScript.

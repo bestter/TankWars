@@ -135,6 +135,12 @@ export default {
     // POST /api/rooms/:roomId/join (optional REST fallback; primary join is via WS)
     if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/join') && request.method === 'POST') {
       const roomId = pathname.split('/')[3];
+      if (!roomId || roomId.length > 256) {
+        return withCors(new Response(JSON.stringify({ error: 'Invalid room ID' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
       const joinResp = await stub.fetch(request);
@@ -165,7 +171,12 @@ export default {
       const slot = Number(searchParams.get('slot') ?? '-1');
       const token = searchParams.get('token') ?? '';
 
-      if (!roomId || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
+      // Strict origin validation for WebSocket to prevent CSRF/Cross-Site WebSocket Hijacking
+      if (origin !== null && !isAllowedOrigin) {
+        return new Response('Forbidden: Invalid Origin', { status: 403 });
+      }
+
+      if (!roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
         return new Response('Missing or invalid room/slot/token', { status: 400 });
       }
 

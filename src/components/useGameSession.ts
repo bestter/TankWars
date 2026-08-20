@@ -5,7 +5,9 @@ import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
-import { WEAPON_REGISTRY, DEFAULT_INVENTORY } from "../types/weapon";
+import type { TerrainMaterial } from "../types/terrain";
+import { DEFAULT_INVENTORY } from "../types/weapon";
+import { applyShopDelta } from "./shopBuySell";
 import type { GamePhase } from "../types/game";
 import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
@@ -81,6 +83,7 @@ interface UseGameSessionProps {
   localPlayerId?: string;
   roomId?: string;
   initialHeights?: number[];
+  initialMaterials?: TerrainMaterial[];
   initialWind?: number;
   initialCurrentPlayerIndex?: number;
   resumeCanvas?: OnlineCanvasSnapshot;
@@ -102,6 +105,7 @@ export function useGameSession({
   localPlayerId,
   roomId,
   initialHeights,
+  initialMaterials,
   initialWind,
   initialCurrentPlayerIndex,
   resumeCanvas,
@@ -213,6 +217,7 @@ export function useGameSession({
         slot,
         token,
         initialHeights,
+        initialMaterials,
         initialWind,
         initialCurrentPlayerIndex,
       },
@@ -244,6 +249,7 @@ export function useGameSession({
     canvasWind,
     initialPlayers,
     initialHeights,
+    initialMaterials,
     initialWind,
     initialCurrentPlayerIndex,
   ]);
@@ -375,7 +381,7 @@ export function useGameSession({
     // BEFORE setPlayers, so spawnTanks will snap tank Y positions to the server heights.
     if (gameMode === 'online' && initialHeights && initialHeights.length > 0) {
       try {
-        engine.getTerrain().loadHeights(initialHeights);
+        engine.getTerrain().loadHeights(initialHeights, initialMaterials);
       } catch (e) {
         console.warn('[useGameSession] could not load initialHeights', e);
       }
@@ -576,10 +582,14 @@ export function useGameSession({
         }
       };
 
-      ws.onclose = () => {
-        console.log('[Game] Combat WS closed');
+      ws.onclose = (ev: CloseEvent) => {
+        console.log('[Game] Combat WS closed', ev.code, ev.reason);
         if (gameWsRef.current === ws) {
           gameWsRef.current = null;
+          if (ev.code === 4001 || (typeof ev.reason === 'string' && ev.reason.includes('replaced'))) {
+            console.log('[Game] Socket superseded by another connection, skipping reconnect');
+            return;
+          }
           if (gamePhaseRef.current !== 'GAME_OVER' && isMounted) {
             clearCombatReconnect();
             combatReconnectTimer = setTimeout(() => {
@@ -635,6 +645,7 @@ export function useGameSession({
         : createDemoPlayers();
 
     // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
+    engine.setLocalMatch(gameMode !== "online");
     if (localPlayerId) {
       engine.setLocalPlayerId(localPlayerId);
     }
@@ -644,6 +655,7 @@ export function useGameSession({
 
     if (resumed && resumed.uiPlayers.length >= 2) {
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
+      engine.setRoundNumber(resumed.currentManche);
       gamePhaseRef.current = resumed.gamePhase;
       shopPlayersRef.current = resumed.shopPlayers;
       currentShopIndexRef.current = resumed.currentShopIndex;
@@ -663,6 +675,7 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
       engine.setPlayers(players);
+      engine.setRoundNumber(1);
       if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
       }
@@ -715,7 +728,8 @@ export function useGameSession({
           tm.isAwaitingServerTurnAfterLocalShot();
         if (shouldNotify) {
           console.log('[Game] Sending SHOT_SETTLED to server');
-          sendCombatMessage({ type: 'SHOT_SETTLED', slot });
+          const deadSlots = engine.getTankManager().getPlayers().map((p) => Boolean(p.tank.isDead));
+          sendCombatMessage({ type: 'SHOT_SETTLED', slot, deadSlots });
         }
       }
     };
@@ -1076,45 +1090,13 @@ export function useGameSession({
       return;
     }
 
-    const def = WEAPON_REGISTRY[weaponId];
-    if (!def) return;
-
-    const currentStock = currentPlayer.inventory?.[weaponId] ?? 0;
-
     let localUpdated = currentPlayer;
     const updatedPlayers = enginePlayers.map((p) => {
-      if (p.id === currentPlayer.id) {
-        if (delta > 0) {
-          // Achat
-          if ((p.money ?? 0) >= def.price) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) - def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock + 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        } else {
-          // Vente
-          if (currentStock > 0) {
-            const updated = {
-              ...p,
-              money: (p.money ?? 0) + def.price,
-              inventory: {
-                ...p.inventory,
-                [weaponId]: currentStock - 1,
-              },
-            };
-            if (p.id === localPlayerId) localUpdated = updated;
-            return updated;
-          }
-        }
-      }
-      return p;
+      if (p.id !== currentPlayer.id) return p;
+      const updated = applyShopDelta(p, weaponId, delta);
+      if (!updated) return p;
+      if (p.id === localPlayerId) localUpdated = updated;
+      return updated;
     });
 
     // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable
@@ -1267,6 +1249,7 @@ export function useGameSession({
     }
 
     const started = engine.startNextRound();
+    engine.setRoundNumber(currentMancheRef.current);
     if (!started) {
       shopFinishingRef.current = false;
       endMatchFromShop(engine, [...roster]);
@@ -1380,9 +1363,9 @@ export function useGameSession({
       finishShopPhase(finalPlayers);
     };
 
-    return () => {
-      clearShopAiTimeout();
-    };
+    // No cleanup here: this effect refreshes handler refs on every render.
+    // Clearing shopAiTimeout on each paint cancelled the local AI shop delay
+    // (human Ready → overlay "IA fait ses achats…" → stuck until next round).
   });
 
   const handleNewGame = () => {
@@ -1394,6 +1377,7 @@ export function useGameSession({
     const newPlayers = createDemoPlayers();
     engine.setAIEngine(new AIByProfileStrategy());
     engine.setPlayers(newPlayers);
+    engine.setRoundNumber(1);
 
     dispatch({ type: "RESET_GAME", newPlayers });
     shopPlayersRef.current = [];

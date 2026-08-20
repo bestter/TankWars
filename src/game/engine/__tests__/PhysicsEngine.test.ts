@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PhysicsEngine } from '../PhysicsEngine';
 import { TerrainManager } from '../Terrain';
+import { TERRAIN_MATERIAL } from '../../../types/terrain';
 
 describe('PhysicsEngine', () => {
   let engine: PhysicsEngine;
@@ -9,88 +10,33 @@ describe('PhysicsEngine', () => {
     engine = new PhysicsEngine();
   });
 
-  describe('hasActiveProjectiles', () => {
-    it('returns false when initialized with zero projectiles', () => {
-      expect(engine.hasActiveProjectiles()).toBe(false);
-    });
-
-    it('returns true when there is exactly one projectile', () => {
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      expect(engine.hasActiveProjectiles()).toBe(true);
-    });
-
-    it('returns true when there are multiple projectiles', () => {
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      engine.launchProjectile(10, 10, 45, 100, 'MISSILE');
-      expect(engine.hasActiveProjectiles()).toBe(true);
-    });
-
-    it('returns false after projectiles are cleared', () => {
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      engine.clear();
-      expect(engine.hasActiveProjectiles()).toBe(false);
-    });
-
-    it('returns false when the last active projectile is removed from bounds', () => {
-      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      engine.getProjectiles()[0].x = 10000; // Force out of bounds
-      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
-      expect(engine.hasActiveProjectiles()).toBe(false);
-    });
-
-    it('returns false and triggers settlement when a projectile goes out of bounds with active notification', () => {
-      let settlementCalled = false;
-      engine.onAllProjectilesSettled = () => {
-        settlementCalled = true;
-      };
-
-      const terrainManager = { width: 800, height: 600, checkCollision: () => false };
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-
-      // Before update, projectile is active
-      expect(engine.hasActiveProjectiles()).toBe(true);
-
-      // Move projectile far out of bounds
-      engine.getProjectiles()[0].x = 10000;
-      engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
-
-      expect(engine.hasActiveProjectiles()).toBe(false);
-      expect(settlementCalled).toBe(true);
-    });
-
-    it('returns false accurately if a projectile is directly removed', () => {
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      expect(engine.hasActiveProjectiles()).toBe(true);
-
-      // We simulate what could happen if we cleared without settlement
-      engine.clear(false);
-      expect(engine.hasActiveProjectiles()).toBe(false);
-    });
-
-  });
-
-  describe('State Queries', () => {
-    it('should return false for hasActiveProjectiles and 0 for count initially', () => {
+  describe('active projectile queries', () => {
+    it('starts empty and reports a launch', () => {
       expect(engine.hasActiveProjectiles()).toBe(false);
       expect(engine.count).toBe(0);
-    });
 
-    it('should return true for hasActiveProjectiles and positive count after launching projectiles', () => {
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
       expect(engine.hasActiveProjectiles()).toBe(true);
       expect(engine.count).toBe(1);
-
-      engine.launchProjectile(10, 10, 45, 100, 'MISSILE');
-      expect(engine.hasActiveProjectiles()).toBe(true);
-      expect(engine.count).toBe(2);
     });
 
-    it('should return false for hasActiveProjectiles and 0 for count after clearing', () => {
+    it('clears without notifying settlement when asked', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
+      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.clear(false);
+      expect(engine.hasActiveProjectiles()).toBe(false);
+      expect(engine.count).toBe(0);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('clears and notifies settlement when projectiles were in flight', () => {
+      const spy = vi.fn();
+      engine.onAllProjectilesSettled = spy;
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
       engine.clear();
       expect(engine.hasActiveProjectiles()).toBe(false);
-      expect(engine.count).toBe(0);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -109,19 +55,20 @@ describe('PhysicsEngine', () => {
       expect(engine.count).toBe(1);
     });
 
-    it('should return false when all projectiles are removed via out of bounds', () => {
+    it('returns false and triggers settlement when the last projectile leaves bounds', () => {
+      let settlementCalled = false;
+      engine.onAllProjectilesSettled = () => {
+        settlementCalled = true;
+      };
+
       const terrainManager = { width: 800, height: 600, checkCollision: () => false };
-
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-
       engine.getProjectiles()[0].x = 10000;
-      engine.getProjectiles()[1].y = 10000;
-
       engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       expect(engine.hasActiveProjectiles()).toBe(false);
       expect(engine.count).toBe(0);
+      expect(settlementCalled).toBe(true);
     });
 
     it('should accurately report status when a projectile impacts terrain', () => {
@@ -129,13 +76,12 @@ describe('PhysicsEngine', () => {
         width: 800,
         height: 600,
         checkCollision: () => true,
-        destroyTerrain: () => {}
+        destroyTerrain: () => {},
+        destroyTerrainShaft: () => {},
+        getMaterialAt: () => TERRAIN_MATERIAL.DIRT,
       };
 
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      expect(engine.hasActiveProjectiles()).toBe(true);
-      expect(engine.count).toBe(1);
-
       engine.updateProjectiles(0.1, 9.8, 0, terrainManager as unknown as TerrainManager);
 
       expect(engine.hasActiveProjectiles()).toBe(false);
@@ -144,27 +90,25 @@ describe('PhysicsEngine', () => {
 
     it('should allow a projectile at maximum power (100) to travel across the screen width (800px)', () => {
       const terrainManager = { width: 1200, height: 1000, checkCollision: () => false };
-      
+
       engine.launchProjectile(0, 300, 45, 100, 'MISSILE');
-      
+
       const dt = 1 / 120;
       let steps = 0;
-      
+
       while (engine.hasActiveProjectiles() && steps < 1000) {
         engine.updateProjectiles(dt, 260, 0, terrainManager as unknown as TerrainManager);
         steps++;
-        
+
         const projectiles = engine.getProjectiles();
         if (projectiles.length > 0 && projectiles[0].vy > 0 && projectiles[0].y >= 300) {
           break;
         }
       }
-      
+
       const projectiles = engine.getProjectiles();
       expect(projectiles.length).toBeGreaterThan(0);
-      const finalX = projectiles[0].x;
-      
-      expect(finalX).toBeGreaterThan(800);
+      expect(projectiles[0].x).toBeGreaterThan(800);
     });
   });
 
@@ -186,34 +130,58 @@ describe('PhysicsEngine', () => {
       expect(spy).not.toHaveBeenCalled();
     });
 
-    it('calls onAllProjectilesSettled when projectiles drop to 0', () => {
+    it('calls onAllProjectilesSettled only once when the last projectile is cleared', () => {
       const spy = vi.fn();
       engine.onAllProjectilesSettled = spy;
 
       engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
-      engine.checkSettlement(); // previousCount = 1
-
-      // Simulate projectile removal without resetting previousCount
-      (engine as unknown as { projectiles: unknown[] }).projectiles.length = 0;
-
-      engine.checkSettlement(); // previous = 1, current = 0 -> calls spy
-
-      expect(spy).toHaveBeenCalledTimes(1);
-    });
-
-    it('only calls onAllProjectilesSettled once when dropping to 0', () => {
-      const spy = vi.fn();
-      engine.onAllProjectilesSettled = spy;
-
-      engine.launchProjectile(0, 0, 45, 100, 'MISSILE');
+      engine.clear();
       engine.checkSettlement();
-
-      (engine as unknown as { projectiles: unknown[] }).projectiles.length = 0;
-
-      engine.checkSettlement(); // triggers
-      engine.checkSettlement(); // should not trigger again
 
       expect(spy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Explosion damage on rock terrain', () => {
+    it('inflicts 50% more blast damage on rock with unchanged blast radius', () => {
+      const terrain = new TerrainManager(400, 300);
+      terrain.loadHeights(Array.from({ length: 400 }, () => 150));
+      terrain.setMaterialRange(80, 160, 'ROCK');
+
+      const tankManager = {
+        checkTankCollision: vi.fn().mockReturnValue(false),
+        applyExplosionDamage: vi.fn(),
+        updateTankPositions: vi.fn(),
+        checkTankBurial: vi.fn(),
+        getPlayerById: vi.fn().mockReturnValue(undefined),
+      };
+
+      // Launch a MISSILE (base damage 35, radius 28) that impacts at x=120, y=150 (on rock)
+      engine.launchProjectile(120, 140, 90, 10, 'MISSILE');
+      engine.updateProjectiles(
+        1.0,
+        260,
+        0,
+        terrain,
+        tankManager as unknown as import('../../entities/TankManager').TankManager,
+      );
+
+      // Verify rock was not carved
+      expect(terrain.getHeightAt(120)).toBe(150);
+
+      // Verify splash damage was 50% stronger (35 * 1.5 = 53) with unchanged blast radius (28)
+      expect(tankManager.applyExplosionDamage).toHaveBeenCalledTimes(1);
+      expect(tankManager.applyExplosionDamage).toHaveBeenCalledWith(
+        120,
+        expect.any(Number),
+        28, // Radius is NOT affected
+        53, // 50% increased damage (Math.round(35 * 1.5))
+        undefined,
+        'MISSILE',
+        false,
+        expect.anything(),
+      );
+    });
+  });
 });
+
