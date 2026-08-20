@@ -13,12 +13,16 @@
 
 ## Features
 
-- **Destructible Heightmap Terrain** — Procedurally generated rolling hills using layered sine waves + high-frequency noise. Circular crater destruction with smooth falloff. DRILLER also carves an oriented shaft along the impact velocity.
+- **Destructible Heightmap Terrain & Diverse Topography** — Procedurally generated diverse terrain using multi-octaves layered sine waves, localized tactical hollows (shelters for tanks), and steep hills/ridges. Distinct terrain materials:
+  - `DIRT` (Standard earth & grass with classic destruction)
+  - `ROCK` (Indestructible stone wall: side blasts stop at the rock; exploding on top reflects the blast for +50% damage with unchanged radius)
+  - `SOFT` (Loose sand/sediment: 2.5× more destructible for massive craters)
+  - DRILLER also carves an oriented shaft along the impact velocity with unchanged splash.
 - **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, …) for the procedural tank sprites.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters). Object pool recycles launches and cluster sub-munitions.
 - **Multiple Weapons**
   - Missile (balanced, unlimited)
-  - Grenade (arcing + bounces on terrain)
+  - Grenade (arcing + bounces ~2× higher on rock; sticks, digs, and explodes in sand)
   - Cluster Bomb (sub-munitions)
   - Baby Nuke (massive blast; direct hit instakill)
   - Driller (oriented shaft + current splash; depth `DRILLER_SHAFT_DEPTH`)
@@ -31,7 +35,7 @@
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
   - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten). Wired in MainMenu + GameCanvas.
+  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten) and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health** — Tanks have both health and shield layers.
@@ -86,7 +90,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (359 unit tests across 48 files)
+# Run tests (402 unit tests across 51 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -116,7 +120,7 @@ This project follows a strict separation of concerns:
   - `v2-heuristic` → `AIHeuristicStrategy` ("IA OK")
   - `v3-sniper` → `AISniperStrategy` ("IA SNIPER")
   - `v4-smart` → `AISmartStrategy` ("IA EXPERT")
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (per-attempt lock + per-round warmup). Swap implementations without touching the core engine.
+  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (per-attempt lock + per-round warmup) and `terrainMaterialTactics.ts`. Swap implementations without touching the core engine.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -125,27 +129,27 @@ This project follows a strict separation of concerns:
 - No React state inside the render loop.
 - AI strategies must not block the core architecture.
 
-**Developer docs:** [AGENTS.md](./AGENTS.md) (coding agents — layout, commands, checklists) · [CLAUDE.md](./CLAUDE.md) · [GROK.md](./GROK.md) · [CURSOR.md](./CURSOR.md).
+**Developer docs:** [AGENTS.md](./AGENTS.md) (coding agents — layout, commands, checklists) · [CLAUDE.md](./CLAUDE.md) · [GROK.md](./GROK.md) · [CURSOR.md](./CURSOR.md) · [.cursorrules](./.cursorrules) · [.antigravityrules](./.antigravityrules).
 
 ---
 
 ## Current Status
 
-**v0.5.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.6.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
 - Retro `MENU` with 2–4 players, Human + four AI profiles, ColorPicker + TankPreview
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
-- Randomized / shuffled spawns each round; AABB shell-to-tank hits with owner-exit guard
-- Destructible heightmap, DRILLER oriented shaft, wind, `baseSpeed` 6.0 (full-width at POW 100)
-- Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
+- Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
+- Destructible heightmap, DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
+- Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` + `terrainMaterialTactics` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + $300 / $600 / $500 economy; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **359 unit tests** across **48 files** (Vitest)
+- **402 unit tests** across **51 files** (Vitest)
 
 Still planned:
 
@@ -185,8 +189,8 @@ To explore the codebase:
 - Start with `src/main.tsx` (entry; production console suppression), `src/App.tsx` + `src/appReducer.ts` (top-level phase), and `src/components/MainMenu.tsx`
 - Main game view + engine integration: `src/components/GameCanvas.tsx` + `useGameSession.ts`
 - Core simulation: `src/game/engine/GameEngine.ts` (indicator, recoil trigger, celebration, audio)
-- Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`)
-- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `roundSkill.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
+- Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`) + `src/types/terrain.ts` (materials, spawn, grenade bounce)
+- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `roundSkill.ts` + `terrainMaterialTactics.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tanks: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectiles: `src/game/engine/PhysicsEngine.ts`
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`

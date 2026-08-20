@@ -59,14 +59,14 @@ describe("BallisticsSimulator", () => {
 
 
   it("searchBallisticSolution finds a low-error shot on flat terrain", () => {
-    const terrain = new TerrainManager(800, 480);
-    terrain.generate();
+    const terrain = flatTerrain(800, 480, 0.72);
+    const groundY = 480 * 0.72;
 
     const result = searchBallisticSolution({
       sx: 150,
-      sy: 300,
+      sy: groundY - 15,
       tx: 550,
-      ty: 290,
+      ty: groundY - 15,
       wind: 0,
       gravity: 260,
       terrain,

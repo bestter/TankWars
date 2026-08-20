@@ -1,6 +1,6 @@
 # Bestter's TankWars — Cursor Rules (CURSOR.md)
 
-**Cursor users:** read [AGENTS.md](./AGENTS.md) first. It is the single source of truth for layout, commands, verification, pitfalls, and the file map. This file is a Cursor-friendly companion. It is not a changelog. Also see [.cursorrules](./.cursorrules), [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md).
+**Cursor users:** read [AGENTS.md](./AGENTS.md) first. It is the single source of truth for layout, commands, verification, pitfalls, and the file map. This file is a Cursor-friendly companion. It is not a changelog. Also see [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules), [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md).
 
 ## Role & Stack
 
@@ -22,13 +22,14 @@
 - Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`).
 - Tanks: `drawTankSprite` only (`src/game/rendering/tankSprite.ts`), 24×15, hull tilt + independent `turretAngle`. Active triangle, `ownerColor` shells, micro recoil.
 - State machine (`src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
+- Terrain: heightmap custom dans `Terrain.ts` (relief diversifié multi-octaves avec bosses et creux tactiques). Matériaux (`src/types/terrain.ts`) : `DIRT` (normal), `ROCK` (roche indestructible, mur pour le souffle latéral ; explosion par-dessus : +50% dégâts, portée inchangée), `SOFT` (terrain meuble, multiplicateur 2.5x). GRENADE : rebond ~2× sur ROCK ; colle et explose au premier contact sur SOFT (`grenadeBounceParams`).
 - Weapons (`WEAPON_REGISTRY` in `src/types/weapon.ts`): Missile unlimited (not in shop). Others decrement. DRILLER carves an oriented shaft of depth `DRILLER_SHAFT_DEPTH` (53 px); splash stays as registered. BULLET ×3 on direct hitbox hit. NUKE / THERMONUCLEAR have special VFX/audio in `GameEngine`.
 - Economy: $300 per destroy, $600 when only one tank remains, $500 survival after the round.
-- Spawns: shuffled X, 100 px gap, 13 % margins, `Y = groundY`.
+- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
-- Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **359** across **48** files (`npm run test`).
-- Version: `0.5.0` (footer on the main menu).
+- Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
+- Tests: **402** across **51** files (`npm run test`).
+- Version: `0.6.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
 
@@ -41,7 +42,7 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER — first shot ≥ 36 px, lock at shot 4, 14 % slip after |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT — first shot ≥ 36 px, lock at shot 3 |
 
-v2–v4 share `fallibleAim.ts` + `roundSkill.ts`. Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts` and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
 ## Edit strategy
 
@@ -63,3 +64,4 @@ v2–v4 share `fallibleAim.ts` + `roundSkill.ts`. Warmup ease-out: 15% on round 
 - [GROK.md](./GROK.md)
 - [CLAUDE.md](./CLAUDE.md)
 - [.cursorrules](./.cursorrules)
+- [.antigravityrules](./.antigravityrules)

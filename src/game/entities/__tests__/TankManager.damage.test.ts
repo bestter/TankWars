@@ -118,6 +118,34 @@ describe("TankManager.applyExplosionDamage", () => {
     expect(target.tank.isDead).toBe(false);
     expect(target.tank.health).toBe(target.tank.maxHealth);
   });
+
+  it("stops splash behind a rock wall but not when exploding on top of the rock", () => {
+    const terrain = new TerrainManager(200, 200);
+    terrain.loadHeights(Array.from({ length: 200 }, () => 100));
+    terrain.setMaterialRange(80, 120, "ROCK");
+
+    const behind = makePlayer({
+      id: "behind",
+      tank: makeTank("t-behind", 150, 100, { health: 100, shield: 0 }),
+    });
+    const sameSide = makePlayer({
+      id: "same",
+      tank: makeTank("t-same", 40, 100, { health: 100, shield: 0 }),
+    });
+    const tm = managerWith(behind, sameSide);
+
+    tm.applyExplosionDamage(30, 100, 160, 80, "killer", "MISSILE", false, terrain);
+
+    expect(behind.tank.health).toBe(100);
+    expect(sameSide.tank.health).toBeLessThan(100);
+
+    behind.tank.health = 100;
+    sameSide.tank.health = 100;
+    tm.applyExplosionDamage(100, 100, 160, 80, "killer", "MISSILE", false, terrain);
+
+    expect(behind.tank.health).toBeLessThan(100);
+    expect(sameSide.tank.health).toBeLessThan(100);
+  });
 });
 
 describe("TankManager.applyGravity and burial", () => {

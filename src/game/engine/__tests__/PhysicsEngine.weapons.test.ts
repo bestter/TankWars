@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { PhysicsEngine } from "../PhysicsEngine";
 import { TankManager } from "../../entities/TankManager";
 import { TerrainManager } from "../Terrain";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 import { DRILLER_SHAFT_DEPTH } from "../../../types/weapon";
+import { TERRAIN_MATERIAL } from "../../../types/terrain";
+import * as random from "../../../utils/random";
 
 function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
   return {
@@ -13,11 +15,17 @@ function mockTerrain(overrides: Partial<TerrainManager> = {}): TerrainManager {
     destroyTerrain: vi.fn(),
     destroyTerrainShaft: vi.fn(),
     getHeightAt: () => 400,
+    getMaterialAt: () => TERRAIN_MATERIAL.DIRT,
+    isBlastOccludedByRock: () => false,
     ...overrides,
   } as unknown as TerrainManager;
 }
 
 describe("PhysicsEngine weapon behavior", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("ignores the owner hitbox until the shell leaves it, then can hit others", () => {
     const owner = makePlayer({
       id: "owner",
@@ -77,6 +85,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "MISSILE",
       true,
+      expect.anything(),
     );
     expect(destroy).toHaveBeenCalled();
   });
@@ -97,6 +106,48 @@ describe("PhysicsEngine weapon behavior", () => {
 
     expect(destroy).toHaveBeenCalled();
     expect(physics.count).toBe(0);
+  });
+
+  it("detonates a grenade on first contact with SOFT sand", () => {
+    const destroy = vi.fn();
+    const terrain = mockTerrain({
+      checkCollision: () => true,
+      destroyTerrain: destroy,
+      getHeightAt: () => 300,
+      getMaterialAt: () => TERRAIN_MATERIAL.SOFT,
+    });
+    const physics = new PhysicsEngine();
+    physics.launchProjectile(100, 290, 45, 80, "GRENADE", "owner");
+    physics.updateProjectiles(1 / 60, 260, 0, terrain);
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(physics.count).toBe(0);
+  });
+
+  it("bounces a grenade about twice as high on ROCK as on DIRT", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
+
+    const bounceOnce = (material: (typeof TERRAIN_MATERIAL)[keyof typeof TERRAIN_MATERIAL]) => {
+      const physics = new PhysicsEngine();
+      const terrain = mockTerrain({
+        checkCollision: () => true,
+        getHeightAt: () => 300,
+        getMaterialAt: () => material,
+      });
+      physics.launchProjectile(100, 290, 45, 80, "GRENADE", "owner");
+      const shell = physics.getProjectiles()[0];
+      shell.vx = 4;
+      shell.vy = 10;
+      physics.updateProjectiles(1 / 60, 260, 0, terrain);
+      return physics.getProjectiles()[0]?.vy ?? 0;
+    };
+
+    const vyDirt = bounceOnce(TERRAIN_MATERIAL.DIRT);
+    const vyRock = bounceOnce(TERRAIN_MATERIAL.ROCK);
+
+    expect(vyDirt).toBeLessThan(0);
+    expect(vyRock).toBeLessThan(0);
+    expect(Math.abs(vyRock) / Math.abs(vyDirt)).toBeCloseTo(Math.SQRT2, 1);
   });
 
   it("explodes a grenade immediately on a direct tank hit", () => {
@@ -120,6 +171,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "GRENADE",
       true,
+      expect.anything(),
     );
     expect(physics.count).toBe(0);
   });
@@ -186,6 +238,7 @@ describe("PhysicsEngine weapon behavior", () => {
       "owner",
       "DRILLER",
       true,
+      expect.anything(),
     );
     expect(physics.count).toBe(0);
   });

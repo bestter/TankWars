@@ -235,6 +235,26 @@ describe("TankManager", () => {
       expect(p1LeftOfP2Count).toBeGreaterThan(0);
       expect(p2LeftOfP1Count).toBeGreaterThan(0);
     });
+
+    it("prefers tactical hollows while keeping minDist and margins", () => {
+      const tankManager = new TankManager();
+      const terrain = new TerrainManager(800, 600);
+      const heights = (terrain as unknown as { heights: number[] }).heights;
+      heights.fill(200);
+      for (let x = 180; x <= 220; x++) heights[x] = 420;
+      for (let x = 580; x <= 620; x++) heights[x] = 420;
+
+      const p1 = createDummyPlayer("1", false);
+      const p2 = createDummyPlayer("2", false);
+      tankManager.spawnTanks([p1, p2], terrain);
+
+      const xs = [p1.tank.position.x, p2.tank.position.x].sort((a, b) => a - b);
+      const inLeft = (x: number) => x >= 180 && x <= 220;
+      const inRight = (x: number) => x >= 580 && x <= 620;
+      expect(inLeft(xs[0])).toBe(true);
+      expect(inRight(xs[1])).toBe(true);
+      expect(xs[1] - xs[0]).toBeGreaterThanOrEqual(100);
+    });
   });
 
 

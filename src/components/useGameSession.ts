@@ -5,6 +5,7 @@ import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
+import type { TerrainMaterial } from "../types/terrain";
 import { DEFAULT_INVENTORY } from "../types/weapon";
 import { applyShopDelta } from "./shopBuySell";
 import type { GamePhase } from "../types/game";
@@ -82,6 +83,7 @@ interface UseGameSessionProps {
   localPlayerId?: string;
   roomId?: string;
   initialHeights?: number[];
+  initialMaterials?: TerrainMaterial[];
   initialWind?: number;
   initialCurrentPlayerIndex?: number;
   resumeCanvas?: OnlineCanvasSnapshot;
@@ -103,6 +105,7 @@ export function useGameSession({
   localPlayerId,
   roomId,
   initialHeights,
+  initialMaterials,
   initialWind,
   initialCurrentPlayerIndex,
   resumeCanvas,
@@ -214,6 +217,7 @@ export function useGameSession({
         slot,
         token,
         initialHeights,
+        initialMaterials,
         initialWind,
         initialCurrentPlayerIndex,
       },
@@ -245,6 +249,7 @@ export function useGameSession({
     canvasWind,
     initialPlayers,
     initialHeights,
+    initialMaterials,
     initialWind,
     initialCurrentPlayerIndex,
   ]);
@@ -376,7 +381,7 @@ export function useGameSession({
     // BEFORE setPlayers, so spawnTanks will snap tank Y positions to the server heights.
     if (gameMode === 'online' && initialHeights && initialHeights.length > 0) {
       try {
-        engine.getTerrain().loadHeights(initialHeights);
+        engine.getTerrain().loadHeights(initialHeights, initialMaterials);
       } catch (e) {
         console.warn('[useGameSession] could not load initialHeights', e);
       }
@@ -640,6 +645,7 @@ export function useGameSession({
         : createDemoPlayers();
 
     // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
+    engine.setLocalMatch(gameMode !== "online");
     if (localPlayerId) {
       engine.setLocalPlayerId(localPlayerId);
     }

@@ -104,3 +104,6 @@ export interface RoundResult {
   /** Ids of players still alive with health > 0 */
   survivors: string[];
 }
+
+export * from "./terrain";
+

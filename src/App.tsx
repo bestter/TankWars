@@ -58,12 +58,13 @@ function App() {
 
   const handleStartOnlineGame = (
     initialPlayers: Player[],
-    meta: { roomId: string; localPlayerId: string; gameMode: 'online'; initialHeights?: number[]; initialWind?: number; initialCurrentPlayerIndex?: number; slot?: number; token?: string; ws?: WebSocket },
+    meta: OnlineMeta & { gameMode: 'online' },
   ): void => {
     const onlineMeta: OnlineMeta = {
       roomId: meta.roomId,
       localPlayerId: meta.localPlayerId,
       initialHeights: meta.initialHeights,
+      initialMaterials: meta.initialMaterials,
       initialWind: meta.initialWind,
       initialCurrentPlayerIndex: meta.initialCurrentPlayerIndex,
       slot: meta.slot,
@@ -139,6 +140,7 @@ function App() {
             localPlayerId={onlineMeta?.localPlayerId}
             roomId={onlineMeta?.roomId}
             initialHeights={onlineMeta?.initialHeights}
+            initialMaterials={onlineMeta?.initialMaterials}
             initialWind={onlineMeta?.initialWind}
             initialCurrentPlayerIndex={onlineMeta?.initialCurrentPlayerIndex}
             resumeCanvas={resumeCanvas ?? undefined}

@@ -15,6 +15,12 @@ import { secureRandom } from '../../utils/random';
 import { DRILLER_SHAFT_DEPTH, WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
 import type { TerrainManager } from "./Terrain";
 import { VGA_PALETTE } from "../../types/game";
+import {
+  TERRAIN_MATERIAL,
+  ROCK_EXPLOSION_DAMAGE_MULTIPLIER,
+  GRENADE_MAX_BOUNCES,
+  grenadeBounceParams,
+} from "../../types/terrain";
 import type { TankManager } from "../entities/TankManager";
 
 export interface Projectile {
@@ -252,10 +258,18 @@ export class PhysicsEngine {
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
-    const maxDamage = weapon?.damage ?? 35;
+    const baseDamage = weapon?.damage ?? 35;
+
+    // Explosion PAR DESSUS la roche : souffle réfléchi, +50% de dégâts (portée inchangée).
+    // Explosion d'un CÔTÉ : la roche sert de mur (occlusion dans applyExplosionDamage).
+    const impactMaterial = terrainManager.getMaterialAt(p.x);
+    const maxDamage =
+      impactMaterial === TERRAIN_MATERIAL.ROCK
+        ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
+        : baseDamage;
 
     console.log(
-      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
+      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
     );
 
     // 1. Détruire le terrain (DRILLER: puits orienté selon la vitesse, splash inchangé)
@@ -274,7 +288,16 @@ export class PhysicsEngine {
 
     // 2. Appliquer les dégâts aux tanks (nouveau système)
     if (tankManager) {
-      tankManager.applyExplosionDamage(p.x, p.y, blastRadius, maxDamage, p.ownerId, p.weaponId, isDirectHit);
+      tankManager.applyExplosionDamage(
+        p.x,
+        p.y,
+        blastRadius,
+        maxDamage,
+        p.ownerId,
+        p.weaponId,
+        isDirectHit,
+        terrainManager,
+      );
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
     }
@@ -337,10 +360,9 @@ export class PhysicsEngine {
 
   /**
    * Handles bouncing behavior for GRENADE (physicsType === 'grenade').
-   * On terrain contact: reflects velocity with energy loss + friction, increments bounce count.
-   * After a few bounces (or when energy is low) it detonates via handleImpact (crater + damage).
+   * DIRT: lossy bounce. ROCK: ~2× bounce height. SOFT: sticks, digs, detonates.
+   * After a few bounces (or when energy is low) it detonates via handleImpact.
    * Direct tank hits always explode immediately (handled before reaching here).
-   * This makes the grenade "rebond" as advertised ("Grenade à rebond").
    */
   private bounceGrenade(
     index: number,
@@ -357,13 +379,20 @@ export class PhysicsEngine {
     const bounceCount = (p.bounceCount ?? 0) + 1;
     p.bounceCount = bounceCount;
 
+    const bounce = grenadeBounceParams(
+      terrainManager.getMaterialAt(p.x),
+      secureRandom,
+    );
+
     // Check if this contact should cause detonation rather than another bounce.
     // Explodes on the Nth bounce or when nearly stopped (prevents infinite micro-hops).
-    // 4 allows 3 visible bounces which feels good for "grenade à rebond" on rough maps.
+    // SOFT sand: first contact sticks, digs, and detonates.
     const speedSq = p.vx * p.vx + p.vy * p.vy;
-    const MAX_BOUNCES = 4;
     const shouldExplode =
-      bounceCount >= MAX_BOUNCES || speedSq < 10.24 || Math.abs(p.vy) < 2.0;
+      bounce.explodeOnContact ||
+      bounceCount >= GRENADE_MAX_BOUNCES ||
+      speedSq < 10.24 ||
+      Math.abs(p.vy) < 2.0;
 
     if (shouldExplode) {
       // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
@@ -372,12 +401,11 @@ export class PhysicsEngine {
     }
 
     // Apply bounce physics (retro artillery feel with lossy bounces).
-    // Vertical restitution: controls how high it bounces back up.
-    const restitution = 0.58 + secureRandom() * 0.12; // 0.58–0.70, slight natural variance
-    p.vy = -p.vy * restitution;
+    // ROCK: restitution × √2 ≈ 2× bounce height vs dirt.
+    p.vy = -p.vy * bounce.restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= 0.78 + (secureRandom() - 0.5) * 0.06;
+    p.vx *= bounce.friction + (secureRandom() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
     p.vy += (secureRandom() - 0.5) * 0.5;

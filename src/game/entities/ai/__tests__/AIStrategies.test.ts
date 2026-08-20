@@ -9,6 +9,7 @@ import { makeGameState, makePlayer, makeTank, flatTerrain } from "../../../__tes
 import * as random from "../../../../utils/random";
 import type { GameState } from "../../../../types/game";
 import type { Player } from "../../../../types/player";
+import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 
 describe("AI strategy executeTurn smoke", () => {
   const terrain = new TerrainManager(800, 480);
@@ -211,6 +212,81 @@ describe("AI weapon gates", () => {
       terrain,
     );
     expect(shot.weaponId).not.toBe("CLUSTER");
+  });
+
+  it("heuristic upgrades MISSILE to DRILLER when the target sits on SOFT", async () => {
+    const terrain = flatTerrain(800, 480);
+    terrain.setMaterialRange(480, 520, TERRAIN_MATERIAL.SOFT);
+    const strategy = new AIHeuristicStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v2-heuristic",
+      tank: makeTank("shooter-tank", 80, 310),
+      inventory: { DRILLER: 1 },
+    });
+    const target = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 500, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState({ ...shooter, aiProfile: "v2-heuristic" }, target, "v2-heuristic"),
+      terrain,
+    );
+    expect(shot.weaponId).toBe("DRILLER");
+  });
+
+  it("sniper drops DRILLER on ROCK after the first MISSILE shot", async () => {
+    const terrain = flatTerrain(800, 480);
+    terrain.setMaterialRange(480, 520, TERRAIN_MATERIAL.ROCK);
+    const strategy = new AISniperStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v3-sniper",
+      tank: makeTank("shooter-tank", 80, 336),
+      inventory: { DRILLER: 1 },
+    });
+    const target = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 500, 336),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const gs = makeGameState(
+      { ...shooter, aiProfile: "v3-sniper" },
+      target,
+      "v3-sniper",
+    );
+    const first = await strategy.executeTurn("shooter-tank", gs, terrain);
+    expect(first.weaponId).toBe("MISSILE");
+    const second = await strategy.executeTurn("shooter-tank", gs, terrain);
+    expect(second.weaponId).not.toBe("DRILLER");
+  });
+
+  it("simple v1 does not switch to DRILLER just because the target sits on SOFT", async () => {
+    const terrain = flatTerrain(800, 480);
+    terrain.setMaterialRange(480, 520, TERRAIN_MATERIAL.SOFT);
+    const strategy = new AISimpleStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v1-random",
+      tank: makeTank("shooter-tank", 80, 310, { currentWeapon: "MISSILE" }),
+      inventory: { DRILLER: 1 },
+    });
+    const target = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 500, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState({ ...shooter, aiProfile: "v1-random" }, target, "v1-random"),
+      terrain,
+    );
+    expect(shot.weaponId).toBe("MISSILE");
   });
 });
 
