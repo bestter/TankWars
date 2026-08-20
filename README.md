@@ -24,7 +24,7 @@
   - Missile (balanced, unlimited)
   - Grenade (arcing + bounces ~2× higher on rock; sticks, digs, and explodes in sand)
   - Cluster Bomb (sub-munitions)
-  - Baby Nuke (massive blast; direct hit instakill)
+  - Baby Nuke ($420; massive blast; direct hit instakill)
   - Driller (oriented shaft + current splash; depth `DRILLER_SHAFT_DEPTH`)
   - Bullet (precision shot, ×3 direct hitbox damage)
   - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; outer tanks fall into the crater; large VFX + deep bomb sound)
@@ -91,7 +91,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (428 unit tests across 52 files)
+# Run tests (430 unit tests across 52 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
