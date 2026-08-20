@@ -29,7 +29,7 @@
 - Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **413** across **51** files (`npm run test`).
+- Tests: **428** across **52** files (`npm run test`).
 - Version: `0.6.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
@@ -43,7 +43,7 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER — first shot ≥ 36 px, lock at shot 4, 14 % slip after |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT — first shot ≥ 36 px, lock at shot 3 |
 
-v2–v4 share `fallibleAim.ts` + `roundSkill.ts` and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts` and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
 ## Edit strategy
 

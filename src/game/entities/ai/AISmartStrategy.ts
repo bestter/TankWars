@@ -21,6 +21,7 @@ import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
+import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface SmartMemory {
   currentTargetId?: string;
@@ -202,6 +203,10 @@ export class AISmartStrategy implements AIEngine {
       chosenWeapon = hasGrenade ? "GRENADE" : "CLUSTER";
     }
     self.tank.currentWeapon = chosenWeapon; // Sync live snap for HUD display
+    const penalty = getHitReactionPenalty(
+      self.aiProfile ?? "v4-smart",
+      self.tank.hitReaction,
+    );
 
     // Compute the shot
     const { angle, power } = this.computeSmartShot(
@@ -214,7 +219,10 @@ export class AISmartStrategy implements AIEngine {
       chosenWeapon,
       mem,
       skill,
+      penalty,
     );
+
+    advanceHitReaction(self.tank.hitReaction);
 
     return {
       angle: Math.round(angle * 10) / 10,
@@ -291,10 +299,13 @@ export class AISmartStrategy implements AIEngine {
     weaponId: WeaponId,
     mem: SmartMemory,
     skill: number,
+    penalty = 0,
   ): { angle: number; power: number } {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx = target.tank.position.x + signedImpactOffset(attempts, "v4-smart", undefined, skill);
+    const tx =
+      target.tank.position.x +
+      signedImpactOffset(attempts, "v4-smart", undefined, skill, penalty);
     const ty = target.tank.position.y - 6;
     const dx = tx - sx;
     const isRight = dx > 0;

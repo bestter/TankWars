@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **413 tests** (51 files)
+- Run tests: `npm run test` (or `vitest run`) — **428 tests** (52 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -42,7 +42,7 @@ Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. First shot ≥ 36 px, lock at shot 4, 14 % slip after. |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. First shot ≥ 36 px, lock at shot 3. |
 
-v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit) and `terrainMaterialTactics.ts` (skip DRILLER on ROCK; prefer DRILLER on SOFT when the default pick is MISSILE). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim` and off material tactics.
+v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit) and `terrainMaterialTactics.ts` (skip DRILLER on ROCK; prefer DRILLER on SOFT when the default pick is MISSILE). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim` and off material tactics.
 
 New profile → new file under `game/entities/ai/`, register in `AIByProfileStrategy.ts` + `GameCanvas.tsx`.
 

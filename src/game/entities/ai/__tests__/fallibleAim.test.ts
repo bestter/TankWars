@@ -132,4 +132,27 @@ describe("fallibleAim", () => {
     spy.mockReturnValueOnce(0.5);
     expect(signedImpactOffset(1, "v4-smart")).toBe(42);
   });
+
+  it("increases miss magnitude when penalty is applied", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const normal = impactOffsetMagnitude(1, "v4-smart", 1, 0);
+    const penalized = impactOffsetMagnitude(1, "v4-smart", 1, 0.5);
+    expect(penalized).toBeCloseTo(normal * 1.5, 2);
+  });
+
+  it("adds disturbance offset on locked shots when penalty is applied", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const lockedNoPenalty = impactOffsetMagnitude(4, "v3-sniper", 1, 0);
+    expect(lockedNoPenalty).toBe(0);
+
+    const lockedWithPenalty = impactOffsetMagnitude(4, "v3-sniper", 1, 0.5);
+    expect(lockedWithPenalty).toBeGreaterThan(0);
+  });
+
+  it("adds disturbance offset to locked sniper when penalty is applied", () => {
+    const spy = vi.spyOn(random, "secureRandom");
+    spy.mockReturnValue(0.99); // no slip
+    expect(sniperImpactMagnitude(4, 1, 0)).toBe(0);
+    expect(sniperImpactMagnitude(4, 1, 0.5)).toBeGreaterThan(0);
+  });
 });
