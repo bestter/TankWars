@@ -23,9 +23,10 @@
 - Palette: `VGA_PALETTE` only (16 VGA + neon arcade extras).
 - Tanks: `drawTankSprite` only, 24×15, slope tilt, independent turret. Active triangle, `ownerColor` shells, micro recoil.
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
+- Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas: single red bar at $y-24$ when shield > 0 and health is full; stacked dual bars (red shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **402** across **51** files. Version `0.6.0`.
+- Tests: **410** across **51** files. Version `0.6.0`.
 
 ## AI
 
