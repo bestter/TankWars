@@ -150,4 +150,120 @@ describe('PlayerConfigRow', () => {
 
     expect(onTypeChange).toHaveBeenCalledWith(1, true);
   });
+
+  it('triggers onColorSelect when a color is clicked in the ColorPicker', () => {
+    const cfg = {
+      id: 'p-1',
+      name: 'Player 1',
+      isHuman: true,
+      color: VGA_PALETTE.BLUE,
+    };
+    const onColorSelect = vi.fn();
+
+    render(
+      <PlayerConfigRow
+        cfg={cfg as PlayerConfig}
+        index={2}
+        unavailableColors={new Set()}
+        colorPool={sampleColorPool}
+        nameInputRef={() => {}}
+        onNameChange={() => {}}
+        onColorSelect={onColorSelect}
+        onTypeChange={() => {}}
+        onUpdatePlayer={() => {}}
+      />
+    );
+
+    const buttons = screen.getAllByRole('button');
+    fireEvent.click(buttons[1]);
+
+    expect(onColorSelect).toHaveBeenCalledWith(2, VGA_PALETTE.RED);
+  });
+
+  it('calls nameInputRef with the input element', () => {
+    const cfg = {
+      id: 'p-1',
+      name: 'Player 1',
+      isHuman: true,
+      color: VGA_PALETTE.BLUE,
+    };
+    const nameInputRef = vi.fn();
+
+    render(
+      <PlayerConfigRow
+        cfg={cfg as PlayerConfig}
+        index={0}
+        unavailableColors={new Set()}
+        colorPool={sampleColorPool}
+        nameInputRef={nameInputRef}
+        onNameChange={() => {}}
+        onColorSelect={() => {}}
+        onTypeChange={() => {}}
+        onUpdatePlayer={() => {}}
+      />
+    );
+
+    expect(nameInputRef).toHaveBeenCalled();
+    const callArg = nameInputRef.mock.calls[0][0];
+    expect(callArg).toBeInstanceOf(HTMLInputElement);
+    expect(callArg.value).toBe('Player 1');
+  });
+
+  describe('Compact Status Indicator', () => {
+    const baseProps = {
+      index: 0,
+      unavailableColors: new Set<typeof VGA_PALETTE.BLUE>(),
+      colorPool: sampleColorPool,
+      nameInputRef: () => { },
+      onNameChange: () => { },
+      onColorSelect: () => { },
+      onTypeChange: () => { },
+      onUpdatePlayer: () => { },
+    };
+
+    it('displays P for human players', () => {
+      render(<PlayerConfigRow {...baseProps} cfg={{ id: 'p-1', name: 'P1', isHuman: true, color: VGA_PALETTE.BLUE } as PlayerConfig} />);
+      expect(screen.getByText('P')).toBeDefined();
+    });
+
+    it('displays CPU for default/v1-random AI', () => {
+      render(<PlayerConfigRow {...baseProps} cfg={{ id: 'p-1', name: 'P1', isHuman: false, aiProfile: 'v1-random', color: VGA_PALETTE.BLUE } as PlayerConfig} />);
+      expect(screen.getByText('CPU')).toBeDefined();
+    });
+
+    it('displays OK for v2-heuristic AI', () => {
+      render(<PlayerConfigRow {...baseProps} cfg={{ id: 'p-1', name: 'P1', isHuman: false, aiProfile: 'v2-heuristic', color: VGA_PALETTE.BLUE } as PlayerConfig} />);
+      expect(screen.getByText('OK')).toBeDefined();
+    });
+
+    it('displays SNIP for v3-sniper AI', () => {
+      render(<PlayerConfigRow {...baseProps} cfg={{ id: 'p-1', name: 'P1', isHuman: false, aiProfile: 'v3-sniper', color: VGA_PALETTE.BLUE } as PlayerConfig} />);
+      expect(screen.getByText('SNIP')).toBeDefined();
+    });
+
+    it('displays EXPT for v4-smart AI', () => {
+      render(<PlayerConfigRow {...baseProps} cfg={{ id: 'p-1', name: 'P1', isHuman: false, aiProfile: 'v4-smart', color: VGA_PALETTE.BLUE } as PlayerConfig} />);
+      expect(screen.getByText('EXPT')).toBeDefined();
+    });
+  });
+
+  it('displays CPU for missing aiProfile but isHuman false', () => {
+    const cfg = { id: 'p-1', name: 'P1', isHuman: false, color: VGA_PALETTE.BLUE };
+    render(
+      <PlayerConfigRow
+        cfg={cfg as PlayerConfig}
+        index={0}
+        unavailableColors={new Set()}
+        colorPool={sampleColorPool}
+        nameInputRef={() => {}}
+        onNameChange={() => {}}
+        onColorSelect={() => {}}
+        onTypeChange={() => {}}
+        onUpdatePlayer={() => {}}
+      />
+    );
+    expect(screen.getByText('CPU')).toBeDefined();
+    const select = screen.getByRole('combobox');
+    expect((select as HTMLSelectElement).value).toBe('v1-random');
+  });
 });
