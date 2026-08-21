@@ -25,7 +25,7 @@
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas: single dark cyan bar at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0.
 - Weapons: `WEAPON_REGISTRY` in `src/types/weapon.ts`. Missile unlimited, not in shop. Economy: $300 destroy / $600 last standing / $500 survival.
-- Pricing: Baby Nuke (`NUKE`) costs $420; all shop and AI purchases derive from `WEAPON_REGISTRY`.
+- Pricing: Baby Nuke (`NUKE`) costs $420; BULLDOZER $150 (0 HP / 0 blast, push + recoil, skips `applyExplosionDamage`). All shop and AI purchases derive from `WEAPON_REGISTRY`.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Tests: **430** across **52** files. Version `0.6.0`.
 
@@ -38,7 +38,7 @@ All tank AI implements `AIEngine`. Router: `AIByProfileStrategy` in `GameCanvas.
 - `v3-sniper` / `AISniperStrategy` — first shot ≥ 36 px, lock at shot 4, 14 % slip after lock.
 - `v4-smart` / `AISmartStrategy` — first shot ≥ 36 px, lock at shot 3.
 
-v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten) and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
+v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (BULLDOZER on map edge / drop ≥ 12 px; v1 never buys or fires it). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
 
 ## Response
 

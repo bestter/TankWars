@@ -288,6 +288,102 @@ describe("AI weapon gates", () => {
     );
     expect(shot.weaponId).toBe("MISSILE");
   });
+
+  it("heuristic picks BULLDOZER when the target sits at the map edge", async () => {
+    const terrain = flatTerrain(800, 480);
+    const strategy = new AIHeuristicStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v2-heuristic",
+      tank: makeTank("shooter-tank", 80, 310),
+      inventory: { BULLDOZER: 1 },
+    });
+    const edge = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 780, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState({ ...shooter, aiProfile: "v2-heuristic" }, edge, "v2-heuristic"),
+      terrain,
+    );
+    expect(shot.weaponId).toBe("BULLDOZER");
+  });
+
+  it("heuristic does not pick BULLDOZER on flat interior ground", async () => {
+    const terrain = flatTerrain(800, 480);
+    const strategy = new AIHeuristicStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v2-heuristic",
+      tank: makeTank("shooter-tank", 80, 310),
+      inventory: { BULLDOZER: 1 },
+    });
+    const interior = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 400, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState(
+        { ...shooter, aiProfile: "v2-heuristic" },
+        interior,
+        "v2-heuristic",
+      ),
+      terrain,
+    );
+    expect(shot.weaponId).not.toBe("BULLDOZER");
+  });
+
+  it("smart picks BULLDOZER when the target sits at the map edge", async () => {
+    const terrain = flatTerrain(800, 480);
+    const strategy = new AISmartStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v4-smart",
+      tank: makeTank("shooter-tank", 80, 310),
+      inventory: { BULLDOZER: 2 },
+    });
+    const edge = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 780, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState({ ...shooter, aiProfile: "v4-smart" }, edge, "v4-smart"),
+      terrain,
+    );
+    expect(shot.weaponId).toBe("BULLDOZER");
+  });
+
+  it("simple v1 does not switch to BULLDOZER even with stock at the map edge", async () => {
+    const terrain = flatTerrain(800, 480);
+    const strategy = new AISimpleStrategy();
+    const shooter = makePlayer({
+      id: "ai",
+      isHuman: false,
+      aiProfile: "v1-random",
+      tank: makeTank("shooter-tank", 80, 310, { currentWeapon: "MISSILE" }),
+      inventory: { BULLDOZER: 2 },
+    });
+    const edge = makePlayer({
+      id: "enemy",
+      tank: makeTank("enemy-tank", 780, 310),
+    });
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await strategy.executeTurn(
+      "shooter-tank",
+      makeGameState({ ...shooter, aiProfile: "v1-random" }, edge, "v1-random"),
+      terrain,
+    );
+    expect(shot.weaponId).toBe("MISSILE");
+  });
 });
 
 describe("AI fallibility contracts", () => {

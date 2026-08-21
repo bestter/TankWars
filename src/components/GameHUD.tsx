@@ -11,7 +11,7 @@ export interface GameHUDProps {
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
 
-const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER', 'BULLET'] as const;
+const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER', 'BULLET', 'BULLDOZER'] as const;
 
 function getShortLabel(id: WeaponId): string {
   switch (id) {
@@ -22,10 +22,11 @@ function getShortLabel(id: WeaponId): string {
     case 'THERMONUCLEAR': return 'THM';
     case 'DRILLER': return 'DRL';
     case 'BULLET': return 'BLT';
+    case 'BULLDOZER': return 'BLD';
   }
 }
 
-const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET"> = {
+const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET" | "weapons.BULLDOZER"> = {
   MISSILE: "weapons.MISSILE",
   GRENADE: "weapons.GRENADE",
   CLUSTER: "weapons.CLUSTER",
@@ -33,6 +34,7 @@ const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "wea
   THERMONUCLEAR: "weapons.THERMONUCLEAR",
   DRILLER: "weapons.DRILLER",
   BULLET: "weapons.BULLET",
+  BULLDOZER: "weapons.BULLDOZER",
 };
 
 export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
