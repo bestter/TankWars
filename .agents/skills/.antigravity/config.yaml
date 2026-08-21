@@ -1,0 +1,6 @@
+# Configuration Antigravity CLI
+tools:
+  bash:
+    auto_approve:
+      - pattern: "^npx vitest.*"
+      - pattern: "^npm run test.*"
