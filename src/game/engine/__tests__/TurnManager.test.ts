@@ -15,6 +15,7 @@ describe('TurnManager', () => {
   beforeEach(() => {
     mockTankManager = {
       getPlayers: vi.fn().mockReturnValue([]),
+      getPlayerById: vi.fn().mockImplementation((id) => (mockTankManager.getPlayers?.() || []).find((p) => p.id === id)),
       anyTankIsFalling: vi.fn().mockReturnValue(false),
     };
     mockTerrainManager = {};

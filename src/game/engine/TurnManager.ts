@@ -518,10 +518,10 @@ export class TurnManager {
       this.currentPlayerIndex = opts.fromSlot;
       player = players[opts.fromSlot];
     } else if (opts?.ownerId) {
-      const idx = players.findIndex((p) => p.id === opts.ownerId);
-      if (idx >= 0) {
-        this.currentPlayerIndex = idx;
-        player = players[idx];
+      const p = this.tankManager.getPlayerById(opts.ownerId);
+      if (p) {
+        this.currentPlayerIndex = players.indexOf(p);
+        player = p;
       }
     } else {
       player = this.getCurrentPlayer();
