@@ -196,6 +196,8 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     // Record current known healths of all alive enemies for next comparison
+    // we can just overwrite keys for current players, no need to delete or clear old keys
+    // since we only lookup by current enemy IDs anyway.
     for (const p of gameState.players) {
       if (p.id !== self.id) {
         mem.lastKnownHealth[p.id] = p.tank.isDead ? 0 : p.tank.health;

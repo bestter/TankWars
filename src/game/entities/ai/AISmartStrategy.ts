@@ -48,7 +48,10 @@ export class AISmartStrategy implements AIEngine {
   private resetForNewRound(mem: SmartMemory): void {
     mem.currentTargetId = undefined;
     mem.targetAttempts = {};
-    mem.lastKnownHealth = {};
+    // clear without reallocation to avoid GC overhead
+    for (const key in mem.lastKnownHealth) {
+      mem.lastKnownHealth[key] = 0;
+    }
     mem.lastPowerBias = 0;
   }
 
@@ -172,7 +175,8 @@ export class AISmartStrategy implements AIEngine {
     const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
     mem.targetAttempts[target!.id] = attempts;
 
-    mem.lastKnownHealth = {};
+    // we can just overwrite keys for current players, no need to delete or clear old keys
+    // since we only lookup by current enemy IDs anyway.
     for (const p of gameState.players) {
       if (p.id !== self.id && !p.tank.isDead) {
         mem.lastKnownHealth[p.id] = p.tank.health;
