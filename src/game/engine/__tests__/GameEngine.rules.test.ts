@@ -153,4 +153,18 @@ describe("GameEngine match rules", () => {
     expect(engine2.getWinner()).toBeNull();
     expect(onDraw).toHaveBeenCalledTimes(1);
   });
+
+  it("kills a tank and plays burial sound when it falls out of bounds (burial check)", () => {
+    const { a } = threePlayers();
+    const burialSpy = vi.spyOn(engine as unknown as { playTankSadBurialSound: () => void }, "playTankSadBurialSound");
+
+    // Move the tank far below the terrain to simulate a fall
+    a.tank.position.y = 2000;
+
+    // Call engine update to trigger the checkBurials (inlined via tankManager.checkTankBurial)
+    (engine as unknown as { update: (dt: number) => void }).update(0.016);
+
+    expect(a.tank.isDead).toBe(true);
+    expect(burialSpy).toHaveBeenCalledTimes(1);
+  });
 });
