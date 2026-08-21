@@ -29,7 +29,7 @@
 - Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared living-player index: `src/game/online/turnOrder.ts`. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
-- Tests: **430** across **52** files (`npm run test`).
+- Tests: **517** across **60** files (`npm run test`).
 - Version: `0.6.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

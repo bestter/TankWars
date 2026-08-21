@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 430 tests, 52 fichiers) |
+| Tests | `npm run test` (vitest, 517 tests, 60 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
