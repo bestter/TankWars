@@ -140,3 +140,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, WebSocket payloads for phase transitions (`ROUND_END`, `SHOP_FINISH`, and `SHOP_ENTER`) unconditionally accepted a full array of players from *any* client to overwrite the server's authoritative game state (`this.state.players`).
 **Learning:** When a game architecture splits simulation responsibilities (e.g., relying on the host/slot 0 for authoritative full-roster snapshots during phase transitions), failing to enforce authorization checks allows any connected client to send spoofed transition messages. This results in an Insecure Direct Object Reference (IDOR) / State Override attack where a malicious player can modify other players' health, money, or inventory, or forcefully end rounds.
 **Prevention:** Strictly enforce that only the designated authoritative client (e.g., the host at `slot === 0`) can dictate full-roster state updates or trigger phase transitions that affect all players.
+
+## 2026-10-18 - [Overly Permissive Regex for Origin Validation]
+**Vulnerability:** In `worker/src/game-room.ts` and `worker/src/index.ts`, the origin validation allowed any port for localhost via `^http:\/\/localhost:\d+$`.
+**Learning:** By allowing any port for local development, an attacker could potentially host a malicious payload on an unexpected port on localhost, which would bypass the origin check and execute in a trusted context (e.g., via a compromised local dev tool or an open port).
+**Prevention:** Always restrict origins to the specific known safe ports (e.g. `^http:\/\/localhost:(5173|8787)$`) rather than relying on a generic `\d+` wildcard for ports.

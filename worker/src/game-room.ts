@@ -334,8 +334,8 @@ export class GameRoom extends DurableObject {
       const isAllowedOrigin =
         body.origin === 'https://tankwars.pages.dev' ||
         /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(body.origin) ||
-        /^http:\/\/localhost:\d+$/.test(body.origin) ||
-        /^http:\/\/127\.0\.0\.1:\d+$/.test(body.origin);
+        /^http:\/\/localhost:(5173|8787)$/.test(body.origin) ||
+        /^http:\/\/127\.0\.0\.1:(5173|8787)$/.test(body.origin);
       if (isAllowedOrigin) {
         origin = body.origin;
       }
