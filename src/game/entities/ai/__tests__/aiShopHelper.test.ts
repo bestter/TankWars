@@ -176,10 +176,23 @@ describe("autoBuyForAI", () => {
     expect(player.inventory["DRILLER"]).toBe(7);
   });
 
-  it("caps BULLDOZER at 1 for non-displacement profiles (v1-random)", () => {
+  it("does not buy BULLDOZER for v1-random", () => {
     const player = makePlayer({
       isHuman: false,
       aiProfile: "v1-random",
+      money: 20000,
+      inventory: {},
+    });
+
+    autoBuyForAI(player);
+
+    expect(player.inventory["BULLDOZER"]).toBeUndefined();
+  });
+
+  it("caps BULLDOZER at 1 for v2-heuristic", () => {
+    const player = makePlayer({
+      isHuman: false,
+      aiProfile: "v2-heuristic",
       money: 20000,
       inventory: {},
     });

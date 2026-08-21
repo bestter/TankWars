@@ -18,6 +18,16 @@ function isSafePlayerTarget(value: unknown): value is Player {
   return proto === Object.prototype || proto === null;
 }
 
+function maxStockFor(
+  wid: WeaponId,
+  profile: string,
+  displacementFocused: boolean,
+): number {
+  if (wid === "BULLET" && profile === "v3-sniper") return 2;
+  if (wid === "BULLDOZER") return displacementFocused ? 2 : 1;
+  return Number.POSITIVE_INFINITY;
+}
+
 function toSafeInventory(
   inventory: Player["inventory"],
 ): NonNullable<Player["inventory"]> {
@@ -41,7 +51,6 @@ export function autoBuyForAI(aiPlayer: Player): void {
 
   const inventory = toSafeInventory(aiPlayer.inventory);
   const profile = aiPlayer.aiProfile ?? "v1-random";
-  // Seul v4-smart traite le Bulldozer comme outil tactique (déplacement).
   const isDisplacementFocused = profile === "v4-smart";
 
   // Budget et priorités selon le profil IA
@@ -51,7 +60,6 @@ export function autoBuyForAI(aiPlayer: Player): void {
     "GRENADE",
     "NUKE",
     "THERMONUCLEAR",
-    "BULLDOZER",
   ];
   let budgetRatio = 0.7; // défaut : 70 % du budget
 
@@ -69,6 +77,15 @@ export function autoBuyForAI(aiPlayer: Player): void {
       "THERMONUCLEAR",
     ];
     budgetRatio = 0.78;
+  } else if (profile === "v2-heuristic") {
+    preferredOrder = [
+      "CLUSTER",
+      "DRILLER",
+      "GRENADE",
+      "NUKE",
+      "THERMONUCLEAR",
+      "BULLDOZER",
+    ];
   }
 
   let spent = 0;
@@ -83,14 +100,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
     if (!def) continue;
 
     let buysThisWeapon = 0;
-    const maxStock =
-      wid === "BULLET" && profile === "v3-sniper"
-        ? 2
-        : wid === "BULLDOZER"
-          ? isDisplacementFocused
-            ? 2
-            : 1
-          : Number.POSITIVE_INFINITY;
+    const maxStock = maxStockFor(wid, profile, isDisplacementFocused);
     const maxBuysPerWeapon = 12;
 
     while (

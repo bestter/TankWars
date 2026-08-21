@@ -239,6 +239,61 @@ describe("Bulldozer Weapon & Displacement Mechanics", () => {
       expect(targetPush).toBeCloseTo(50, 0);
     });
 
+    it("does not mark wasDirectHit or deal HP on a bulldozer push", () => {
+      const shooter = makePlayer({
+        id: "shooter",
+        tank: makeTank("t-shoot", 100, 300, { health: 100, shield: 40 }),
+      });
+      const target = makePlayer({
+        id: "target",
+        tank: makeTank("t-targ", 300, 300, { health: 100, shield: 40 }),
+      });
+      const tanks = new TankManager();
+      tanks.setPlayers([shooter, target]);
+      const terrain = mockCustomTerrain(() => 300);
+
+      const physics = new PhysicsEngine();
+      physics.launchProjectile(290, 295, 0, 10, "BULLDOZER", "shooter");
+      const proj = physics.getProjectiles()[0];
+      proj.x = 300;
+      proj.y = 295;
+      proj.vx = 200;
+      proj.hasLeftOwnerHitbox = true;
+
+      physics.updateProjectiles(1 / 120, 0, 0, terrain, tanks);
+
+      expect(target.tank.position.x).toBeGreaterThan(300);
+      expect(target.tank.health).toBe(100);
+      expect(target.tank.shield).toBe(40);
+      expect(target.tank.hitReaction?.wasDirectHit).not.toBe(true);
+      expect(shooter.tank.hitReaction?.wasDirectHit).not.toBe(true);
+    });
+
+    it("skips applyExplosionDamage but still runs gravity/burial after a hit", () => {
+      const shooter = makePlayer({ id: "shooter", tank: makeTank("t-shoot", 100, 300) });
+      const target = makePlayer({ id: "target", tank: makeTank("t-targ", 300, 300) });
+      const tanks = new TankManager();
+      tanks.setPlayers([shooter, target]);
+      const terrain = mockCustomTerrain(() => 300);
+      const explosionSpy = vi.spyOn(tanks, "applyExplosionDamage");
+      const positionsSpy = vi.spyOn(tanks, "updateTankPositions");
+      const burialSpy = vi.spyOn(tanks, "checkTankBurial");
+
+      const physics = new PhysicsEngine();
+      physics.launchProjectile(290, 295, 0, 10, "BULLDOZER", "shooter");
+      const proj = physics.getProjectiles()[0];
+      proj.x = 300;
+      proj.y = 295;
+      proj.vx = 200;
+      proj.hasLeftOwnerHitbox = true;
+
+      physics.updateProjectiles(1 / 120, 0, 0, terrain, tanks);
+
+      expect(explosionSpy).not.toHaveBeenCalled();
+      expect(positionsSpy).toHaveBeenCalledTimes(1);
+      expect(burialSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("clamps push distance to MAX_BULLDOZER_PUSH for high velocity hits", () => {
       const shooter = makePlayer({ id: "shooter", tank: makeTank("t-shoot", 200, 300) });
       const target = makePlayer({ id: "target", tank: makeTank("t-targ", 400, 300) });

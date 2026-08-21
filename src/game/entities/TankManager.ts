@@ -561,11 +561,11 @@ export class TankManager {
    */
   public applyBulldozerDisplacement(
     tankId: string,
-    direction: 1 | -1 | 0,
+    direction: 1 | -1,
     requestedDistance: number,
     terrain: TerrainManager,
   ): number {
-    if (direction === 0 || requestedDistance <= 0) return 0;
+    if (requestedDistance <= 0) return 0;
     const player = this.playersMap.get(tankId);
     if (!player || player.tank.isDead) return 0;
 
@@ -574,68 +574,42 @@ export class TankManager {
     const startX = tank.position.x;
     let currentX = startX;
     let currentY = tank.position.y;
+    let remaining = requestedDistance;
 
-    const totalDistance = requestedDistance;
-    const stepCount = Math.floor(totalDistance);
-    const remainder = totalDistance - stepCount;
-
-    const steps: number[] = [];
-    for (let i = 0; i < stepCount; i++) {
-      steps.push(1);
-    }
-    if (remainder > 1e-4) {
-      steps.push(remainder);
-    }
-
-    for (const stepSize of steps) {
+    while (remaining > 1e-4) {
+      const stepSize = Math.min(1, remaining);
       const nextX = currentX + direction * stepSize;
 
-      // 1. Collision tank-à-tank : stop avant chevauchement
+      // Collision tank-à-tank : stop avant chevauchement
       let blockedByTank = false;
       for (const other of this.players) {
         if (other.id === tankId || other.tank.isDead) continue;
         const otherX = other.tank.position.x;
-        const currentDist = Math.abs(currentX - otherX);
-        const nextDist = Math.abs(nextX - otherX);
-        if (nextDist < tankWidth && nextDist < currentDist) {
+        if (
+          Math.abs(nextX - otherX) < tankWidth &&
+          Math.abs(nextX - otherX) < Math.abs(currentX - otherX)
+        ) {
           blockedByTank = true;
           break;
         }
       }
-      if (blockedByTank) {
-        break;
-      }
+      if (blockedByTank) break;
 
-      // 2. Obstacle terrain et pente
       // Hors carte : on laisse avancer pour que checkTankBurial élimine
       if (nextX < 0 || nextX > terrain.width) {
         currentX = nextX;
+        remaining -= stepSize;
         continue;
       }
 
       const nextGroundY = terrain.getHeightAt(nextX);
-      if (nextGroundY > currentY) {
-        // Sol descendant / cratère / vide : le char avance
-        currentX = nextX;
-        const downSlope = (nextGroundY - currentY) / stepSize;
-        if (downSlope <= BULLDOZER_MAX_CLIMB_SLOPE) {
-          // Pente douce descendante : glisse sur la surface
-          currentY = nextGroundY;
-        }
-        // Falaise / cratère : reste en l'air (gravité ensuite)
-      } else {
-        // Sol montant : pente ou mur
-        const deltaY = currentY - nextGroundY;
-        const slope = deltaY / stepSize;
-        if (slope <= BULLDOZER_MAX_CLIMB_SLOPE) {
-          // Pente douce : grimpe sur la surface
-          currentX = nextX;
-          currentY = nextGroundY;
-        } else {
-          // Paroi abrupte / mur solide : arrêt immédiat
-          break;
-        }
+      const slope = (currentY - nextGroundY) / stepSize;
+      if (slope > BULLDOZER_MAX_CLIMB_SLOPE) break; // mur
+      currentX = nextX;
+      if (Math.abs(slope) <= BULLDOZER_MAX_CLIMB_SLOPE) {
+        currentY = nextGroundY; // pente douce : coller au sol
       }
+      remaining -= stepSize;
     }
 
     tank.position.x = currentX;

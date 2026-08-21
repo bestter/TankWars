@@ -243,18 +243,50 @@ export class PhysicsEngine {
     this.checkSettlement();
   }
 
-  /**
-   * Gère l'impact d'un projectile (terrain ou tank direct hit) :
-   * - Destruction du terrain
-   * - Application des dégâts aux tanks (si TankManager fourni)
-   * - Mise à jour des positions des tanks (chute)
-   * - Suppression du projectile
-   */
-
   private freeProjectile(p: Projectile): void {
     this.projectilePool.push(p);
   }
 
+  /** Poussée cible + recul tireur. Auto-tir : déplacement net 0. */
+  private applyBulldozerHit(
+    p: Projectile,
+    terrainManager: TerrainManager,
+    tankManager: TankManager,
+  ): void {
+    const hitTank = tankManager.findTankAt(p.x, p.y);
+    if (!hitTank) return;
+    const pushDistance = Math.min(
+      Math.abs(p.vx) * BULLDOZER_PUSH_FACTOR,
+      MAX_BULLDOZER_PUSH,
+    );
+    if (pushDistance <= 0 || p.vx === 0) return;
+    const dir: 1 | -1 = p.vx > 0 ? 1 : -1;
+    if (p.ownerId && hitTank.id === p.ownerId) return;
+    tankManager.applyBulldozerDisplacement(
+      hitTank.id,
+      dir,
+      pushDistance,
+      terrainManager,
+    );
+    if (!p.ownerId) return;
+    const shooter = tankManager.getPlayerById(p.ownerId);
+    if (!shooter || shooter.tank.isDead) return;
+    const recoilDir: 1 | -1 = dir === 1 ? -1 : 1;
+    tankManager.applyBulldozerDisplacement(
+      p.ownerId,
+      recoilDir,
+      pushDistance,
+      terrainManager,
+    );
+  }
+
+  /**
+   * Gère l'impact d'un projectile (terrain ou tank direct hit) :
+   * - Effet d'arme (poussée Bulldozer, puits DRILLER, ou cratère)
+   * - Dégâts d'explosion (sauf BULLDOZER)
+   * - Mise à jour des positions des tanks (chute)
+   * - Suppression du projectile
+   */
   private handleImpact(
     index: number,
     p: Projectile,
@@ -274,45 +306,16 @@ export class PhysicsEngine {
         ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
         : baseDamage;
 
-    console.log(
-      `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
-    );
+    if (p.weaponId !== "BULLDOZER") {
+      console.log(
+        `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
+      );
+    }
 
-    // 1. Détruire le terrain ou appliquer la poussée Bulldozer
+    // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
       if (isDirectHit && tankManager) {
-        const hitTank = tankManager.findTankAt(p.x, p.y);
-        if (hitTank) {
-          const pushDistance = Math.min(
-            Math.abs(p.vx) * BULLDOZER_PUSH_FACTOR,
-            MAX_BULLDOZER_PUSH,
-          );
-          const dir: 1 | -1 | 0 = p.vx > 0 ? 1 : p.vx < 0 ? -1 : 0;
-          if (dir !== 0 && pushDistance > 0) {
-            // Auto-tir : les forces s'annulent (déplacement net 0).
-            if (!p.ownerId || hitTank.id !== p.ownerId) {
-              // 1) Poussée du char cible dans la direction d'impact
-              tankManager.applyBulldozerDisplacement(
-                hitTank.id,
-                dir,
-                pushDistance,
-                terrainManager,
-              );
-              // 2) Recul symétrique du char tireur dans la direction opposée
-              if (p.ownerId) {
-                const shooterPlayer = tankManager.getPlayerById(p.ownerId);
-                if (shooterPlayer && !shooterPlayer.tank.isDead) {
-                  tankManager.applyBulldozerDisplacement(
-                    p.ownerId,
-                    -dir as 1 | -1,
-                    pushDistance,
-                    terrainManager,
-                  );
-                }
-              }
-            }
-          }
-        }
+        this.applyBulldozerHit(p, terrainManager, tankManager);
       }
     } else if (p.weaponId === "DRILLER") {
       terrainManager.destroyTerrainShaft(
@@ -327,20 +330,22 @@ export class PhysicsEngine {
       terrainManager.destroyTerrain(p.x, p.y, blastRadius);
     }
 
-    // 2. Appliquer les dégâts aux tanks (nouveau système)
+    // 2. Dégâts d'explosion (BULLDOZER : 0 HP, pas de wasDirectHit)
     if (tankManager) {
-      tankManager.applyExplosionDamage(
-        p.x,
-        p.y,
-        blastRadius,
-        maxDamage,
-        p.ownerId,
-        p.weaponId,
-        isDirectHit,
-        terrainManager,
-      );
+      if (p.weaponId !== "BULLDOZER") {
+        tankManager.applyExplosionDamage(
+          p.x,
+          p.y,
+          blastRadius,
+          maxDamage,
+          p.ownerId,
+          p.weaponId,
+          isDirectHit,
+          terrainManager,
+        );
+      }
       tankManager.updateTankPositions(terrainManager);
-      tankManager.checkTankBurial(terrainManager); // Vérifie immédiatement les tanks enterrés
+      tankManager.checkTankBurial(terrainManager);
     }
 
     // 3. Notifier l'extérieur

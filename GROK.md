@@ -29,10 +29,11 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Terrain: multi-octaves procedural heightmap with bumps/creux. Materials: `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast damage, radius unaffected), `SOFT` (2.5x destruction multiplier).
 - DRILLER: oriented shaft (`DRILLER_SHAFT_DEPTH` = 53), splash unchanged.
+- BULLDOZER: $150, 0 HP / 0 blast. Direct hit pushes the target (`sign(vx)`) and recoils the shooter (`min(|vx| × 0.25, 120 px)`). Skips `applyExplosionDamage` (no `wasDirectHit`). Falls use existing gravity / lava.
 - GRENADE: ~2× bounce height on ROCK; first contact on SOFT sticks, digs, and detonates (`grenadeBounceParams`).
 - Weapon pricing comes from `WEAPON_REGISTRY`; Baby Nuke (`NUKE`) costs $420.
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
-- AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table) and pick weapons via `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`. All AI share `hitReaction.ts` (direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%).
+- AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table) and pick weapons via `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE) and `bulldozerTactics.ts` (BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`. All AI share `hitReaction.ts` (direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%).
 - Online MVP: local physics + server turn order. Authoritative server sim is still planned. `GAME_START` sends `materials` only when the server array matches `heights` length (headless generate still planned). `loadHeights` resets every column to `DIRT` if materials are omitted or mismatched.
 
 Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math.
