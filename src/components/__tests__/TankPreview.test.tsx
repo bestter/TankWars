@@ -93,4 +93,9 @@ describe('TankPreview', () => {
     expect(() => render(<TankPreview color={"#ff0000" as Color} />)).not.toThrow();
     expect(drawTankSprite).not.toHaveBeenCalled();
   });
+
+  it('handles unmount gracefully', () => {
+    const { unmount } = render(<TankPreview color={"#ff0000" as Color} />);
+    expect(() => unmount()).not.toThrow();
+  });
 });
