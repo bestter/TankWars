@@ -140,3 +140,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** In `worker/src/game-room.ts`, WebSocket payloads for phase transitions (`ROUND_END`, `SHOP_FINISH`, and `SHOP_ENTER`) unconditionally accepted a full array of players from *any* client to overwrite the server's authoritative game state (`this.state.players`).
 **Learning:** When a game architecture splits simulation responsibilities (e.g., relying on the host/slot 0 for authoritative full-roster snapshots during phase transitions), failing to enforce authorization checks allows any connected client to send spoofed transition messages. This results in an Insecure Direct Object Reference (IDOR) / State Override attack where a malicious player can modify other players' health, money, or inventory, or forcefully end rounds.
 **Prevention:** Strictly enforce that only the designated authoritative client (e.g., the host at `slot === 0`) can dictate full-roster state updates or trigger phase transitions that affect all players.
+
+## 2024-05-25 - Fix overly permissive CORS configuration for localhost
+**Vulnerability:** The CORS validation regex in `worker/src/index.ts` permitted any port on `localhost` or `127.0.0.1` (`\d+`).
+**Learning:** This could be exploited by an attacker running a malicious service on any port on the same machine to bypass CORS, as they could serve malicious content from a high port to spoof interactions.
+**Prevention:** Use restrictive and explicit configurations specifying the exact ports necessary for development/services (e.g. `(5173|4173|8787)`) when allowing `localhost` or `127.0.0.1`.
