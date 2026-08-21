@@ -18,7 +18,7 @@
 
 import { useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { Player } from "../types/player";
+import type { Player, AiProfile } from "../types/player";
 import { VGA_PALETTE } from "../types/game";
 type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
 import { DEFAULT_INVENTORY } from "../types/weapon";
@@ -42,7 +42,7 @@ export interface PlayerConfig {
   /** stable identifier for React list keys (avoids array index keys) */
   id: string;
   /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE" (Mr. Simple). */
-  aiProfile?: "v1-random" | "v2-heuristic" | "v3-sniper" | "v4-smart";
+  aiProfile?: AiProfile;
 }
 
 /** Couleurs tanks jouables (palette VGA rétro classique + extensions néon haute visibilité)

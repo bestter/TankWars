@@ -27,6 +27,7 @@
   - Baby Nuke ($420; massive blast; direct hit instakill)
   - Driller (oriented shaft + current splash; depth `DRILLER_SHAFT_DEPTH`)
   - Bullet (precision shot, ×3 direct hitbox damage)
+  - Bulldozer ($150; 0 HP / 0 blast; direct hit pushes the target and recoils the shooter; falls use existing gravity / lava; does not go through `applyExplosionDamage`)
   - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; outer tanks fall into the crater; large VFX + deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Unique VGA colors with live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
@@ -35,7 +36,7 @@
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
   - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten) and `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE).
+  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it).
   **Post-hit & fall learning curves (`hitReaction.ts`):** Direct projectile hit causes a 50% accuracy penalty on the next shot; falling causes a 1–25% penalty based on fall distance (0–120 px); both are cumulative on shot 1. On shot 2 (if not hit again), Sniper recovers immediately (0%), Expert has 12% penalty, OK and Simple have 25% penalty; shot 3 is fully normalized. Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.

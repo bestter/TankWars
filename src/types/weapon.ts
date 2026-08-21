@@ -18,7 +18,8 @@ export type WeaponId =
   | 'NUKE'
   | 'THERMONUCLEAR'
   | 'DRILLER'
-  | 'BULLET';
+  | 'BULLET'
+  | 'BULLDOZER';
 
 /** Static definition for a weapon type. */
 export interface Weapon {
@@ -43,6 +44,15 @@ export interface Weapon {
  * Éditer cette valeur pour retuner le forage — ne pas toucher à damage / blastRadius.
  */
 export const DRILLER_SHAFT_DEPTH = 53;
+
+/** Facteur multiplicateur pour convertir la vitesse horizontale (px/s) en distance de poussée (px) */
+export const BULLDOZER_PUSH_FACTOR = 0.25;
+
+/** Poussée horizontale maximale autorisée pour le Bulldozer (px) */
+export const MAX_BULLDOZER_PUSH = 120;
+
+/** Pente maximale (deltaY / deltaX) franchissable par une poussée (1.0 = ~45°) */
+export const BULLDOZER_MAX_CLIMB_SLOPE = 1.0;
 
 /** Master registry. All weapon behavior is derived from these values. */
 export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
@@ -115,6 +125,16 @@ export const WEAPON_REGISTRY: Record<WeaponId, Weapon> = {
     physicsType: 'projectile',
     color: VGA_PALETTE.WHITE,
     defaultAmmo: 3,
+  },
+  BULLDOZER: {
+    id: 'BULLDOZER',
+    name: 'Bulldozer',
+    price: 150,
+    damage: 0,
+    blastRadius: 0,
+    physicsType: 'projectile',
+    color: VGA_PALETTE.CYBER_YELLOW,
+    defaultAmmo: 2,
   },
 } as const;
 

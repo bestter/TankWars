@@ -2,6 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import worker, { type Env } from '../index';
 
 describe('Worker Entrypoint', () => {
+  const expectSecurityHeaders = (response: Response): void => {
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(response.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains');
+  };
+
   const createMockEnv = () => {
     const mockStub = {
       fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })),
@@ -28,6 +34,23 @@ describe('Worker Entrypoint', () => {
       const data = (await response.json()) as { ok: boolean; service: string };
       expect(data.ok).toBe(true);
       expect(data.service).toBe('tankwars-api');
+      expectSecurityHeaders(response);
+    });
+  });
+
+  describe('CORS preflight', () => {
+    it('adds CORS and security headers', async () => {
+      const { env } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'OPTIONS',
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(204);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
+      expectSecurityHeaders(response);
     });
   });
 
@@ -96,6 +119,7 @@ describe('Worker Entrypoint', () => {
       const response = await worker.fetch(request, env);
       expect(response.status).toBe(403);
       expect(await response.text()).toBe('Forbidden: Invalid Origin');
+      expectSecurityHeaders(response);
     });
 
     it('rejects upgrade with missing token', async () => {
@@ -105,6 +129,7 @@ describe('Worker Entrypoint', () => {
       });
       const response = await worker.fetch(request, env);
       expect(response.status).toBe(400);
+      expectSecurityHeaders(response);
     });
 
     it('rejects WebSocket upgrade with roomId longer than 256 characters', async () => {
