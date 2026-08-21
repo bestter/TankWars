@@ -94,8 +94,44 @@ describe('TankPreview', () => {
     expect(drawTankSprite).not.toHaveBeenCalled();
   });
 
-  it('handles unmount gracefully', () => {
-    const { unmount } = render(<TankPreview color={"#ff0000" as Color} />);
-    expect(() => unmount()).not.toThrow();
+  describe('Lifecycle and unmount behavior', () => {
+    it('does not recall drawTankSprite after unmount', () => {
+      const { unmount } = render(<TankPreview color={"#ff0000" as Color} />);
+      expect(drawTankSprite).toHaveBeenCalledTimes(1);
+
+      vi.clearAllMocks();
+
+      // Unmount the component
+      unmount();
+
+      // Ensure drawTankSprite was not invoked during or after unmount
+      expect(drawTankSprite).not.toHaveBeenCalled();
+      expect(mockFillRect).not.toHaveBeenCalled();
+    });
+
+    it('handles clean remounting with new props after unmounting', () => {
+      const { unmount } = render(<TankPreview color={"#ff0000" as Color} />);
+      expect(drawTankSprite).toHaveBeenCalledTimes(1);
+      expect(drawTankSprite).toHaveBeenLastCalledWith(
+        expect.anything(), 20, 13, 24, 15, 0, 25, "#ff0000"
+      );
+
+      unmount();
+      expect(drawTankSprite).toHaveBeenCalledTimes(1);
+
+      // Remount a fresh instance
+      render(<TankPreview color={"#00ff00" as Color} />);
+      expect(drawTankSprite).toHaveBeenCalledTimes(2);
+      expect(drawTankSprite).toHaveBeenLastCalledWith(
+        expect.anything(), 20, 13, 24, 15, 0, 25, "#00ff00"
+      );
+    });
+
+    it('handles unmount gracefully without throwing errors even if context is unavailable', () => {
+      HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(null);
+      const { unmount } = render(<TankPreview color={"#ff0000" as Color} />);
+      expect(() => unmount()).not.toThrow();
+      expect(drawTankSprite).not.toHaveBeenCalled();
+    });
   });
 });
