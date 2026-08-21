@@ -49,8 +49,6 @@ describe('MobileControls', () => {
       matches: query === '(pointer: coarse)',
       media: query,
       onchange: null,
-      addListener: vi.fn(), // Deprecated
-      removeListener: vi.fn(), // Deprecated
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
@@ -85,8 +83,6 @@ describe('MobileControls', () => {
       matches: false,
       media: query,
       onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
@@ -328,8 +324,6 @@ describe('MobileControls', () => {
         matches: false,
         media: query,
         onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
         addEventListener: vi.fn((event, listener) => {
           if (event === 'change') changeListener = listener;
         }),
