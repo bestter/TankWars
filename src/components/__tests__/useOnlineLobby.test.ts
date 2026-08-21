@@ -179,6 +179,32 @@ describe('useOnlineLobby', () => {
     vi.useRealTimers();
   });
 
+  it('handles create room failure with missing error text', async () => {
+    // Suppress console.error
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: vi.fn().mockRejectedValue(new Error('Network error reading text')),
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleCreateRoom();
+    });
+
+    expect(result.current.error).toBe('room_error_generic');
+    expect(consoleSpy).toHaveBeenCalledWith('[OnlineLobby] Create room failed with status', 500);
+
+    consoleSpy.mockRestore();
+  });
+
   it('cleans up WebSocket and timers on unmount', async () => {
     const mockWs = {
       send: vi.fn(),
