@@ -552,12 +552,12 @@ export class TankManager {
   }
 
   /**
-   * Applies horizontal displacement caused by a Bulldozer impact or recoil.
-   * Resolves movement step-by-step to prevent clipping through solid terrain or other tanks.
-   * Slopes up to BULLDOZER_MAX_CLIMB_SLOPE are climbed; steep walls stop the tank.
-   * Tank-to-tank collisions stop before overlapping.
-   * Movement beyond map bounds is permitted and will trigger boundary elimination.
-   * @returns Effective distance travelled in pixels.
+   * Applique un déplacement horizontal (impact ou recul du Bulldozer).
+   * Résout le mouvement pas à pas pour éviter de traverser le terrain ou un autre tank.
+   * Pentes ≤ BULLDOZER_MAX_CLIMB_SLOPE : le char grimpe ou glisse. Parois plus raides : arrêt.
+   * Collision tank-à-tank : arrêt avant chevauchement.
+   * Sortie de carte autorisée (élimination via checkTankBurial).
+   * @returns Distance effectivement parcourue (px).
    */
   public applyBulldozerDisplacement(
     tankId: string,
@@ -590,7 +590,7 @@ export class TankManager {
     for (const stepSize of steps) {
       const nextX = currentX + direction * stepSize;
 
-      // 1. Tank-to-tank collision: stop before overlapping with any other alive tank
+      // 1. Collision tank-à-tank : stop avant chevauchement
       let blockedByTank = false;
       for (const other of this.players) {
         if (other.id === tankId || other.tank.isDead) continue;
@@ -606,8 +606,8 @@ export class TankManager {
         break;
       }
 
-      // 2. Terrain obstacle and slope check
-      // If moving beyond map boundary, allow it so checkTankBurial can eliminate
+      // 2. Obstacle terrain et pente
+      // Hors carte : on laisse avancer pour que checkTankBurial élimine
       if (nextX < 0 || nextX > terrain.width) {
         currentX = nextX;
         continue;
@@ -615,8 +615,14 @@ export class TankManager {
 
       const nextGroundY = terrain.getHeightAt(nextX);
       if (nextGroundY > currentY) {
-        // Sol descendant / cratère / vide : le char avance librement
+        // Sol descendant / cratère / vide : le char avance
         currentX = nextX;
+        const downSlope = (nextGroundY - currentY) / stepSize;
+        if (downSlope <= BULLDOZER_MAX_CLIMB_SLOPE) {
+          // Pente douce descendante : glisse sur la surface
+          currentY = nextGroundY;
+        }
+        // Falaise / cratère : reste en l'air (gravité ensuite)
       } else {
         // Sol montant : pente ou mur
         const deltaY = currentY - nextGroundY;
@@ -633,7 +639,15 @@ export class TankManager {
     }
 
     tank.position.x = currentX;
-    tank.position.y = currentY;
+    const onMap = currentX >= 0 && currentX <= terrain.width;
+    if (onMap) {
+      const groundY = terrain.getHeightAt(currentX);
+      // Coller au sol sauf au-dessus d'un vide (la gravité gère la chute)
+      tank.position.y =
+        groundY - currentY <= VOID_FALL_THRESHOLD ? groundY : currentY;
+    } else {
+      tank.position.y = currentY;
+    }
 
     return Math.abs(currentX - startX);
   }

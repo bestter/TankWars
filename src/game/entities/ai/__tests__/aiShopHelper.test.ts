@@ -175,4 +175,30 @@ describe("autoBuyForAI", () => {
     expect(player.inventory["MISSILE"]).toBe(10);
     expect(player.inventory["DRILLER"]).toBe(7);
   });
+
+  it("caps BULLDOZER at 1 for non-displacement profiles (v1-random)", () => {
+    const player = makePlayer({
+      isHuman: false,
+      aiProfile: "v1-random",
+      money: 20000,
+      inventory: {},
+    });
+
+    autoBuyForAI(player);
+
+    expect(player.inventory["BULLDOZER"]).toBe(1);
+  });
+
+  it("caps BULLDOZER at 2 for displacement-focused v4-smart", () => {
+    const player = makePlayer({
+      isHuman: false,
+      aiProfile: "v4-smart",
+      money: 20000,
+      inventory: {},
+    });
+
+    autoBuyForAI(player);
+
+    expect(player.inventory["BULLDOZER"]).toBe(2);
+  });
 });

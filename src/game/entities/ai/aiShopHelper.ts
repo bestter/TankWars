@@ -41,20 +41,22 @@ export function autoBuyForAI(aiPlayer: Player): void {
 
   const inventory = toSafeInventory(aiPlayer.inventory);
   const profile = aiPlayer.aiProfile ?? "v1-random";
+  // Seul v4-smart traite le Bulldozer comme outil tactique (déplacement).
+  const isDisplacementFocused = profile === "v4-smart";
 
-  // Configure budget and priorities depending on AI profile
+  // Budget et priorités selon le profil IA
   let preferredOrder: WeaponId[] = [
     "CLUSTER",
     "DRILLER",
-    "BULLDOZER",
     "GRENADE",
     "NUKE",
     "THERMONUCLEAR",
+    "BULLDOZER",
   ];
-  let budgetRatio = 0.7; // default 70% budget spending
+  let budgetRatio = 0.7; // défaut : 70 % du budget
 
   if (profile === "v3-sniper") {
-    // Sniper only wants precise kinetic weapons: Driller, Bullet
+    // Sniper : armes cinétiques précises seulement (Bullet, Driller)
     preferredOrder = ["BULLET", "DRILLER"];
     budgetRatio = 0.7;
   } else if (profile === "v4-smart") {
@@ -82,7 +84,13 @@ export function autoBuyForAI(aiPlayer: Player): void {
 
     let buysThisWeapon = 0;
     const maxStock =
-      wid === "BULLET" && profile === "v3-sniper" ? 2 : Number.POSITIVE_INFINITY;
+      wid === "BULLET" && profile === "v3-sniper"
+        ? 2
+        : wid === "BULLDOZER"
+          ? isDisplacementFocused
+            ? 2
+            : 1
+          : Number.POSITIVE_INFINITY;
     const maxBuysPerWeapon = 12;
 
     while (

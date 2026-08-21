@@ -289,12 +289,8 @@ export class PhysicsEngine {
           );
           const dir: 1 | -1 | 0 = p.vx > 0 ? 1 : p.vx < 0 ? -1 : 0;
           if (dir !== 0 && pushDistance > 0) {
-            // Option A : l'auto-tir annule la poussée et le recul (déplacement net 0)
-            if (p.ownerId && hitTank.id === p.ownerId) {
-              console.log(
-                `[BULLDOZER] Self-hit on owner ${p.ownerId} - forces cancel out (0 displacement)`,
-              );
-            } else {
+            // Auto-tir : les forces s'annulent (déplacement net 0).
+            if (!p.ownerId || hitTank.id !== p.ownerId) {
               // 1) Poussée du char cible dans la direction d'impact
               tankManager.applyBulldozerDisplacement(
                 hitTank.id,

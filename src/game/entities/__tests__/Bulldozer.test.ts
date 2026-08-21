@@ -138,6 +138,78 @@ describe("Bulldozer Weapon & Displacement Mechanics", () => {
       expect(targetMoved).toBe(4);
       expect(shooterMoved).toBe(50);
     });
+
+    it("follows a gentle downhill slope and snaps Y to the surface", () => {
+      const target = makePlayer({ id: "p1", tank: makeTank("t1", 200, 300) });
+      const tanks = new TankManager();
+      tanks.setPlayers([target]);
+      const terrain = mockCustomTerrain((x) => 300 + (x - 200) * 0.5);
+
+      const actualDist = tanks.applyBulldozerDisplacement("p1", 1, 40, terrain);
+      expect(actualDist).toBe(40);
+      expect(target.tank.position.x).toBe(240);
+      expect(target.tank.position.y).toBe(terrain.getHeightAt(240));
+    });
+
+    it("stays airborne when pushed over a crater (Y not snapped into the pit)", () => {
+      const target = makePlayer({ id: "p1", tank: makeTank("t1", 200, 300) });
+      const tanks = new TankManager();
+      tanks.setPlayers([target]);
+      const terrain = mockCustomTerrain((x) => (x < 230 ? 300 : 380));
+
+      tanks.applyBulldozerDisplacement("p1", 1, 50, terrain);
+      expect(target.tank.position.x).toBe(250);
+      expect(target.tank.position.y).toBe(300);
+      expect(terrain.getHeightAt(250)).toBe(380);
+    });
+  });
+
+  describe("push over a void: fall damage / lava", () => {
+    it("inflicts fall damage after a push over a crater", () => {
+      const target = makePlayer({
+        id: "p1",
+        tank: makeTank("t1", 200, 300, { health: 100, shield: 40, maxShield: 40 }),
+      });
+      const tanks = new TankManager();
+      tanks.setPlayers([target]);
+      const terrain = mockCustomTerrain((x) => (x < 230 ? 300 : 380));
+
+      tanks.applyBulldozerDisplacement("p1", 1, 50, terrain);
+      tanks.updateTankPositions(terrain);
+      for (let i = 0; i < 120; i++) {
+        tanks.applyGravity(1 / 60, terrain);
+      }
+
+      expect(target.tank.position.x).toBe(250);
+      expect(target.tank.health).toBeLessThan(100);
+      expect(target.tank.shield).toBe(40);
+      expect(target.tank.hitReaction?.fallDistance).toBeGreaterThan(0);
+    });
+
+    it("kills on lava after a push over a pit", () => {
+      const target = makePlayer({
+        id: "p1",
+        tank: makeTank("t1", 200, 300, { health: 250, maxHealth: 250, shield: 0 }),
+      });
+      const tanks = new TankManager();
+      tanks.setPlayers([target]);
+      const onDied = vi.fn();
+      tanks.onPlayerDied = onDied;
+      const terrain = mockCustomTerrain((x) => (x < 230 ? 300 : 480), 800, 480);
+
+      tanks.applyBulldozerDisplacement("p1", 1, 50, terrain);
+      tanks.updateTankPositions(terrain);
+      for (let i = 0; i < 600 && !target.tank.isDead; i++) {
+        tanks.applyGravity(1 / 60, terrain);
+      }
+
+      expect(target.tank.isDead).toBe(true);
+      expect(onDied).toHaveBeenCalledWith(
+        "p1",
+        "burial",
+        expect.stringContaining("lava"),
+      );
+    });
   });
 
   describe("PhysicsEngine Bulldozer projectile interaction", () => {
