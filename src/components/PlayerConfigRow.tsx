@@ -3,6 +3,13 @@ import type { PlayerConfig } from "./MainMenu";
 import { type Color } from "../types/game";
 import { ColorPicker } from "./ColorPicker";
 import { TankPreview } from "./TankPreview";
+import {
+  AI_PROFILE_IDS,
+  AI_PROFILE_UI,
+  DEFAULT_AI_PROFILE,
+  controllerBadge,
+  isAiProfile,
+} from "./playerControllerUi";
 
 export interface PlayerConfigRowProps {
   cfg: PlayerConfig;
@@ -66,20 +73,15 @@ export function PlayerConfigRow({
           color: isHuman ? "#55FF55" : "#FFAA00",
           border: `1px solid ${isHuman ? "#55FF55" : "#FFAA00"}`,
         }}
-        value={isHuman ? "human" : (cfg.aiProfile ?? "v1-random")}
+        value={isHuman ? "human" : (cfg.aiProfile ?? DEFAULT_AI_PROFILE)}
         onChange={(e) => {
           const val = e.target.value;
           if (val === "human") {
             onTypeChange(index, true);
-          } else {
-            onUpdatePlayer(index, {
-              isHuman: false,
-              aiProfile: val as
-                | "v1-random"
-                | "v2-heuristic"
-                | "v3-sniper"
-                | "v4-smart",
-            });
+            return;
+          }
+          if (isAiProfile(val)) {
+            onUpdatePlayer(index, { isHuman: false, aiProfile: val });
           }
         }}
         aria-label={t("controller_type_aria_label", { num: index + 1 })}
@@ -90,30 +92,15 @@ export function PlayerConfigRow({
         >
           {t("controller_human")}
         </option>
-        <option
-          value="v1-random"
-          style={{ color: "#FFAA00", background: "#000000" }}
-        >
-          {t("controller_ai_simple")}
-        </option>
-        <option
-          value="v2-heuristic"
-          style={{ color: "#FFAA00", background: "#000000" }}
-        >
-          {t("controller_ai_ok")}
-        </option>
-        <option
-          value="v3-sniper"
-          style={{ color: "#FFAA00", background: "#000000" }}
-        >
-          {t("controller_ai_sniper")}
-        </option>
-        <option
-          value="v4-smart"
-          style={{ color: "#FFAA00", background: "#000000" }}
-        >
-          {t("controller_ai_expert")}
-        </option>
+        {AI_PROFILE_IDS.map((profile) => (
+          <option
+            key={profile}
+            value={profile}
+            style={{ color: "#FFAA00", background: "#000000" }}
+          >
+            {t(AI_PROFILE_UI[profile].optionKey)}
+          </option>
+        ))}
       </select>
 
       {/* Compact Status Indicator */}
@@ -126,15 +113,7 @@ export function PlayerConfigRow({
           textAlign: "center",
         }}
       >
-        {isHuman
-          ? "P"
-          : cfg.aiProfile === "v2-heuristic"
-            ? "OK"
-            : cfg.aiProfile === "v3-sniper"
-              ? "SNIP"
-              : cfg.aiProfile === "v4-smart"
-                ? "EXPT"
-                : "CPU"}
+        {controllerBadge(isHuman, cfg.aiProfile)}
       </span>
     </div>
   );
