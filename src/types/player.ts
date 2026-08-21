@@ -56,6 +56,9 @@ export interface TankHitReaction {
   shotStep: number;
 }
 
+/** Strategy identifier used by AIEngine when !isHuman. */
+export type AiProfile = "v1-random" | "v2-heuristic" | "v3-sniper" | "v4-smart";
+
 /** A participant in the match (human or AI). */
 export interface Player {
   id: PlayerId;
@@ -68,5 +71,5 @@ export interface Player {
   /** Ammo remaining per weapon type. Keys absent or <=0 mean unavailable. */
   inventory: Partial<Record<WeaponId, number>>;
   /** Strategy identifier used by AIEngine when !isHuman. Phase 1 = 'v1-random' (simple), 'v2-heuristic' = smarter "OK" AI (see AIHeuristicStrategy). */
-  aiProfile?: "v1-random" | "v2-heuristic" | "v3-sniper" | "v4-smart";
+  aiProfile?: AiProfile;
 }

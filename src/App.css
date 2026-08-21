@@ -201,6 +201,8 @@
   color: #ffffff;
   padding: 14px 18px 18px;
   text-align: center;
+  box-sizing: border-box;
+  max-height: 96%;
 }
 
 .retro-hud {

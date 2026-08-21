@@ -18,6 +18,7 @@ import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { shouldPickBulldozer } from "./bulldozerTactics";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
@@ -288,6 +289,8 @@ export class AISmartStrategy implements AIEngine {
 
     // 5. Driller for hidden targets under high slopes
     if (isHidden && has("DRILLER")) return "DRILLER";
+
+    if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
 
     // Default
     return "MISSILE";

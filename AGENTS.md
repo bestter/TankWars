@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 430 tests, 52 fichiers) |
+| Tests | `npm run test` (vitest, 517 tests, 60 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -56,7 +56,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
   - `shield <= 0` : barre unique verte à $y - 24$ (santé, rouge si $\le 40\%$).
 - **Spawns:** `spawnTanks` mélange les X, favorise les creux (max Y canvas parmi les candidats `minDist` 100 px), marges 13 %, `Y = groundY`. Humains locaux : skip 25 % des samples SOFT. IA (tous modes) : skip 25 % des samples ROCK (`spawnAcceptsMaterial`).
 - **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
-- **Armes:** `WEAPON_REGISTRY` dans `src/types/weapon.ts` est la source unique des caractéristiques et des prix. La Mini-Nuke (`NUKE`) coûte 420 $.
+- **Armes:** `WEAPON_REGISTRY` dans `src/types/weapon.ts` est la source unique des caractéristiques et des prix. La Mini-Nuke (`NUKE`) coûte 420 $. BULLDOZER : 150 $, 0 HP, 0 rayon ; hit direct = poussée `sign(vx)` + recul (`min(|vx| × 0.25, 120 px)`), pas de cratère, pas d’`applyExplosionDamage` (donc pas de `wasDirectHit`) ; chute / lave via la gravité existante ; hors-carte → burial.
 - **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).
 
 ### Online multiplayer
@@ -88,7 +88,7 @@ Profils (mixables dans une même partie) :
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT |
 
-Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE). **v1-random n’y touche pas.**
+Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE) et `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). Shop : v1 n’achète pas BULLDOZER ; v2 stock max 1 ; v3 jamais ; v4 stock max 2. **v1-random n’y touche pas.**
 
 Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
 | Profile | Courbe d’offset (px, par tentative sur la cible) |
@@ -126,6 +126,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Besoin | Fichiers |
 |--------|----------|
 | Nouvelle arme | `types/weapon.ts`, `GameEngine.ts`, `PhysicsEngine.ts`, shop + HUD |
+| BULLDOZER / poussée | `types/weapon.ts`, `PhysicsEngine.ts` (`applyBulldozerHit`), `TankManager.ts` (`applyBulldozerDisplacement`), `bulldozerTactics.ts` |
 | DRILLER / puits | `types/weapon.ts` (`DRILLER_SHAFT_DEPTH`), `Terrain.ts` (`destroyTerrainShaft`), `PhysicsEngine.ts` |
 | Nouveau cycle/manche | `TurnManager.ts`, `GameCanvas.tsx` |
 | Physique/explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
@@ -136,7 +137,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + la stratégie concernée |
+| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles

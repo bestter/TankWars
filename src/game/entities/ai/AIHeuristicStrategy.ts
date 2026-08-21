@@ -27,6 +27,7 @@ import { searchBallisticSolution } from "./BallisticsSimulator";
 import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
 import { roundSkill } from "./roundSkill";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { shouldPickBulldozer } from "./bulldozerTactics";
 import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
 
 interface AIMemory {
@@ -292,6 +293,8 @@ export class AIHeuristicStrategy implements AIEngine {
     ) {
       return "NUKE";
     }
+
+    if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
 
     // default unlimited
     return "MISSILE";

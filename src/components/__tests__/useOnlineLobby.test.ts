@@ -138,8 +138,9 @@ describe('useOnlineLobby', () => {
       onerror: null as (() => void) | null,
       onclose: null as ((ev: unknown) => void) | null,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const wsConstructor = vi.fn().mockImplementation(() => mockWs) as any;
+    const wsConstructor = vi.fn().mockImplementation(function () {
+      return mockWs;
+    }) as unknown as typeof WebSocket;
     global.WebSocket = wsConstructor;
 
     const { result } = renderHook(() =>
@@ -176,5 +177,46 @@ describe('useOnlineLobby', () => {
     // Should NOT have attempted any reconnect
     expect(wsConstructor).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it('cleans up WebSocket and timers on unmount', async () => {
+    const mockWs = {
+      send: vi.fn(),
+      close: vi.fn(),
+      readyState: 1,
+      onopen: null as (() => void) | null,
+      onmessage: null as ((ev: { data: string }) => void) | null,
+      onerror: null as (() => void) | null,
+      onclose: null as ((ev: unknown) => void) | null,
+    };
+    const wsConstructor = vi.fn().mockImplementation(function () {
+      return mockWs;
+    }) as unknown as typeof WebSocket;
+    global.WebSocket = wsConstructor;
+
+    const { result, unmount } = renderHook(() =>
+      useOnlineLobby({
+        initialRoomId: 'room-cleanup-123',
+        initialSlot: 0,
+        initialToken: 'TOK_CLEANUP',
+        onStartGame: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.setMyName('Unmounting Player');
+    });
+
+    await act(async () => {
+      await result.current.handleJoin();
+    });
+
+    expect(wsConstructor).toHaveBeenCalledTimes(1);
+
+    // Unmount the hook
+    unmount();
+
+    // WebSocket close must have been called on unmount
+    expect(mockWs.close).toHaveBeenCalled();
   });
 });

@@ -34,23 +34,14 @@ export default {
     );
     const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
 
-    // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': allowedOrigin,
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, x-room-id, x-slot, x-token',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
-    }
-
-    // Helper to add CORS to all responses
-    const withCors = (res: Response): Response => {
+    // Add CORS and security headers to HTTP responses. WebSocket upgrade responses
+    // are returned untouched below so their Cloudflare-specific `webSocket` is preserved.
+    const withResponseHeaders = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
+      headers.set('X-Content-Type-Options', 'nosniff');
+      headers.set('X-Frame-Options', 'DENY');
+      headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       return new Response(res.body, {
         status: res.status,
         statusText: res.statusText,
@@ -58,9 +49,21 @@ export default {
       });
     };
 
+    // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
+    if (request.method === 'OPTIONS') {
+      return withResponseHeaders(new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, x-room-id, x-slot, x-token',
+          'Access-Control-Max-Age': '86400',
+        },
+      }));
+    }
+
     // Health / version for easy checks during dev
     if (pathname === '/api/health') {
-      return withCors(new Response(JSON.stringify({ ok: true, service: 'tankwars-api', time: Date.now() }), {
+      return withResponseHeaders(new Response(JSON.stringify({ ok: true, service: 'tankwars-api', time: Date.now() }), {
         headers: { 'content-type': 'application/json' },
       }));
     }
@@ -112,19 +115,19 @@ export default {
         const errorText = await createResp.text();
         if (createResp.status >= 500) {
           console.error('[Worker] create room 500 error:', errorText);
-          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
             status: createResp.status,
             headers: { 'content-type': 'application/json' },
           }));
         }
-        return withCors(new Response(errorText || JSON.stringify({ error: 'Error creating room' }), {
+        return withResponseHeaders(new Response(errorText || JSON.stringify({ error: 'Error creating room' }), {
           status: createResp.status,
           headers: { 'content-type': createResp.headers.get('content-type') || 'application/json' },
         }));
       }
 
       const data = await createResp.json();
-      return withCors(new Response(JSON.stringify(data), {
+      return withResponseHeaders(new Response(JSON.stringify(data), {
         headers: { 'content-type': 'application/json' },
       }));
     }
@@ -133,7 +136,7 @@ export default {
     if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/join') && request.method === 'POST') {
       const roomId = pathname.split('/')[3];
       if (!roomId || roomId.length > 256) {
-        return withCors(new Response(JSON.stringify({ error: 'Invalid room ID' }), {
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid room ID' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
         }));
@@ -145,17 +148,17 @@ export default {
       if (!joinResp.ok) {
         if (joinResp.status >= 500) {
           console.error('[Worker] join room 500 error:', joinText);
-          return withCors(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
             status: joinResp.status,
             headers: { 'content-type': 'application/json' },
           }));
         }
-        return withCors(new Response(JSON.stringify({ error: joinText || 'Error joining room' }), {
+        return withResponseHeaders(new Response(JSON.stringify({ error: joinText || 'Error joining room' }), {
           status: joinResp.status,
           headers: { 'content-type': 'application/json' },
         }));
       }
-      return withCors(new Response(joinText, {
+      return withResponseHeaders(new Response(joinText, {
         status: joinResp.status,
         headers: { 'content-type': 'application/json' },
       }));
@@ -170,11 +173,11 @@ export default {
 
       // Strict origin validation for WebSocket to prevent CSRF/Cross-Site WebSocket Hijacking
       if (origin !== null && !isAllowedOrigin) {
-        return new Response('Forbidden: Invalid Origin', { status: 403 });
+        return withResponseHeaders(new Response('Forbidden: Invalid Origin', { status: 403 }));
       }
 
       if (!roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
-        return new Response('Missing or invalid room/slot/token', { status: 400 });
+        return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
 
       const id = env.GAME_ROOM.idFromName(roomId);
@@ -193,6 +196,6 @@ export default {
     }
 
     // Fallback
-    return withCors(new Response('Not found. TankWars Online API. See /api/health', { status: 404 }));
+    return withResponseHeaders(new Response('Not found. TankWars Online API. See /api/health', { status: 404 }));
   },
 } satisfies ExportedHandler<Env>;
