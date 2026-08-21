@@ -12,7 +12,13 @@ import { secureRandom } from '../../utils/random';
  * - Ballistic motion: gravity, horizontal wind acceleration, light air drag
  */
 
-import { DRILLER_SHAFT_DEPTH, WEAPON_REGISTRY, type WeaponId } from "../../types/weapon"; // Preserved: WeaponId is actively used for type annotations
+import {
+  DRILLER_SHAFT_DEPTH,
+  BULLDOZER_PUSH_FACTOR,
+  MAX_BULLDOZER_PUSH,
+  WEAPON_REGISTRY,
+  type WeaponId,
+} from "../../types/weapon";
 import type { TerrainManager } from "./Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import {
@@ -272,8 +278,47 @@ export class PhysicsEngine {
       `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
     );
 
-    // 1. Détruire le terrain (DRILLER: puits orienté selon la vitesse, splash inchangé)
-    if (p.weaponId === "DRILLER") {
+    // 1. Détruire le terrain ou appliquer la poussée Bulldozer
+    if (p.weaponId === "BULLDOZER") {
+      if (isDirectHit && tankManager) {
+        const hitTank = tankManager.findTankAt(p.x, p.y);
+        if (hitTank) {
+          const pushDistance = Math.min(
+            Math.abs(p.vx) * BULLDOZER_PUSH_FACTOR,
+            MAX_BULLDOZER_PUSH,
+          );
+          const dir: 1 | -1 | 0 = p.vx > 0 ? 1 : p.vx < 0 ? -1 : 0;
+          if (dir !== 0 && pushDistance > 0) {
+            // Option A : l'auto-tir annule la poussée et le recul (déplacement net 0)
+            if (p.ownerId && hitTank.id === p.ownerId) {
+              console.log(
+                `[BULLDOZER] Self-hit on owner ${p.ownerId} - forces cancel out (0 displacement)`,
+              );
+            } else {
+              // 1) Poussée du char cible dans la direction d'impact
+              tankManager.applyBulldozerDisplacement(
+                hitTank.id,
+                dir,
+                pushDistance,
+                terrainManager,
+              );
+              // 2) Recul symétrique du char tireur dans la direction opposée
+              if (p.ownerId) {
+                const shooterPlayer = tankManager.getPlayerById(p.ownerId);
+                if (shooterPlayer && !shooterPlayer.tank.isDead) {
+                  tankManager.applyBulldozerDisplacement(
+                    p.ownerId,
+                    -dir as 1 | -1,
+                    pushDistance,
+                    terrainManager,
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    } else if (p.weaponId === "DRILLER") {
       terrainManager.destroyTerrainShaft(
         p.x,
         p.y,
@@ -282,7 +327,7 @@ export class PhysicsEngine {
         DRILLER_SHAFT_DEPTH,
         blastRadius,
       );
-    } else {
+    } else if (blastRadius > 0) {
       terrainManager.destroyTerrain(p.x, p.y, blastRadius);
     }
 

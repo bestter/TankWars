@@ -46,6 +46,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
   let preferredOrder: WeaponId[] = [
     "CLUSTER",
     "DRILLER",
+    "BULLDOZER",
     "GRENADE",
     "NUKE",
     "THERMONUCLEAR",
@@ -60,6 +61,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
     preferredOrder = [
       "CLUSTER",
       "DRILLER",
+      "BULLDOZER",
       "GRENADE",
       "NUKE",
       "THERMONUCLEAR",

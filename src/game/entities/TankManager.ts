@@ -9,7 +9,7 @@ import { secureRandom } from "../../utils/random";
 import type { Player } from "../../types/player";
 import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
-import type { WeaponId } from "../../types/weapon";
+import { BULLDOZER_MAX_CLIMB_SLOPE, type WeaponId } from "../../types/weapon";
 import { drawTankSprite } from "../rendering/tankSprite";
 import {
   spawnAcceptsMaterial,
@@ -483,16 +483,19 @@ export class TankManager {
       const tank = player.tank;
       if (tank.isDead) continue;
 
+      const outOfBoundsX = tank.position.x < 0 || tank.position.x > terrain.width;
       const groundY = terrain.getHeightAt(tank.position.x);
       const unsupported = groundY >= pitFloorY;
       const fallenThrough = tank.position.y > terrain.height + 8;
       const touchedLava = tank.position.y >= lavaY;
 
-      if (unsupported || fallenThrough || touchedLava) {
+      if (outOfBoundsX || unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
         this.invalidateAliveCache();
         let details: string;
-        if (touchedLava) {
+        if (outOfBoundsX) {
+          details = `pushed off map boundary (x=${tank.position.x.toFixed(1)})`;
+        } else if (touchedLava) {
           details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
         } else if (unsupported) {
           details = `no ground support (surfaceY=${groundY.toFixed(1)} >= pitFloor=${pitFloorY.toFixed(1)})`;
@@ -515,6 +518,18 @@ export class TankManager {
     y: number,
     ignoreOwnerId?: string,
   ): boolean {
+    return this.findTankAt(x, y, ignoreOwnerId) !== null;
+  }
+
+  /**
+   * Returns the player whose alive tank contains the point (x, y) in its visual bounding box,
+   * or null if no alive tank was hit.
+   */
+  public findTankAt(
+    x: number,
+    y: number,
+    ignoreOwnerId?: string,
+  ): Player | null {
     const tankWidth = 24;
     const tankHeight = 15;
 
@@ -530,10 +545,97 @@ export class TankManager {
         y >= ty - tankHeight &&
         y <= ty
       ) {
-        return true;
+        return player;
       }
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * Applies horizontal displacement caused by a Bulldozer impact or recoil.
+   * Resolves movement step-by-step to prevent clipping through solid terrain or other tanks.
+   * Slopes up to BULLDOZER_MAX_CLIMB_SLOPE are climbed; steep walls stop the tank.
+   * Tank-to-tank collisions stop before overlapping.
+   * Movement beyond map bounds is permitted and will trigger boundary elimination.
+   * @returns Effective distance travelled in pixels.
+   */
+  public applyBulldozerDisplacement(
+    tankId: string,
+    direction: 1 | -1 | 0,
+    requestedDistance: number,
+    terrain: TerrainManager,
+  ): number {
+    if (direction === 0 || requestedDistance <= 0) return 0;
+    const player = this.playersMap.get(tankId);
+    if (!player || player.tank.isDead) return 0;
+
+    const tank = player.tank;
+    const tankWidth = 24;
+    const startX = tank.position.x;
+    let currentX = startX;
+    let currentY = tank.position.y;
+
+    const totalDistance = requestedDistance;
+    const stepCount = Math.floor(totalDistance);
+    const remainder = totalDistance - stepCount;
+
+    const steps: number[] = [];
+    for (let i = 0; i < stepCount; i++) {
+      steps.push(1);
+    }
+    if (remainder > 1e-4) {
+      steps.push(remainder);
+    }
+
+    for (const stepSize of steps) {
+      const nextX = currentX + direction * stepSize;
+
+      // 1. Tank-to-tank collision: stop before overlapping with any other alive tank
+      let blockedByTank = false;
+      for (const other of this.players) {
+        if (other.id === tankId || other.tank.isDead) continue;
+        const otherX = other.tank.position.x;
+        const currentDist = Math.abs(currentX - otherX);
+        const nextDist = Math.abs(nextX - otherX);
+        if (nextDist < tankWidth && nextDist < currentDist) {
+          blockedByTank = true;
+          break;
+        }
+      }
+      if (blockedByTank) {
+        break;
+      }
+
+      // 2. Terrain obstacle and slope check
+      // If moving beyond map boundary, allow it so checkTankBurial can eliminate
+      if (nextX < 0 || nextX > terrain.width) {
+        currentX = nextX;
+        continue;
+      }
+
+      const nextGroundY = terrain.getHeightAt(nextX);
+      if (nextGroundY > currentY) {
+        // Sol descendant / cratère / vide : le char avance librement
+        currentX = nextX;
+      } else {
+        // Sol montant : pente ou mur
+        const deltaY = currentY - nextGroundY;
+        const slope = deltaY / stepSize;
+        if (slope <= BULLDOZER_MAX_CLIMB_SLOPE) {
+          // Pente douce : grimpe sur la surface
+          currentX = nextX;
+          currentY = nextGroundY;
+        } else {
+          // Paroi abrupte / mur solide : arrêt immédiat
+          break;
+        }
+      }
+    }
+
+    tank.position.x = currentX;
+    tank.position.y = currentY;
+
+    return Math.abs(currentX - startX);
   }
 
   /**

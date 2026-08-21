@@ -7,7 +7,7 @@ import {
 } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
 
-const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET"> = {
+const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET" | "weapons.BULLDOZER"> = {
   MISSILE: "weapons.MISSILE",
   GRENADE: "weapons.GRENADE",
   CLUSTER: "weapons.CLUSTER",
@@ -15,9 +15,10 @@ const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "wea
   THERMONUCLEAR: "weapons.THERMONUCLEAR",
   DRILLER: "weapons.DRILLER",
   BULLET: "weapons.BULLET",
+  BULLDOZER: "weapons.BULLDOZER",
 };
 
-const WEAPON_DESC_KEYS: Record<WeaponId, "weapons.desc.MISSILE" | "weapons.desc.GRENADE" | "weapons.desc.CLUSTER" | "weapons.desc.NUKE" | "weapons.desc.THERMONUCLEAR" | "weapons.desc.DRILLER" | "weapons.desc.BULLET"> = {
+const WEAPON_DESC_KEYS: Record<WeaponId, "weapons.desc.MISSILE" | "weapons.desc.GRENADE" | "weapons.desc.CLUSTER" | "weapons.desc.NUKE" | "weapons.desc.THERMONUCLEAR" | "weapons.desc.DRILLER" | "weapons.desc.BULLET" | "weapons.desc.BULLDOZER"> = {
   MISSILE: "weapons.desc.MISSILE",
   GRENADE: "weapons.desc.GRENADE",
   CLUSTER: "weapons.desc.CLUSTER",
@@ -25,6 +26,7 @@ const WEAPON_DESC_KEYS: Record<WeaponId, "weapons.desc.MISSILE" | "weapons.desc.
   THERMONUCLEAR: "weapons.desc.THERMONUCLEAR",
   DRILLER: "weapons.desc.DRILLER",
   BULLET: "weapons.desc.BULLET",
+  BULLDOZER: "weapons.desc.BULLDOZER",
 };
 
 export interface WeaponShopProps {
@@ -57,12 +59,16 @@ export function WeaponShop({
       style={{
         border: `4px solid ${VGA_PALETTE.MAGENTA}`,
         width: "min(520px, 92%)",
-        padding: "16px 20px 20px",
+        maxHeight: "min(460px, 95%)",
+        display: "flex",
+        flexDirection: "column",
+        padding: "12px 16px",
         backgroundColor: "rgba(0, 0, 0, 0.94)",
+        boxSizing: "border-box",
       }}
     >
       {/* Header */}
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 6, flexShrink: 0 }}>
         <span style={{ color: VGA_PALETTE.CYAN, fontSize: "13px" }}>
           {t("shop_header", { current: shopIndex + 1, total: totalShoppers })}
         </span>
@@ -74,7 +80,8 @@ export function WeaponShop({
           alignItems: "center",
           justifyContent: "center",
           gap: 8,
-          marginBottom: 12,
+          marginBottom: 8,
+          flexShrink: 0,
         }}
       >
         <span
@@ -108,13 +115,27 @@ export function WeaponShop({
       </div>
 
       <div
-        style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginBottom: 10 }}
+        style={{
+          fontSize: "12px",
+          color: VGA_PALETTE.GRAY,
+          marginBottom: 8,
+          flexShrink: 0,
+        }}
       >
         {t("shop_instructions")}
       </div>
 
       {/* Weapon list */}
-      <div style={{ textAlign: "left", marginBottom: 16 }}>
+      <div
+        style={{
+          textAlign: "left",
+          marginBottom: 10,
+          overflowY: "auto",
+          flex: "1 1 auto",
+          minHeight: 0,
+          paddingRight: 4,
+        }}
+      >
         {SHOP_WEAPON_IDS.map((wid) => {
           const def = WEAPON_REGISTRY[wid];
           const currentStock = inventory[wid] ?? 0;
@@ -128,8 +149,8 @@ export function WeaponShop({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                padding: "6px 8px",
-                marginBottom: 5,
+                padding: "5px 8px",
+                marginBottom: 4,
                 backgroundColor: "#111",
                 border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
               }}
@@ -148,7 +169,7 @@ export function WeaponShop({
                 </div>
                 <div
                   style={{
-                    fontSize: "12px",
+                    fontSize: "11px",
                     color: VGA_PALETTE.GRAY,
                     lineHeight: 1.2,
                   }}
@@ -213,19 +234,21 @@ export function WeaponShop({
       </div>
 
       {/* Ready button */}
-      <button
-        type="button"
-        onClick={onReady}
-        className="retro-btn"
-        style={{ padding: "10px 36px" }}
-      >
-        {t("btn_ready_next_player")}
-      </button>
+      <div style={{ flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={onReady}
+          className="retro-btn"
+          style={{ padding: "8px 32px" }}
+        >
+          {t("btn_ready_next_player")}
+        </button>
 
-      <div
-        style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}
-      >
-        {t("ai_auto_buy_note")}
+        <div
+          style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 6 }}
+        >
+          {t("ai_auto_buy_note")}
+        </div>
       </div>
     </div>
   );
