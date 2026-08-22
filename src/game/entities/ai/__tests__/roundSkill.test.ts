@@ -5,6 +5,7 @@ import {
   AI_LATE_SKILL_CAP,
   roundSkill,
   aimMissScale,
+  clamp01,
 } from "../roundSkill";
 
 describe("roundSkill", () => {
@@ -34,5 +35,18 @@ describe("roundSkill", () => {
     expect(aimMissScale(0.15)).toBeCloseTo(1.75);
     expect(aimMissScale(1)).toBe(1);
     expect(aimMissScale(1.35)).toBeCloseTo(0.55);
+  });
+});
+
+
+describe("clamp01", () => {
+  it("clamps values correctly", () => {
+    expect(clamp01(-1)).toBe(0);
+    expect(clamp01(0)).toBe(0);
+    expect(clamp01(0.5)).toBe(0.5);
+    expect(clamp01(1)).toBe(1);
+    expect(clamp01(2)).toBe(1);
+    expect(clamp01(Number.NEGATIVE_INFINITY)).toBe(0);
+    expect(clamp01(Number.POSITIVE_INFINITY)).toBe(1);
   });
 });
