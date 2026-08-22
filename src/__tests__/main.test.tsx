@@ -17,13 +17,54 @@ vi.mock('../App.tsx', () => ({
 
 describe('main.tsx', () => {
   const originalEnvProd = import.meta.env.PROD;
-  const originalConsoleLog = console.log;
-  const originalConsoleInfo = console.info;
+  const neutralizedConsoleMethods = [
+    'log',
+    'info',
+    'warn',
+    'debug',
+    'trace',
+    'group',
+    'groupCollapsed',
+    'groupEnd',
+    'time',
+    'timeEnd',
+  ] as const;
+  const originalConsoleMethods = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    debug: console.debug,
+    trace: console.trace,
+    group: console.group,
+    groupCollapsed: console.groupCollapsed,
+    groupEnd: console.groupEnd,
+    time: console.time,
+    timeEnd: console.timeEnd,
+  };
+  const originalServiceWorkerDescriptor = Object.getOwnPropertyDescriptor(
+    navigator,
+    'serviceWorker',
+  );
+  let loadListener: EventListenerOrEventListenerObject | undefined;
+
+  const dispatchCapturedLoad = async () => {
+    expect(loadListener).toBeDefined();
+
+    const loadEvent = new Event('load');
+    if (typeof loadListener === 'function') {
+      loadListener.call(window, loadEvent);
+    } else {
+      loadListener?.handleEvent(loadEvent);
+    }
+
+    await new Promise<void>((resolve) => process.nextTick(resolve));
+  };
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="root"></div>';
     vi.resetModules();
     (import.meta.env as Record<string, unknown>).PROD = true;
+    loadListener = undefined;
 
     // Mock navigator.serviceWorker
     Object.defineProperty(navigator, 'serviceWorker', {
@@ -34,32 +75,44 @@ describe('main.tsx', () => {
       configurable: true,
     });
 
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener) => {
+      if (type === 'load') {
+        loadListener = listener;
+      }
+    });
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    (import.meta.env as Record<string, unknown>).PROD = originalEnvProd;
-    console.log = originalConsoleLog;
-    console.info = originalConsoleInfo;
     vi.restoreAllMocks();
+    (import.meta.env as Record<string, unknown>).PROD = originalEnvProd;
+    Object.assign(console, originalConsoleMethods);
+    if (originalServiceWorkerDescriptor) {
+      Object.defineProperty(navigator, 'serviceWorker', originalServiceWorkerDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, 'serviceWorker');
+    }
+    loadListener = undefined;
   });
 
   it('handles service worker registration success', async () => {
     await import('../main');
 
-    window.dispatchEvent(new Event('load'));
-    await new Promise(process.nextTick);
+    expect(window.addEventListener).toHaveBeenCalledTimes(1);
+    expect(window.addEventListener).toHaveBeenCalledWith('load', expect.any(Function));
 
+    await dispatchCapturedLoad();
+
+    expect(navigator.serviceWorker.register).toHaveBeenCalledTimes(1);
     expect(navigator.serviceWorker.register).toHaveBeenCalledWith('/sw.js');
   });
 
   it('handles service worker registration failure', async () => {
     navigator.serviceWorker.register = vi.fn().mockRejectedValue(new Error('Test registration error'));
 
-    await import('../main?bust=1');
+    await import('../main');
 
-    window.dispatchEvent(new Event('load'));
-    await new Promise(process.nextTick);
+    await dispatchCapturedLoad();
 
     expect(console.error).toHaveBeenCalledWith(
       "Service Worker registration failed",
@@ -70,10 +123,9 @@ describe('main.tsx', () => {
   it('handles service worker registration failure with non-Error object', async () => {
     navigator.serviceWorker.register = vi.fn().mockRejectedValue('String error');
 
-    await import('../main?bust=2');
+    await import('../main');
 
-    window.dispatchEvent(new Event('load'));
-    await new Promise(process.nextTick);
+    await dispatchCapturedLoad();
 
     expect(console.error).toHaveBeenCalledWith(
       "Service Worker registration failed",
@@ -82,10 +134,11 @@ describe('main.tsx', () => {
   });
 
   it('neutralizes console methods in production', async () => {
-    await import('../main?bust=3');
+    await import('../main');
 
-    expect(console.log.name).toBe('noop');
-    expect(console.info.name).toBe('noop');
+    neutralizedConsoleMethods.forEach((method) => {
+      expect(console[method].name).toBe('noop');
+    });
 
     // Verify noop works
     expect(() => console.log('test')).not.toThrow();
@@ -93,36 +146,15 @@ describe('main.tsx', () => {
 
   it('does not register service worker or neutralize console if not in PROD', async () => {
     (import.meta.env as Record<string, unknown>).PROD = false;
-    vi.mocked(navigator.serviceWorker.register).mockClear();
 
-    // Need to clear out event listeners manually by resetting the whole window
-    const oldWindow = global.window;
-    type EventCallback = (e: Event) => void;
-    const listeners: Record<string, EventCallback[]> = {};
-    const newWindow = {
-      ...oldWindow,
-      addEventListener: (type: string, listener: EventCallback) => {
-        if (!listeners[type]) listeners[type] = [];
-        listeners[type].push(listener);
-      },
-      dispatchEvent: (event: Event) => {
-        if (listeners[event.type]) {
-          listeners[event.type].forEach(l => l(event));
-        }
-        return true;
-      }
-    };
-    global.window = newWindow as unknown as Window & typeof globalThis;
+    await import('../main');
 
-    await import('../main?bust=4');
-
-    expect(console.log.name).not.toBe('noop');
-
-    global.window.dispatchEvent(new Event('load'));
-    await new Promise(process.nextTick);
+    expect(window.addEventListener).not.toHaveBeenCalled();
+    expect(loadListener).toBeUndefined();
+    neutralizedConsoleMethods.forEach((method) => {
+      expect(console[method]).toBe(originalConsoleMethods[method]);
+    });
 
     expect(navigator.serviceWorker.register).not.toHaveBeenCalled();
-
-    global.window = oldWindow;
   });
 });
