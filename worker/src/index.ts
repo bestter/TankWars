@@ -29,8 +29,8 @@ export default {
     const isAllowedOrigin = origin && (
       origin === 'https://tankwars.pages.dev' ||
       /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
-      /^http:\/\/localhost:\d+$/.test(origin) ||
-      /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
+      /^http:\/\/localhost:(5173|4173|8787)$/.test(origin) ||
+      /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(origin)
     );
     const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
 

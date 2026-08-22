@@ -546,7 +546,11 @@ export class GameRoom extends DurableObject {
 
 
     const sanitizedPlayers = Array.isArray(msg?.players)
-      ? msg.players.map(sanitizePlayer).filter((p): p is Player => p !== null)
+      ? msg.players.reduce((acc: Player[], p: unknown) => {
+          const s = sanitizePlayer(p);
+          if (s !== null) acc.push(s);
+          return acc;
+        }, [])
       : null;
     if (msg?.type === 'ROUND_END' && sanitizedPlayers && sanitizedPlayers.length > 0 && !this.state.roundEnded) {
       // SECURE: Enforce authorization - only the host (slot 0) can dictate the round end state for all players.
@@ -580,7 +584,11 @@ export class GameRoom extends DurableObject {
     }
     if (msg?.type === 'SHOP_ENTER') {
       const enterPlayers = Array.isArray(msg?.players)
-        ? msg.players.map(sanitizePlayer).filter((p): p is Player => p !== null)
+        ? msg.players.reduce((acc: Player[], p: unknown) => {
+          const s = sanitizePlayer(p);
+          if (s !== null) acc.push(s);
+          return acc;
+        }, [])
         : undefined;
       await this.handleShopEnter(
         slot,
@@ -590,7 +598,11 @@ export class GameRoom extends DurableObject {
     }
     if (msg?.type === 'SHOP_READY') {
       const readyPlayers = Array.isArray(msg?.players)
-        ? msg.players.map(sanitizePlayer).filter((p): p is Player => p !== null)
+        ? msg.players.reduce((acc: Player[], p: unknown) => {
+          const s = sanitizePlayer(p);
+          if (s !== null) acc.push(s);
+          return acc;
+        }, [])
         : undefined;
       await this.handleShopReady(slot, readyPlayers && readyPlayers.length > 0 ? readyPlayers : undefined);
       return;
@@ -599,13 +611,21 @@ export class GameRoom extends DurableObject {
     if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
       console.warn(`[GameRoom] Legacy SHOP_ADVANCE from slot ${slot} — treating as SHOP_READY`);
       const legacyReadyPlayers = Array.isArray(msg?.players)
-        ? msg.players.map(sanitizePlayer).filter((p): p is Player => p !== null)
+        ? msg.players.reduce((acc: Player[], p: unknown) => {
+          const s = sanitizePlayer(p);
+          if (s !== null) acc.push(s);
+          return acc;
+        }, [])
         : undefined;
       await this.handleShopReady(slot, legacyReadyPlayers && legacyReadyPlayers.length > 0 ? legacyReadyPlayers : undefined);
       return;
     }
     const finishPlayers = Array.isArray(msg?.players)
-      ? msg.players.map(sanitizePlayer).filter((p): p is Player => p !== null)
+      ? msg.players.reduce((acc: Player[], p: unknown) => {
+          const s = sanitizePlayer(p);
+          if (s !== null) acc.push(s);
+          return acc;
+        }, [])
       : null;
     if (msg?.type === 'SHOP_FINISH' && finishPlayers && finishPlayers.length > 0) {
       // SECURE: Enforce authorization - only the host (slot 0) can force-finish and dictate the full roster.
