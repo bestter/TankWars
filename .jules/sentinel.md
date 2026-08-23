@@ -145,3 +145,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The CORS validation regex in `worker/src/index.ts` permitted any port on `localhost` or `127.0.0.1` (`\d+`).
 **Learning:** This could be exploited by an attacker running a malicious service on any port on the same machine to bypass CORS, as they could serve malicious content from a high port to spoof interactions.
 **Prevention:** Use restrictive and explicit configurations specifying the exact ports necessary for development/services (e.g. `(5173|4173|8787)`) when allowing `localhost` or `127.0.0.1`.
+
+## 2026-08-11 - [Targeted State Desync via Client-Provided Broadcast ID]
+**Vulnerability:** In `worker/src/game-room.ts`, the `ROUND_END` broadcast accepted a `slot` field directly from the client's JSON payload (`typeof msg.slot === 'number' ? msg.slot : slot`) and forwarded it to all clients.
+**Learning:** Because the frontend uses the sender's `slot` to determine whether to process a broadcasted state update (e.g. `msg.slot !== localSlot`), allowing the client to forge this ID enables a Denial of Service (DoS) / targeted desynchronization attack. A malicious host can send `msg.slot: 1` to trick Player 1's client into ignoring the crucial `ROUND_END` state update, leaving them out of sync with the rest of the lobby.
+**Prevention:** Never trust client-provided sender identifiers (like `slot`, `userId`, etc.) when echoing or broadcasting events back to a room. Always strictly enforce the server-validated identity of the connection (e.g., the local `slot` variable bound to the authenticated WebSocket session).

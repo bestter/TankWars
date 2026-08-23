@@ -566,9 +566,9 @@ export class GameRoom extends DurableObject {
       this.broadcast({
         type: 'ROUND_END',
         players: sanitizedPlayers,
-        roundWinnerId: msg.roundWinnerId ?? null,
+        roundWinnerId: typeof msg.roundWinnerId === 'string' ? msg.roundWinnerId : null,
         isDraw: !!msg.isDraw,
-        slot: typeof msg.slot === 'number' ? msg.slot : slot,
+        slot: slot, // SECURE: Enforce actual sender slot to prevent targeted desync IDOR
       });
       return;
     }
