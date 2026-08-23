@@ -29,7 +29,6 @@
   "default_cpu_name_n": "CPU-{{num}}",
   "default_player_name_1": "Joueur-1",
   "default_player_name_n": "Joueur {{num}}",
-  "earnings_detail": " (base 500 si vivant, +300/kill, double pour le vainqueur)",
   "game_over": "Fin de partie",
   "hud_turn": "TOUR",
   "hud_weapon": "ARME",

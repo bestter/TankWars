@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **517 tests** (60 files)
+- Run tests: `npm run test` (or `vitest run`) — **560 tests** (64 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -29,7 +29,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **Spawns:** `spawnTanks` shuffles X, prefers tactical hollows (max canvas Y among minDist candidates), 100 px minimum gap, 13 % width margins, `Y = groundY`. Local humans skip 25 % of SOFT samples; AI skip 25 % of ROCK samples in every mode (`spawnAcceptsMaterial`).
 - **Hits:** AABB 24×15 in `PhysicsEngine.updateProjectiles`, with launch-time owner hitbox ignore until the shell exits it.
 - **Weapons & pricing:** `WEAPON_REGISTRY` in `src/types/weapon.ts` is the single source of truth. The Baby Nuke (`NUKE`) costs $420. BULLDOZER costs $150, deals 0 HP / 0 blast; a direct hit pushes the target (`sign(vx)`) and recoils the shooter (`min(|vx| × 0.25, 120 px)`). It does not call `applyExplosionDamage` (no `wasDirectHit`). Falls use existing gravity / lava; off-map is burial.
-- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared living-player index: `src/game/online/turnOrder.ts`. Deploy via `deploy-cloudflare.ps1` with `VITE_API_BASE`. MVP = local Canvas physics + server turn order; authoritative server sim is still planned. `GAME_START` includes `materials` only when the server array matches `heights` length (headless generate still planned). `loadHeights` resets to `DIRT` if materials are omitted or mismatched.
+- **Economy:** `src/game/economy/fixedPoint.ts` + `shotRewards.ts` calculate exact per-shot rewards from actual damage, attributed falls, destructions, and round outcome. Base $X$ is $3 / $3.50 / $4 for 2 / 3 / 4 starting players; self-damage is excluded and rounding happens once at the end. `GameEngine` owns shot ledgers and round earnings. `ShotEarningsOverlay` floats `+amount$` for 3 seconds without blocking; `RoundSummary` shows round earnings and the shop shows total balance.
+- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, authoritative reward/balance application, server-owned round end, and transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared files: `src/game/online/turnOrder.ts` and strict `protocol.ts`. The first connected human is reward authority; persistent failover promotes the next original human. MVP still uses local Canvas physics; full authoritative terrain/damage simulation is planned. `GAME_START` includes `materials` only when the server array matches `heights` length; `loadHeights` resets to `DIRT` otherwise.
 - **RNG:** `secureRandom` from `src/utils/random.ts` — never `Math.random`.
 
 ## AI Strategy Pattern

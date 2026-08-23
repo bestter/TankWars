@@ -30,6 +30,11 @@ export interface CurrentTurnInfo {
   tanksAreFalling: boolean;
 }
 
+export interface ShotResolutionGate {
+  hasEarnings: boolean;
+  isRoundEnd: boolean;
+}
+
 export class TurnManager {
   private tankManager: TankManager;
   private terrainManager: TerrainManager;
@@ -37,6 +42,7 @@ export class TurnManager {
     from: { x: number; y: number },
     command: FireCommand,
     ownerId?: string,
+    identity?: { shotId: number; isFirstShotOfRound: boolean },
   ) => void;
   private aiEngine?: AIEngine;
 
@@ -105,6 +111,9 @@ export class TurnManager {
    */
   private hasUnresolvedShot = false;
 
+  private isAwaitingEarningsRelease = false;
+  private resolvedShotEndsRound = false;
+
   /** Physics engine used to detect in-flight projectiles (set via connectToPhysics). */
   private physicsEngine: PhysicsEngine | null = null;
 
@@ -129,6 +138,8 @@ export class TurnManager {
 
   /** Callback optionnel appelé lorsque la simulation physique d'un tir est complètement stabilisée sur le client. */
   public onShotSettled?: () => void;
+  public onShotResolutionReady?: () => ShotResolutionGate;
+  public onResolvedRoundEnd?: () => void;
 
   /**
    * True when the shot currently resolving was fired locally (tryFire).
@@ -172,6 +183,7 @@ export class TurnManager {
       from: { x: number; y: number },
       command: FireCommand,
       ownerId?: string,
+      identity?: { shotId: number; isFirstShotOfRound: boolean },
     ) => void,
     aiEngine?: AIEngine,
   ) {
@@ -376,6 +388,7 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
+    this.clearEarningsRelease();
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
@@ -509,7 +522,11 @@ export class TurnManager {
   /** For online: replay a fire command from another client so terrain, damage and effects stay in sync. */
   public executeRemoteFire(
     command: FireCommand,
-    opts?: { fromSlot?: number; ownerId?: string },
+    opts?: {
+      fromSlot?: number;
+      ownerId?: string;
+      identity?: { shotId: number; isFirstShotOfRound: boolean };
+    },
   ): void {
     const players = this.tankManager.getPlayers();
     let player: Player | null = null;
@@ -544,15 +561,19 @@ export class TurnManager {
     player.tank.power = command.power;
     player.tank.currentWeapon = command.weaponId;
 
-    this.fireRemote(player, command);
+    this.fireRemote(player, command, opts?.identity);
     this.notifyHudUpdate();
   }
 
   /** Launch a replayed remote shot — bypasses local turn lock and falling-tank guards. */
-  private fireRemote(player: Player, command: FireCommand): void {
+  private fireRemote(
+    player: Player,
+    command: FireCommand,
+    identity?: { shotId: number; isFirstShotOfRound: boolean },
+  ): void {
     this.settlingShotWasLocal = false;
     this.hasUnresolvedShot = true;
-    this.fireCallback(player.tank.position, command, player.id);
+    this.fireCallback(player.tank.position, command, player.id, identity);
     this.consumeAmmo(player, command.weaponId);
     this.isInputLocked = true;
     this.armTurnLockSafetyWatchdog();
@@ -677,6 +698,7 @@ export class TurnManager {
   public nextTurn(): void {
     if (this.interRoundPaused) return;
     if (this.isMatchEnded()) return;
+    if (this.isAwaitingEarningsRelease) return;
 
     this.clearAwaitingStabilization();
 
@@ -763,6 +785,11 @@ export class TurnManager {
     }
     this.hasUnresolvedShot = false;
 
+    const gate = this.onShotResolutionReady?.() ?? {
+      hasEarnings: false,
+      isRoundEnd: false,
+    };
+
     const wasLocalShot = this.settlingShotWasLocal;
     this.settlingShotWasLocal = false;
 
@@ -786,7 +813,26 @@ export class TurnManager {
       this.notifyHudUpdate();
       return;
     }
-    this.nextTurn();
+    this.isAwaitingEarningsRelease = true;
+    this.resolvedShotEndsRound = gate.isRoundEnd;
+    this.releaseResolvedShot();
+  }
+
+  /** Termine une résolution locale; demeure idempotent pour les appels tardifs. */
+  public releaseResolvedShot(): void {
+    if (!this.isAwaitingEarningsRelease) return;
+    this.isAwaitingEarningsRelease = false;
+    const endsRound = this.resolvedShotEndsRound;
+    this.resolvedShotEndsRound = false;
+    if (endsRound) {
+      this.onResolvedRoundEnd?.();
+    } else {
+      this.nextTurn();
+    }
+  }
+
+  public isWaitingForEarningsRelease(): boolean {
+    return this.isAwaitingEarningsRelease;
   }
 
   private isLocalHumanTurn(): boolean {
@@ -878,6 +924,7 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
+    this.clearEarningsRelease();
     this.isInputLocked = !this.isLocalHumanTurn();
 
     const players = this.tankManager.getPlayers();
@@ -926,6 +973,7 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
+    this.clearEarningsRelease();
     this.isInputLocked = !this.isLocalHumanTurn();
     this.isProcessingAI = false;
     this.interRoundPaused = false;
@@ -933,6 +981,11 @@ export class TurnManager {
 
     // Invalidate any pending async AI activity
     this.aiTurnGeneration++;
+  }
+
+  private clearEarningsRelease(): void {
+    this.isAwaitingEarningsRelease = false;
+    this.resolvedShotEndsRound = false;
   }
 
   /**

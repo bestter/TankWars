@@ -30,6 +30,8 @@ import {
 import type { TankManager } from "../entities/TankManager";
 
 export interface Projectile {
+  shotId: number;
+  munitionId: number;
   x: number;
   y: number;
   vx: number;
@@ -52,6 +54,8 @@ export interface Projectile {
 }
 
 export interface ProjectileHitEvent {
+  shotId: number;
+  munitionId: number;
   x: number;
   y: number;
   weaponId: WeaponId;
@@ -63,6 +67,7 @@ const PROJECTILE_DRAG = 0.28;
 export class PhysicsEngine {
   private projectiles: Projectile[] = [];
   private projectilePool: Projectile[] = [];
+  private nextFallbackShotId = 1;
 
 
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
@@ -74,7 +79,19 @@ export class PhysicsEngine {
    * L'axe Y est inversé pour correspondre au canvas (Y vers le bas).
    */
 
-  private getProjectile(x: number, y: number, vx: number, vy: number, weaponId: WeaponId, ownerId?: string, ownerColor?: string, isSubmunition?: boolean, bounceCount?: number): Projectile {
+  private getProjectile(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    weaponId: WeaponId,
+    shotId: number,
+    munitionId: number,
+    ownerId?: string,
+    ownerColor?: string,
+    isSubmunition?: boolean,
+    bounceCount?: number,
+  ): Projectile {
     const p = this.projectilePool.pop();
     if (p) {
       p.x = x;
@@ -82,6 +99,8 @@ export class PhysicsEngine {
       p.vx = vx;
       p.vy = vy;
       p.weaponId = weaponId;
+      p.shotId = shotId;
+      p.munitionId = munitionId;
       p.ownerId = ownerId;
       p.ownerColor = ownerColor;
       p.isSubmunition = isSubmunition;
@@ -98,6 +117,8 @@ export class PhysicsEngine {
       vx,
       vy,
       weaponId,
+      shotId,
+      munitionId,
       ownerId,
       ownerColor,
       isSubmunition,
@@ -114,6 +135,7 @@ export class PhysicsEngine {
     weaponId: WeaponId,
     ownerId?: string,
     ownerColor?: string,
+    identity?: { shotId: number; munitionId: number },
   ): void {
     const rad = (angle * Math.PI) / 180;
 
@@ -124,7 +146,19 @@ export class PhysicsEngine {
     const vx = Math.cos(rad) * speed;
     const vy = -Math.sin(rad) * speed; // négatif = vers le haut dans le canvas
 
-    const p = this.getProjectile(startX, startY, vx, vy, weaponId, ownerId, ownerColor);
+    const shotId = identity?.shotId ?? this.nextFallbackShotId++;
+    const munitionId = identity?.munitionId ?? 0;
+    const p = this.getProjectile(
+      startX,
+      startY,
+      vx,
+      vy,
+      weaponId,
+      shotId,
+      munitionId,
+      ownerId,
+      ownerColor,
+    );
     p.initialAngle = angle;
     p.initialPower = power;
     p.isSubmunition = undefined;
@@ -255,6 +289,7 @@ export class PhysicsEngine {
   ): void {
     const hitTank = tankManager.findTankAt(p.x, p.y);
     if (!hitTank) return;
+    tankManager.markDirectlyAffected(hitTank.id, p.munitionId);
     const pushDistance = Math.min(
       Math.abs(p.vx) * BULLDOZER_PUSH_FACTOR,
       MAX_BULLDOZER_PUSH,
@@ -333,16 +368,18 @@ export class PhysicsEngine {
     // 2. Dégâts d'explosion (BULLDOZER : 0 HP, pas de wasDirectHit)
     if (tankManager) {
       if (p.weaponId !== "BULLDOZER") {
-        tankManager.applyExplosionDamage(
-          p.x,
-          p.y,
-          blastRadius,
+        tankManager.applyExplosionDamage({
+          explosionX: p.x,
+          explosionY: p.y,
+          radius: blastRadius,
           maxDamage,
-          p.ownerId,
-          p.weaponId,
+          shooterId: p.ownerId,
+          weaponId: p.weaponId,
           isDirectHit,
-          terrainManager,
-        );
+          terrain: terrainManager,
+          shotId: p.shotId,
+          munitionId: p.munitionId,
+        });
       }
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager);
@@ -350,6 +387,8 @@ export class PhysicsEngine {
 
     // 3. Notifier l'extérieur
     this.onProjectileHit?.({
+      shotId: p.shotId,
+      munitionId: p.munitionId,
       x: p.x,
       y: p.y,
       weaponId: p.weaponId,
@@ -390,7 +429,18 @@ export class PhysicsEngine {
       const relX = p.x + Math.cos(dir) * offset;
       const relY = p.y + Math.sin(dir) * offset;
 
-      const sub = this.getProjectile(relX, relY, subVx, subVy, p.weaponId, p.ownerId, p.ownerColor, true);
+      const sub = this.getProjectile(
+        relX,
+        relY,
+        subVx,
+        subVy,
+        p.weaponId,
+        p.shotId,
+        k + 1,
+        p.ownerId,
+        p.ownerColor,
+        true,
+      );
       sub.lastVy = undefined;
       sub.initialAngle = undefined;
       sub.initialPower = undefined;
@@ -500,6 +550,12 @@ export class PhysicsEngine {
   /** Retourne la liste des projectiles actifs (lecture seule) */
   public getProjectiles(): readonly Projectile[] {
     return this.projectiles;
+  }
+
+  public reassignShotId(previousShotId: number, shotId: number): void {
+    for (const projectile of this.projectiles) {
+      if (projectile.shotId === previousShotId) projectile.shotId = shotId;
+    }
   }
 
   /**

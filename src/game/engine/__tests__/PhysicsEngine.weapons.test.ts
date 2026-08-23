@@ -78,14 +78,16 @@ describe("PhysicsEngine weapon behavior", () => {
     );
 
     expect(apply).toHaveBeenCalledWith(
-      expect.any(Number),
-      expect.any(Number),
-      28,
-      35,
-      "owner",
-      "MISSILE",
-      true,
-      expect.anything(),
+      expect.objectContaining({
+        explosionX: expect.any(Number),
+        explosionY: expect.any(Number),
+        radius: 28,
+        maxDamage: 35,
+        shooterId: "owner",
+        weaponId: "MISSILE",
+        isDirectHit: true,
+        terrain: expect.anything(),
+      }),
     );
     expect(destroy).toHaveBeenCalled();
   });
@@ -164,14 +166,16 @@ describe("PhysicsEngine weapon behavior", () => {
     physics.updateProjectiles(1 / 120, 0, 0, mockTerrain(), tanks);
 
     expect(apply).toHaveBeenCalledWith(
-      expect.any(Number),
-      expect.any(Number),
-      24,
-      28,
-      "owner",
-      "GRENADE",
-      true,
-      expect.anything(),
+      expect.objectContaining({
+        explosionX: expect.any(Number),
+        explosionY: expect.any(Number),
+        radius: 24,
+        maxDamage: 28,
+        shooterId: "owner",
+        weaponId: "GRENADE",
+        isDirectHit: true,
+        terrain: expect.anything(),
+      }),
     );
     expect(physics.count).toBe(0);
   });
@@ -188,6 +192,8 @@ describe("PhysicsEngine weapon behavior", () => {
     expect(physics.count).toBe(5);
     expect(physics.getProjectiles().every((p) => p.isSubmunition === true)).toBe(true);
     expect(physics.getProjectiles().every((p) => p.weaponId === "CLUSTER")).toBe(true);
+    expect(new Set(physics.getProjectiles().map((p) => p.shotId)).size).toBe(1);
+    expect(new Set(physics.getProjectiles().map((p) => p.munitionId)).size).toBe(5);
   });
 
   it("DRILLER carves an angled shaft but keeps current splash damage", () => {
@@ -231,14 +237,16 @@ describe("PhysicsEngine weapon behavior", () => {
     void dirX;
 
     expect(apply).toHaveBeenCalledWith(
-      expect.any(Number),
-      expect.any(Number),
-      14,
-      42,
-      "owner",
-      "DRILLER",
-      true,
-      expect.anything(),
+      expect.objectContaining({
+        explosionX: expect.any(Number),
+        explosionY: expect.any(Number),
+        radius: 14,
+        maxDamage: 42,
+        shooterId: "owner",
+        weaponId: "DRILLER",
+        isDirectHit: true,
+        terrain: expect.anything(),
+      }),
     );
     expect(physics.count).toBe(0);
   });

@@ -11,6 +11,7 @@ import { useGameSession } from "./useGameSession";
 import { MobileControls } from "./MobileControls";
 import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
 import type { TerrainMaterial } from "../types/terrain";
+import { ShotEarningsOverlay } from "./ShotEarningsOverlay";
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -66,6 +67,7 @@ export function GameCanvas({
     isLocalShopTurn,
     shopDisplayPlayer,
     localShopDone,
+    dismissEarningsOverlay,
   } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialMaterials, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
@@ -80,6 +82,7 @@ export function GameCanvas({
     shopPlayers,
     currentShopIndex,
     uiPlayers,
+    earningsOverlay,
   } = state;
 
   return (
@@ -113,6 +116,13 @@ export function GameCanvas({
       <div style={{ position: "relative" }}>
         {(gamePhase === "COMBAT" || gamePhase === "RESOLUTION") && (
           <WindBanner windForce={wind} />
+        )}
+
+        {earningsOverlay && (
+          <ShotEarningsOverlay
+            overlay={earningsOverlay}
+            onDismiss={dismissEarningsOverlay}
+          />
         )}
 
         <canvas

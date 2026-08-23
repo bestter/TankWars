@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
-import { GameEngine } from "../game/engine/GameEngine";
+import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
@@ -9,7 +9,11 @@ import type { TerrainMaterial } from "../types/terrain";
 import { DEFAULT_INVENTORY } from "../types/weapon";
 import { applyShopDelta } from "./shopBuySell";
 import type { GamePhase } from "../types/game";
-import { gameCanvasReducer, INITIAL_STATE } from "./gameCanvasReducer";
+import {
+  gameCanvasReducer,
+  INITIAL_STATE,
+  type EarningsOverlayState,
+} from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
 import { setRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
@@ -19,6 +23,10 @@ import {
   persistOnlineSession,
   type OnlineCanvasSnapshot,
 } from "../utils/onlineSession";
+import {
+  isStrictOnlineMessage,
+  type ShotEarningsMessage,
+} from "../game/online/protocol";
 
 function buildInitialCanvasState(
   resume?: OnlineCanvasSnapshot,
@@ -75,6 +83,28 @@ function createDemoPlayers(): Player[] {
   ];
 }
 
+function buildOverlayAwards(
+  awards: ReadonlyArray<{ playerId: string; amount: number }>,
+  roster: ReadonlyArray<Player>,
+): EarningsOverlayState["awards"] {
+  const playersById = new Map(roster.map((player) => [player.id, player]));
+  const overlayAwards: EarningsOverlayState["awards"] = [];
+  for (const award of awards) {
+    if (award.amount <= 0) continue;
+    const player = playersById.get(award.playerId);
+    if (!player) continue;
+    overlayAwards.push({
+      playerId: player.id,
+      playerName: player.name,
+      color: player.tank.color,
+      amount: award.amount,
+      x: player.tank.position.x,
+      y: player.tank.position.y,
+    });
+  }
+  return overlayAwards;
+}
+
 interface UseGameSessionProps {
   initialPlayers?: Player[];
   onReturnToMenu?: () => void;
@@ -121,6 +151,12 @@ export function useGameSession({
   /** Outbox for combat WS messages when the socket is not yet OPEN. */
   const pendingCombatMessagesRef = useRef<string[]>([]);
   const roundEndFromNetworkRef = useRef(false);
+  const authoritySlotRef = useRef<number | null>(resumeCanvas?.authoritySlot ?? null);
+  const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
+  const activeServerShotIdRef = useRef<number | null>(null);
+  const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
+  const pendingShotPreviewsRef = useRef<Map<number, ResolvedShotPreview>>(new Map());
+  const submitShotEarningsRef = useRef<(preview: ResolvedShotPreview) => void>(() => {});
   const shopSyncRef = useRef({
     applyRemoteAdvance: (nextIndex: number) => {
       void nextIndex;
@@ -231,6 +267,14 @@ export function useGameSession({
         roundResult,
         lastRoundOutcome,
         wind: canvasWind,
+        authoritySlot: authoritySlotRef.current,
+        authorityEpoch: authorityEpochRef.current,
+        lastAppliedShotId: lastAppliedShotIdRef.current,
+        roundEarningsByPlayer:
+          engineRef.current?.getRoundEarningsByPlayer() ??
+          roundResult?.earningsByPlayer ??
+          {},
+        earningsOverlay: state.earningsOverlay,
       },
     });
   }, [
@@ -252,6 +296,7 @@ export function useGameSession({
     initialMaterials,
     initialWind,
     initialCurrentPlayerIndex,
+    state.earningsOverlay,
   ]);
 
   const clearShopAiTimeout = useCallback((): void => {
@@ -278,7 +323,7 @@ export function useGameSession({
   }, []);
 
   const sendCombatMessage = useCallback(
-    (obj: Record<string, unknown>): void => {
+    (obj: object): void => {
       const payload = JSON.stringify(obj);
       const ws = gameWsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -291,7 +336,7 @@ export function useGameSession({
       }
       pendingCombatMessagesRef.current.push(payload);
       console.warn(
-        `[Game] Queued combat message type=${String(obj.type)} (ws readyState=${ws?.readyState ?? 'null'})`,
+        `[Game] Queued combat message type=${"type" in obj ? String(obj.type) : "unknown"} (ws readyState=${ws?.readyState ?? 'null'})`,
       );
     },
     [],
@@ -341,6 +386,10 @@ export function useGameSession({
     dispatch({ type: "GO_TO_SUMMARY" });
     gamePhaseRef.current = "SUMMARY";
   }, [clearCelebrationTimer]);
+
+  const dismissEarningsOverlay = useCallback((): void => {
+    dispatch({ type: "HIDE_EARNINGS" });
+  }, []);
 
   // Stable render function that delegates to the engine
   const renderFrame = () => {
@@ -461,6 +510,38 @@ export function useGameSession({
       }
     };
 
+    const submitShotEarnings = (preview: ResolvedShotPreview): void => {
+      if (authoritySlotRef.current !== localSlotNum) return;
+      const message: ShotEarningsMessage = {
+        type: "SHOT_EARNINGS",
+        shotId: preview.shotId,
+        authorityEpoch: authorityEpochRef.current,
+        awards: preview.awards.map(({ playerId, amount }) => ({ playerId, amount })),
+        deadSlots: engine.getTankManager().getPlayers().map((player) => player.tank.isDead),
+        roundOutcome: preview.roundOutcome,
+      };
+      sendCombatMessage(message);
+    };
+    submitShotEarningsRef.current = submitShotEarnings;
+
+    const syncWireBalances = (value: unknown): void => {
+      if (!Array.isArray(value)) return;
+      const balances: Array<{ playerId: string; money: number }> = [];
+      for (const entry of value) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+        const player = entry as Record<string, unknown>;
+        if (
+          typeof player.id !== 'string' ||
+          typeof player.money !== 'number' ||
+          !Number.isSafeInteger(player.money) ||
+          player.money < 0
+        ) return;
+        balances.push({ playerId: player.id, money: player.money });
+      }
+      engine.syncAuthoritativeBalances(balances);
+      dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
+    };
+
     function bindCombatWsHandlers(ws: WebSocket): void {
       ws.onopen = () => {
         console.log('[Game] Combat WS connected to server');
@@ -475,7 +556,10 @@ export function useGameSession({
 
       ws.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data);
+          const parsed: unknown = JSON.parse(ev.data);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+          const msg = parsed as Record<string, unknown>;
+          const strictMessage = isStrictOnlineMessage(parsed) ? parsed : null;
           const tm = engine.getTurnManager();
 
           if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number' && Number.isInteger(msg.currentPlayerIndex)) {
@@ -484,30 +568,39 @@ export function useGameSession({
             if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
               engine.setWindForce(msg.wind);
             }
+            syncWireBalances(msg.players);
           }
 
-          if (msg.type === 'SHOT' && msg.command) {
-            const shotSlot =
-              typeof msg.slot === 'number' ? msg.slot : Number(msg.slot);
-            console.log('[Game] Received SHOT from slot=', shotSlot, ', cmd=', msg.command);
+          if (strictMessage?.type === 'SHOT') {
+            const shotSlot = strictMessage.slot;
+            activeServerShotIdRef.current = strictMessage.shotId;
+            console.log('[Game] Received SHOT from slot=', shotSlot, ', cmd=', strictMessage.command);
             // For the firer, we already executed the full local fire for immediate feedback.
             // Replay for every other slot so observers always see the projectile.
             if (
-              Number.isInteger(shotSlot) &&
               shotSlot !== localSlotNum &&
               gamePhaseRef.current === 'COMBAT' &&
               !tm.isInterRoundPaused()
             ) {
-              const shotKey = `${shotSlot}:${msg.command.angle}:${msg.command.power}:${msg.command.weaponId}:${String(msg.ownerId ?? '')}`;
+              const shotKey = String(strictMessage.shotId);
               if (shotKey === lastReplayedShotKey && engine.getActiveProjectiles().length > 0) {
                 console.log('[Game] Skipping duplicate in-flight SHOT replay');
               } else {
                 lastReplayedShotKey = shotKey;
-                tm.executeRemoteFire(msg.command, {
+                tm.executeRemoteFire(strictMessage.command, {
                   fromSlot: shotSlot,
-                  ownerId: typeof msg.ownerId === 'string' ? msg.ownerId : undefined,
+                  ownerId: strictMessage.ownerId,
+                  identity: {
+                    shotId: strictMessage.shotId,
+                    isFirstShotOfRound: strictMessage.isFirstShotOfRound,
+                  },
                 });
               }
+            } else if (shotSlot === localSlotNum) {
+              engine.associateActiveShotId(
+                strictMessage.shotId,
+                strictMessage.isFirstShotOfRound,
+              );
             } else {
               console.log(
                 `[Game] SHOT not replayed (shotSlot=${shotSlot}, localSlot=${localSlotNum}, phase=${gamePhaseRef.current}, paused=${tm.isInterRoundPaused()})`,
@@ -515,8 +608,39 @@ export function useGameSession({
             }
           }
 
-          if (msg.type === 'STATE_UPDATE') {
-            console.log(`[Game] Received STATE_UPDATE: currentPlayerIndex=${msg.currentPlayerIndex}`);
+          if (strictMessage?.type === 'AUTHORITY_CHANGED') {
+            authoritySlotRef.current = strictMessage.authoritySlot;
+            authorityEpochRef.current = strictMessage.authorityEpoch;
+            if (strictMessage.authoritySlot === localSlotNum && activeServerShotIdRef.current !== null) {
+              const preview = pendingShotPreviewsRef.current.get(activeServerShotIdRef.current);
+              if (preview) submitShotEarnings(preview);
+            }
+          }
+
+          if (
+            strictMessage?.type === 'SHOT_EARNINGS_APPLIED' &&
+            strictMessage.shotId > lastAppliedShotIdRef.current
+          ) {
+            engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
+            lastAppliedShotIdRef.current = strictMessage.shotId;
+            pendingShotPreviewsRef.current.delete(strictMessage.shotId);
+            const roster = [...engine.getTankManager().getPlayers()];
+            dispatch({ type: "SET_UI_PLAYERS", players: roster });
+            const awards = buildOverlayAwards(strictMessage.awards, roster);
+            if (awards.length > 0) {
+              dispatch({
+                type: "SHOW_EARNINGS",
+                overlay: {
+                  shotId: strictMessage.shotId,
+                  awards,
+                  displayedAt: Date.now(),
+                },
+              });
+            }
+          }
+
+          if (strictMessage?.type === 'STATE_UPDATE') {
+            console.log(`[Game] Received STATE_UPDATE: currentPlayerIndex=${strictMessage.currentPlayerIndex}`);
             // MVP: server only coordinates turn order. Clients run local physics after SHOT replay.
             // Do NOT apply server players/heights here — the DO stub still carries placeholder
             // spawn Y values (≈280) which teleport tanks into the sky and reset crater terrain.
@@ -525,9 +649,8 @@ export function useGameSession({
               gamePhaseRef.current === 'COMBAT' &&
               !tm.isInterRoundPaused()
             ) {
-              if (typeof msg.currentPlayerIndex === 'number' && Number.isInteger(msg.currentPlayerIndex)) {
-                tm.syncTurn(msg.currentPlayerIndex);
-              }
+              tm.syncTurn(strictMessage.currentPlayerIndex);
+              if (strictMessage.players) syncWireBalances(strictMessage.players);
               if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
                 engine.setWindForce(msg.wind);
               }
@@ -567,13 +690,13 @@ export function useGameSession({
             shopSyncRef.current.finishShop(msg.players);
           }
 
-          if (msg.type === 'ROUND_END' && Array.isArray(msg.players) && msg.slot !== slot) {
+          if (strictMessage?.type === 'ROUND_END') {
             if (gamePhaseRef.current === 'COMBAT') {
               roundEndFromNetworkRef.current = true;
               engine.syncRoundEndFromRemote(
-                msg.players,
-                typeof msg.roundWinnerId === 'string' ? msg.roundWinnerId : null,
-                !!msg.isDraw,
+                strictMessage.players,
+                strictMessage.roundWinnerId,
+                strictMessage.isDraw,
               );
             }
           }
@@ -655,6 +778,7 @@ export function useGameSession({
 
     if (resumed && resumed.uiPlayers.length >= 2) {
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
+      engine.restoreRoundEarningsByPlayer(resumed.roundEarningsByPlayer);
       engine.setRoundNumber(resumed.currentManche);
       gamePhaseRef.current = resumed.gamePhase;
       shopPlayersRef.current = resumed.shopPlayers;
@@ -729,7 +853,10 @@ export function useGameSession({
         if (shouldNotify) {
           console.log('[Game] Sending SHOT_SETTLED to server');
           const deadSlots = engine.getTankManager().getPlayers().map((p) => Boolean(p.tank.isDead));
-          sendCombatMessage({ type: 'SHOT_SETTLED', slot, deadSlots });
+          const shotId = activeServerShotIdRef.current;
+          if (shotId !== null) {
+            sendCombatMessage({ type: 'SHOT_SETTLED', shotId, slot, deadSlots });
+          }
         }
       }
     };
@@ -749,6 +876,27 @@ export function useGameSession({
       dispatch({ type: "SET_TURN_INFO", info });
     };
 
+    engine.onShotResolved = (preview) => {
+      if (gameMode === "online") {
+        pendingShotPreviewsRef.current.set(preview.shotId, preview);
+        submitShotEarningsRef.current(preview);
+        return;
+      }
+      const roster = [...engine.getTankManager().getPlayers()];
+      dispatch({ type: "SET_UI_PLAYERS", players: roster });
+      const awards = buildOverlayAwards(preview.awards, roster);
+      if (awards.length > 0) {
+        dispatch({
+          type: "SHOW_EARNINGS",
+          overlay: {
+            shotId: preview.shotId,
+            awards,
+            displayedAt: Date.now(),
+          },
+        });
+      }
+    };
+
     /**
      * Combat round ends on last man standing (0 or 1 tanks remain alive).
      */
@@ -758,25 +906,11 @@ export function useGameSession({
       const fromNetwork = roundEndFromNetworkRef.current;
       roundEndFromNetworkRef.current = false;
 
-      if (
-        gameMode === "online" &&
-        !fromNetwork &&
-        gameWsRef.current?.readyState === WebSocket.OPEN
-      ) {
-        gameWsRef.current.send(
-          JSON.stringify({
-            type: "ROUND_END",
-            players: [...engine.getTankManager().getPlayers()],
-            roundWinnerId: payload.roundWinner?.id ?? null,
-            isDraw: payload.isDraw,
-            slot,
-          }),
-        );
-      }
+      void fromNetwork;
 
       tm.pauseForInterRound();
 
-      const res = engine.awardEndOfRoundEarnings();
+      const res = engine.buildRoundResult();
       const nextPlayers = [...engine.getTankManager().getPlayers()];
 
       // Track round end event (custom Zaraz analytics)
@@ -1425,6 +1559,7 @@ export function useGameSession({
     handleAdjustPower,
     handleCycleWeapon,
     handleFire,
+    dismissEarningsOverlay,
     isLocalShopTurn,
     shopDisplayPlayer,
     localShopDone,

@@ -99,6 +99,8 @@ export interface GameState {
 export interface RoundResult {
   /** playerId -> total damage points inflicted this resolution */
   damageDealt: Record<string, number>;
+  /** playerId -> gains effectivement appliqués pendant la manche */
+  earningsByPlayer: Record<string, number>;
   /** Approximate "area" destroyed (pixels or heightmap deltas) */
   terrainDestroyed: number;
   /** Ids of players still alive with health > 0 */

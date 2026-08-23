@@ -71,6 +71,7 @@ describe("GameCanvas component", () => {
     shopPlayers: [p1, p2],
     currentShopIndex: 0,
     uiPlayers: [p1, p2],
+    earningsOverlay: null,
   };
 
   let mockHandlers: {
@@ -85,6 +86,7 @@ describe("GameCanvas component", () => {
     handleAdjustPower: Mock<(delta: number) => void>;
     handleCycleWeapon: Mock<() => void>;
     handleFire: Mock<() => void>;
+    dismissEarningsOverlay: Mock<() => void>;
   };
 
   let originalMatchMedia: typeof window.matchMedia;
@@ -115,6 +117,7 @@ describe("GameCanvas component", () => {
       handleAdjustPower: vi.fn(),
       handleCycleWeapon: vi.fn(),
       handleFire: vi.fn(),
+      dismissEarningsOverlay: vi.fn(),
     };
 
     vi.mocked(useGameSession).mockReturnValue({
@@ -196,6 +199,7 @@ describe("GameCanvas component", () => {
         currentManche: 2,
         roundResult: {
           damageDealt: { p1: 50, p2: 0 },
+          earningsByPlayer: { p1: 150, p2: 0 },
           terrainDestroyed: 120,
           survivors: ["p1"],
         },
