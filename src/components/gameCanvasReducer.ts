@@ -2,6 +2,19 @@ import type { GamePhase, RoundResult } from "../types/game";
 import type { Player } from "../types/player";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 
+export interface EarningsOverlayState {
+  shotId: number;
+  awards: Array<{
+    playerId: string;
+    playerName: string;
+    color: string;
+    amount: number;
+    x: number;
+    y: number;
+  }>;
+  displayedAt: number;
+}
+
 export interface GameCanvasState {
   gamePhase: GamePhase;
   wind: number;
@@ -14,12 +27,15 @@ export interface GameCanvasState {
   shopPlayers: Player[];
   currentShopIndex: number;
   uiPlayers: Player[];
+  earningsOverlay: EarningsOverlayState | null;
 }
 
 export type GameCanvasAction =
   | { type: "SET_WIND"; wind: number }
   | { type: "SET_TURN_INFO"; info: CurrentTurnInfo | null }
   | { type: "SET_UI_PLAYERS"; players: Player[] }
+  | { type: "SHOW_EARNINGS"; overlay: EarningsOverlayState }
+  | { type: "HIDE_EARNINGS" }
   | { type: "START_CELEBRATION"; payload: { roundWinner: Player | null; roundResult: RoundResult; uiPlayers: Player[] } }
   | { type: "GO_TO_SUMMARY" }
   | { type: "START_SHOP"; roster: Player[] }
@@ -29,7 +45,7 @@ export type GameCanvasAction =
   | { type: "END_MATCH_FROM_SHOP"; winner: Player | null }
   | { type: "SHOW_NEW_GAME_BUTTON"; show: boolean }
   | { type: "RESET_GAME"; newPlayers: Player[] }
-  | { type: "RESUME_CANVAS"; snapshot: Pick<GameCanvasState, "gamePhase" | "currentManche" | "uiPlayers" | "shopPlayers" | "currentShopIndex" | "roundResult" | "lastRoundOutcome" | "wind"> };
+  | { type: "RESUME_CANVAS"; snapshot: Pick<GameCanvasState, "gamePhase" | "currentManche" | "uiPlayers" | "shopPlayers" | "currentShopIndex" | "roundResult" | "lastRoundOutcome" | "wind" | "earningsOverlay"> };
 
 export const INITIAL_STATE: GameCanvasState = {
   gamePhase: "COMBAT",
@@ -43,6 +59,7 @@ export const INITIAL_STATE: GameCanvasState = {
   shopPlayers: [],
   currentShopIndex: 0,
   uiPlayers: [],
+  earningsOverlay: null,
 };
 
 export function gameCanvasReducer(
@@ -56,6 +73,10 @@ export function gameCanvasReducer(
       return { ...state, turnInfo: action.info };
     case "SET_UI_PLAYERS":
       return { ...state, uiPlayers: action.players };
+    case "SHOW_EARNINGS":
+      return { ...state, earningsOverlay: action.overlay };
+    case "HIDE_EARNINGS":
+      return { ...state, earningsOverlay: null };
     case "START_CELEBRATION":
       return {
         ...state,
@@ -69,6 +90,7 @@ export function gameCanvasReducer(
           winner: action.payload.roundWinner,
         },
         uiPlayers: action.payload.uiPlayers,
+        earningsOverlay: null,
       };
     case "GO_TO_SUMMARY":
       return {
@@ -103,6 +125,7 @@ export function gameCanvasReducer(
         shopPlayers: [],
         currentShopIndex: 0,
         uiPlayers: action.uiPlayers,
+        earningsOverlay: null,
       };
     case "END_MATCH_FROM_SHOP":
       return {
@@ -129,6 +152,7 @@ export function gameCanvasReducer(
         uiPlayers: action.newPlayers,
         shopPlayers: [],
         currentShopIndex: 0,
+        earningsOverlay: null,
       };
     case "RESUME_CANVAS":
       return {
@@ -141,6 +165,7 @@ export function gameCanvasReducer(
         roundResult: action.snapshot.roundResult,
         lastRoundOutcome: action.snapshot.lastRoundOutcome,
         wind: action.snapshot.wind,
+        earningsOverlay: action.snapshot.earningsOverlay,
       };
     default:
       return state;

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { GameEngine } from "../GameEngine";
+import type { ResolvedShotPreview } from "../GameEngine";
 import * as random from "../../../utils/random";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 
@@ -54,26 +55,34 @@ describe("GameEngine match rules", () => {
   }
 
   function killAt(tankX: number, tankY: number, killerId: string): void {
-    engine.getTankManager().applyExplosionDamage(tankX, tankY, 80, 200, killerId);
+    engine.getTankManager().applyExplosionDamage({
+      explosionX: tankX,
+      explosionY: tankY,
+      radius: 80,
+      maxDamage: 200,
+      shooterId: killerId,
+      weaponId: "MISSILE",
+      isDirectHit: false,
+    });
   }
 
-  it("awards $300 to the killer when more than one tank remains", () => {
+  it("does not apply the historical $300 death reward", () => {
     const { a, b, c } = threePlayers();
     killAt(b.tank.position.x, b.tank.position.y, "a");
 
     expect(b.tank.isDead).toBe(true);
-    expect(a.money).toBe(300);
+    expect(a.money).toBe(0);
     expect(c.money).toBe(0);
   });
 
-  it("awards $600 to the last tank standing and no suicide payout", () => {
+  it("does not apply the historical $600 last-survivor reward immediately", () => {
     const { a, b, c } = threePlayers();
     killAt(b.tank.position.x, b.tank.position.y, "a");
-    expect(a.money).toBe(300);
+    expect(a.money).toBe(0);
 
     killAt(c.tank.position.x, c.tank.position.y, "a");
     expect(c.tank.isDead).toBe(true);
-    expect(a.money).toBe(900);
+    expect(a.money).toBe(0);
     expect(b.money).toBe(0);
   });
 
@@ -86,18 +95,19 @@ describe("GameEngine match rules", () => {
     expect(b.money).toBe(0);
   });
 
-  it("awards $500 survival money only to living tanks", () => {
+  it("builds the round summary without applying the historical $500 reward", () => {
     const { a, b, c } = threePlayers();
     b.tank.isDead = true;
     b.tank.health = 0;
     engine.getTankManager().invalidateAliveCache();
 
-    const result = engine.awardEndOfRoundEarnings();
+    const result = engine.buildRoundResult();
 
-    expect(a.money).toBe(500);
-    expect(c.money).toBe(500);
+    expect(a.money).toBe(0);
+    expect(c.money).toBe(0);
     expect(b.money).toBe(0);
     expect(result.survivors).toEqual(["a", "c"]);
+    expect(result.earningsByPlayer).toEqual({});
   });
 
   it("startNextRound respawns the roster and refuses a single-player match", () => {
@@ -129,6 +139,51 @@ describe("GameEngine match rules", () => {
     expect(shot).toBeDefined();
     expect(shot.x).toBeCloseTo(a.tank.position.x + 20, 5);
     expect(shot.y).toBeCloseTo(a.tank.position.y - 13, 5);
+  });
+
+  it("finalizes real shot events, applies earnings once, and accumulates round earnings", () => {
+    const { a, b } = threePlayers();
+    engine.fireProjectile(
+      a.tank.position,
+      { angle: 0, power: 50, weaponId: "MISSILE" },
+      a.id,
+    );
+    const projectile = engine.getActiveProjectiles()[0];
+    engine.getTankManager().applyExplosionDamage({
+      explosionX: b.tank.position.x,
+      explosionY: b.tank.position.y,
+      radius: 80,
+      maxDamage: 200,
+      shooterId: a.id,
+      weaponId: "MISSILE",
+      isDirectHit: true,
+      shotId: projectile.shotId,
+      munitionId: projectile.munitionId,
+    });
+    const finalize = Reflect.get(engine, "finalizeActiveShot") as () => ResolvedShotPreview;
+    const preview = finalize.call(engine);
+
+    expect(preview.awards.find((award) => award.playerId === a.id)?.amount).toBe(525);
+    expect(a.money).toBe(525);
+    expect(engine.buildRoundResult().earningsByPlayer).toEqual({ a: 525 });
+
+    engine.applyResolvedEarnings(preview.shotId, preview.balances);
+    expect(a.money).toBe(525);
+  });
+
+  it("resets the first-shot flag and round earnings for a new round", () => {
+    const { a } = threePlayers();
+    engine.fireProjectile(a.tank.position, { angle: 0, power: 50, weaponId: "MISSILE" }, a.id);
+    const firstLedger = Reflect.get(engine, "activeShotLedger") as { isFirstShotOfRound: boolean };
+    expect(firstLedger.isFirstShotOfRound).toBe(true);
+
+    expect(engine.startNextRound()).toBe(true);
+    const nextA = engine.getTankManager().getPlayerById(a.id);
+    if (!nextA) throw new Error("Alice should respawn");
+    engine.fireProjectile(nextA.tank.position, { angle: 0, power: 50, weaponId: "MISSILE" }, nextA.id);
+    const nextLedger = Reflect.get(engine, "activeShotLedger") as { isFirstShotOfRound: boolean };
+    expect(nextLedger.isFirstShotOfRound).toBe(true);
+    expect(engine.buildRoundResult().earningsByPlayer).toEqual({});
   });
 
   it("declareMatchWinner and declareMatchDraw set game-over state", () => {

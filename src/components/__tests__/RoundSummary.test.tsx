@@ -57,6 +57,7 @@ describe('RoundSummary', () => {
     players: [player1, player2],
     result: {
       damageDealt: { p1: 150, p2: 50 },
+      earningsByPlayer: { p1: 384, p2: 0 },
       terrainDestroyed: 400,
       survivors: ['p1']
     } as RoundResult,
@@ -101,7 +102,7 @@ describe('RoundSummary', () => {
     expect(screen.getByText(/terrain_destroyed 0/)).toBeDefined();
   });
 
-  it('renders player stats correctly and sorted by money', () => {
+  it('renders player stats sorted by round earnings without showing total balances', () => {
     render(<RoundSummary {...defaultProps} />);
 
     // Check survivors count text (1 alive, 2 total)
@@ -113,9 +114,9 @@ describe('RoundSummary', () => {
     // For eliminated player
     expect(screen.getByText('Player Twoko_indicator')).toBeDefined();
 
-    // Check money
-    expect(screen.getByText('1200$')).toBeDefined();
-    expect(screen.getByText('900$')).toBeDefined();
+    expect(screen.getByText('+384$')).toBeDefined();
+    expect(screen.getByText('+0$')).toBeDefined();
+    expect(screen.queryByText('1200$')).toBeNull();
   });
 
   it('calls onNextRound when clicking next round button and there are enough players', () => {

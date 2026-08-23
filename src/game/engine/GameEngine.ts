@@ -26,6 +26,12 @@ import type { AIStrategy } from "../entities/ai/AIStrategy";
 import type { AIEngine } from "../entities/ai/AIEngine";
 import i18n from "../../i18n";
 import { rollRoundWind } from "../wind";
+import {
+  calculateShotRewards,
+  type CombatDamageEvent,
+  type CombatDestructionEvent,
+  type ShotRewardResult,
+} from "../economy/shotRewards";
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -44,6 +50,20 @@ interface HitEvent {
   weaponId: WeaponId;
   ownerId: string;
   blastRadius: number;
+}
+
+interface ActiveShotLedger {
+  shotId: number;
+  shooterId: string;
+  weaponId: WeaponId;
+  isFirstShotOfRound: boolean;
+  aliveBeforeShot: string[];
+  damageEvents: CombatDamageEvent[];
+  destructionEvents: CombatDestructionEvent[];
+}
+
+export interface ResolvedShotPreview extends ShotRewardResult {
+  balances: ReadonlyArray<{ playerId: string; money: number }>;
 }
 
 type FireworkParticle = {
@@ -155,13 +175,16 @@ export class GameEngine {
   }> = [];
   private thermoFlashLife = 0; // short full-screen red flash on thermonuclear impact for "huge" punch
 
-  // === Round-end (fin de manche) accumulators for money/kill rewards (React-owned phase uses these via award fn) ===
+  // === Registre économique de la manche et de la résolution active ===
   private roundDamageDealt: Record<string, number> = {};
-  private roundKills: Record<string, number> = {};
+  private roundEarningsByPlayer: Record<string, number> = {};
   private roundTerrainDestroyed = 0;
   private currentFirerId: string | null = null;
-  /** Snapshot of alive player IDs just before the last shot (for per-shot kill attribution via diff) */
-  private aliveAtLastShot: Set<string> = new Set();
+  private activeShotLedger: ActiveShotLedger | null = null;
+  private pendingShotResult: ResolvedShotPreview | null = null;
+  private nextShotId = 1;
+  private shotNumberInRound = 0;
+  private lastAppliedShotId = 0;
 
   // Debug: accumulate death reasons to produce a clear summary at game end (especially for "partie nulle")
   private deathReasons: Record<
@@ -195,6 +218,7 @@ export class GameEngine {
    * React shows SUMMARY → SHOP if the match continues, or GAME_OVER if not.
    */
   public onRoundEnded?: (payload: RoundEndPayload) => void;
+  public onShotResolved?: (preview: ResolvedShotPreview) => void;
 
   constructor(width: number, height: number, config: Partial<GameConfig> = {}) {
     this.width = Math.floor(width);
@@ -206,16 +230,22 @@ export class GameEngine {
     this.physicsEngine = new PhysicsEngine();
     this.tankManager = new TankManager();
 
-    // Wire debug death recorder so we can produce a rich summary at game end.
-    // Also branch to play distinct death SFX (explosion vs sad burial) and handle instant earnings.
-    this.tankManager.onPlayerDied = (playerId, cause, details, killerId) => {
+    // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
+    this.tankManager.onPlayerDied = (playerId, cause, details) => {
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion") {
         this.playTankDestroyedByExplosionSound();
       } else if (cause === "burial") {
         this.playTankSadBurialSound();
       }
-      this.handlePlayerDeathGains(playerId, killerId);
+    };
+    this.tankManager.onDamageApplied = (event) => {
+      if (event.shotId !== this.activeShotLedger?.shotId) return;
+      this.activeShotLedger.damageEvents.push(event);
+    };
+    this.tankManager.onTankDestroyed = (event) => {
+      if (event.shotId !== this.activeShotLedger?.shotId) return;
+      this.activeShotLedger.destructionEvents.push(event);
     };
 
     // Wire tank movement / pit SFX (consumed by applyGravity in TankManager)
@@ -228,45 +258,32 @@ export class GameEngine {
     this.turnManager = new TurnManager(
       this.tankManager,
       this.terrain,
-      (from, command, ownerId) => {
-        this.fireProjectile(from, command, ownerId ?? "unknown");
+      (from, command, ownerId, identity) => {
+        this.fireProjectile(from, command, ownerId ?? "unknown", identity);
       },
     );
 
     // Connecte le TurnManager au système de physique (fin de volée → nextTurn)
     this.turnManager.connectToPhysics(this.physicsEngine);
     this.turnManager.setMatchEndedChecker(() => this.gameOver);
+    this.turnManager.onShotResolutionReady = () => {
+      const preview = this.finalizeActiveShot();
+      return {
+        hasEarnings: preview?.hasEarnings ?? false,
+        isRoundEnd: preview?.roundOutcome.isRoundEnd ?? false,
+      };
+    };
+    this.turnManager.onResolvedRoundEnd = () => this.completeResolvedRound();
 
     // Transmet les mises à jour HUD du TurnManager vers l'extérieur (React)
     this.turnManager.onHudUpdate = (info) => {
       this.onTurnHudUpdate?.(info);
     };
 
-    // Forward hit events from PhysicsEngine (owner now threaded for round rewards)
+    // Forward hit events from PhysicsEngine for VFX/audio.
     this.physicsEngine.onProjectileHit = (hit) => {
       const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
-
-      // Accumulate for end-of-round earnings (damage + kill attribution via alive diff)
-      if (firer !== "unknown") {
-        this.roundDamageDealt[firer] =
-          (this.roundDamageDealt[firer] ?? 0) + (weapon?.damage ?? 0);
-
-        // Attribute any players who died due to *this* impact (splash + direct, works for chains)
-        // We avoid array mapping overhead but must maintain the Set for newly spawned/resurrected players
-        const players = this.tankManager.getPlayers();
-        for (let i = 0; i < players.length; i++) {
-          const p = players[i];
-          if (p.tank.isDead) {
-            if (this.aliveAtLastShot.has(p.id)) {
-              this.aliveAtLastShot.delete(p.id);
-              this.roundKills[firer] = (this.roundKills[firer] ?? 0) + 1;
-            }
-          } else {
-            this.aliveAtLastShot.add(p.id);
-          }
-        }
-      }
 
       this.onProjectileHit?.({
         x: hit.x,
@@ -367,20 +384,40 @@ export class GameEngine {
   /**
    * Fire a projectile. Called by human input or by AI strategy.
    * Angle in degrees (0 = right, positive = CCW / upward).
-   * ownerId is used for round-end kill/damage attribution (see awardEndOfRoundEarnings).
+   * ownerId is used for structured damage and destruction attribution.
    */
   public fireProjectile(
     from: Vector2,
     command: FireCommand,
     ownerId: string = "unknown",
+    identity?: { shotId: number; isFirstShotOfRound: boolean },
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
       console.warn(`Unknown weapon: ${command.weaponId}`);
       return;
     }
+    if (this.activeShotLedger !== null) {
+      console.warn("[GameEngine] Refus d'un second tir avant la finalisation du tir actif.");
+      return;
+    }
 
     this.currentFirerId = ownerId;
+    this.shotNumberInRound++;
+    const shotId = identity?.shotId ?? this.nextShotId++;
+    const isFirstShotOfRound = identity?.isFirstShotOfRound ?? this.shotNumberInRound === 1;
+    const aliveBeforeShot = this.tankManager.getAlivePlayers().map((player) => player.id);
+    this.activeShotLedger = {
+      shotId,
+      shooterId: ownerId,
+      weaponId: command.weaponId,
+      isFirstShotOfRound,
+      aliveBeforeShot,
+      damageEvents: [],
+      destructionEvents: [],
+    };
+    this.pendingShotResult = null;
+    this.tankManager.beginShotAttribution(shotId, ownerId, command.weaponId);
 
     // Per-weapon fire sound (distinct for each projectile type)
     this.playFireSound(command.weaponId);
@@ -395,11 +432,6 @@ export class GameEngine {
 
     console.log(
       `[SHOT] weapon=${command.weaponId} angle=${command.angle} power=${command.power} (owner and coordinates redacted)`,
-    );
-
-    // Snapshot alive set *before* this shot for accurate per-shot kill attribution (diff after impact)
-    this.aliveAtLastShot = new Set(
-      this.tankManager.getAlivePlayers().map((p) => p.id),
     );
 
     // Lookup firer color for projectile harmonization + recoil trigger (Step 4 polish)
@@ -420,7 +452,21 @@ export class GameEngine {
       command.weaponId,
       ownerId,
       ownerColor,
+      { shotId, munitionId: 0 },
     );
+  }
+
+  /** Associe l'identifiant serveur au tir optimiste encore actif. */
+  public associateActiveShotId(shotId: number, isFirstShotOfRound: boolean): boolean {
+    if (!Number.isSafeInteger(shotId) || shotId < 0 || !this.activeShotLedger) return false;
+    const previousShotId = this.activeShotLedger.shotId;
+    this.activeShotLedger.shotId = shotId;
+    this.activeShotLedger.isFirstShotOfRound = isFirstShotOfRound;
+    for (const event of this.activeShotLedger.damageEvents) event.shotId = shotId;
+    for (const event of this.activeShotLedger.destructionEvents) event.shotId = shotId;
+    this.tankManager.reassignShotAttribution(previousShotId, shotId);
+    this.physicsEngine.reassignShotId(previousShotId, shotId);
+    return true;
   }
 
   /**
@@ -439,40 +485,122 @@ export class GameEngine {
     return true;
   }
 
-  // === Round-end (fin de manche) rewards & celebration (called by React when phase → SUMMARY) ===
+  // === Gains par résolution et résumé de manche ===
 
-  /**
-   * Awards money at end of a manche per spec:
-   * - 500$ base to every surviving tank
-   * Mutates the live Player.money (shared refs) and returns RoundResult for UI.
-   * Resets accumulators for the next round.
-   */
-  public awardEndOfRoundEarnings(): RoundResult {
-    const players = this.tankManager.getPlayers();
-    const survivors: string[] = [];
+  public buildRoundResult(): RoundResult {
+    return {
+      damageDealt: { ...this.roundDamageDealt },
+      earningsByPlayer: { ...this.roundEarningsByPlayer },
+      terrainDestroyed: this.roundTerrainDestroyed,
+      survivors: this.tankManager.getAlivePlayers().map((player) => player.id),
+    };
+  }
 
-    // Apply earnings (base survival bonus only) to survivors
-    for (const p of players) {
-      if (p.tank.isDead) continue;
-      survivors.push(p.id);
-      const earnings = 500;
-      p.money = (p.money ?? 0) + earnings;
+  public getPendingShotResult(): ResolvedShotPreview | null {
+    return this.pendingShotResult;
+  }
+
+  public getRoundEarningsByPlayer(): Record<string, number> {
+    return { ...this.roundEarningsByPlayer };
+  }
+
+  public restoreRoundEarningsByPlayer(earnings: Readonly<Record<string, number>>): void {
+    const restored: Record<string, number> = {};
+    for (const [playerId, amount] of Object.entries(earnings)) {
+      if (!this.tankManager.getPlayerById(playerId)) continue;
+      if (!Number.isSafeInteger(amount) || amount < 0) {
+        throw new RangeError("Un gain de manche restauré doit être un entier sûr positif ou nul.");
+      }
+      restored[playerId] = amount;
+    }
+    this.roundEarningsByPlayer = restored;
+  }
+
+  private finalizeActiveShot(): ResolvedShotPreview | null {
+    if (!this.activeShotLedger) return this.pendingShotResult;
+    const ledger = this.activeShotLedger;
+    const reward = calculateShotRewards({
+      ...ledger,
+      playerCountAtMatchStart: this.tankManager.getPlayers().length,
+      survivorsAfterShot: this.tankManager.getAlivePlayers().map((player) => player.id),
+    });
+    for (const [playerId, damageMilli] of Object.entries(reward.damageDealtMilliByPlayer)) {
+      this.roundDamageDealt[playerId] =
+        (this.roundDamageDealt[playerId] ?? 0) + damageMilli / 1_000;
     }
 
-    const result: RoundResult = {
-      damageDealt: { ...this.roundDamageDealt },
-      terrainDestroyed: this.roundTerrainDestroyed,
-      survivors,
-    };
+    const balances = this.tankManager.getPlayers().map((player) => ({
+      playerId: player.id,
+      money:
+        player.money +
+        (reward.awards.find((award) => award.playerId === player.id)?.amount ?? 0),
+    }));
+    if (balances.some((balance) => !Number.isSafeInteger(balance.money))) {
+      throw new RangeError("Un solde calculé dépasse la plage des entiers sûrs.");
+    }
+    const preview: ResolvedShotPreview = { ...reward, balances };
+    this.pendingShotResult = preview;
+    this.activeShotLedger = null;
+    this.tankManager.clearShotAttribution();
 
-    // Reset for next round
-    this.roundDamageDealt = {};
-    this.roundKills = {};
-    this.roundTerrainDestroyed = 0;
-    this.currentFirerId = null;
-    this.aliveAtLastShot.clear();
+    if (this.localMatch) {
+      this.applyResolvedEarnings(preview.shotId, balances);
+    }
+    this.onShotResolved?.(preview);
+    return preview;
+  }
 
-    return result;
+  public applyResolvedEarnings(
+    shotId: number,
+    balances: ReadonlyArray<{ playerId: string; money: number }>,
+  ): void {
+    if (!Number.isSafeInteger(shotId) || shotId <= this.lastAppliedShotId) return;
+    const seen = new Set<string>();
+    const updates: Array<{ player: Player; money: number; delta: number }> = [];
+    for (const balance of balances) {
+      if (seen.has(balance.playerId)) throw new RangeError("Solde reçu en double pour un joueur.");
+      seen.add(balance.playerId);
+      if (!Number.isSafeInteger(balance.money) || balance.money < 0) {
+        throw new RangeError("Le solde autoritaire doit être un entier sûr positif ou nul.");
+      }
+      const player = this.tankManager.getPlayerById(balance.playerId);
+      if (!player) throw new RangeError("Le solde autoritaire vise un joueur inconnu.");
+      updates.push({ player, money: balance.money, delta: balance.money - player.money });
+    }
+    for (const update of updates) {
+      update.player.money = update.money;
+      if (update.delta > 0) {
+        this.roundEarningsByPlayer[update.player.id] =
+          (this.roundEarningsByPlayer[update.player.id] ?? 0) + update.delta;
+      }
+    }
+    this.lastAppliedShotId = shotId;
+  }
+
+  public syncAuthoritativeBalances(
+    balances: ReadonlyArray<{ playerId: string; money: number }>,
+  ): void {
+    const updates = balances.map((balance) => {
+      if (!Number.isSafeInteger(balance.money) || balance.money < 0) {
+        throw new RangeError("Le solde autoritaire doit être un entier sûr positif ou nul.");
+      }
+      const player = this.tankManager.getPlayerById(balance.playerId);
+      if (!player) throw new RangeError("Le solde autoritaire vise un joueur inconnu.");
+      return { player, money: balance.money };
+    });
+    for (const update of updates) update.player.money = update.money;
+  }
+
+  private completeResolvedRound(): void {
+    const outcome = this.pendingShotResult?.roundOutcome;
+    if (!outcome?.isRoundEnd || !this.roundCombatActive || this.gameOver) return;
+    this.roundCombatActive = false;
+    const survivors = this.tankManager.getAlivePlayers();
+    const roundWinner = outcome.roundWinnerId
+      ? this.tankManager.getPlayerById(outcome.roundWinnerId) ?? null
+      : null;
+    if (outcome.isDraw) this.logDeathSummary();
+    this.onRoundEnded?.({ survivors, isDraw: outcome.isDraw, roundWinner });
   }
 
   /** Lightweight celebration reuse for SUMMARY (does NOT set gameOver or winner). Keeps existing final-win paths untouched. */
@@ -576,10 +704,12 @@ export class GameEngine {
 
     // Clear any round accumulators
     this.roundDamageDealt = {};
-    this.roundKills = {};
+    this.roundEarningsByPlayer = {};
     this.roundTerrainDestroyed = 0;
     this.currentFirerId = null;
-    this.aliveAtLastShot.clear();
+    this.activeShotLedger = null;
+    this.pendingShotResult = null;
+    this.shotNumberInRound = 0;
 
     // Reset projectile settlement tracker (physics.clear() was just called)
     this.previousProjectileCount = 0;
@@ -674,40 +804,6 @@ export class GameEngine {
     }
     this.previousProjectileCount = currentCount;
 
-    this.tryEndCombatRound();
-  }
-
-  /**
-   * Ends the current combat round on last man standing (0 or 1 tanks alive).
-   * While >=2 remain alive, combat and turns continue (skipping dead players).
-   * Match continuation (shop) vs match over is decided in React via onRoundEnded.
-   */
-  private tryEndCombatRound(): void {
-    if (!this.roundCombatActive || this.gameOver) return;
-
-    const survivors = this.tankManager.getAlivePlayers();
-
-    if (survivors.length >= 2) return;
-
-    this.roundCombatActive = false;
-
-    const isDraw = survivors.length === 0;
-    const roundWinner = survivors.length === 1 ? survivors[0] : null;
-
-    if (isDraw) {
-      console.log(`[ROUND END] DRAW — all tanks destroyed (players redacted)`);
-      this.logDeathSummary();
-    } else if (roundWinner) {
-      console.log(
-        `[ROUND END] (player redacted) is the last tank standing this round`,
-      );
-    }
-
-    this.onRoundEnded?.({
-      survivors,
-      isDraw,
-      roundWinner,
-    });
   }
 
   /**
@@ -1542,53 +1638,6 @@ export class GameEngine {
     return this.winner;
   }
 
-  /** Awards money immediately when a player is destroyed:
-   *  - $300 to the killer (unless suicide)
-   *  - Sinks the second-to-last player, meaning only 1 remains, awarding $600 (double) to the last standing tank
-   */
-  private handlePlayerDeathGains(victimId: string, killerId?: string): void {
-    const actualKiller = killerId ?? this.currentFirerId ?? "unknown";
-    const aliveTanks = this.tankManager.getAlivePlayers();
-
-    // Check if this was the second-to-last tank's destruction (exactly 1 survivor left)
-    if (aliveTanks.length === 1) {
-      const lastTank = aliveTanks[0];
-      // The last tank receives the double ($600) upon the second-to-last tank's death
-      lastTank.money = (lastTank.money ?? 0) + 600;
-      console.log(
-        `[EARNINGS] Last tank standing (redacted) receives double reward: +$600`,
-      );
-
-      // If the last tank was also the killer, it already receives $600 total.
-      // If the killer was someone else (different from victim and lastTank), they receive standard $300.
-      if (
-        actualKiller !== "unknown" &&
-        actualKiller !== victimId &&
-        actualKiller !== lastTank.id
-      ) {
-        const killerPlayer = this.tankManager.getPlayerById(actualKiller);
-        if (killerPlayer) {
-          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
-          console.log(
-            `[EARNINGS] Killer (redacted) receives standard reward: +$300`,
-          );
-        }
-      }
-    } else if (aliveTanks.length > 1) {
-      // Standard death (not the end of the round yet)
-      // Standard reward ($300) to the killer (unless suicide)
-      if (actualKiller !== "unknown" && actualKiller !== victimId) {
-        const killerPlayer = this.tankManager.getPlayerById(actualKiller);
-        if (killerPlayer) {
-          killerPlayer.money = (killerPlayer.money ?? 0) + 300;
-          console.log(
-            `[EARNINGS] Killer (redacted) receives standard reward: +$300`,
-          );
-        }
-      }
-    }
-  }
-
   /** Record why a player died (used for end-of-game summary, especially for "partie nulle") */
   public recordDeath(playerId: string, cause: string, info?: string): void {
     if (!this.deathReasons[playerId]) {
@@ -1622,10 +1671,14 @@ export class GameEngine {
 
     // Clear round accumulators / celebration state
     this.roundDamageDealt = {};
-    this.roundKills = {};
+    this.roundEarningsByPlayer = {};
     this.roundTerrainDestroyed = 0;
     this.currentFirerId = null;
-    this.aliveAtLastShot.clear();
+    this.activeShotLedger = null;
+    this.pendingShotResult = null;
+    this.shotNumberInRound = 0;
+    this.nextShotId = 1;
+    this.lastAppliedShotId = 0;
 
     // Reset projectile settlement tracker
     this.previousProjectileCount = 0;

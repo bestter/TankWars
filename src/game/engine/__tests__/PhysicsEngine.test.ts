@@ -172,14 +172,18 @@ describe('PhysicsEngine', () => {
       // Verify splash damage was 50% stronger (35 * 1.5 = 53) with unchanged blast radius (28)
       expect(tankManager.applyExplosionDamage).toHaveBeenCalledTimes(1);
       expect(tankManager.applyExplosionDamage).toHaveBeenCalledWith(
-        120,
-        expect.any(Number),
-        28, // Radius is NOT affected
-        53, // 50% increased damage (Math.round(35 * 1.5))
-        undefined,
-        'MISSILE',
-        false,
-        expect.anything(),
+        expect.objectContaining({
+          explosionX: 120,
+          explosionY: expect.any(Number),
+          radius: 28,
+          maxDamage: 53,
+          shooterId: undefined,
+          weaponId: 'MISSILE',
+          isDirectHit: false,
+          terrain: expect.anything(),
+          shotId: expect.any(Number),
+          munitionId: 0,
+        }),
       );
     });
   });

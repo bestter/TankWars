@@ -365,8 +365,16 @@ describe('GameRoom Durable Object', () => {
         })
       );
 
-      // 2. Slot 0 sends SHOT_SETTLED
-      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'SHOT_SETTLED' }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((m) => m.type === 'SHOT');
+      expect(shot).toBeDefined();
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, false],
+      }));
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
 
       const stateUpdate = ws0.getAllMessages<{ type: string; currentPlayerIndex: number }>().find(
         (m) => m.type === 'STATE_UPDATE'
@@ -558,15 +566,22 @@ describe('GameRoom Durable Object', () => {
         })
       );
 
-      // 4. Slot 0 sends SHOT_SETTLED
+      const roundTwoShot = ws0.getAllMessages<{ type: string; shotId: number }>().filter((m) => m.type === 'SHOT').pop();
       await handleClientMessage.call(
         room,
         0,
         JSON.stringify({
           type: 'SHOT_SETTLED',
+          shotId: roundTwoShot?.shotId,
+          slot: 0,
           deadSlots: [false, false],
         })
       );
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: roundTwoShot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
 
       // 5. Turn MUST advance to slot 1 (Player 2), NOT remain stuck on slot 0!
       const lastStateUpdate = ws0
@@ -661,6 +676,104 @@ describe('GameRoom Durable Object', () => {
     });
   });
 
+  describe('Earnings authority and idempotent payment', () => {
+    async function startTwoHumanRoom() {
+      await room.fetchCreate(new Request('http://localhost/api/room', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'room-economy',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+      return { ws0, ws1, sockets, claim, handle };
+    }
+
+    it('elects the first human, transfers authority, and does not restore it on reconnect', async () => {
+      const { ws0, ws1, sockets, claim } = await startTwoHumanRoom();
+      const stateBefore = Reflect.get(room, 'state') as { earningsAuthoritySlot: number | null; authorityEpoch: number };
+      expect(stateBefore.earningsAuthoritySlot).toBe(0);
+      expect(stateBefore.authorityEpoch).toBe(1);
+
+      const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+      await disconnect.call(room, 0, ws0 as unknown as WebSocket);
+      const stateAfter = Reflect.get(room, 'state') as { earningsAuthoritySlot: number | null; authorityEpoch: number };
+      expect(stateAfter.earningsAuthoritySlot).toBe(1);
+      expect(stateAfter.authorityEpoch).toBe(2);
+
+      sockets.set(0, ws0 as unknown as WebSocket);
+      await claim.call(room, 0, 'Alice');
+      expect((Reflect.get(room, 'state') as { earningsAuthoritySlot: number | null }).earningsAuthoritySlot).toBe(1);
+      expect(ws1.getAllMessages<{ type: string }>().some((message) => message.type === 'AUTHORITY_CHANGED')).toBe(true);
+    });
+
+    it('rejects non-authority, stale epoch, and decimal awards', async () => {
+      const { ws0, handle } = await startTwoHumanRoom();
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const base = {
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
+        deadSlots: [false, false], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      };
+      await handle.call(room, 1, JSON.stringify({ ...base, authorityEpoch: 1 }));
+      await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 0 }));
+      await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 1, awards: [{ playerId: 'player-1', amount: 1.5 }] }));
+      const players = (Reflect.get(room, 'state') as { players: Array<{ money: number }> }).players;
+      expect(players[0].money).toBe(250);
+    });
+
+    it('applies a report atomically once and advances as soon as physics settles', async () => {
+      const { ws0, handle } = await startTwoHumanRoom();
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const report = {
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [{ playerId: 'player-1', amount: 10 }], deadSlots: [false, false],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      };
+      await handle.call(room, 0, JSON.stringify(report));
+      await handle.call(room, 0, JSON.stringify(report));
+      expect((Reflect.get(room, 'state') as { players: Array<{ money: number }> }).players[0].money).toBe(260);
+      expect((Reflect.get(room, 'state') as { currentPlayerIndex: number }).currentPlayerIndex).toBe(0);
+
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, false],
+      }));
+      expect((Reflect.get(room, 'state') as { currentPlayerIndex: number }).currentPlayerIndex).toBe(1);
+    });
+
+    it('advances immediately once physics and a zero-gain report are both present', async () => {
+      const { ws0, handle } = await startTwoHumanRoom();
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, false],
+      }));
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+      expect((Reflect.get(room, 'state') as { currentPlayerIndex: number }).currentPlayerIndex).toBe(1);
+    });
+  });
+
   describe('Persistence, catch-up and ROUND_END', () => {
     it('persists room state after creation', async () => {
       const payload = {
@@ -735,7 +848,7 @@ describe('GameRoom Durable Object', () => {
       expect(types).toContain('STATE_UPDATE');
     });
 
-    it('broadcasts ROUND_END and marks the round finished', async () => {
+    it('broadcasts authoritative ROUND_END after settled earnings', async () => {
       const payload = {
         roomId: 'room-end',
         numPlayers: 2,
@@ -761,19 +874,22 @@ describe('GameRoom Durable Object', () => {
         slot: number,
         raw: string
       ) => Promise<void>;
-      const players = (
-        Reflect.get(room, 'state') as { players: Array<Record<string, unknown>> }
-      ).players;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       await handleClientMessage.call(
         room,
         0,
         JSON.stringify({
-          type: 'ROUND_END',
-          roundWinnerId: 'player-1',
-          isDraw: false,
-          players,
+          type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, true],
         }),
       );
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, true],
+        roundOutcome: { isRoundEnd: true, isDraw: false, roundWinnerId: 'player-1' },
+      }));
 
       const end = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'ROUND_END');
       expect(end).toBeDefined();
