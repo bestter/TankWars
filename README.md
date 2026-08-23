@@ -41,10 +41,10 @@
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (absorbs via `Math.ceil(shield / 2)`; normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: dark cyan shield bar (`VGA_PALETTE.DARK_CYAN`) above tank while shield > 0; if health is also reduced, a green health bar appears below the dark cyan shield bar; when shield is depleted, only the health bar (green, red if $\le 40\%$) is shown.
-- **Ammo Inventory + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Sequential shop between rounds. Money: $300 per destroy, $600 for the last tank standing, $500 survival.
+- **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn order, and shop sync (`FIRE` / `SHOT` / `STATE_UPDATE` / `ROUND_END` / shop relay). Client: `localPlayerId` gating, seeded RNG per round (`seedFromRoomRound`), `sessionStorage` resume, combat WS reconnect. Physics stays local; server owns turn order (authoritative sim still planned).
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn order, authoritative reward application, round end, and shop sync. The strict shared protocol covers `AUTHORITY_CHANGED`, `SHOT`, `SHOT_SETTLED`, `SHOT_EARNINGS`, `SHOT_EARNINGS_APPLIED`, `STATE_UPDATE`, and `ROUND_END`. The first connected human computes rewards; persistent failover promotes the next human if needed. Physics stays local; full authoritative terrain/damage simulation is still planned.
 - **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting. All in `GameEngine` (Web Audio).
 
 ---
@@ -92,7 +92,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (517 unit tests across 60 files)
+# Run tests (560 unit tests across 64 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -114,7 +114,8 @@ This project follows a strict separation of concerns:
 
 - **React Layer** (`src/components/`, `src/App.tsx`, `src/appReducer.ts`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop) via `useReducer`. Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
-- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `worker/`): REST room creation + persistent WS to `GameRoom` Durable Object; server coordinates turns and relays state; each client runs local Canvas physics.
+- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server coordinates turns, atomically applies authoritative rewards and balances, owns round end, and persists authority/failover state. Each client still runs local Canvas physics.
+- **Economy** (`src/game/economy/`): Exact rational reward calculation from structured damage/destruction events. `GameEngine` owns shot ledgers and round earnings; React owns the floating reward feedback and summaries.
 - **Game Engine** (`src/game/engine/`): Owns the 120 Hz fixed-timestep physics loop, terrain mutations, projectile simulation, rendering, and combat audio. Communicates exclusively via callbacks.
 - **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate from React.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches on `player.aiProfile`:
@@ -146,12 +147,12 @@ In the build today:
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
 - Destructible heightmap, DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
 - Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` + `terrainMaterialTactics` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
-- Shop + ammo + $300 / $600 / $500 economy; local hotseat shop stays usable after round 1
+- Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
-- Online lobby + combat WS, Durable Object persistence, shop relay, session resume, reconnect
+- Online lobby + strict combat protocol, authoritative reward/balance application, Durable Object authority failover, shop relay, session resume, reconnect
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **517 unit tests** across **60 files** (Vitest)
+- **560 unit tests** across **64 files** (Vitest)
 
 Still planned:
 
@@ -197,6 +198,8 @@ To explore the codebase:
 - Projectiles: `src/game/engine/PhysicsEngine.ts`
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
 - Shared turn order: `src/game/online/turnOrder.ts`
+- Economy: `src/game/economy/fixedPoint.ts` + `shotRewards.ts`
+- Shared online protocol: `src/game/online/protocol.ts`
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)
 

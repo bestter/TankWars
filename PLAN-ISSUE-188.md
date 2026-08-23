@@ -2,6 +2,8 @@
 
 Source : [Changer méthode de calcul des montants reçu — Issue #188](https://github.com/bestter/TankWars/issues/188)
 
+> **État final (23 août 2026) :** plan implanté dans la PR #200. Une décision UX prise après l’implantation remplace la barrière initiale : le gain flotte au-dessus du tank pendant 3 secondes, sans bloquer le jeu. Les sections ci-dessous reflètent ce comportement final.
+
 ## Objectif
 
 Remplacer complètement les anciennes primes de `300 $`, `500 $` et `600 $` par un système de gains calculé après chaque résolution de tir à partir :
@@ -26,11 +28,11 @@ Le changement doit fonctionner en partie locale et en ligne. En ligne, le poste 
 7. Une mini-nuke ou une thermonucléaire donne toujours seulement `2 × X` par destruction, même au premier tir.
 8. En partie nulle normale, chaque joueur vivant avant le tir reçoit `50 × X / N` et le tireur reçoit aussi `X`.
 9. En partie nulle provoquée par une arme massive, le tireur reçoit uniquement `X`; les autres joueurs se partagent `50 × X`.
-10. Le message de gain est visible 5 secondes et bloque le jeu au maximum 2 secondes. Une touche ou un clic le ferme; l’entrée est consommée et ne provoque pas de tir.
+10. Le message de gain flotte au-dessus du tank pendant 3 secondes avec montée et fondu, sans bloquer les entrées ni le prochain tour.
 11. Le résumé de manche affiche uniquement le gain de la manche. Le solde total demeure dans la boutique.
 12. En ligne, l’autorité transférée demeure chez son successeur tant que celui-ci reste connecté. La reconnexion de l’ancien premier humain ne lui redonne pas immédiatement l’autorité.
-13. En ligne, le serveur impose le délai minimal de 2 secondes. Fermer l’affichage localement ne fait pas avancer les autres clients.
-14. Lorsqu’une résolution paie plusieurs joueurs, leurs lignes sont affichées simultanément et empilées au centre.
+13. En ligne, le serveur n’impose aucun délai d’affichage; il avance dès que la physique et le rapport économique requis sont stabilisés.
+14. Lorsqu’une résolution paie plusieurs joueurs, chaque montant est affiché simultanément au-dessus du tank bénéficiaire.
 
 ## Contraintes du dépôt
 
@@ -406,16 +408,15 @@ interface RoundResult {
 
 Réinitialiser le compteur de tirs et les gains lors de `startNextRound` et `resetGame`.
 
-## 6. Ajouter une barrière entre résolution et tour suivant
+## 6. Coordonner la résolution et le tour suivant
 
 Modifier `src/game/engine/TurnManager.ts`.
 
-Actuellement, `finishShotResolution()` avance immédiatement en local. Il faut séparer :
+`finishShotResolution()` sépare :
 
 1. résolution physique terminée;
 2. gains calculés/appliqués;
-3. barrière d’affichage terminée;
-4. prochain tour.
+3. prochain tour ou fin de manche.
 
 Ajouter un état idempotent du genre :
 
@@ -429,13 +430,12 @@ et une méthode :
 releaseResolvedShot(): void;
 ```
 
-Comportement :
+Comportement final :
 
-- aucun gain : libération immédiate;
-- partie locale avec gain : libération après 2 secondes ou interaction;
+- partie locale : libération immédiate, avec ou sans gain;
 - partie en ligne : ne pas avancer localement; attendre le `STATE_UPDATE` serveur;
-- fin de manche : après libération, déclencher la célébration au lieu d’un prochain tour;
-- les callbacks de sécurité existants ne doivent pas contourner cette barrière;
+- fin de manche : déclencher la célébration au lieu d’un prochain tour;
+- les callbacks de sécurité existants ne doivent pas contourner la coordination physique/économique;
 - un appel en double à `releaseResolvedShot` ne fait rien.
 
 La détection de fin de manche doit être déplacée après la stabilisation complète. Elle ne doit plus lancer la célébration dès qu’une explosion laisse temporairement un seul tank vivant alors que d’autres chutes sont encore en cours.
@@ -468,9 +468,10 @@ interface EarningsOverlayState {
     playerName: string;
     color: string;
     amount: number;
+    x: number;
+    y: number;
   }>;
   displayedAt: number;
-  blocking: boolean;
 }
 ```
 
@@ -481,32 +482,23 @@ Ne pas utiliser `useState` pour les données physiques; seulement pour cet état
 Constantes :
 
 ```ts
-const EARNINGS_DISPLAY_MS = 5_000;
-const EARNINGS_BLOCK_MS = 2_000;
+const EARNINGS_DISPLAY_MS = 3_000;
 ```
 
 Comportement :
 
-- une ligne par bénéficiaire;
-- lignes empilées au centre;
-- texte `NOM DU JOUEUR: +100$`;
+- un montant par bénéficiaire, placé au-dessus de son tank;
+- texte compact `+100$`;
 - couleur du tank;
+- animation ascendante avec fondu;
+- `pointer-events: none` afin de ne jamais bloquer les contrôles;
 - ne pas afficher les joueurs à zéro;
 - si toute la résolution vaut zéro, ne créer aucun overlay;
 - nettoyer tous les timers au démontage et au changement de manche.
 
 ### 7.3 Interaction
 
-Pendant que l’overlay existe :
-
-- une touche ou un clic le ferme;
-- l’événement est consommé et ne doit pas tirer ni modifier les contrôles;
-- en local, l’interaction libère aussi immédiatement la barrière;
-- en ligne, elle ferme seulement l’affichage local; le serveur conserve son délai minimal de 2 secondes.
-
-Installer le gestionnaire clavier en phase de capture afin qu’il intercepte l’événement avant les listeners du `TurnManager`.
-
-Les contrôles mobiles doivent respecter le même comportement.
+L’affichage est purement informatif : il ne capture ni clavier, ni clic, ni contrôle tactile. Sa minuterie le retire automatiquement après 3 secondes et doit être nettoyée au démontage.
 
 Ne pas réutiliser `CELEBRATION` et ne pas introduire une mutation Canvas depuis React. L’overlay demeure un composant React superposé.
 
@@ -690,7 +682,7 @@ Le message appliqué contient :
   awards,
   balances: Array<{ playerId, money }>,
   hasEarnings,
-  blockDurationMs,
+  blockDurationMs: 0,
   roundOutcome,
 }
 ```
@@ -705,7 +697,6 @@ Pour chaque tir serveur, suivre séparément :
 
 - résolution du tireur humain reçue;
 - gains autoritaires reçus;
-- délai minimal expiré.
 
 ### Tir humain
 
@@ -713,7 +704,6 @@ Le changement de tour exige :
 
 1. `SHOT_SETTLED` du tireur ou son watchdog existant;
 2. `SHOT_EARNINGS` de l’autorité;
-3. si les gains sont non nuls, expiration des 2 secondes.
 
 ### Tir IA
 
@@ -725,7 +715,7 @@ Dès que la physique et le rapport autoritaire sont présents :
 
 - ne pas diffuser d’overlay;
 - avancer immédiatement;
-- ne pas imposer 2 secondes.
+- ne pas imposer de délai.
 
 ### Fin de manche
 
@@ -733,7 +723,6 @@ Supprimer l’envoi client autonome de `ROUND_END`.
 
 Après application des gains :
 
-- attendre les 2 secondes si nécessaire;
 - diffuser le `ROUND_END` autoritaire avec les soldes à jour;
 - ne pas diffuser de prochain tour;
 - les clients passent ensuite à la célébration et au résumé;
@@ -859,8 +848,8 @@ Tester :
 - premier tir remis à zéro à la nouvelle manche;
 - aucune ancienne prime `300/500/600`;
 - finalisation après stabilisation complète;
-- fin de manche différée;
-- aucun tour avant libération;
+- fin de manche après stabilisation;
+- prochain tour immédiat après résolution locale;
 - libération idempotente;
 - résolution sans gain immédiate;
 - gains de manche cumulés seulement lors de l’application.
@@ -869,10 +858,9 @@ Tester :
 
 Tester avec de faux timers :
 
-- overlay visible 5 secondes;
-- blocage 2 secondes;
-- interaction fermant et consommant l’événement;
-- plusieurs bénéficiaires empilés;
+- overlay visible 3 secondes;
+- aucune capture des interactions;
+- plusieurs bénéficiaires positionnés au-dessus de leurs tanks;
 - couleurs correctes;
 - aucun overlay à zéro;
 - nettoyage au démontage;
@@ -893,8 +881,8 @@ Tester avec de faux timers :
 - doublon sans double crédit;
 - attente de `SHOT_SETTLED`;
 - attente des gains;
-- pause de 2 secondes;
-- zéro gain sans pause;
+- avancement immédiat après physique + gains;
+- zéro gain sans délai;
 - tir IA;
 - relève pendant un tir;
 - rattrapage après reconnexion;
@@ -982,7 +970,7 @@ Pour réduire les régressions et permettre des commits logiques :
 2. événements réels de dommages/destructions dans `TankManager`;
 3. propagation `shotId`/`munitionId` dans `PhysicsEngine`;
 4. registre et finalisation dans `GameEngine`;
-5. barrière de résolution dans `TurnManager`;
+5. coordination de résolution dans `TurnManager`;
 6. overlay et résumé React;
 7. protocole partagé strict;
 8. autorité, idempotence et persistance Worker;
