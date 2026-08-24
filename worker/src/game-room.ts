@@ -715,6 +715,18 @@ export class GameRoom extends DurableObject {
          console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
          return;
       }
+      if (!ALL_WEAPON_IDS.includes(weaponId as WeaponId)) {
+         console.warn(`[GameRoom] Invalid weaponId in FIRE from slot ${slot}:`, weaponId);
+         return;
+      }
+      if (power < 0 || power > 100) {
+         console.warn(`[GameRoom] Power out of bounds in FIRE from slot ${slot}:`, power);
+         return;
+      }
+      if (angle < -360 || angle > 360) {
+         console.warn(`[GameRoom] Angle out of bounds in FIRE from slot ${slot}:`, angle);
+         return;
+      }
 
       // One shot in flight at a time — blocks double-fire on the same turn (client unlock races).
       if (this.shotInFlight || this.awaitingShotFromSlot != null) {

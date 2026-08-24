@@ -594,6 +594,55 @@ describe('GameRoom Durable Object', () => {
   });
 
   describe('Security and edge cases', () => {
+    it('rejects FIRE payloads with invalid weaponId', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      // Force room into started state
+      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
+
+      const payload = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: 50, weaponId: 'INVALID_WEAPON' } });
+      await handleClientMessage.call(room, 0, payload);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid weaponId'), 'INVALID_WEAPON');
+      warnSpy.mockRestore();
+    });
+
+    it('rejects FIRE payloads with power out of bounds', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      // Force room into started state
+      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
+
+      const payloadHigh = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: 150, weaponId: 'MISSILE' } });
+      await handleClientMessage.call(room, 0, payloadHigh);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Power out of bounds'), 150);
+
+      const payloadLow = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: -10, weaponId: 'MISSILE' } });
+      await handleClientMessage.call(room, 0, payloadLow);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Power out of bounds'), -10);
+      warnSpy.mockRestore();
+    });
+
+    it('rejects FIRE payloads with angle out of bounds', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      // Force room into started state
+      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
+
+      const payloadHigh = JSON.stringify({ type: 'FIRE', command: { angle: 400, power: 50, weaponId: 'MISSILE' } });
+      await handleClientMessage.call(room, 0, payloadHigh);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Angle out of bounds'), 400);
+      warnSpy.mockRestore();
+    });
+
     it('handles invalid JSON gracefully without throwing', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
