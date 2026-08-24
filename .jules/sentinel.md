@@ -146,7 +146,7 @@ No security impact, strictly an internal performance cache.
 **Learning:** This could be exploited by an attacker running a malicious service on any port on the same machine to bypass CORS, as they could serve malicious content from a high port to spoof interactions.
 **Prevention:** Use restrictive and explicit configurations specifying the exact ports necessary for development/services (e.g. `(5173|4173|8787)`) when allowing `localhost` or `127.0.0.1`.
 
-## 2024-05-18 - Missing enum and bounds validation for client-to-server intents
+## 2026-10-18 - Missing enum and bounds validation for client-to-server intents
 **Vulnerability:** The client-to-server `FIRE` command payload in the GameRoom Durable Object missed strict validation for the `weaponId` enum and `power` bounds.
 **Learning:** This architectural gap exists because `FIRE` is a client-to-server intent that bypasses the strict `StrictOnlineMessage` parser. The DO manually parsed the JSON, only checking basic JS types (`typeof weaponId === 'string'`), but failed to ensure it matched the game rules. This allows a malformed intent to pass to `executeFire` and be broadcast to all clients, where the strict client-side parsers drop the invalid `SHOT` payload. This leads to the host dropping the shot while the DO advances its authoritative turn, causing a fatal state desync (DoS for that round).
 **Prevention:** When parsing raw JSON in WebSocket handlers for client-to-server messages that do not reuse the strict protocol parsers, ensure that not only the type is validated, but also that enums match allowed values (`ALL_WEAPON_IDS.includes(...)`) and numerical inputs are properly bounded (`power >= 0 && power <= 100`).
