@@ -2,6 +2,8 @@ import type { GamePhase, RoundResult } from "../types/game";
 import type { Player } from "../types/player";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 
+export const ZEUS_ANNOUNCEMENT_DURATION_MS = 3_000;
+
 export interface EarningsOverlayState {
   shotId: number;
   awards: Array<{
@@ -12,6 +14,12 @@ export interface EarningsOverlayState {
     x: number;
     y: number;
   }>;
+  displayedAt: number;
+}
+
+export interface ZeusAnnouncementState {
+  appointmentId: number;
+  playerName: string;
   displayedAt: number;
 }
 
@@ -28,6 +36,7 @@ export interface GameCanvasState {
   currentShopIndex: number;
   uiPlayers: Player[];
   earningsOverlay: EarningsOverlayState | null;
+  zeusAnnouncement?: ZeusAnnouncementState | null;
 }
 
 export type GameCanvasAction =
@@ -36,6 +45,8 @@ export type GameCanvasAction =
   | { type: "SET_UI_PLAYERS"; players: Player[] }
   | { type: "SHOW_EARNINGS"; overlay: EarningsOverlayState }
   | { type: "HIDE_EARNINGS" }
+  | { type: "SHOW_ZEUS_ANNOUNCEMENT"; announcement: ZeusAnnouncementState }
+  | { type: "HIDE_ZEUS_ANNOUNCEMENT" }
   | { type: "START_CELEBRATION"; payload: { roundWinner: Player | null; roundResult: RoundResult; uiPlayers: Player[] } }
   | { type: "GO_TO_SUMMARY" }
   | { type: "START_SHOP"; roster: Player[] }
@@ -60,6 +71,7 @@ export const INITIAL_STATE: GameCanvasState = {
   currentShopIndex: 0,
   uiPlayers: [],
   earningsOverlay: null,
+  zeusAnnouncement: null,
 };
 
 export function gameCanvasReducer(
@@ -77,6 +89,10 @@ export function gameCanvasReducer(
       return { ...state, earningsOverlay: action.overlay };
     case "HIDE_EARNINGS":
       return { ...state, earningsOverlay: null };
+    case "SHOW_ZEUS_ANNOUNCEMENT":
+      return { ...state, zeusAnnouncement: action.announcement };
+    case "HIDE_ZEUS_ANNOUNCEMENT":
+      return { ...state, zeusAnnouncement: null };
     case "START_CELEBRATION":
       return {
         ...state,
@@ -91,6 +107,7 @@ export function gameCanvasReducer(
         },
         uiPlayers: action.payload.uiPlayers,
         earningsOverlay: null,
+        zeusAnnouncement: null,
       };
     case "GO_TO_SUMMARY":
       return {
@@ -104,6 +121,7 @@ export function gameCanvasReducer(
         shopPlayers: action.roster,
         uiPlayers: action.roster,
         currentShopIndex: 0,
+        zeusAnnouncement: null,
       };
     case "ADVANCE_SHOPPER":
       return {
@@ -126,6 +144,7 @@ export function gameCanvasReducer(
         currentShopIndex: 0,
         uiPlayers: action.uiPlayers,
         earningsOverlay: null,
+        zeusAnnouncement: null,
       };
     case "END_MATCH_FROM_SHOP":
       return {
@@ -134,6 +153,7 @@ export function gameCanvasReducer(
         shopPlayers: [],
         winner: action.winner,
         showNewGameButton: false,
+        zeusAnnouncement: null,
       };
     case "SHOW_NEW_GAME_BUTTON":
       return {
@@ -153,6 +173,7 @@ export function gameCanvasReducer(
         shopPlayers: [],
         currentShopIndex: 0,
         earningsOverlay: null,
+        zeusAnnouncement: null,
       };
     case "RESUME_CANVAS":
       return {

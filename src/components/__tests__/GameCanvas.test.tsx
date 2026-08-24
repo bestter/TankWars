@@ -72,6 +72,7 @@ describe("GameCanvas component", () => {
     currentShopIndex: 0,
     uiPlayers: [p1, p2],
     earningsOverlay: null,
+    zeusAnnouncement: null,
   };
 
   let mockHandlers: {
@@ -144,6 +145,31 @@ describe("GameCanvas component", () => {
     expect(canvas).toBeDefined();
     expect(canvas.getAttribute("aria-label")).toBe("canvas_game_aria_label");
     expect(canvas.tabIndex).toBe(0);
+  });
+
+  it("renders the bilingual Zeus announcement key with the appointed player name", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        zeusAnnouncement: {
+          appointmentId: 1,
+          playerName: "CPU 2",
+          displayedAt: Date.now(),
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas />);
+    expect(screen.getByRole("status").textContent).toBe(
+      "zeus_appointed_announcement_CPU 2",
+    );
   });
 
   it("triggers handleCanvasClick on canvas click and keyboard Enter/Space", () => {

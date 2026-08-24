@@ -104,7 +104,7 @@ export class TankManager {
   /** Debug hook: called when a player dies so GameEngine can accumulate causes for the final summary */
   public onPlayerDied?: (
     playerId: string,
-    cause: "explosion" | "burial",
+    cause: "explosion" | "burial" | "zeus",
     details: string,
     killerId?: string,
   ) => void;
@@ -279,6 +279,7 @@ export class TankManager {
 
       // Clear per-round AI revenge data and hit reaction
       tank.lastHitBy = undefined;
+      tank.lastDirectAttackerId = undefined;
       tank.hitReaction = undefined;
     });
 
@@ -791,6 +792,9 @@ export class TankManager {
           };
           tank.hitReaction.wasDirectHit = true;
           tank.hitReaction.shotStep = 0;
+          if (shooterId && shooterId !== player.id && weaponId !== "BULLDOZER") {
+            tank.lastDirectAttackerId = shooterId;
+          }
         }
       }
 
@@ -911,6 +915,19 @@ export class TankManager {
     }
 
     return killsThisExplosion;
+  }
+
+  /** Applies the Zeus domain action without projectile, splash, shield absorption or terrain mutation. */
+  public applyZeusStrike(zeusId: string, targetId: string): boolean {
+    if (zeusId === targetId) return false;
+    const target = this.getPlayerById(targetId);
+    if (!target || target.tank.isDead || target.tank.health <= 0) return false;
+    target.tank.health = 0;
+    target.tank.shield = 0;
+    target.tank.isDead = true;
+    this.invalidateAliveCache();
+    this.onPlayerDied?.(target.id, "zeus", `lightning by ${zeusId}`, zeusId);
+    return true;
   }
 
   /**

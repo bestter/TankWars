@@ -12,6 +12,7 @@ import type { GamePhase } from "../types/game";
 import {
   gameCanvasReducer,
   INITIAL_STATE,
+  ZEUS_ANNOUNCEMENT_DURATION_MS,
   type EarningsOverlayState,
 } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
@@ -27,6 +28,10 @@ import {
   isStrictOnlineMessage,
   type ShotEarningsMessage,
 } from "../game/online/protocol";
+import type {
+  ZeusAppointment,
+  ZeusStrikeResult,
+} from "../game/zeus/zeusDomain";
 
 function buildInitialCanvasState(
   resume?: OnlineCanvasSnapshot,
@@ -155,6 +160,8 @@ export function useGameSession({
   const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
   const activeServerShotIdRef = useRef<number | null>(null);
   const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
+  const lastZeusAppointmentIdRef = useRef(resumeCanvas?.lastZeusAppointmentId ?? 0);
+  const lastAppliedZeusStrikeIdRef = useRef(resumeCanvas?.lastAppliedZeusStrikeId ?? 0);
   const pendingShotPreviewsRef = useRef<Map<number, ResolvedShotPreview>>(new Map());
   const submitShotEarningsRef = useRef<(preview: ResolvedShotPreview) => void>(() => {});
   const shopSyncRef = useRef({
@@ -209,6 +216,7 @@ export function useGameSession({
   const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const zeusAnnouncementTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync refs to avoid stale closures
   useEffect(() => {
@@ -270,6 +278,8 @@ export function useGameSession({
         authoritySlot: authoritySlotRef.current,
         authorityEpoch: authorityEpochRef.current,
         lastAppliedShotId: lastAppliedShotIdRef.current,
+        lastZeusAppointmentId: lastZeusAppointmentIdRef.current,
+        lastAppliedZeusStrikeId: lastAppliedZeusStrikeIdRef.current,
         roundEarningsByPlayer:
           engineRef.current?.getRoundEarningsByPlayer() ??
           roundResult?.earningsByPlayer ??
@@ -375,6 +385,14 @@ export function useGameSession({
       clearTimeout(celebrationTimerRef.current);
       celebrationTimerRef.current = null;
     }
+  }, []);
+
+  const clearZeusAnnouncement = useCallback((): void => {
+    if (zeusAnnouncementTimerRef.current !== null) {
+      clearTimeout(zeusAnnouncementTimerRef.current);
+      zeusAnnouncementTimerRef.current = null;
+    }
+    dispatch({ type: "HIDE_ZEUS_ANNOUNCEMENT" });
   }, []);
 
   const goToSummary = useCallback(() => {
@@ -519,6 +537,7 @@ export function useGameSession({
         awards: preview.awards.map(({ playerId, amount }) => ({ playerId, amount })),
         deadSlots: engine.getTankManager().getPlayers().map((player) => player.tank.isDead),
         roundOutcome: preview.roundOutcome,
+        directHitVictimIds: preview.directHitVictimIds,
       };
       sendCombatMessage(message);
     };
@@ -637,6 +656,64 @@ export function useGameSession({
                 },
               });
             }
+          }
+
+          if (strictMessage?.type === 'ZEUS_APPOINTED') {
+            const roster = engine.getTankManager().getPlayers();
+            const rotationPlayerIds = strictMessage.rotationSlots
+              .map((rotationSlot) => roster[rotationSlot]?.id)
+              .filter((playerId): playerId is string => typeof playerId === "string");
+            engine.applyRemoteZeusAppointment({
+              appointmentId: strictMessage.appointmentId,
+              zeusId: strictMessage.zeusId,
+              rotationPlayerIds,
+            });
+            tm.syncTurn(strictMessage.zeusSlot);
+          }
+
+          if (strictMessage?.type === 'ZEUS_STRIKE') {
+            engine.startRemoteZeusStrike(strictMessage, strictMessage.resolveAt);
+          }
+
+          if (strictMessage?.type === 'ZEUS_STRIKE_APPLIED') {
+            const result: ZeusStrikeResult = {
+              strikeId: strictMessage.strikeId,
+              zeusId: strictMessage.zeusId,
+              targetId: strictMessage.targetId,
+              award: strictMessage.award,
+              balances: strictMessage.balances,
+              roundOutcome: strictMessage.roundOutcome,
+            };
+            engine.applyRemoteZeusStrikeResult(result);
+            if (
+              strictMessage.nextPlayerIndex !== null &&
+              gamePhaseRef.current === 'COMBAT'
+            ) {
+              tm.syncTurn(strictMessage.nextPlayerIndex);
+            }
+          }
+
+          if (strictMessage?.type === 'ZEUS_STATE') {
+            engine.syncRemoteZeusState(strictMessage.activeZeusId);
+            const roster = engine.getTankManager().getPlayers();
+            for (let index = 0; index < strictMessage.deadSlots.length; index++) {
+              if (!strictMessage.deadSlots[index]) continue;
+              const player = roster[index];
+              if (!player) continue;
+              player.tank.health = 0;
+              player.tank.shield = 0;
+              player.tank.isDead = true;
+            }
+            if (strictMessage.activeStrike) {
+              engine.startRemoteZeusStrike(
+                strictMessage.activeStrike,
+                strictMessage.activeStrike.resolveAt,
+              );
+            }
+            if (gamePhaseRef.current === 'COMBAT') {
+              tm.syncTurn(strictMessage.currentPlayerIndex);
+            }
+            dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
           }
 
           if (strictMessage?.type === 'STATE_UPDATE') {
@@ -876,6 +953,52 @@ export function useGameSession({
       dispatch({ type: "SET_TURN_INFO", info });
     };
 
+    engine.onZeusAppointed = (appointment: ZeusAppointment) => {
+      if (
+        gameMode === "online" &&
+        appointment.appointmentId <= lastZeusAppointmentIdRef.current
+      ) return;
+      lastZeusAppointmentIdRef.current = appointment.appointmentId;
+      const player = engine.getTankManager().getPlayerById(appointment.zeusId);
+      if (!player) return;
+      if (zeusAnnouncementTimerRef.current !== null) {
+        clearTimeout(zeusAnnouncementTimerRef.current);
+      }
+      dispatch({
+        type: "SHOW_ZEUS_ANNOUNCEMENT",
+        announcement: {
+          appointmentId: appointment.appointmentId,
+          playerName: player.name,
+          displayedAt: Date.now(),
+        },
+      });
+      zeusAnnouncementTimerRef.current = setTimeout(() => {
+        zeusAnnouncementTimerRef.current = null;
+        dispatch({ type: "HIDE_ZEUS_ANNOUNCEMENT" });
+      }, ZEUS_ANNOUNCEMENT_DURATION_MS);
+    };
+
+    engine.onZeusStrikeApplied = (result: ZeusStrikeResult) => {
+      if (
+        gameMode === "online" &&
+        result.strikeId <= lastAppliedZeusStrikeIdRef.current
+      ) return;
+      lastAppliedZeusStrikeIdRef.current = result.strikeId;
+      const roster = [...engine.getTankManager().getPlayers()];
+      dispatch({ type: "SET_UI_PLAYERS", players: roster });
+      const awards = buildOverlayAwards([result.award], roster);
+      if (awards.length > 0) {
+        dispatch({
+          type: "SHOW_EARNINGS",
+          overlay: {
+            shotId: -result.strikeId,
+            awards,
+            displayedAt: Date.now(),
+          },
+        });
+      }
+    };
+
     engine.onShotResolved = (preview) => {
       if (gameMode === "online") {
         pendingShotPreviewsRef.current.set(preview.shotId, preview);
@@ -902,6 +1025,7 @@ export function useGameSession({
      */
     engine.onRoundEnded = (payload) => {
       if (gamePhaseRef.current !== "COMBAT") return;
+      clearZeusAnnouncement();
 
       const fromNetwork = roundEndFromNetworkRef.current;
       roundEndFromNetworkRef.current = false;
@@ -988,6 +1112,10 @@ export function useGameSession({
       }
       clearShopAiTimeout();
       clearCelebrationTimer();
+      if (zeusAnnouncementTimerRef.current !== null) {
+        clearTimeout(zeusAnnouncementTimerRef.current);
+        zeusAnnouncementTimerRef.current = null;
+      }
 
       const wsToClose = gameWs;
       const genAtCleanup = effectGeneration;
@@ -1028,7 +1156,7 @@ export function useGameSession({
       engineRef.current = null;
       ctxRef.current = null;
     };
-  }, [clearCelebrationTimer, clearShopAiTimeout, goToSummary]); // eslint-disable-line react-hooks/exhaustive-deps -- complex effect with conditional online logic; re-running on those is acceptable for game session mount
+  }, [clearCelebrationTimer, clearShopAiTimeout, clearZeusAnnouncement, goToSummary]); // eslint-disable-line react-hooks/exhaustive-deps -- complex effect with conditional online logic; re-running on those is acceptable for game session mount
 
   // Global SPACE to skip round celebration fireworks
   useEffect(() => {

@@ -31,6 +31,7 @@
   - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; outer tanks fall into the crater; large VFX + deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Unique VGA colors with live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
+- **Zeus Lightning Anti-Deadlock** — If only two or more AIs remain and five full rotations produce no paid hit (`hasEarnings`), one eligible AI is appointed Zeus and immediately takes the next turn. Zeus then vaporizes one opponent per turn, preferring its last living direct attacker, until the round ends or Zeus dies. `ZEUS_LIGHTNING` is an internal special action: players cannot select, buy, fire, or teach it to an AI strategy.
 - **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
   - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — deliberately naive, no `fallibleAim`. Early rounds: alcoholic shots (random 0°–180°, including self); sobers via `roundSkill`.
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
@@ -41,11 +42,11 @@
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (absorbs via `Math.ceil(shield / 2)`; normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: dark cyan shield bar (`VGA_PALETTE.DARK_CYAN`) above tank while shield > 0; if health is also reduced, a green health bar appears below the dark cyan shield bar; when shield is depleted, only the health bar (green, red if $\le 40\%$) is shown.
-- **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
+- **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A Zeus strike pays only the standard destruction reward `25X`, with no damage or last-survivor component. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn order, authoritative reward application, round end, and shop sync. The strict shared protocol covers `AUTHORITY_CHANGED`, `SHOT`, `SHOT_SETTLED`, `SHOT_EARNINGS`, `SHOT_EARNINGS_APPLIED`, `STATE_UPDATE`, and `ROUND_END`. The first connected human computes rewards; persistent failover promotes the next human if needed. Physics stays local; full authoritative terrain/damage simulation is still planned.
-- **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting. All in `GameEngine` (Web Audio).
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn order, authoritative reward application, round end, shop sync, and every Zeus decision. The strict shared protocol also covers `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, and reconnect snapshot `ZEUS_STATE`; persisted strike IDs prevent double death or credit after reconnect. Economic-authority failover never changes Zeus state. Physics stays local; full authoritative terrain/damage simulation is still planned.
+- **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
 
 ---
 
@@ -61,6 +62,8 @@
 | Touch Screen | On-screen retro controls (mobile) |
 
 The game starts on a retro Main Menu (color picking + tank previews) where you configure 2–4 players (Human or any of 4 AI profiles). During a match the HUD + canvas overlays (active indicator, colored shells, recoil) provide feedback. Round-winner CELEBRATION fireworks play before SUMMARY. Mobile touch controls appear on tactile devices.
+
+When combat stalls with only AIs alive, a three-second bilingual banner announces Zeus without blocking input. A permanent aura marks the appointed AI; each special turn draws a deterministic branched bolt from the sky, flashes, vaporizes only its target, and then resumes the ordinary circular turn order.
 
 ---
 
@@ -92,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (560 unit tests across 64 files)
+# Run tests (582 unit tests across 65 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -116,7 +119,8 @@ This project follows a strict separation of concerns:
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
 - **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server coordinates turns, atomically applies authoritative rewards and balances, owns round end, and persists authority/failover state. Each client still runs local Canvas physics.
 - **Economy** (`src/game/economy/`): Exact rational reward calculation from structured damage/destruction events. `GameEngine` owns shot ledgers and round earnings; React owns the floating reward feedback and summaries.
-- **Game Engine** (`src/game/engine/`): Owns the 120 Hz fixed-timestep physics loop, terrain mutations, projectile simulation, rendering, and combat audio. Communicates exclusively via callbacks.
+- **Zeus domain** (`src/game/zeus/`): Pure deadlock evaluation, fair appointment history, revenge/fallback targeting, monotonic event IDs, and isolated `25X` reward. It has no dependency on weapons or React.
+- **Game Engine** (`src/game/engine/`): Owns the 120 Hz fixed-timestep physics loop, terrain mutations, projectile simulation, Zeus action/VFX, rendering, and combat audio. Communicates exclusively via callbacks.
 - **Rendering helpers** (`src/game/rendering/`): Pure Canvas 2D procedures (e.g. `drawTankSprite`) kept separate from React.
 - **AI** (`src/game/entities/ai/`): Runtime behavior via `AIEngine`. `AIByProfileStrategy` (wired in `GameCanvas`) dispatches on `player.aiProfile`:
   - `v1-random` → `AISimpleStrategy` ("IA SIMPLE")
@@ -151,8 +155,9 @@ In the build today:
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + strict combat protocol, authoritative reward/balance application, Durable Object authority failover, shop relay, session resume, reconnect
+- Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **560 unit tests** across **64 files** (Vitest)
+- **582 unit tests** across **65 files** (Vitest)
 
 Still planned:
 
@@ -199,6 +204,7 @@ To explore the codebase:
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
 - Shared turn order: `src/game/online/turnOrder.ts`
 - Economy: `src/game/economy/fixedPoint.ts` + `shotRewards.ts`
+- Zeus special-action domain: `src/game/zeus/zeusDomain.ts` + `zeusRewards.ts`
 - Shared online protocol: `src/game/online/protocol.ts`
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)

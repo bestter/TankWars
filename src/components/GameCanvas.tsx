@@ -83,6 +83,7 @@ export function GameCanvas({
     currentShopIndex,
     uiPlayers,
     earningsOverlay,
+    zeusAnnouncement,
   } = state;
 
   return (
@@ -123,6 +124,14 @@ export function GameCanvas({
             overlay={earningsOverlay}
             onDismiss={dismissEarningsOverlay}
           />
+        )}
+
+        {zeusAnnouncement && (
+          <div className="zeus-announcement" role="status" aria-live="polite">
+            {t("zeus_appointed_announcement", {
+              name: zeusAnnouncement.playerName,
+            })}
+          </div>
         )}
 
         <canvas

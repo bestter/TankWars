@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**560 tests**, 64 files).
+- After edits: `npm run lint && npm run build && npm run test` (**582 tests**, 65 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -34,9 +34,11 @@
 - GRENADE: ~2× bounce height on ROCK; first contact on SOFT sticks, digs, and detonates (`grenadeBounceParams`).
 - Weapon pricing comes from `WEAPON_REGISTRY`; Baby Nuke (`NUKE`) costs $420.
 - Economy: exact per-shot calculator in `src/game/economy/` with base $X = $3 / $3.50 / $4 for 2 / 3 / 4 players. Actual damage, attributed falls, destructions, survivor/draw outcomes feed one final ceiling; self-damage pays nothing. `ShotEarningsOverlay` floats for 3 seconds without blocking. Summary = round earnings; shop = total balance.
+- Zeus deadlock action: `src/game/zeus/` is separate from weapons. With ≥2 living AIs and no living human, appoint fairly after `living AI × 5` shots without a paid hit (`hasEarnings`); reset on earnings, living human, <2 survivors, Zeus death, or round end. Zeus consumes the last living direct attacker (never BULLDOZER), otherwise injected RNG, kills only that target, and earns `25X`. Never add `ZEUS_LIGHTNING` to `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, shop, or `AIEngine`.
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
 - AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table) and pick weapons via `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE) and `bulldozerTactics.ts` (BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`. All AI share `hitReaction.ts` (direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%).
 - Online MVP: local physics + server turn order and authoritative reward application. `GameRoom` persists authority epoch/order, active shot, balances, deaths, and the last reward result; duplicate reports cannot double-credit. Full authoritative terrain/damage sim is still planned. `GAME_START` sends `materials` only when the server array matches `heights` length. `loadHeights` resets every column to `DIRT` if materials are omitted or mismatched.
+- Online Zeus is Durable Object-authoritative and persisted before broadcast (`ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, reconnect `ZEUS_STATE`). Strike IDs prevent double death/credit; authority failover changes nothing; cosmetic geometry uses only strike ID + time, not room RNG.
 
 Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math.
 
@@ -54,7 +56,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (560 / 64)
+3. `npm run test` (582 / 65)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).

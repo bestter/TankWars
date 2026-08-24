@@ -32,6 +32,18 @@ import {
   type CombatDestructionEvent,
   type ShotRewardResult,
 } from "../economy/shotRewards";
+import {
+  allocateZeusStrike,
+  createZeusState,
+  evaluateZeusDeadlock,
+  resetZeusRound,
+  selectZeusTarget,
+  type ZeusAppointment,
+  type ZeusState,
+  type ZeusStrike,
+  type ZeusStrikeResult,
+} from "../zeus/zeusDomain";
+import { calculateZeusStrikeReward } from "../zeus/zeusRewards";
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -64,6 +76,15 @@ interface ActiveShotLedger {
 
 export interface ResolvedShotPreview extends ShotRewardResult {
   balances: ReadonlyArray<{ playerId: string; money: number }>;
+  directHitVictimIds: string[];
+}
+
+interface ActiveZeusVisual {
+  strike: ZeusStrike;
+  elapsedSeconds: number;
+  impactApplied: boolean;
+  localAuthoritative: boolean;
+  result: ZeusStrikeResult | null;
 }
 
 type FireworkParticle = {
@@ -156,6 +177,7 @@ export class GameEngine {
     this.roundCombatActive = false;
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
+    this.clearZeusVisuals();
   }
 
   // Enriched fireworks for winner celebration
@@ -185,6 +207,12 @@ export class GameEngine {
   private nextShotId = 1;
   private shotNumberInRound = 0;
   private lastAppliedShotId = 0;
+  private zeusState: ZeusState = createZeusState();
+  private pendingZeusAppointment: ZeusAppointment | null = null;
+  private activeZeusVisual: ActiveZeusVisual | null = null;
+  private pendingSpecialRoundOutcome: ShotRewardResult["roundOutcome"] | null = null;
+  private lastAppliedZeusStrikeId = 0;
+  private zeusFlashLife = 0;
 
   // Debug: accumulate death reasons to produce a clear summary at game end (especially for "partie nulle")
   private deathReasons: Record<
@@ -219,6 +247,8 @@ export class GameEngine {
    */
   public onRoundEnded?: (payload: RoundEndPayload) => void;
   public onShotResolved?: (preview: ResolvedShotPreview) => void;
+  public onZeusAppointed?: (appointment: ZeusAppointment) => void;
+  public onZeusStrikeApplied?: (result: ZeusStrikeResult) => void;
 
   constructor(width: number, height: number, config: Partial<GameConfig> = {}) {
     this.width = Math.floor(width);
@@ -233,7 +263,7 @@ export class GameEngine {
     // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
     this.tankManager.onPlayerDied = (playerId, cause, details) => {
       this.recordDeath(playerId, cause, details);
-      if (cause === "explosion") {
+      if (cause === "explosion" || cause === "zeus") {
         this.playTankDestroyedByExplosionSound();
       } else if (cause === "burial") {
         this.playTankSadBurialSound();
@@ -268,12 +298,16 @@ export class GameEngine {
     this.turnManager.setMatchEndedChecker(() => this.gameOver);
     this.turnManager.onShotResolutionReady = () => {
       const preview = this.finalizeActiveShot();
+      const appointment = this.pendingZeusAppointment;
+      this.pendingZeusAppointment = null;
       return {
         hasEarnings: preview?.hasEarnings ?? false,
         isRoundEnd: preview?.roundOutcome.isRoundEnd ?? false,
+        nextPlayerId: appointment?.zeusId,
       };
     };
     this.turnManager.onResolvedRoundEnd = () => this.completeResolvedRound();
+    this.turnManager.onSpecialTurn = (player) => this.beginLocalZeusTurn(player.id);
 
     // Transmet les mises à jour HUD du TurnManager vers l'extérieur (React)
     this.turnManager.onHudUpdate = (info) => {
@@ -538,13 +572,37 @@ export class GameEngine {
     if (balances.some((balance) => !Number.isSafeInteger(balance.money))) {
       throw new RangeError("Un solde calculé dépasse la plage des entiers sûrs.");
     }
-    const preview: ResolvedShotPreview = { ...reward, balances };
+    const directHitVictims = new Set<string>();
+    for (const event of ledger.damageEvents) {
+      if (
+        event.classification === "direct" &&
+        event.weaponId !== "BULLDOZER" &&
+        event.shooterId !== event.victimId
+      ) {
+        directHitVictims.add(event.victimId);
+      }
+    }
+    const directHitVictimIds = [...directHitVictims];
+    const preview: ResolvedShotPreview = { ...reward, balances, directHitVictimIds };
     this.pendingShotResult = preview;
     this.activeShotLedger = null;
     this.tankManager.clearShotAttribution();
 
     if (this.localMatch) {
       this.applyResolvedEarnings(preview.shotId, balances);
+      const evaluation = evaluateZeusDeadlock(
+        this.zeusState,
+        this.tankManager.getPlayers(),
+        preview.hasEarnings,
+        secureRandom,
+      );
+      this.zeusState = evaluation.state;
+      if (evaluation.zeusRevoked) this.clearZeusVisuals();
+      if (evaluation.appointment) {
+        this.pendingZeusAppointment = evaluation.appointment;
+        this.playZeusAppointmentSound();
+        this.onZeusAppointed?.(evaluation.appointment);
+      }
     }
     this.onShotResolved?.(preview);
     return preview;
@@ -591,15 +649,172 @@ export class GameEngine {
     for (const update of updates) update.player.money = update.money;
   }
 
+  public getActiveZeusId(): string | null {
+    return this.zeusState.activeZeusId;
+  }
+
+  public applyRemoteZeusAppointment(appointment: ZeusAppointment): void {
+    if (appointment.appointmentId < this.zeusState.nextAppointmentId) return;
+    this.zeusState = {
+      ...this.zeusState,
+      shotsWithoutEarnings: 0,
+      activeZeusId: appointment.zeusId,
+      appointedPlayerIds: this.zeusState.appointedPlayerIds.includes(appointment.zeusId)
+        ? this.zeusState.appointedPlayerIds
+        : [...this.zeusState.appointedPlayerIds, appointment.zeusId],
+      nextAppointmentId: appointment.appointmentId + 1,
+    };
+    this.playZeusAppointmentSound();
+    this.onZeusAppointed?.(appointment);
+  }
+
+  public syncRemoteZeusState(activeZeusId: string | null): void {
+    this.zeusState = { ...this.zeusState, activeZeusId, shotsWithoutEarnings: 0 };
+    if (activeZeusId === null) this.clearZeusVisuals();
+  }
+
+  public startRemoteZeusStrike(strike: ZeusStrike, resolveAt = Date.now() + 700): void {
+    if (strike.strikeId <= this.lastAppliedZeusStrikeId) return;
+    if (this.activeZeusVisual?.strike.strikeId === strike.strikeId) return;
+    this.activeZeusVisual = {
+      strike,
+      elapsedSeconds: Math.max(0, (Date.now() - (resolveAt - 700)) / 1_000),
+      impactApplied: false,
+      localAuthoritative: false,
+      result: null,
+    };
+  }
+
+  public applyRemoteZeusStrikeResult(result: ZeusStrikeResult): boolean {
+    if (result.strikeId <= this.lastAppliedZeusStrikeId) return false;
+    const target = this.tankManager.getPlayerById(result.targetId);
+    this.playZeusStrikeSound();
+    if (target && !target.tank.isDead) {
+      this.tankManager.applyZeusStrike(result.zeusId, result.targetId);
+    }
+    this.applyZeusBalances(result.balances);
+    this.lastAppliedZeusStrikeId = result.strikeId;
+    this.zeusFlashLife = 8;
+    if (this.activeZeusVisual?.strike.strikeId === result.strikeId) {
+      this.activeZeusVisual.impactApplied = true;
+      this.activeZeusVisual.result = result;
+    }
+    this.onZeusStrikeApplied?.(result);
+    if (result.roundOutcome.isRoundEnd) this.pendingSpecialRoundOutcome = result.roundOutcome;
+    return true;
+  }
+
+  private applyZeusBalances(
+    balances: ReadonlyArray<{ playerId: string; money: number }>,
+  ): void {
+    const updates = balances.map((balance) => {
+      if (!Number.isSafeInteger(balance.money) || balance.money < 0) {
+        throw new RangeError("Le solde Zeus doit être un entier sûr positif ou nul.");
+      }
+      const player = this.tankManager.getPlayerById(balance.playerId);
+      if (!player) throw new RangeError("Le solde Zeus vise un joueur inconnu.");
+      return { player, money: balance.money, delta: balance.money - player.money };
+    });
+    for (const update of updates) {
+      update.player.money = update.money;
+      if (update.delta > 0) {
+        this.roundEarningsByPlayer[update.player.id] =
+          (this.roundEarningsByPlayer[update.player.id] ?? 0) + update.delta;
+      }
+    }
+  }
+
+  private beginLocalZeusTurn(playerId: string): boolean {
+    if (!this.localMatch || this.zeusState.activeZeusId !== playerId) return false;
+    if (this.activeZeusVisual !== null) return true;
+    const selection = selectZeusTarget(
+      this.tankManager.getPlayers(),
+      playerId,
+      secureRandom,
+    );
+    if (!selection) return false;
+    const zeus = this.tankManager.getPlayerById(playerId);
+    if (zeus) zeus.tank.lastDirectAttackerId = undefined;
+    const allocation = allocateZeusStrike(this.zeusState, playerId, selection.targetId);
+    this.zeusState = allocation.state;
+    this.activeZeusVisual = {
+      strike: allocation.strike,
+      elapsedSeconds: 0,
+      impactApplied: false,
+      localAuthoritative: true,
+      result: null,
+    };
+    return true;
+  }
+
+  private updateZeusStrike(dt: number): void {
+    const visual = this.activeZeusVisual;
+    if (!visual) return;
+    visual.elapsedSeconds += dt;
+
+    if (
+      visual.localAuthoritative &&
+      !visual.impactApplied &&
+      visual.elapsedSeconds >= 0.7
+    ) {
+      visual.impactApplied = true;
+      this.playZeusStrikeSound();
+      if (this.tankManager.applyZeusStrike(visual.strike.zeusId, visual.strike.targetId)) {
+        const reward = calculateZeusStrikeReward(
+          visual.strike.zeusId,
+          this.tankManager.getPlayers().length,
+          this.tankManager.getAlivePlayers().map((player) => player.id),
+        );
+        const balances = this.tankManager.getPlayers().map((player) => ({
+          playerId: player.id,
+          money:
+            player.money +
+            (player.id === reward.award.playerId ? reward.award.amount : 0),
+        }));
+        this.applyZeusBalances(balances);
+        visual.result = { ...visual.strike, ...reward, balances };
+        this.lastAppliedZeusStrikeId = visual.strike.strikeId;
+        this.pendingSpecialRoundOutcome = reward.roundOutcome;
+        this.zeusFlashLife = 8;
+        this.onZeusStrikeApplied?.(visual.result);
+      }
+    }
+
+    if (visual.localAuthoritative && visual.elapsedSeconds >= 0.8) {
+      const isRoundEnd = visual.result?.roundOutcome.isRoundEnd ?? false;
+      this.activeZeusVisual = null;
+      this.turnManager.completeSpecialTurn(isRoundEnd);
+    } else if (!visual.localAuthoritative && visual.elapsedSeconds >= 0.85) {
+      this.activeZeusVisual = null;
+    }
+  }
+
+  private resetZeusForRound(): void {
+    this.zeusState = resetZeusRound(this.zeusState);
+    this.pendingZeusAppointment = null;
+    this.pendingSpecialRoundOutcome = null;
+    this.clearZeusVisuals();
+    for (const player of this.tankManager.getPlayers()) {
+      player.tank.lastDirectAttackerId = undefined;
+    }
+  }
+
+  private clearZeusVisuals(): void {
+    this.activeZeusVisual = null;
+    this.zeusFlashLife = 0;
+  }
+
   private completeResolvedRound(): void {
-    const outcome = this.pendingShotResult?.roundOutcome;
+    const outcome = this.pendingSpecialRoundOutcome ?? this.pendingShotResult?.roundOutcome;
     if (!outcome?.isRoundEnd || !this.roundCombatActive || this.gameOver) return;
+    this.pendingSpecialRoundOutcome = null;
     this.roundCombatActive = false;
     const survivors = this.tankManager.getAlivePlayers();
     const roundWinner = outcome.roundWinnerId
       ? this.tankManager.getPlayerById(outcome.roundWinnerId) ?? null
       : null;
     if (outcome.isDraw) this.logDeathSummary();
+    this.resetZeusForRound();
     this.onRoundEnded?.({ survivors, isDraw: outcome.isDraw, roundWinner });
   }
 
@@ -688,6 +903,7 @@ export class GameEngine {
     this.celebrationWinner = null;
     this.celebrationAngle = 90;
     this.celebrationAngleDir = 1;
+    this.resetZeusForRound();
 
     this.terrain.generate();
     this.tankManager.spawnTanks(roster, this.terrain, {
@@ -732,6 +948,15 @@ export class GameEngine {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.clearZeusVisuals();
+    this.stopVictoryMusic();
+    const audioContext = this.audioContext;
+    this.audioContext = null;
+    if (audioContext && audioContext.state !== "closed") {
+      void audioContext.close().catch(() => {
+        // Audio teardown is best-effort during React unmount.
+      });
+    }
   }
 
   private readonly loop = (timestamp: number): void => {
@@ -763,6 +988,8 @@ export class GameEngine {
       this.tankManager.clearRecoil(); // ensure chassis is un-shifted for summary/shop renders
       return;
     }
+
+    this.updateZeusStrike(dt);
 
     const gravity = this.config.gravity;
     const wind = this.windForce;
@@ -821,6 +1048,7 @@ export class GameEngine {
     this.roundCombatActive = false;
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
+    this.resetZeusForRound();
 
     const survivors = this.tankManager.getAlivePlayers();
     const roundWinner = isDraw
@@ -881,6 +1109,7 @@ export class GameEngine {
     }
 
     this.tankManager.draw(ctx, showPlayerNames, this.terrain);
+    this.drawZeusEffects(ctx);
 
     // restore
     if (this.celebrationWinner != null && restoredAngle !== undefined) {
@@ -933,6 +1162,14 @@ export class GameEngine {
       this.thermoFlashLife--;
     }
 
+    if (this.zeusFlashLife > 0) {
+      ctx.globalAlpha = Math.min(0.65, this.zeusFlashLife / 10);
+      ctx.fillStyle = VGA_PALETTE.WHITE;
+      ctx.fillRect(0, 0, this.width, this.height);
+      ctx.globalAlpha = 1;
+      this.zeusFlashLife--;
+    }
+
     if (this.impactExplosions.length > 0) {
       this.drawImpactExplosions(ctx);
     }
@@ -948,6 +1185,81 @@ export class GameEngine {
         80,
       );
     }
+  }
+
+  private drawZeusEffects(ctx: CanvasRenderingContext2D): void {
+    const activeZeusId = this.zeusState.activeZeusId;
+    const zeus = activeZeusId ? this.tankManager.getPlayerById(activeZeusId) : undefined;
+    if (zeus && !zeus.tank.isDead) {
+      const pulse = 1 + Math.sin(Date.now() / 90) * 0.12;
+      ctx.save();
+      ctx.strokeStyle = VGA_PALETTE.CYAN;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.arc(
+        zeus.tank.position.x,
+        zeus.tank.position.y - 8,
+        20 * pulse,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    const visual = this.activeZeusVisual;
+    if (!visual || visual.elapsedSeconds > 0.72) return;
+    const target = this.tankManager.getPlayerById(visual.strike.targetId);
+    if (!target) return;
+    const targetX = target.tank.position.x;
+    const targetY = target.tank.position.y - 8;
+    const segments = 9;
+    const seed = visual.strike.strikeId * 1103515245;
+    ctx.save();
+    ctx.strokeStyle = VGA_PALETTE.WHITE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(targetX, 0);
+    for (let segment = 1; segment <= segments; segment++) {
+      const y = (targetY * segment) / segments;
+      const hash = (seed + segment * 2654435761) >>> 0;
+      const offset = segment === segments ? 0 : ((hash % 23) - 11);
+      ctx.lineTo(targetX + offset, y);
+    }
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    for (let branch = 0; branch < 3; branch++) {
+      const segment = 3 + branch * 2;
+      const y = (targetY * segment) / segments;
+      const hash = (seed + (branch + 17) * 2246822519) >>> 0;
+      const direction = (hash & 1) === 0 ? -1 : 1;
+      ctx.beginPath();
+      ctx.moveTo(targetX + (((seed + segment * 2654435761) >>> 0) % 23) - 11, y);
+      ctx.lineTo(
+        targetX + direction * (18 + (hash % 14)),
+        y + 12 + (hash % 9),
+      );
+      ctx.stroke();
+    }
+    ctx.strokeStyle = VGA_PALETTE.CYAN;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    if (visual.elapsedSeconds >= 0.68) {
+      ctx.fillStyle = VGA_PALETTE.WHITE;
+      for (let shard = 0; shard < 8; shard++) {
+        const angle = (Math.PI * 2 * shard) / 8;
+        const distance = 8 + ((seed + shard * 97) >>> 0) % 15;
+        ctx.fillRect(
+          targetX + Math.cos(angle) * distance - 2,
+          targetY + Math.sin(angle) * distance - 2,
+          4,
+          4,
+        );
+      }
+    }
+    ctx.restore();
   }
 
   // Utility
@@ -1679,6 +1991,11 @@ export class GameEngine {
     this.shotNumberInRound = 0;
     this.nextShotId = 1;
     this.lastAppliedShotId = 0;
+    this.zeusState = createZeusState();
+    this.pendingZeusAppointment = null;
+    this.pendingSpecialRoundOutcome = null;
+    this.lastAppliedZeusStrikeId = 0;
+    this.clearZeusVisuals();
 
     // Reset projectile settlement tracker
     this.previousProjectileCount = 0;
@@ -1697,6 +2014,48 @@ export class GameEngine {
   // Sound synthesis (Web Audio, chiptune/retro style, no assets)
   // All methods are silent on failure and never throw to the loop.
   // ============================================================
+
+  private playZeusAppointmentSound(): void {
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return;
+    try {
+      this.playNoiseBurst(0.24, 0.3, 1100, 90);
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(92, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(42, ctx.currentTime + 0.28);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.31);
+    } catch {
+      // Audio is optional and must never interrupt combat.
+    }
+  }
+
+  private playZeusStrikeSound(): void {
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return;
+    try {
+      this.playNoiseBurst(0.18, 0.45, 3200, 120);
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sawtooth";
+      oscillator.frequency.setValueAtTime(180, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(48, ctx.currentTime + 0.22);
+      gain.gain.setValueAtTime(0.22, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.24);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.25);
+    } catch {
+      // Audio is optional and must never interrupt combat.
+    }
+  }
 
   private playFireSound(weaponId: WeaponId): void {
     const ctx = this.ensureAudioContext();

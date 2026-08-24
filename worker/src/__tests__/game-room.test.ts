@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GameRoom } from '../game-room';
 import type { WeaponId } from '../../../src/types/weapon';
+import type { Player } from '../../../src/types/player';
 
 class MockWebSocket {
   public sent: string[] = [];
@@ -373,6 +374,7 @@ describe('GameRoom Durable Object', () => {
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false],
+        directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
 
@@ -580,6 +582,7 @@ describe('GameRoom Durable Object', () => {
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'SHOT_EARNINGS', shotId: roundTwoShot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false],
+        directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
 
@@ -774,7 +777,7 @@ describe('GameRoom Durable Object', () => {
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       const base = {
         type: 'SHOT_EARNINGS', shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
-        deadSlots: [false, false], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+        deadSlots: [false, false], directHitVictimIds: [], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       };
       await handle.call(room, 1, JSON.stringify({ ...base, authorityEpoch: 1 }));
       await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 0 }));
@@ -792,6 +795,7 @@ describe('GameRoom Durable Object', () => {
       const report = {
         type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
         awards: [{ playerId: 'player-1', amount: 10 }], deadSlots: [false, false],
+        directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       };
       await handle.call(room, 0, JSON.stringify(report));
@@ -817,9 +821,82 @@ describe('GameRoom Durable Object', () => {
       await handle.call(room, 0, JSON.stringify({
         type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false],
+        directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
       expect((Reflect.get(room, 'state') as { currentPlayerIndex: number }).currentPlayerIndex).toBe(1);
+    });
+
+    it('records direct-hit revenge authoritatively and rejects BULLDOZER victim reports', async () => {
+      const { ws0, handle } = await startTwoHumanRoom();
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false], directHitVictimIds: ['player-2'],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+      const state = Reflect.get(room, 'state') as {
+        lastDirectAttackerByPlayerId: Record<string, string>;
+        players: Player[];
+      };
+      expect(state.lastDirectAttackerByPlayerId['player-2']).toBe('player-1');
+      expect(state.players[1].tank.lastDirectAttackerId).toBe('player-1');
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, false],
+      }));
+      state.players[1].inventory.BULLDOZER = 1;
+      await handle.call(room, 1, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'BULLDOZER' },
+      }));
+      const bulldozerShot = ws0.getAllMessages<{ type: string; shotId: number }>()
+        .filter((message) => message.type === 'SHOT')
+        .pop();
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: bulldozerShot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false], directHitVictimIds: ['player-1'],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+      expect(state.lastDirectAttackerByPlayerId['player-1']).toBeUndefined();
+    });
+
+    it('appoints and persists Zeus after the authoritative zero-gain threshold', async () => {
+      const { ws0, handle } = await startTwoHumanRoom();
+      const state = Reflect.get(room, 'state') as {
+        players: Player[];
+        zeusState: { shotsWithoutEarnings: number; activeZeusId: string | null };
+        currentPlayerIndex: number;
+      };
+      for (const player of state.players) player.isHuman = false;
+      state.zeusState.shotsWithoutEarnings = 9;
+
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+      const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
+        awards: [], deadSlots: [false, false], directHitVictimIds: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED', shotId: shot?.shotId, slot: 0, deadSlots: [false, false],
+      }));
+
+      const appointment = ws0.getAllMessages<{
+        type: string;
+        zeusId: string;
+        zeusSlot: number;
+      }>().find((message) => message.type === 'ZEUS_APPOINTED');
+      expect(appointment).toBeDefined();
+      expect(state.zeusState.activeZeusId).toBe(appointment?.zeusId);
+      expect(state.currentPlayerIndex).toBe(appointment?.zeusSlot);
+      const stored = await (mockCtx as { storage: { get: (key: string) => Promise<unknown> } }).storage.get('state') as {
+        zeusState: { activeZeusId: string | null };
+      };
+      expect(stored.zeusState.activeZeusId).toBe(appointment?.zeusId);
     });
   });
 
@@ -937,6 +1014,7 @@ describe('GameRoom Durable Object', () => {
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'SHOT_EARNINGS', shotId: shot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, true],
+        directHitVictimIds: [],
         roundOutcome: { isRoundEnd: true, isDraw: false, roundWinnerId: 'player-1' },
       }));
 

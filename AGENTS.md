@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 560 tests, 64 fichiers) |
+| Tests | `npm run test` (vitest, 582 tests, 65 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -86,6 +86,16 @@ Le multi est dans `main` (plus une branche `AddMultiplayer`). MVP = physique loc
 - `GameEngine` tient un registre de tir (`shotId` / `munitionId`), applique les gains une seule fois et cumule `roundEarningsByPlayer`. Le résumé montre le gain de manche; la boutique montre le solde total.
 - `ShotEarningsOverlay.tsx` affiche `+montant$` au-dessus du tank pendant 3 secondes, avec montée/fondu et sans bloquer les entrées ni le prochain tour.
 
+### Anti-impasse / Éclair de Zeus
+
+- Domaine pur : `src/game/zeus/zeusDomain.ts` + `zeusRewards.ts`. `ZEUS_LIGHTNING` est une **action spéciale**, jamais une arme : ne jamais l’ajouter à `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, la boutique ou une stratégie `AIEngine`.
+- Activation : seulement lorsqu’au moins deux IA sont vivantes et qu’aucun humain vivant ne reste. Après `IA vivantes × 5` tirs consécutifs sans **touche payante** (`hasEarnings === false`), une IA admissible devient Zeus et prend immédiatement le prochain tour.
+- Compteur : un gain, un humain vivant, moins de deux survivants, la mort de Zeus ou la fin de manche le remet à zéro. Une mort sans gain conserve le cycle et recalcule le seuil avec les survivants; la résolution qui tue Zeus ne compte jamais dans le cycle suivant.
+- Roulement équitable : `appointedPlayerIds` survit aux manches et est vidé seulement quand toutes les IA admissibles ont été Zeus; `resetGame`/nouvelle salle vide tout. L’ordre est réancré sur Zeus, puis reste circulaire (`Zeus → suivants → Zeus`).
+- Vengeance : `Tank.lastDirectAttackerId` est distinct de `lastHitBy`/`hitReaction`; toute touche directe adverse, même absorbée entièrement par le bouclier, l’actualise sauf BULLDOZER. Zeus consomme le dernier agresseur direct encore vivant, sinon utilise le RNG injecté.
+- Frappe : animation d’environ 700 ms, puis la cible seule passe à 0 santé/0 bouclier/morte. Aucun projectile, souffle, cratère ou dommage collatéral. Prime unique = destruction standard `25X`, sans dégâts, premier tir ni bonus de dernier survivant.
+- En ligne, `GameRoom` est l’unique autorité Zeus. Il persiste compteur, historique, agresseurs, RNG, ordre, identifiants et frappe avant diffusion. `strikeId`/dernier résultat garantissent l’idempotence; `ZEUS_STATE` restaure aura, morts, tour et frappe à la reconnexion. Un changement d’autorité économique ne modifie jamais Zeus.
+
 ### Système d'IA
 
 Toute IA doit implémenter `AIEngine` (`src/game/entities/ai/AIEngine.ts`) :
@@ -134,6 +144,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 - Grenade longue : le filet de sécurité du `TurnManager` ne doit pas laisser l’IA rejouer après un bounce trop long.
 - `loadHeights` sans `materials` (ou longueur mismatch) : tout retombe sur `DIRT` — pas d’état hybride.
 - Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.
+- Zeus : persister toute nomination/frappe avant de la diffuser; ne jamais double-créditer un `strikeId`, consommer le RNG de salle pour des effets visuels, ni accepter `ZEUS_LIGHTNING` dans `FIRE`. La géométrie cosmétique dépend seulement de `strikeId` et du temps.
 
 ## Fichiers clés par tâche
 
@@ -153,6 +164,8 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
 | Économie / gains par tir | `game/economy/fixedPoint.ts`, `game/economy/shotRewards.ts`, `GameEngine.ts`, `ShotEarningsOverlay.tsx`, `RoundSummary.tsx` |
 | Protocole autoritaire des gains | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
+| Anti-impasse / Éclair de Zeus | `game/zeus/zeusDomain.ts`, `game/zeus/zeusRewards.ts`, `GameEngine.ts`, `TurnManager.ts`, `TankManager.ts` |
+| Autorité Zeus / reconnexion | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
 | Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 
