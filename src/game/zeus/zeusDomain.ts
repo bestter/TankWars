@@ -131,7 +131,8 @@ export function evaluateZeusDeadlock(
   }
 
   let appointedPlayerIds = [...state.appointedPlayerIds];
-  let candidates = alive.filter((player) => !appointedPlayerIds.includes(player.id));
+  const appointedPlayerIdSet = new Set(appointedPlayerIds);
+  let candidates = alive.filter((player) => !appointedPlayerIdSet.has(player.id));
   if (candidates.length === 0) {
     appointedPlayerIds = [];
     candidates = alive;

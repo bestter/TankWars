@@ -1518,9 +1518,10 @@ export function useGameSession({
       return;
     }
 
-    // Fresh round: spawn revived everyone; unlock local human on server turn 0.
+    // Fresh round: startNextRound already anchors and starts the first local turn.
+    // Online clients must still cancel that speculative local AI turn and follow slot 0.
     tm.resumeForCombat();
-    tm.syncTurn(0);
+    if (gameMode === 'online') tm.syncTurn(0);
 
     const nextPlayers = [...engine.getTankManager().getPlayers()];
     dispatch({ type: "FINISH_SHOP", uiPlayers: nextPlayers });

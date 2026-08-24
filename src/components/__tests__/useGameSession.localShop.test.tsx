@@ -5,6 +5,7 @@ import { render, act, cleanup } from "@testing-library/react";
 import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
 import type { Player } from "../../types/player";
+import { TurnManager } from "../../game/engine/TurnManager";
 
 type SessionApi = ReturnType<typeof useGameSession>;
 
@@ -89,5 +90,27 @@ describe("useGameSession local shop AI advance", () => {
 
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
     expect(sessionRef.current?.state.shopPlayers).toEqual([]);
+  });
+
+  it("does not invalidate the first AI turn when a four-AI second round starts", () => {
+    const aiPlayers = Array.from({ length: 4 }, (_, index) => makePlayer({
+      id: `ai-${index + 1}`,
+      name: `CPU-${index + 1}`,
+      isHuman: false,
+      aiProfile: "v1-random",
+      tank: makeTank(`tank-ai-${index + 1}`, 120 + index * 160, 300),
+    }));
+    const syncTurn = vi.spyOn(TurnManager.prototype, "syncTurn");
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    render(<ShopHarness players={aiPlayers} sessionRef={sessionRef} />);
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(sessionRef.current?.state.shopPlayers).toEqual([]);
+    expect(syncTurn).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**582 tests**, 65 files).
+- After edits: `npm run lint && npm run build && npm run test` (**583 tests**, 65 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -56,7 +56,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (582 / 65)
+3. `npm run test` (583 / 65)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
