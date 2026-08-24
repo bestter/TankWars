@@ -8,6 +8,8 @@ Ce fichier est la source opérationnelle (commandes, architecture, pièges, fich
 
 Répondre en français (FR, de préférence québécois). Même si l'utilisateur écrit en anglais. **Jamais de `any`.** Douter → demander.
 
+Tous les contributeurs — agents IA comme humains 😁 — doivent respecter les conventions définies dans [`.editorconfig`](./.editorconfig) pour chaque fichier créé ou modifié.
+
 ## Commandes
 
 | Tâche | Commande |
