@@ -79,6 +79,7 @@ describe("gameCanvasReducer", () => {
     const players = [createMockPlayer("p1", "Alice"), createMockPlayer("p2", "Bob")];
     const roundResult: RoundResult = {
       damageDealt: { p1: 50 },
+      earningsByPlayer: { p1: 150 },
       terrainDestroyed: 120,
       survivors: ["p1"],
     };
@@ -114,6 +115,7 @@ describe("gameCanvasReducer", () => {
     const players = [createMockPlayer("p1", "Alice"), createMockPlayer("p2", "Bob")];
     const roundResult: RoundResult = {
       damageDealt: {},
+      earningsByPlayer: {},
       terrainDestroyed: 0,
       survivors: [],
     };
@@ -210,7 +212,7 @@ describe("gameCanvasReducer", () => {
       uiPlayers: roster,
       currentShopIndex: 1,
       lastRoundOutcome: { isDraw: false, winner: roster[0] },
-      roundResult: { damageDealt: {}, terrainDestroyed: 5, survivors: [] },
+      roundResult: { damageDealt: {}, earningsByPlayer: {}, terrainDestroyed: 5, survivors: [] },
     };
 
     const action: GameCanvasAction = { type: "FINISH_SHOP", uiPlayers: roster };
@@ -270,12 +272,13 @@ describe("gameCanvasReducer", () => {
       },
       winner: newPlayers[0],
       showNewGameButton: true,
-      roundResult: { damageDealt: {}, terrainDestroyed: 100, survivors: [] },
+      roundResult: { damageDealt: {}, earningsByPlayer: {}, terrainDestroyed: 100, survivors: [] },
       currentManche: 4,
       lastRoundOutcome: { isDraw: false, winner: newPlayers[0] },
       shopPlayers: [newPlayers[0]],
       currentShopIndex: 1,
       uiPlayers: [newPlayers[0]],
+      earningsOverlay: null,
     };
 
     const action: GameCanvasAction = { type: "RESET_GAME", newPlayers };

@@ -10,7 +10,7 @@ export interface RoundEndOutcome {
 
 export interface RoundSummaryProps {
   round: number;
-  /** Full match roster (money already updated by awardEndOfRoundEarnings) */
+  /** Full match roster; total money remains visible in the shop. */
   players: ReadonlyArray<Player>;
   result: RoundResult | null;
   roundOutcome: RoundEndOutcome | null;
@@ -28,7 +28,14 @@ export function RoundSummary({
 }: RoundSummaryProps) {
   const { t } = useTranslation();
   const alivePlayers = players.filter((p) => !p.tank.isDead);
-  const sorted = players.toSorted((a, b) => (b.money ?? 0) - (a.money ?? 0));
+  const sorted = players
+    .map((player, index) => ({ player, index }))
+    .toSorted((left, right) => {
+      const earningsDifference =
+        (result?.earningsByPlayer[right.player.id] ?? 0) -
+        (result?.earningsByPlayer[left.player.id] ?? 0);
+      return earningsDifference || left.index - right.index;
+    });
   const canContinue = players.length >= 2;
 
   let outcomeLine = t("outcome_round_ended");
@@ -78,8 +85,8 @@ export function RoundSummary({
       </div>
 
       <div style={{ marginBottom: 14, textAlign: "left" }}>
-        {sorted.map((p) => {
-          const currentMoney = p.money ?? 0;
+        {sorted.map(({ player: p }) => {
+          const roundEarnings = result?.earningsByPlayer[p.id] ?? 0;
           const eliminated = p.tank.isDead;
           return (
             <div
@@ -110,10 +117,7 @@ export function RoundSummary({
                 {eliminated ? t("ko_indicator") : ""}
               </span>
               <span style={{ color: VGA_PALETTE.GREEN, marginLeft: "auto" }}>
-                {currentMoney}$
-              </span>
-              <span style={{ color: VGA_PALETTE.CYAN, fontSize: 12 }}>
-                {t("earnings_detail")}
+                +{roundEarnings}$
               </span>
             </div>
           );

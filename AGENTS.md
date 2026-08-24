@@ -16,7 +16,7 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 517 tests, 60 fichiers) |
+| Tests | `npm run test` (vitest, 560 tests, 64 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -61,16 +61,28 @@ Répondre en français (FR, de préférence québécois). Même si l'utilisateur
 
 ### Online multiplayer
 
-Le multi est dans `main` (plus une branche `AddMultiplayer`). MVP = physique locale + ordre des tours côté serveur. Simu serveur authoritative encore prévue.
+Le multi est dans `main` (plus une branche `AddMultiplayer`). MVP = physique locale + ordre des tours et gains autoritaires côté serveur. La simulation complète serveur (terrain / dégâts / PV) reste prévue.
 
 - `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tour relay, shop sync persistant et transactionnel via Durable Object storage).
 - Client lobby : `OnlineLobby.tsx` (shell) + `useOnlineLobby.ts` + `OnlineLobbyCreate.tsx` / `OnlineLobbyWaiting.tsx` / `onlineLobbyTypes.ts`.
 - Client combat : `useGameSession.ts`, `onlineSession.ts` (reconnexion WS combat et résilience aux coupures).
 - Ordre des tours vivant : `src/game/online/turnOrder.ts` (partagé client + worker, sans DOM ni APIs Workers).
+- Protocole combat strict partagé : `src/game/online/protocol.ts` (`AUTHORITY_CHANGED`, `SHOT`, `SHOT_SETTLED`, `SHOT_EARNINGS`, `SHOT_EARNINGS_APPLIED`, `STATE_UPDATE`, `ROUND_END`).
+- Le premier humain connecté devient l’autorité des gains; `GameRoom` persiste l’ordre, l’époque, le tir actif et le dernier résultat. En cas de déconnexion, l’autorité passe au prochain humain selon l’ordre initial sans reprise automatique par l’ancien premier.
+- Le Worker valide puis applique les gains et les états morts atomiquement avant diffusion. Un doublon identique est rediffusé sans double crédit. Le tour avance dès que la physique et le rapport économique sont stabilisés, sans délai d’affichage.
 - Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
 - `GAME_START` n'envoie `materials` que si le tableau serveur a la même longueur que `heights` (generate headless pas encore branché). `Terrain.loadHeights` remet tout à `DIRT` si le tableau est absent ou mismatch (pas d'état hybride).
 - `worker/.wrangler/` est gitignoré (état local SQLite).
 - Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine pour la validation statique stricte des types.
+
+### Économie par tir
+
+- Domaine pur : `src/game/economy/fixedPoint.ts` + `shotRewards.ts`; calcul exact rationnel, dégâts normalisés au millième et un seul `ceil` final. `Player.money` demeure un entier sûr.
+- Base $X$ selon le nombre initial de joueurs : 3 $ (2 joueurs), 3,5 $ (3), 4 $ (4).
+- Dégâts de projectile : direct = $X \times dégâts$, indirect = moitié; NUKE/THERMONUCLEAR divisent encore par 2. Chute attribuée : quart en direct, huitième en indirect. Aucun gain pour l'auto-dégât.
+- Destruction : $25X$, ou $50X$ au premier tir de la manche; NUKE/THERMONUCLEAR = $2X$. Dernier survivant = $50X$; les nulles suivent le partage défini dans `shotRewards.ts`.
+- `GameEngine` tient un registre de tir (`shotId` / `munitionId`), applique les gains une seule fois et cumule `roundEarningsByPlayer`. Le résumé montre le gain de manche; la boutique montre le solde total.
+- `ShotEarningsOverlay.tsx` affiche `+montant$` au-dessus du tank pendant 3 secondes, avec montée/fondu et sans bloquer les entrées ni le prochain tour.
 
 ### Système d'IA
 
@@ -137,6 +149,8 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
+| Économie / gains par tir | `game/economy/fixedPoint.ts`, `game/economy/shotRewards.ts`, `GameEngine.ts`, `ShotEarningsOverlay.tsx`, `RoundSummary.tsx` |
+| Protocole autoritaire des gains | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
 | Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
 | Audio combat / victoire | `GameEngine.ts` |
 

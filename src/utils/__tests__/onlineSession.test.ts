@@ -47,6 +47,11 @@ function makeSession(overrides: Partial<PersistedOnlineSession> = {}): Persisted
       roundResult: null,
       lastRoundOutcome: null,
       wind: 12,
+      authoritySlot: 0,
+      authorityEpoch: 1,
+      lastAppliedShotId: 0,
+      roundEarningsByPlayer: {},
+      earningsOverlay: null,
     },
     ...overrides,
   };

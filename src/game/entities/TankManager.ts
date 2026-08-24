@@ -10,6 +10,15 @@ import type { Player } from "../../types/player";
 import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import { BULLDOZER_MAX_CLIMB_SLOPE, type WeaponId } from "../../types/weapon";
+import {
+  normalizeDamageToMilli,
+} from "../economy/fixedPoint";
+import type {
+  CombatDamageEvent,
+  CombatDestructionEvent,
+  DestructionCause,
+  HitClassification,
+} from "../economy/shotRewards";
 import { drawTankSprite } from "../rendering/tankSprite";
 import {
   spawnAcceptsMaterial,
@@ -37,6 +46,27 @@ const TERMINAL_V_VOID = 24.0; // accelerated terminal velocity for void fall
 /** Vertical gap threshold (in pixels) to distinguish falling in the void from sliding down a slope. */
 const VOID_FALL_THRESHOLD = 12;
 
+interface FallAttribution {
+  shotId: number;
+  munitionId: number;
+  shooterId: string;
+  weaponId: WeaponId;
+  classification: HitClassification;
+}
+
+export interface ExplosionDamageOptions {
+  explosionX: number;
+  explosionY: number;
+  radius: number;
+  maxDamage: number;
+  shooterId?: string;
+  weaponId: WeaponId;
+  isDirectHit: boolean;
+  terrain?: TerrainManager;
+  shotId?: number;
+  munitionId?: number;
+}
+
 /** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
 export const TANK_GAUGE_SINGLE_Y_OFFSET = 24; // Barre unique (bouclier ou vie) : y - 24
 export const TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET = 28; // Barre de bouclier (mode double) : y - 28
@@ -60,6 +90,9 @@ export class TankManager {
   /** Map to track if a tank is falling in the void (versus sliding down a slope). */
   private isVoidFall: Map<string, boolean> = new Map();
 
+  /** Provenance du tir actif utilisée pour attribuer les chutes et morts différées. */
+  private fallAttributions: Map<string, FallAttribution> = new Map();
+
   /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
    *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
    */
@@ -76,6 +109,9 @@ export class TankManager {
     killerId?: string,
   ) => void;
 
+  public onDamageApplied?: (event: CombatDamageEvent) => void;
+  public onTankDestroyed?: (event: CombatDestructionEvent) => void;
+
   /** Called (throttled by caller) while a tank has downward velocity after losing ground support (for scrape/slide SFX). */
   public onTankSliding?: (playerId: string) => void;
 
@@ -91,6 +127,7 @@ export class TankManager {
     this.fallenDistances.clear();
     this.isVoidFall.clear();
     this.recoilState.clear();
+    this.clearShotAttribution();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
@@ -103,6 +140,7 @@ export class TankManager {
     this.fallenDistances.clear();
     this.isVoidFall.clear();
     this.recoilState.clear();
+    this.clearShotAttribution();
   }
 
   public getPlayers(): ReadonlyArray<Player> {
@@ -249,10 +287,71 @@ export class TankManager {
     this.fallenDistances.clear();
     this.isVoidFall.clear();
     this.recoilState.clear();
+    this.clearShotAttribution();
     for (const p of players) {
       this.velocities.set(p.tank.id, 0);
       this.fallenDistances.set(p.tank.id, 0);
     }
+  }
+
+  public beginShotAttribution(
+    shotId: number,
+    shooterId: string,
+    weaponId: WeaponId,
+    munitionId = 0,
+  ): void {
+    this.fallAttributions.clear();
+    for (const player of this.players) {
+      if (player.tank.isDead) continue;
+      this.fallAttributions.set(player.id, {
+        shotId,
+        munitionId,
+        shooterId,
+        weaponId,
+        classification: "indirect",
+      });
+    }
+  }
+
+  public markDirectlyAffected(playerId: string, munitionId?: number): void {
+    const attribution = this.fallAttributions.get(playerId);
+    if (!attribution) return;
+    attribution.classification = "direct";
+    if (munitionId !== undefined) attribution.munitionId = munitionId;
+  }
+
+  public reassignShotAttribution(previousShotId: number, shotId: number): void {
+    for (const attribution of this.fallAttributions.values()) {
+      if (attribution.shotId === previousShotId) attribution.shotId = shotId;
+    }
+  }
+
+  public clearShotAttribution(): void {
+    this.fallAttributions.clear();
+  }
+
+  private emitFallDamage(playerId: string, healthDamage: number): void {
+    const attribution = this.fallAttributions.get(playerId);
+    if (!attribution || healthDamage <= 0) return;
+    this.onDamageApplied?.({
+      ...attribution,
+      victimId: playerId,
+      source: "fall",
+      shieldAbsorbedMilli: 0,
+      healthDamageMilli: normalizeDamageToMilli(healthDamage),
+    });
+  }
+
+  private emitAttributedDestruction(playerId: string, cause: DestructionCause): void {
+    const attribution = this.fallAttributions.get(playerId);
+    if (!attribution) return;
+    this.onTankDestroyed?.({
+      shotId: attribution.shotId,
+      shooterId: attribution.shooterId,
+      victimId: playerId,
+      weaponId: attribution.weaponId,
+      cause,
+    });
   }
 
   /**
@@ -394,6 +493,7 @@ export class TankManager {
           this.invalidateAliveCache();
           const details = `touched lava (y=${pos.y.toFixed(1)} >= lavaTop=${lavaY})`;
           this.onPlayerDied?.(player.id, "burial", details);
+          this.emitAttributedDestruction(player.id, "lava");
           this.velocities.delete(id);
           this.fallenDistances.delete(id);
           this.isVoidFall.delete(id);
@@ -419,6 +519,8 @@ export class TankManager {
             const dmg = levelsCrossed; // 1 per level
             const healthBefore = tank.health;
             tank.health = Math.max(0, tank.health - dmg);
+            const healthDamage = healthBefore - tank.health;
+            this.emitFallDamage(player.id, healthDamage);
 
             // keep remainder so we don't lose fractional progress
             fallen -= levelsCrossed * damageLevelHeight;
@@ -433,6 +535,7 @@ export class TankManager {
               ).toFixed(0);
               const details = `fall damage (${dmg} pts after ~${totalFallen}px)`;
               this.onPlayerDied?.(player.id, "burial", details);
+              this.emitAttributedDestruction(player.id, "health-zero");
             }
           }
         }
@@ -503,6 +606,12 @@ export class TankManager {
           details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         }
         this.onPlayerDied?.(player.id, "burial", details);
+        const cause: DestructionCause = outOfBoundsX
+          ? "out-of-bounds"
+          : touchedLava
+            ? "lava"
+            : "buried";
+        this.emitAttributedDestruction(player.id, cause);
       }
     }
   }
@@ -638,16 +747,19 @@ export class TankManager {
    * @param weaponId - Optional weapon for special direct-hit / kill-zone rules
    * @returns Number of *new* kills caused by *this* explosion (for attribution to the killer)
    */
-  public applyExplosionDamage(
-    explosionX: number,
-    explosionY: number,
-    radius: number,
-    maxDamage: number,
-    killerId?: string,
-    weaponId?: WeaponId,
-    isDirectHit?: boolean,
-    terrain?: TerrainManager,
-  ): number {
+  public applyExplosionDamage(options: ExplosionDamageOptions): number {
+    const {
+      explosionX,
+      explosionY,
+      radius,
+      maxDamage,
+      shooterId,
+      weaponId,
+      isDirectHit,
+      terrain,
+      shotId,
+      munitionId,
+    } = options;
     let killsThisExplosion = 0;
 
     for (const player of this.players) {
@@ -671,6 +783,7 @@ export class TankManager {
           explosionY >= pos.y - tankHeight &&
           explosionY <= pos.y;
         if (isDirectHitOnThisTank) {
+          this.markDirectlyAffected(player.id, munitionId);
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
@@ -682,6 +795,7 @@ export class TankManager {
       }
 
       const healthBefore = tank.health;
+      const shieldBefore = tank.shield;
 
       const blastBlockedByRock =
         !!terrain &&
@@ -690,14 +804,14 @@ export class TankManager {
       if (blastBlockedByRock) continue;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct
+      let instantKill = false;
       if (weaponId === "BULLET" && isDirectHitOnThisTank) {
         // Direct hit for BULLET deals 3x base damage directly, bypassing distance check and falloff
         damage = maxDamage * 3;
       } else if (weaponId === "NUKE" && isDirectHitOnThisTank) {
-        // Direct hit for NUKE instantly kills the tank, bypassing distance check
-        tank.shield = 0;
-        tank.health = 0;
+        // La zone instantanée passe tout de même par le calcul d'absorption réelle ci-dessous.
         damage = 0;
+        instantKill = true;
       } else {
         // Normal splash damage (linear falloff)
         if (distance > radius) continue;
@@ -708,14 +822,16 @@ export class TankManager {
       // (the huge crater + outer splash + fall mechanics will handle "others might fall like actually").
       // 75px chosen as ~blastRadius * 0.47 for 160px thermo blast (tuneable; produces 1/4-map scale wipe + pit).
       if (weaponId === "THERMONUCLEAR" && distance <= 75) {
-        tank.shield = 0;
-        tank.health = 0;
         damage = 0;
+        instantKill = true;
       }
 
-      if (damage <= 0 && tank.health > 0) continue;
+      if (damage <= 0 && !instantKill) continue;
 
-      let remainingDamage = damage;
+      let remainingDamage = instantKill
+        ? healthBefore + (isDirectHitOnThisTank ? Math.ceil(shieldBefore / 2) : shieldBefore)
+        : damage;
+      let shieldAbsorbed = 0;
 
       if (tank.shield > 0) {
         if (isDirectHitOnThisTank) {
@@ -733,11 +849,13 @@ export class TankManager {
             remainingDamage,
             maxDamageShieldCanAbsorb,
           );
+          shieldAbsorbed = damageAbsorbed;
           tank.shield = Math.max(0, tank.shield - damageAbsorbed * 2);
           remainingDamage -= damageAbsorbed;
         } else {
           // Souffle indirect : ratio standard 1:1
           const absorbed = Math.min(remainingDamage, tank.shield);
+          shieldAbsorbed = absorbed;
           tank.shield -= absorbed;
           remainingDamage -= absorbed;
         }
@@ -746,18 +864,47 @@ export class TankManager {
       if (remainingDamage > 0) {
         tank.health = Math.max(0, tank.health - remainingDamage);
       }
+      const healthDamage = healthBefore - tank.health;
+
+      if (
+        shooterId &&
+        shotId !== undefined &&
+        munitionId !== undefined &&
+        (shieldAbsorbed > 0 || healthDamage > 0)
+      ) {
+        this.onDamageApplied?.({
+          shotId,
+          munitionId,
+          shooterId,
+          victimId: player.id,
+          weaponId,
+          source: "projectile",
+          classification: isDirectHitOnThisTank ? "direct" : "indirect",
+          shieldAbsorbedMilli: normalizeDamageToMilli(shieldAbsorbed),
+          healthDamageMilli: normalizeDamageToMilli(healthDamage),
+        });
+      }
 
       // Record attacker for AI "revenge" targeting (even non-lethal hits). Cleared on round respawn.
-      if (healthBefore > tank.health && killerId) {
-        tank.lastHitBy = killerId;
+      if (healthBefore > tank.health && shooterId) {
+        tank.lastHitBy = shooterId;
       }
 
       if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
         this.invalidateAliveCache();
-        const details = `explosion by ${killerId ?? "unknown"} (damage=${damage.toFixed(1)})`;
-        this.onPlayerDied?.(player.id, "explosion", details, killerId);
-        if (killerId) {
+        const details = `explosion by ${shooterId ?? "unknown"} (damage=${(shieldAbsorbed + healthDamage).toFixed(1)})`;
+        this.onPlayerDied?.(player.id, "explosion", details, shooterId);
+        if (shooterId) {
+          if (shotId !== undefined) {
+            this.onTankDestroyed?.({
+              shotId,
+              shooterId,
+              victimId: player.id,
+              weaponId,
+              cause: "health-zero",
+            });
+          }
           killsThisExplosion++;
         }
       }

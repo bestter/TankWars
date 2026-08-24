@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { TankManager } from "../TankManager";
+import { TankManager, type ExplosionDamageOptions } from "../TankManager";
 import { TerrainManager } from "../../engine/Terrain";
 import { makePlayer, makeTank, flatTerrain } from "../../__tests__/helpers";
 
@@ -9,7 +9,87 @@ function managerWith(...players: ReturnType<typeof makePlayer>[]): TankManager {
   return tm;
 }
 
+function explosion(overrides: Partial<ExplosionDamageOptions> = {}): ExplosionDamageOptions {
+  return {
+    explosionX: 100,
+    explosionY: 200,
+    radius: 40,
+    maxDamage: 40,
+    shooterId: "killer",
+    weaponId: "MISSILE",
+    isDirectHit: false,
+    ...overrides,
+  };
+}
+
 describe("TankManager.applyExplosionDamage", () => {
+  it("reports 5 incoming points absorbed when a direct hit consumes 10 shield points", () => {
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 10, maxShield: 10 }),
+    });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.beginShotAttribution(7, "killer", "MISSILE");
+
+    tm.applyExplosionDamage(explosion({
+      maxDamage: 5,
+      isDirectHit: true,
+      shotId: 7,
+      munitionId: 3,
+    }));
+
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shotId: 7,
+      munitionId: 3,
+      classification: "direct",
+      shieldAbsorbedMilli: 5_000,
+      healthDamageMilli: 0,
+    }));
+  });
+
+  it("caps rewarded health damage and reports shield overflow", () => {
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 4, shield: 4, maxShield: 4 }),
+    });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.applyExplosionDamage(explosion({
+      maxDamage: 100,
+      isDirectHit: true,
+      shotId: 9,
+      munitionId: 0,
+    }));
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldAbsorbedMilli: 2_000,
+      healthDamageMilli: 4_000,
+    }));
+  });
+
+  it("reports real shield and health loss for instant massive kill zones", () => {
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-v", 100, 200, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.applyExplosionDamage(explosion({
+      radius: 62,
+      maxDamage: 75,
+      weaponId: "NUKE",
+      isDirectHit: true,
+      shotId: 10,
+      munitionId: 0,
+    }));
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldAbsorbedMilli: 20_000,
+      healthDamageMilli: 100_000,
+    }));
+  });
   it("applies linear splash falloff and absorbs shield before health", () => {
     const target = makePlayer({
       id: "victim",
@@ -19,7 +99,7 @@ describe("TankManager.applyExplosionDamage", () => {
     const died = vi.fn();
     tm.onPlayerDied = died;
 
-    const kills = tm.applyExplosionDamage(100, 200, 40, 40, "killer");
+    const kills = tm.applyExplosionDamage(explosion());
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(80);
@@ -37,7 +117,7 @@ describe("TankManager.applyExplosionDamage", () => {
     const died = vi.fn();
     tm.onPlayerDied = died;
 
-    const kills = tm.applyExplosionDamage(100, 200, 28, 35, "killer");
+    const kills = tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 35 }));
 
     expect(target.tank.health).toBe(0);
     expect(target.tank.isDead).toBe(true);
@@ -52,7 +132,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 195, 10, 25, "sniper", "BULLET", true);
+    tm.applyExplosionDamage(explosion({ explosionY: 195, radius: 10, maxDamage: 25, shooterId: "sniper", weaponId: "BULLET", isDirectHit: true }));
 
     expect(target.tank.health).toBe(25);
     expect(target.tank.isDead).toBe(false);
@@ -65,7 +145,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 195, 62, 75, "nuker", "NUKE", true);
+    tm.applyExplosionDamage(explosion({ explosionY: 195, radius: 62, maxDamage: 75, shooterId: "nuker", weaponId: "NUKE", isDirectHit: true }));
 
     expect(target.tank.health).toBe(0);
     expect(target.tank.shield).toBe(0);
@@ -79,7 +159,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 160, 120, "thermo", "THERMONUCLEAR", false);
+    tm.applyExplosionDamage(explosion({ radius: 160, maxDamage: 120, shooterId: "thermo", weaponId: "THERMONUCLEAR" }));
 
     expect(target.tank.isDead).toBe(true);
     expect(target.tank.health).toBe(0);
@@ -92,7 +172,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 28, 35, "miss");
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 35, shooterId: "miss" }));
 
     expect(target.tank.health).toBe(100);
     expect(target.tank.isDead).toBe(false);
@@ -108,7 +188,7 @@ describe("TankManager.applyExplosionDamage", () => {
       tank: makeTank("t-o", 400, 200),
     });
     const tm = managerWith(target, other);
-    tm.applyExplosionDamage(100, 200, 40, 20, "attacker");
+    tm.applyExplosionDamage(explosion({ maxDamage: 20, shooterId: "attacker" }));
     expect(target.tank.lastHitBy).toBe("attacker");
 
     const terrain = new TerrainManager(800, 480);
@@ -134,14 +214,14 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(behind, sameSide);
 
-    tm.applyExplosionDamage(30, 100, 160, 80, "killer", "MISSILE", false, terrain);
+    tm.applyExplosionDamage(explosion({ explosionX: 30, explosionY: 100, radius: 160, maxDamage: 80, terrain }));
 
     expect(behind.tank.health).toBe(100);
     expect(sameSide.tank.health).toBeLessThan(100);
 
     behind.tank.health = 100;
     sameSide.tank.health = 100;
-    tm.applyExplosionDamage(100, 100, 160, 80, "killer", "MISSILE", false, terrain);
+    tm.applyExplosionDamage(explosion({ explosionY: 100, radius: 160, maxDamage: 80, terrain }));
 
     expect(behind.tank.health).toBeLessThan(100);
     expect(sameSide.tank.health).toBeLessThan(100);
@@ -161,7 +241,7 @@ describe("TankManager.applyExplosionDamage", () => {
 
     // Hitbox is [100 - 12, 100 + 12] and [200 - 15, 200].
     // Direct hit at x=100, y=200 (distance 0):
-    tm.applyExplosionDamage(100, 200, 28, 30, "killer", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 30, isDirectHit: true }));
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(90);
@@ -179,7 +259,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 28, 15, "killer", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 15, isDirectHit: true }));
 
     expect(target.tank.shield).toBe(10);
     expect(target.tank.health).toBe(100);
@@ -197,7 +277,7 @@ describe("TankManager.applyExplosionDamage", () => {
     const tm = managerWith(target);
 
     // Indirect explosion at distance 0 (radius=40, damage=30, isDirectHit=false)
-    tm.applyExplosionDamage(100, 200, 40, 30, "killer", "MISSILE", false);
+    tm.applyExplosionDamage(explosion({ maxDamage: 30 }));
 
     expect(target.tank.shield).toBe(10);
     expect(target.tank.health).toBe(100);
@@ -214,7 +294,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 28, 1, "killer", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 1, isDirectHit: true }));
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(100);
@@ -231,7 +311,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 28, 25, "killer", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 25, isDirectHit: true }));
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(95);
@@ -248,7 +328,7 @@ describe("TankManager.applyExplosionDamage", () => {
     });
     const tm = managerWith(target);
 
-    tm.applyExplosionDamage(100, 200, 28, 15, "killer", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 15, isDirectHit: true }));
 
     expect(target.tank.shield).toBe(9);
     expect(target.tank.health).toBe(100);
@@ -257,6 +337,21 @@ describe("TankManager.applyExplosionDamage", () => {
 });
 
 describe("TankManager.applyGravity and burial", () => {
+  it("keeps direct fall attribution for the whole Cluster resolution", () => {
+    const tank = makeTank("t-v", 50, 80, { health: 100, shield: 0 });
+    const player = makePlayer({ id: "victim", tank });
+    const tm = managerWith(player);
+    const terrain = flatTerrain(200, 200, 0.9);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.beginShotAttribution(12, "cluster-owner", "CLUSTER");
+    tm.markDirectlyAffected("victim", 4);
+    tm.updateTankPositions(terrain);
+    for (let i = 0; i < 80; i++) tm.applyGravity(1 / 60, terrain);
+    expect(applied).toHaveBeenCalled();
+    expect(applied.mock.calls.every(([event]) => event.classification === "direct")).toBe(true);
+    expect(applied.mock.calls.every(([event]) => event.shotId === 12)).toBe(true);
+  });
   it("applies fall damage while dropping through a crater", () => {
     const tank = makeTank("t-v", 50, 80, { health: 100, shield: 0 });
     const player = makePlayer({ id: "victim", tank });
@@ -360,7 +455,7 @@ describe("TankManager.applyGravity and burial", () => {
     const tm = managerWith(directTarget, splashTarget);
 
     // Direct collision on directTarget at (100, 195) with isDirectHit = true
-    tm.applyExplosionDamage(100, 195, 40, 25, "attacker", "MISSILE", true);
+    tm.applyExplosionDamage(explosion({ explosionY: 195, maxDamage: 25, shooterId: "attacker", isDirectHit: true }));
 
     expect(directTarget.tank.hitReaction?.wasDirectHit).toBe(true);
     expect(splashTarget.tank.hitReaction?.wasDirectHit).toBeUndefined();

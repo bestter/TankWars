@@ -77,6 +77,43 @@ describe('TurnManager', () => {
     });
   });
 
+  describe('earnings resolution', () => {
+    function prepareResolvedLocalShot(gate: { hasEarnings: boolean; isRoundEnd: boolean }) {
+      const players = [
+        makePlayer({ id: 'p1', isHuman: true }),
+        makePlayer({ id: 'p2', isHuman: true }),
+      ];
+      mockTankManager.getPlayers = vi.fn().mockReturnValue(players);
+      turnManager.startFirstTurn();
+      turnManager.onShotResolutionReady = vi.fn().mockReturnValue(gate);
+      Object.assign(turnManager, { hasUnresolvedShot: true, settlingShotWasLocal: true });
+      const finish = Reflect.get(turnManager, 'finishShotResolution') as () => void;
+      finish.call(turnManager);
+    }
+
+    it('advances immediately when a rewarded shot is resolved', () => {
+      prepareResolvedLocalShot({ hasEarnings: true, isRoundEnd: false });
+      expect(turnManager.getCurrentTurnNumber()).toBe(2);
+      expect(turnManager.isWaitingForEarningsRelease()).toBe(false);
+      turnManager.releaseResolvedShot();
+      expect(turnManager.getCurrentTurnNumber()).toBe(2);
+    });
+
+    it('releases a zero-gain resolution immediately', () => {
+      prepareResolvedLocalShot({ hasEarnings: false, isRoundEnd: false });
+      expect(turnManager.getCurrentTurnNumber()).toBe(2);
+      expect(turnManager.isWaitingForEarningsRelease()).toBe(false);
+    });
+
+    it('announces a round end immediately instead of advancing the turn', () => {
+      const roundEnd = vi.fn();
+      turnManager.onResolvedRoundEnd = roundEnd;
+      prepareResolvedLocalShot({ hasEarnings: true, isRoundEnd: true });
+      expect(roundEnd).toHaveBeenCalledTimes(1);
+      expect(turnManager.getCurrentTurnNumber()).toBe(1);
+    });
+  });
+
   describe('HUD update throttling', () => {
     function createHumanPlayer() {
       return makePlayer({
