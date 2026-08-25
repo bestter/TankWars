@@ -50,7 +50,6 @@ function makeSession(overrides: Partial<PersistedOnlineSession> = {}): Persisted
       authoritySlot: 0,
       authorityEpoch: 1,
       lastAppliedShotId: 0,
-      lastZeusAppointmentId: 0,
       lastAppliedZeusStrikeId: 0,
       roundEarningsByPlayer: {},
       earningsOverlay: null,

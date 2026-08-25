@@ -160,7 +160,9 @@ export function useGameSession({
   const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
   const activeServerShotIdRef = useRef<number | null>(null);
   const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
-  const lastZeusAppointmentIdRef = useRef(resumeCanvas?.lastZeusAppointmentId ?? 0);
+  // Appointment IDs only deduplicate broadcasts during this mounted session.
+  // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
+  const lastZeusAppointmentIdRef = useRef(0);
   const lastAppliedZeusStrikeIdRef = useRef(resumeCanvas?.lastAppliedZeusStrikeId ?? 0);
   const pendingShotPreviewsRef = useRef<Map<number, ResolvedShotPreview>>(new Map());
   const submitShotEarningsRef = useRef<(preview: ResolvedShotPreview) => void>(() => {});
@@ -278,7 +280,6 @@ export function useGameSession({
         authoritySlot: authoritySlotRef.current,
         authorityEpoch: authorityEpochRef.current,
         lastAppliedShotId: lastAppliedShotIdRef.current,
-        lastZeusAppointmentId: lastZeusAppointmentIdRef.current,
         lastAppliedZeusStrikeId: lastAppliedZeusStrikeIdRef.current,
         roundEarningsByPlayer:
           engineRef.current?.getRoundEarningsByPlayer() ??
