@@ -89,6 +89,22 @@ describe("Zeus deadlock domain", () => {
     expect(evaluation.appointment?.zeusId).toBe("ai-2");
   });
 
+  it("clears an exhausted admissible pool when appointing during the active round", () => {
+    const players = [ai("ai-1"), ai("ai-2")];
+    const state = {
+      ...createZeusState(),
+      shotsWithoutEarnings: 9,
+      appointedPlayerIds: players.map((player) => player.id),
+      nextAppointmentId: 3,
+    };
+
+    const evaluation = evaluateZeusDeadlock(state, players, false, () => 0);
+
+    expect(evaluation.appointment).toMatchObject({ appointmentId: 3, zeusId: "ai-1" });
+    expect(evaluation.state.appointedPlayerIds).toEqual(["ai-1"]);
+    expect(evaluation.state.nextAppointmentId).toBe(4);
+  });
+
   it("anchors rotation and allocates monotonic strike IDs", () => {
     const players = [ai("a"), ai("b"), ai("c")];
     const evaluation = evaluateZeusDeadlock(
