@@ -6,6 +6,7 @@ import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
 import type { Player } from "../../types/player";
 import { TurnManager } from "../../game/engine/TurnManager";
+import { TankManager } from "../../game/entities/TankManager";
 
 type SessionApi = ReturnType<typeof useGameSession>;
 
@@ -34,22 +35,6 @@ function ShopHarness({
 }
 
 describe("useGameSession local shop AI advance", () => {
-  const players: Player[] = [
-    makePlayer({
-      id: "player-1",
-      name: "Joueur-1",
-      isHuman: true,
-      tank: makeTank("tank-1", 120, 300),
-    }),
-    makePlayer({
-      id: "player-2",
-      name: "CPU-1",
-      isHuman: false,
-      aiProfile: "v4-smart",
-      tank: makeTank("tank-2", 620, 300),
-    }),
-  ];
-
   beforeEach(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
@@ -64,7 +49,28 @@ describe("useGameSession local shop AI advance", () => {
     vi.restoreAllMocks();
   });
 
-  it("finishes the shop after the human ready click even when React re-renders", () => {
+  it("finishes the shop after human ready and retains AI purchases in TankManager and uiPlayers", () => {
+    const setPlayersSpy = vi.spyOn(TankManager.prototype, "setPlayers");
+    const players: Player[] = [
+      makePlayer({
+        id: "player-1",
+        name: "Joueur-1",
+        isHuman: true,
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-1", 120, 300),
+      }),
+      makePlayer({
+        id: "player-2",
+        name: "CPU-1",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-2", 620, 300),
+      }),
+    ];
+
     const sessionRef: { current: SessionApi | null } = { current: null };
     render(<ShopHarness players={players} sessionRef={sessionRef} />);
 
@@ -90,6 +96,185 @@ describe("useGameSession local shop AI advance", () => {
 
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
     expect(sessionRef.current?.state.shopPlayers).toEqual([]);
+
+    // Check uiPlayers at COMBAT phase
+    const uiPlayers = sessionRef.current?.state.uiPlayers;
+    expect(uiPlayers).toBeDefined();
+    expect(uiPlayers?.[0].money).toBe(1000);
+    expect(uiPlayers?.[1].money).toBeLessThan(1000);
+    expect(uiPlayers?.[1].inventory?.CLUSTER).toBeGreaterThan(0);
+
+    // Verify TankManager.setPlayers was called during AI shopping with the updated AI player
+    const lastSetPlayersCall = setPlayersSpy.mock.calls.at(-1)?.[0];
+    expect(lastSetPlayersCall).toBeDefined();
+    expect(lastSetPlayersCall?.[1].money).toBe(uiPlayers?.[1].money);
+    expect(lastSetPlayersCall?.[1].inventory).toEqual(uiPlayers?.[1].inventory);
+  });
+
+  it("retains purchases for all AI players in a pure 4-AI match across round transition", () => {
+    const setPlayersSpy = vi.spyOn(TankManager.prototype, "setPlayers");
+    const aiPlayers = [
+      makePlayer({
+        id: "ai-1",
+        name: "CPU-1",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-ai-1", 100, 300),
+      }),
+      makePlayer({
+        id: "ai-2",
+        name: "CPU-2",
+        isHuman: false,
+        aiProfile: "v3-sniper",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-ai-2", 260, 300),
+      }),
+      makePlayer({
+        id: "ai-3",
+        name: "CPU-3",
+        isHuman: false,
+        aiProfile: "v2-heuristic",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-ai-3", 420, 300),
+      }),
+      makePlayer({
+        id: "ai-4",
+        name: "CPU-4",
+        isHuman: false,
+        aiProfile: "v1-random",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-ai-4", 580, 300),
+      }),
+    ];
+
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    render(<ShopHarness players={aiPlayers} sessionRef={sessionRef} />);
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+      // Advance timers across all AI shopping steps (50ms + 80ms * 3 + 80ms)
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(sessionRef.current?.state.shopPlayers).toEqual([]);
+
+    const uiPlayers = sessionRef.current?.state.uiPlayers;
+    expect(uiPlayers).toBeDefined();
+    expect(uiPlayers?.length).toBe(4);
+
+    for (let i = 0; i < 4; i++) {
+      const p = uiPlayers?.[i];
+      expect(p?.money).toBeLessThan(1000);
+      expect(Object.keys(p?.inventory ?? {}).length).toBeGreaterThan(0);
+    }
+
+    const lastSetPlayersCall = setPlayersSpy.mock.calls.at(-1)?.[0];
+    expect(lastSetPlayersCall).toBeDefined();
+    for (let i = 0; i < 4; i++) {
+      expect(lastSetPlayersCall?.[i].money).toBe(uiPlayers?.[i].money);
+      expect(lastSetPlayersCall?.[i].inventory).toEqual(uiPlayers?.[i].inventory);
+    }
+  });
+
+  it("retains AI purchases even if React re-renders during the shop phase", () => {
+    const players: Player[] = [
+      makePlayer({
+        id: "player-1",
+        name: "Joueur-1",
+        isHuman: true,
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-1", 120, 300),
+      }),
+      makePlayer({
+        id: "player-2",
+        name: "CPU-1",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-2", 620, 300),
+      }),
+    ];
+
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const { rerender } = render(<ShopHarness players={players} sessionRef={sessionRef} />);
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+    });
+
+    act(() => {
+      sessionRef.current?.handleShopReady();
+    });
+
+    // Advance enough for AI to auto-buy, but before finishShopPhase completes
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+
+    // Trigger an extra React re-render
+    rerender(<ShopHarness players={players} sessionRef={sessionRef} />);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    const uiPlayers = sessionRef.current?.state.uiPlayers;
+    expect(uiPlayers?.[1].money).toBeLessThan(1000);
+    expect(uiPlayers?.[1].inventory?.CLUSTER).toBeGreaterThan(0);
+  });
+
+  it("safely handles AI player inventories containing forbidden prototype keys", () => {
+    const maliciousInventory = Object.create(null) as Record<string, unknown>;
+    maliciousInventory["__proto__"] = { hacked: true };
+    maliciousInventory["prototype"] = { hacked: true };
+    maliciousInventory["constructor"] = { hacked: true };
+
+    const players: Player[] = [
+      makePlayer({
+        id: "player-1",
+        name: "Joueur-1",
+        isHuman: true,
+        money: 1000,
+        inventory: {},
+        tank: makeTank("tank-1", 120, 300),
+      }),
+      makePlayer({
+        id: "player-2",
+        name: "CPU-1",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: maliciousInventory as unknown as Player["inventory"],
+        tank: makeTank("tank-2", 620, 300),
+      }),
+    ];
+
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    render(<ShopHarness players={players} sessionRef={sessionRef} />);
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+    });
+
+    act(() => {
+      sessionRef.current?.handleShopReady();
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    const uiPlayers = sessionRef.current?.state.uiPlayers;
+    expect(uiPlayers?.[1].money).toBeLessThan(1000);
+    expect((Object.prototype as unknown as Record<string, unknown>).hacked).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(uiPlayers?.[1].inventory ?? {}, "__proto__")).toBe(false);
   });
 
   it("does not invalidate the first AI turn when a four-AI second round starts", () => {

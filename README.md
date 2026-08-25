@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (586 unit tests across 66 files)
+# Run tests (589 unit tests across 66 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -157,7 +157,7 @@ In the build today:
 - Online lobby + strict combat protocol, authoritative reward/balance application, Durable Object authority failover, shop relay, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **586 unit tests** across **66 files** (Vitest)
+- **589 unit tests** across **66 files** (Vitest)
 
 Still planned:
 
