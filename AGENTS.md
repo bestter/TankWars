@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 586 tests, 66 fichiers) |
+| Tests | `npm run test` (vitest, 589 tests, 66 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -141,6 +141,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 - `tsc -b` vérifie `worker/` aussi (projet reference). Les erreurs de type dans `worker/src/` cassent le build.
 - Le worker DO utilise des types globaux (`DurableObjectNamespace`), pas d'imports de plateforme.
 - Boutique locale humain vs IA : ne pas rebloquer le shop humain en manche 2+ (`useGameSession.ts`).
+- Boutique IA locale (`useGameSession.ts`) : après `autoBuyForAI`, propager le nouveau roster immuable dans `TankManager.setPlayers`, synchroniser `shopPlayersRef.current` et dispatcher `MUTATE_SHOP_PLAYERS` afin que les achats soient conservés à la manche suivante et lors des re-renders.
 - Grenade longue : le filet de sécurité du `TurnManager` ne doit pas laisser l’IA rejouer après un bounce trop long.
 - `loadHeights` sans `materials` (ou longueur mismatch) : tout retombe sur `DIRT` — pas d’état hybride.
 - Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.

@@ -1456,11 +1456,25 @@ export function useGameSession({
 
     autoBuyForAI(safeAiPlayer);
 
-    shopPlayersRef.current[idx] = {
+    const updatedAiPlayer: Player = {
       ...current,
       money: safeAiPlayer.money,
       inventory: safeAiPlayer.inventory,
     };
+
+    const engine = engineRef.current;
+    const basePlayers = engine
+      ? engine.getTankManager().getPlayers()
+      : shopPlayersRef.current;
+    const updatedPlayers = basePlayers.map((p) =>
+      p.id === current.id ? updatedAiPlayer : p,
+    );
+
+    if (engine) {
+      engine.getTankManager().setPlayers(updatedPlayers);
+    }
+    shopPlayersRef.current = updatedPlayers;
+    dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
 
     advanceToNextShopper();
   };
