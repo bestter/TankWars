@@ -1,5 +1,6 @@
 {
   "ai_auto_buy_note": "Les IA achètent automatiquement",
+  "zeus_appointed_announcement": "⚡ Les dieux s’impatientent! {{name}} reçoit l’Éclair de Zeus!",
   "ai_shopping_status": "L'IA <strong>{{name}}</strong> fait ses achats...",
   "battle_configuration": "CONFIGURATION DE LA BATAILLE",
   "btn_go_to_shop": "Aller à la boutique → manche suivante",

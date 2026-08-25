@@ -34,6 +34,9 @@ export interface Tank {
   /** Last player id (owner) whose shot/explosion damaged this tank (for AI revenge targeting).
    *  Set during damage application; cleared on round respawn via spawnTanks. */
   lastHitBy?: string;
+  /** Last opposing shooter whose projectile directly hit this tank this round.
+   *  Unlike hitReaction.wasDirectHit, this identity is not consumed by AI recovery logic. */
+  lastDirectAttackerId?: PlayerId;
   /** Must be a value from VGA_PALETTE (enforced at construction). */
   color: Color;
   /** Weapon that will be used on next FireCommand. */

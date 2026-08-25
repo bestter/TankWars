@@ -92,4 +92,47 @@ describe('GameEngine online multiplayer', () => {
     expect(onRoundEnded).not.toHaveBeenCalled();
     expect(engine.isRoundCombatActive()).toBe(false);
   });
+
+  it('applies an authoritative Zeus result once without collateral or terrain changes', () => {
+    const zeus = makePlayer({
+      id: 'zeus',
+      money: 250,
+      tank: makeTank('tank-zeus', 30, 120),
+    });
+    const target = makePlayer({
+      id: 'target',
+      money: 250,
+      tank: makeTank('tank-target', 100, 120, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const bystander = makePlayer({
+      id: 'bystander',
+      money: 250,
+      tank: makeTank('tank-bystander', 110, 120, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    engine.setPlayers([zeus, target, bystander]);
+    const terrainBefore = [25, 100, 175].map((x) => engine.getTerrain().getHeightAt(x));
+    const applied = vi.fn();
+    engine.onZeusStrikeApplied = applied;
+    const result = {
+      strikeId: 1,
+      zeusId: zeus.id,
+      targetId: target.id,
+      award: { playerId: zeus.id, amount: 88 },
+      balances: [
+        { playerId: zeus.id, money: 338 },
+        { playerId: target.id, money: 250 },
+        { playerId: bystander.id, money: 250 },
+      ],
+      roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+    };
+
+    expect(engine.applyRemoteZeusStrikeResult(result)).toBe(true);
+    expect(engine.applyRemoteZeusStrikeResult(result)).toBe(false);
+    expect(target.tank).toMatchObject({ health: 0, shield: 0, isDead: true });
+    expect(bystander.tank).toMatchObject({ health: 100, shield: 40, isDead: false });
+    expect(zeus.money).toBe(338);
+    expect(engine.getRoundEarningsByPlayer()[zeus.id]).toBe(88);
+    expect([25, 100, 175].map((x) => engine.getTerrain().getHeightAt(x))).toEqual(terrainBefore);
+    expect(applied).toHaveBeenCalledOnce();
+  });
 });

@@ -3,6 +3,7 @@ import { GameEngine } from "../GameEngine";
 import type { ResolvedShotPreview } from "../GameEngine";
 import * as random from "../../../utils/random";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
+import type { Player } from "../../../types/player";
 
 describe("GameEngine match rules", () => {
   let engine: GameEngine;
@@ -184,6 +185,73 @@ describe("GameEngine match rules", () => {
     const nextLedger = Reflect.get(engine, "activeShotLedger") as { isFirstShotOfRound: boolean };
     expect(nextLedger.isFirstShotOfRound).toBe(true);
     expect(engine.buildRoundResult().earningsByPlayer).toEqual({});
+  });
+
+  it("runs a local deadlock through rotations, appointment, strike, and round end", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = makePlayer({
+        id: "ai-1",
+        name: "CPU-1",
+        isHuman: false,
+        money: 0,
+        tank: makeTank("tank-ai-1", 120, 200),
+      });
+      const second = makePlayer({
+        id: "ai-2",
+        name: "CPU-2",
+        isHuman: false,
+        money: 0,
+        tank: makeTank("tank-ai-2", 680, 200),
+      });
+      engine.setAIEngine({
+        executeTurn: vi.fn().mockResolvedValue({
+          angle: 45,
+          power: 50,
+          weaponId: "MISSILE",
+        }),
+      });
+      const appointed = vi.fn();
+      const struck = vi.fn();
+      const roundEnded = vi.fn();
+      engine.onZeusAppointed = appointed;
+      engine.onZeusStrikeApplied = struck;
+      engine.onRoundEnded = roundEnded;
+      engine.setPlayers([first, second]);
+
+      const physics = Reflect.get(engine, "physicsEngine") as {
+        clear: (notifySettlement?: boolean) => void;
+      };
+      for (let shot = 0; shot < 10; shot++) {
+        await vi.advanceTimersByTimeAsync(1_500);
+        expect(engine.getActiveProjectiles()).toHaveLength(1);
+        physics.clear(true);
+        engine.getTurnManager().update(1 / 120);
+      }
+
+      expect(appointed).toHaveBeenCalledOnce();
+      const appointment = appointed.mock.calls[0]?.[0] as { zeusId: string };
+      expect(engine.getActiveZeusId()).toBe(appointment.zeusId);
+      expect(engine.getTurnManager().getCurrentPlayer()?.id).toBe(appointment.zeusId);
+
+      const updateZeusStrike = Reflect.get(engine, "updateZeusStrike") as (dt: number) => void;
+      updateZeusStrike.call(engine, 0.71);
+      updateZeusStrike.call(engine, 0.1);
+
+      const zeus = engine.getTankManager().getPlayerById(appointment.zeusId);
+      const target = engine.getTankManager().getPlayers().find((player) => player.id !== appointment.zeusId);
+      expect(struck).toHaveBeenCalledOnce();
+      expect(target?.tank).toMatchObject({ health: 0, shield: 0, isDead: true });
+      expect(zeus?.money).toBe(75);
+      expect(roundEnded).toHaveBeenCalledOnce();
+      expect(roundEnded.mock.calls[0]?.[0].survivors.map((player: Player) => player.id)).toEqual([
+        appointment.zeusId,
+      ]);
+      expect(engine.isRoundCombatActive()).toBe(false);
+      expect(engine.getActiveZeusId()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("declareMatchWinner and declareMatchDraw set game-over state", () => {

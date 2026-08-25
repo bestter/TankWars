@@ -77,6 +77,49 @@ describe('TurnManager', () => {
     });
   });
 
+  describe('special turns', () => {
+    it('reanchors immediately on Zeus and preserves the circular B → C → A rotation', () => {
+      const players = [
+        makePlayer({ id: 'a', isHuman: true }),
+        makePlayer({ id: 'b', isHuman: false }),
+        makePlayer({ id: 'c', isHuman: true }),
+      ];
+      mockTankManager.getPlayers = vi.fn().mockReturnValue(players);
+      turnManager.onSpecialTurn = (player) => player.id === 'b';
+      turnManager.startFirstTurn();
+
+      expect(turnManager.beginTurnAt('b')).toBe(true);
+      expect(turnManager.getCurrentPlayer()?.id).toBe('b');
+      turnManager.completeSpecialTurn(false);
+      expect(turnManager.getCurrentPlayer()?.id).toBe('c');
+      turnManager.nextTurn();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('a');
+    });
+
+    it('invalidates an obsolete asynchronous AI decision when the turn is reanchored', async () => {
+      const players = [
+        makePlayer({ id: 'a', isHuman: false }),
+        makePlayer({ id: 'b', isHuman: true }),
+      ];
+      mockTankManager.getPlayers = vi.fn().mockReturnValue(players);
+      let resolveDecision: ((command: { angle: number; power: number; weaponId: 'MISSILE' }) => void) | undefined;
+      const executeTurn = vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+      turnManager.setAIEngine({ executeTurn });
+      turnManager.startFirstTurn();
+      expect(executeTurn).toHaveBeenCalledOnce();
+
+      expect(turnManager.beginTurnAt('b')).toBe(true);
+      resolveDecision?.({ angle: 45, power: 50, weaponId: 'MISSILE' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(turnManager.getCurrentPlayer()?.id).toBe('b');
+      expect(mockFireCallback).not.toHaveBeenCalled();
+    });
+  });
+
   describe('earnings resolution', () => {
     function prepareResolvedLocalShot(gate: { hasEarnings: boolean; isRoundEnd: boolean }) {
       const players = [

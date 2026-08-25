@@ -39,6 +39,7 @@ export interface ShotEarningsMessage {
   awards: Array<{ playerId: string; amount: number }>;
   deadSlots: boolean[];
   roundOutcome: RoundOutcomeWire;
+  directHitVictimIds: string[];
 }
 
 export interface ShotEarningsAppliedMessage {
@@ -66,6 +67,44 @@ export interface RoundEndMessage {
   roundNumber: number;
 }
 
+export interface ZeusAppointedMessage {
+  type: "ZEUS_APPOINTED";
+  appointmentId: number;
+  zeusId: string;
+  zeusSlot: number;
+  rotationSlots: number[];
+}
+
+export interface ZeusStrikeMessage {
+  type: "ZEUS_STRIKE";
+  strikeId: number;
+  zeusId: string;
+  targetId: string;
+  resolveAt: number;
+}
+
+export interface ZeusStrikeAppliedMessage {
+  type: "ZEUS_STRIKE_APPLIED";
+  strikeId: number;
+  zeusId: string;
+  targetId: string;
+  award: { playerId: string; amount: number };
+  balances: Array<{ playerId: string; money: number }>;
+  deadSlots: boolean[];
+  roundOutcome: RoundOutcomeWire;
+  nextPlayerIndex: number | null;
+}
+
+export interface ZeusStateMessage {
+  type: "ZEUS_STATE";
+  activeZeusId: string | null;
+  currentPlayerIndex: number;
+  rotationSlots: number[];
+  deadSlots: boolean[];
+  activeStrike: ZeusStrikeMessage | null;
+  lastAppliedStrikeId: number;
+}
+
 export type StrictOnlineMessage =
   | AuthorityChangedMessage
   | ShotMessage
@@ -73,7 +112,11 @@ export type StrictOnlineMessage =
   | ShotEarningsMessage
   | ShotEarningsAppliedMessage
   | StateUpdateMessage
-  | RoundEndMessage;
+  | RoundEndMessage
+  | ZeusAppointedMessage
+  | ZeusStrikeMessage
+  | ZeusStrikeAppliedMessage
+  | ZeusStateMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -136,6 +179,25 @@ function isDeadSlots(value: unknown): value is boolean[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "boolean");
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isSlotArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isSafeNonNegativeInteger);
+}
+
+function isZeusStrike(value: unknown): value is ZeusStrikeMessage {
+  return (
+    isRecord(value) &&
+    value.type === "ZEUS_STRIKE" &&
+    isSafeNonNegativeInteger(value.strikeId) &&
+    typeof value.zeusId === "string" &&
+    typeof value.targetId === "string" &&
+    isSafeNonNegativeInteger(value.resolveAt)
+  );
+}
+
 function isPlayers(value: unknown): value is Player[] {
   return (
     Array.isArray(value) &&
@@ -176,7 +238,8 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isSafeNonNegativeInteger(value.authorityEpoch) &&
         isAwards(value.awards) &&
         isDeadSlots(value.deadSlots) &&
-        isRoundOutcome(value.roundOutcome)
+        isRoundOutcome(value.roundOutcome) &&
+        isStringArray(value.directHitVictimIds)
       );
     case "SHOT_EARNINGS_APPLIED":
       return (
@@ -199,6 +262,37 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         (value.roundWinnerId === null || typeof value.roundWinnerId === "string") &&
         typeof value.isDraw === "boolean" &&
         isSafeNonNegativeInteger(value.roundNumber)
+      );
+    case "ZEUS_APPOINTED":
+      return (
+        isSafeNonNegativeInteger(value.appointmentId) &&
+        typeof value.zeusId === "string" &&
+        isSafeNonNegativeInteger(value.zeusSlot) &&
+        isSlotArray(value.rotationSlots)
+      );
+    case "ZEUS_STRIKE":
+      return isZeusStrike(value);
+    case "ZEUS_STRIKE_APPLIED":
+      return (
+        isSafeNonNegativeInteger(value.strikeId) &&
+        typeof value.zeusId === "string" &&
+        typeof value.targetId === "string" &&
+        isRecord(value.award) &&
+        typeof value.award.playerId === "string" &&
+        isSafeNonNegativeInteger(value.award.amount) &&
+        isBalances(value.balances) &&
+        isDeadSlots(value.deadSlots) &&
+        isRoundOutcome(value.roundOutcome) &&
+        isNullableSlot(value.nextPlayerIndex)
+      );
+    case "ZEUS_STATE":
+      return (
+        (value.activeZeusId === null || typeof value.activeZeusId === "string") &&
+        isSafeNonNegativeInteger(value.currentPlayerIndex) &&
+        isSlotArray(value.rotationSlots) &&
+        isDeadSlots(value.deadSlots) &&
+        (value.activeStrike === null || isZeusStrike(value.activeStrike)) &&
+        isSafeNonNegativeInteger(value.lastAppliedStrikeId)
       );
     default:
       return false;

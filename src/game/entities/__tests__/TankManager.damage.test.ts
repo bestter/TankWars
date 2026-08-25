@@ -462,6 +462,54 @@ describe("TankManager.applyGravity and burial", () => {
     expect(splashTarget.tank.health).toBeLessThan(100); // took splash damage
   });
 
+  it("tracks a shield-only direct attacker and excludes BULLDOZER", () => {
+    const target = makePlayer({
+      id: "victim",
+      tank: makeTank("t-victim", 100, 200, { health: 100, shield: 40 }),
+    });
+    const tm = managerWith(target);
+
+    tm.applyExplosionDamage(explosion({
+      explosionY: 195,
+      maxDamage: 5,
+      shooterId: "attacker",
+      isDirectHit: true,
+    }));
+    expect(target.tank.health).toBe(100);
+    expect(target.tank.lastDirectAttackerId).toBe("attacker");
+
+    target.tank.lastDirectAttackerId = undefined;
+    tm.applyExplosionDamage(explosion({
+      explosionY: 195,
+      maxDamage: 0,
+      shooterId: "bulldozer",
+      weaponId: "BULLDOZER",
+      isDirectHit: true,
+    }));
+    expect(target.tank.lastDirectAttackerId).toBeUndefined();
+  });
+
+  it("applies a Zeus strike only to its target, through shield and health", () => {
+    const zeus = makePlayer({ id: "zeus" });
+    const target = makePlayer({
+      id: "target",
+      tank: makeTank("t-target", 100, 200, { health: 100, shield: 40 }),
+    });
+    const bystander = makePlayer({
+      id: "bystander",
+      tank: makeTank("t-bystander", 105, 200, { health: 100, shield: 40 }),
+    });
+    const tm = managerWith(zeus, target, bystander);
+    const died = vi.fn();
+    tm.onPlayerDied = died;
+
+    expect(tm.applyZeusStrike(zeus.id, target.id)).toBe(true);
+    expect(target.tank).toMatchObject({ health: 0, shield: 0, isDead: true });
+    expect(bystander.tank).toMatchObject({ health: 100, shield: 40, isDead: false });
+    expect(died).toHaveBeenCalledWith(target.id, "zeus", expect.any(String), zeus.id);
+    expect(tm.applyZeusStrike(zeus.id, target.id)).toBe(false);
+  });
+
   it("accumulates fallDistance on hitReaction during gravity fall and spawnTanks clears it", () => {
     const terrain = new TerrainManager(200, 200);
     terrain.loadHeights(Array.from({ length: 200 }, () => 150));

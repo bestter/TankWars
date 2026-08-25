@@ -31,6 +31,7 @@ export interface OnlineCanvasSnapshot {
   authoritySlot: number | null;
   authorityEpoch: number;
   lastAppliedShotId: number;
+  lastAppliedZeusStrikeId?: number;
   roundEarningsByPlayer: Record<string, number>;
   earningsOverlay: EarningsOverlayState | null;
 }
@@ -92,6 +93,7 @@ export function readOnlineSession(): PersistedOnlineSession | null {
         authoritySlot: typeof canvas.authoritySlot === 'number' ? canvas.authoritySlot : null,
         authorityEpoch: typeof canvas.authorityEpoch === 'number' && Number.isSafeInteger(canvas.authorityEpoch) ? canvas.authorityEpoch : 0,
         lastAppliedShotId: typeof canvas.lastAppliedShotId === 'number' && Number.isSafeInteger(canvas.lastAppliedShotId) ? canvas.lastAppliedShotId : 0,
+        lastAppliedZeusStrikeId: typeof canvas.lastAppliedZeusStrikeId === 'number' && Number.isSafeInteger(canvas.lastAppliedZeusStrikeId) ? canvas.lastAppliedZeusStrikeId : 0,
         roundEarningsByPlayer: isRecord(canvas.roundEarningsByPlayer)
           ? canvas.roundEarningsByPlayer as Record<string, number>
           : {},

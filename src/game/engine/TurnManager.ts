@@ -33,6 +33,7 @@ export interface CurrentTurnInfo {
 export interface ShotResolutionGate {
   hasEarnings: boolean;
   isRoundEnd: boolean;
+  nextPlayerId?: string;
 }
 
 export class TurnManager {
@@ -113,6 +114,7 @@ export class TurnManager {
 
   private isAwaitingEarningsRelease = false;
   private resolvedShotEndsRound = false;
+  private resolvedNextPlayerId: string | null = null;
 
   /** Physics engine used to detect in-flight projectiles (set via connectToPhysics). */
   private physicsEngine: PhysicsEngine | null = null;
@@ -140,6 +142,8 @@ export class TurnManager {
   public onShotSettled?: () => void;
   public onShotResolutionReady?: () => ShotResolutionGate;
   public onResolvedRoundEnd?: () => void;
+  /** Returns true when a domain action replaces the AI projectile turn. */
+  public onSpecialTurn?: (player: Player) => boolean;
 
   /**
    * True when the shot currently resolving was fired locally (tryFire).
@@ -742,6 +746,42 @@ export class TurnManager {
     }
   }
 
+  /** Starts the next turn at a specific living player (used by Zeus re-anchoring). */
+  public beginTurnAt(playerId: string): boolean {
+    if (this.interRoundPaused || this.isMatchEnded()) return false;
+    const players = this.tankManager.getPlayers();
+    const index = players.findIndex(
+      (player) => player.id === playerId && !player.tank.isDead && player.tank.health > 0,
+    );
+    if (index < 0) return false;
+
+    this.aiTurnGeneration++;
+    this.currentPlayerIndex = index;
+    this.turnNumber++;
+    this.isInputLocked = true;
+    this.isProcessingAI = false;
+    this.clearAwaitingStabilization();
+    this.clearPhysicsSettlementTimeout();
+    this.clearResolutionTimeout();
+    this.clearSettlementSafetyTimeout();
+    this.clearTurnLockSafetyTimeout();
+    this.onTurnChange?.(players[index], this.turnNumber);
+    this.notifyHudUpdate(true);
+    this.handleAITurnIfNeeded(players[index]);
+    return true;
+  }
+
+  /** Completes a non-projectile domain action while preserving normal round/turn semantics. */
+  public completeSpecialTurn(isRoundEnd: boolean): void {
+    this.isProcessingAI = false;
+    this.aiTurnGeneration++;
+    this.clearResolutionTimeout();
+    this.clearSettlementSafetyTimeout();
+    this.clearTurnLockSafetyTimeout();
+    if (isRoundEnd) this.onResolvedRoundEnd?.();
+    else this.nextTurn();
+  }
+
   /** Retourne le joueur dont c'est actuellement le tour */
   public getCurrentPlayer(): Player | null {
     const players = this.tankManager.getPlayers();
@@ -750,6 +790,8 @@ export class TurnManager {
 
   /** Sync the current turn index from server authoritative state. */
   public syncTurn(currentPlayerIndex: number): void {
+    this.aiTurnGeneration++;
+    this.isProcessingAI = false;
     this.currentPlayerIndex = currentPlayerIndex;
 
     if (this.awaitingServerTurnAfterLocalShot) {
@@ -815,6 +857,7 @@ export class TurnManager {
     }
     this.isAwaitingEarningsRelease = true;
     this.resolvedShotEndsRound = gate.isRoundEnd;
+    this.resolvedNextPlayerId = gate.nextPlayerId ?? null;
     this.releaseResolvedShot();
   }
 
@@ -823,9 +866,13 @@ export class TurnManager {
     if (!this.isAwaitingEarningsRelease) return;
     this.isAwaitingEarningsRelease = false;
     const endsRound = this.resolvedShotEndsRound;
+    const nextPlayerId = this.resolvedNextPlayerId;
     this.resolvedShotEndsRound = false;
+    this.resolvedNextPlayerId = null;
     if (endsRound) {
       this.onResolvedRoundEnd?.();
+    } else if (nextPlayerId) {
+      if (!this.beginTurnAt(nextPlayerId)) this.nextTurn();
     } else {
       this.nextTurn();
     }
@@ -986,6 +1033,7 @@ export class TurnManager {
   private clearEarningsRelease(): void {
     this.isAwaitingEarningsRelease = false;
     this.resolvedShotEndsRound = false;
+    this.resolvedNextPlayerId = null;
   }
 
   /**
@@ -995,6 +1043,12 @@ export class TurnManager {
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
     console.log('[TurnManager] handleAITurnIfNeeded: player=(player redacted), isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
+    if (this.onSpecialTurn?.(player)) {
+      this.isProcessingAI = true;
+      this.isInputLocked = true;
+      this.notifyHudUpdate(true);
+      return;
+    }
     if (!this.aiEngine) {
       console.warn(
         `[TurnManager] No AIEngine configured for AI player (player redacted). Skipping turn.`,

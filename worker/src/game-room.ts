@@ -37,7 +37,20 @@ import {
   type ShotEarningsAppliedMessage,
   type ShotEarningsMessage,
   type ShotMessage,
+  type ZeusAppointedMessage,
+  type ZeusStateMessage,
+  type ZeusStrikeAppliedMessage,
+  type ZeusStrikeMessage,
 } from '../../src/game/online/protocol';
+import {
+  allocateZeusStrike,
+  createZeusState,
+  evaluateZeusDeadlock,
+  resetZeusRound,
+  selectZeusTarget,
+  type ZeusState,
+} from '../../src/game/zeus/zeusDomain';
+import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
 interface PersistedActiveShot extends Omit<ShotMessage, 'type'> {
   shooterSettled: boolean;
@@ -48,6 +61,7 @@ interface PersistedActiveShot extends Omit<ShotMessage, 'type'> {
 interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   deadSlots: boolean[];
   authorityEpoch: number;
+  directHitVictimIds: string[];
 }
 
 // Very small serializable state for MVP (will be enriched with real engine state later)
@@ -78,6 +92,12 @@ interface RoomState {
   shotNumberInRound: number;
   activeShot: PersistedActiveShot | null;
   lastAppliedEarnings: PersistedEarningsResult | null;
+  zeusState: ZeusState;
+  zeusRotationSlots: number[];
+  lastDirectAttackerByPlayerId: Record<string, string>;
+  zeusRngState: number;
+  activeZeusStrike: ZeusStrikeMessage | null;
+  lastAppliedZeusStrike: ZeusStrikeAppliedMessage | null;
 }
 
 // Helper: simple short token (not crypto secure for prod but fine for game invite links)
@@ -100,6 +120,15 @@ function mulberry32(seed: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function seedFromString(value: string): number {
+  let seed = 0;
+  for (let index = 0; index < value.length; index++) {
+    seed = Math.imul(seed, 31) + value.charCodeAt(index);
+    seed |= 0;
+  }
+  return seed >>> 0;
 }
 
 function sanitizePlayer(p: unknown): Player | null {
@@ -194,6 +223,9 @@ function sanitizePlayer(p: unknown): Player | null {
   if (typeof tRecord.lastHitBy === 'string') {
     sanitized.tank.lastHitBy = tRecord.lastHitBy;
   }
+  if (typeof tRecord.lastDirectAttackerId === 'string') {
+    sanitized.tank.lastDirectAttackerId = tRecord.lastDirectAttackerId;
+  }
 
   return sanitized;
 }
@@ -252,6 +284,15 @@ export class GameRoom extends DurableObject {
         this.state.shotNumberInRound ??= 0;
         this.state.activeShot ??= null;
         this.state.lastAppliedEarnings ??= null;
+        if (this.state.lastAppliedEarnings) {
+          this.state.lastAppliedEarnings.directHitVictimIds ??= [];
+        }
+        this.state.zeusState ??= createZeusState();
+        this.state.zeusRotationSlots ??= [];
+        this.state.lastDirectAttackerByPlayerId ??= {};
+        this.state.zeusRngState ??= seedFromString(this.state.roomId);
+        this.state.activeZeusStrike ??= null;
+        this.state.lastAppliedZeusStrike ??= null;
         this.shotInFlight = this.state.activeShot !== null;
         this.awaitingShotFromSlot = this.state.activeShot?.slot ?? null;
         // Restore AI profiles in memory if reloaded
@@ -259,6 +300,9 @@ export class GameRoom extends DurableObject {
           this.state.slotConfigs.forEach((cfg, idx) => {
             if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
           });
+        }
+        if (this.state.activeZeusStrike) {
+          this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
       }
     });
@@ -316,8 +360,17 @@ export class GameRoom extends DurableObject {
       if (this.state.lastAppliedEarnings) {
         ws.send(JSON.stringify(this.state.lastAppliedEarnings));
       }
+      ws.send(JSON.stringify(this.buildZeusStateMessage()));
+      if (this.state.activeZeusStrike) {
+        ws.send(JSON.stringify(this.state.activeZeusStrike));
+      }
+      if (this.state.lastAppliedZeusStrike) {
+        ws.send(JSON.stringify(this.state.lastAppliedZeusStrike));
+      }
       if (this.state.roundEnded) {
-        const lastOutcome = this.state.lastAppliedEarnings?.roundOutcome;
+        const lastOutcome =
+          this.state.lastAppliedZeusStrike?.roundOutcome ??
+          this.state.lastAppliedEarnings?.roundOutcome;
         const roundEnd: RoundEndMessage = {
           type: 'ROUND_END',
           players: this.state.players,
@@ -350,6 +403,29 @@ export class GameRoom extends DurableObject {
         // ignore stale
       }
     }
+  }
+
+  private buildZeusStateMessage(): ZeusStateMessage {
+    if (!this.state) {
+      return {
+        type: 'ZEUS_STATE',
+        activeZeusId: null,
+        currentPlayerIndex: 0,
+        rotationSlots: [],
+        deadSlots: [],
+        activeStrike: null,
+        lastAppliedStrikeId: 0,
+      };
+    }
+    return {
+      type: 'ZEUS_STATE',
+      activeZeusId: this.state.zeusState.activeZeusId,
+      currentPlayerIndex: this.state.currentPlayerIndex,
+      rotationSlots: [...this.state.zeusRotationSlots],
+      deadSlots: this.state.players.map((player) => player.tank.isDead),
+      activeStrike: this.state.activeZeusStrike,
+      lastAppliedStrikeId: this.state.lastAppliedZeusStrike?.strikeId ?? 0,
+    };
   }
 
 
@@ -406,6 +482,12 @@ export class GameRoom extends DurableObject {
       shotNumberInRound: 0,
       activeShot: null,
       lastAppliedEarnings: null,
+      zeusState: createZeusState(),
+      zeusRotationSlots: [],
+      lastDirectAttackerByPlayerId: {},
+      zeusRngState: seedFromString(roomId),
+      activeZeusStrike: null,
+      lastAppliedZeusStrike: null,
     };
 
     // Pre-register AI profiles for server-driven turns
@@ -1119,7 +1201,8 @@ export class GameRoom extends DurableObject {
       const isIdentical =
         JSON.stringify(previous.awards) === JSON.stringify(message.awards) &&
         JSON.stringify(previous.deadSlots) === JSON.stringify(message.deadSlots) &&
-        JSON.stringify(previous.roundOutcome) === JSON.stringify(message.roundOutcome);
+        JSON.stringify(previous.roundOutcome) === JSON.stringify(message.roundOutcome) &&
+        JSON.stringify(previous.directHitVictimIds) === JSON.stringify(message.directHitVictimIds);
       if (isIdentical) this.broadcast(previous);
       return;
     }
@@ -1139,6 +1222,23 @@ export class GameRoom extends DurableObject {
       if (seen.has(award.playerId) || !knownPlayers.has(award.playerId)) return;
       if (!Number.isSafeInteger(award.amount) || award.amount < 0) return;
       seen.add(award.playerId);
+    }
+
+    const directVictims = new Set<string>();
+    for (const victimId of message.directHitVictimIds) {
+      if (directVictims.has(victimId) || !knownPlayers.has(victimId)) return;
+      directVictims.add(victimId);
+    }
+    const activeShooterId = this.state.activeShot?.ownerId;
+    const activeWeaponId = this.state.activeShot?.command.weaponId;
+    if (activeWeaponId === 'BULLDOZER' && directVictims.size > 0) return;
+    if (activeShooterId && directVictims.has(activeShooterId)) return;
+    if (activeShooterId && activeWeaponId !== 'BULLDOZER') {
+      for (const victimId of directVictims) {
+        this.state.lastDirectAttackerByPlayerId[victimId] = activeShooterId;
+        const victim = knownPlayers.get(victimId);
+        if (victim) victim.tank.lastDirectAttackerId = activeShooterId;
+      }
     }
 
     const balances = this.state.players.map((player) => {
@@ -1169,6 +1269,7 @@ export class GameRoom extends DurableObject {
       roundOutcome: message.roundOutcome,
       deadSlots: message.deadSlots,
       authorityEpoch: message.authorityEpoch,
+      directHitVictimIds: [...message.directHitVictimIds],
     };
     this.state.lastAppliedEarnings = applied;
     if (this.state.activeShot) {
@@ -1204,6 +1305,14 @@ export class GameRoom extends DurableObject {
     }
 
     const outcome = this.state.lastAppliedEarnings.roundOutcome;
+    const evaluation = evaluateZeusDeadlock(
+      this.state.zeusState,
+      this.state.players,
+      this.state.lastAppliedEarnings.hasEarnings,
+      () => this.nextZeusRandom(),
+    );
+    this.state.zeusState = evaluation.state;
+    if (evaluation.zeusRevoked) this.state.zeusRotationSlots = [];
     if (outcome.isRoundEnd) {
       this.clearShotSettledTimeout();
       this.shotInFlight = false;
@@ -1211,6 +1320,7 @@ export class GameRoom extends DurableObject {
       this.lastShot = null;
       this.state.activeShot = null;
       this.state.roundEnded = true;
+      this.resetZeusRoundState();
       await this.saveState();
       const roundEnd: RoundEndMessage = {
         type: 'ROUND_END',
@@ -1222,12 +1332,194 @@ export class GameRoom extends DurableObject {
       this.broadcast(roundEnd);
       return;
     }
+    if (evaluation.appointment) {
+      await this.applyZeusAppointment(evaluation.appointment);
+      return;
+    }
     await this.advanceTurnAndNotify();
+  }
+
+  private nextZeusRandom(): number {
+    if (!this.state) return 0;
+    this.state.zeusRngState = (this.state.zeusRngState + 0x6d2b79f5) >>> 0;
+    let value = this.state.zeusRngState;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  }
+
+  private async applyZeusAppointment(
+    appointment: import('../../src/game/zeus/zeusDomain').ZeusAppointment,
+  ): Promise<void> {
+    if (!this.state) return;
+    const zeusSlot = this.state.players.findIndex((player) => player.id === appointment.zeusId);
+    if (zeusSlot < 0) return;
+
+    this.clearShotSettledTimeout();
+    this.awaitingShotFromSlot = null;
+    this.shotInFlight = false;
+    this.lastShot = null;
+    this.state.activeShot = null;
+    this.shotEpoch++;
+    this.state.currentPlayerIndex = zeusSlot;
+    const rotationSlots: number[] = [];
+    for (const playerId of appointment.rotationPlayerIds) {
+      const slot = this.state.players.findIndex((player) => player.id === playerId);
+      if (slot >= 0) rotationSlots.push(slot);
+    }
+    this.state.zeusRotationSlots = rotationSlots;
+    await this.saveState();
+
+    const message: ZeusAppointedMessage = {
+      type: 'ZEUS_APPOINTED',
+      appointmentId: appointment.appointmentId,
+      zeusId: appointment.zeusId,
+      zeusSlot,
+      rotationSlots: [...this.state.zeusRotationSlots],
+    };
+    this.broadcast(message);
+    this.broadcast(this.buildZeusStateMessage());
+    this.broadcast({
+      type: 'STATE_UPDATE',
+      currentPlayerIndex: zeusSlot,
+      roundEnded: false,
+    });
+    this.maybeRunAIServerTurn();
+  }
+
+  private async beginZeusStrike(): Promise<void> {
+    if (!this.state || this.state.roundEnded || this.state.activeZeusStrike) return;
+    const zeusId = this.state.zeusState.activeZeusId;
+    const current = this.state.players[this.state.currentPlayerIndex];
+    if (!zeusId || current?.id !== zeusId || current.tank.isDead) return;
+    const selection = selectZeusTarget(
+      this.state.players,
+      zeusId,
+      () => this.nextZeusRandom(),
+    );
+    if (!selection) return;
+
+    current.tank.lastDirectAttackerId = undefined;
+    delete this.state.lastDirectAttackerByPlayerId[zeusId];
+    const allocation = allocateZeusStrike(this.state.zeusState, zeusId, selection.targetId);
+    this.state.zeusState = allocation.state;
+    const strike: ZeusStrikeMessage = {
+      type: 'ZEUS_STRIKE',
+      ...allocation.strike,
+      resolveAt: Date.now() + 700,
+    };
+    this.state.activeZeusStrike = strike;
+    await this.saveState();
+    this.broadcast(strike);
+    this.scheduleZeusStrikeCompletion(strike);
+  }
+
+  private scheduleZeusStrikeCompletion(strike: ZeusStrikeMessage): void {
+    const remaining = Math.max(0, strike.resolveAt - Date.now());
+    const completion = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        this.completeZeusStrike(strike.strikeId).then(resolve).catch((error: unknown) => {
+          console.error('[GameRoom] Zeus strike completion failed:', String(error));
+          resolve();
+        });
+      }, remaining);
+    });
+    this.ctx.waitUntil(completion);
+  }
+
+  private async completeZeusStrike(strikeId: number): Promise<void> {
+    if (!this.state) return;
+    if (this.state.lastAppliedZeusStrike?.strikeId === strikeId) {
+      this.broadcast(this.state.lastAppliedZeusStrike);
+      return;
+    }
+    const strike = this.state.activeZeusStrike;
+    if (!strike || strike.strikeId !== strikeId) return;
+    const target = this.state.players.find((player) => player.id === strike.targetId);
+    const zeus = this.state.players.find((player) => player.id === strike.zeusId);
+    if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
+      this.state.activeZeusStrike = null;
+      await this.saveState();
+      return;
+    }
+
+    target.tank.health = 0;
+    target.tank.shield = 0;
+    target.tank.isDead = true;
+    const survivors = this.state.players.filter((player) => !player.tank.isDead);
+    const reward = calculateZeusStrikeReward(
+      zeus.id,
+      this.state.numPlayers,
+      survivors.map((player) => player.id),
+    );
+    const balances = this.state.players.map((player) => {
+      const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
+      const money = player.money + amount;
+      if (!Number.isSafeInteger(money)) throw new RangeError('Zeus balance overflow.');
+      player.money = money;
+      return { playerId: player.id, money };
+    });
+    const nextPlayerIndex = reward.roundOutcome.isRoundEnd
+      ? null
+      : nextLivingPlayerIndex(
+          this.state.currentPlayerIndex,
+          this.state.numPlayers,
+          (index) => !!this.state?.players[index]?.tank.isDead,
+        );
+    const result: ZeusStrikeAppliedMessage = {
+      type: 'ZEUS_STRIKE_APPLIED',
+      strikeId,
+      zeusId: strike.zeusId,
+      targetId: strike.targetId,
+      award: reward.award,
+      balances,
+      deadSlots: this.state.players.map((player) => player.tank.isDead),
+      roundOutcome: reward.roundOutcome,
+      nextPlayerIndex,
+    };
+    this.state.activeZeusStrike = null;
+    this.state.lastAppliedZeusStrike = result;
+    if (reward.roundOutcome.isRoundEnd) {
+      this.state.roundEnded = true;
+      this.resetZeusRoundState();
+    } else if (nextPlayerIndex !== null) {
+      this.state.currentPlayerIndex = nextPlayerIndex;
+    }
+    await this.saveState();
+    this.broadcast(result);
+    this.broadcast(this.buildZeusStateMessage());
+
+    if (reward.roundOutcome.isRoundEnd) {
+      const roundEnd: RoundEndMessage = {
+        type: 'ROUND_END',
+        players: this.state.players,
+        roundWinnerId: reward.roundOutcome.roundWinnerId,
+        isDraw: reward.roundOutcome.isDraw,
+        roundNumber: this.state.roundNumber,
+      };
+      this.broadcast(roundEnd);
+      return;
+    }
+    this.broadcast({
+      type: 'STATE_UPDATE',
+      currentPlayerIndex: this.state.currentPlayerIndex,
+      roundEnded: false,
+    });
+    this.maybeRunAIServerTurn();
+  }
+
+  private resetZeusRoundState(): void {
+    if (!this.state) return;
+    this.state.zeusState = resetZeusRound(this.state.zeusState);
+    this.state.zeusRotationSlots = [];
+    this.state.lastDirectAttackerByPlayerId = {};
+    this.state.activeZeusStrike = null;
+    for (const player of this.state.players) player.tank.lastDirectAttackerId = undefined;
   }
 
   private maybeRunAIServerTurn() {
     if (!this.state || this.state.roundEnded) return;
-    if (this.shotInFlight) return;
+    if (this.shotInFlight || this.state.activeZeusStrike) return;
     const idx = this.state.currentPlayerIndex;
     const cfg = this.state.slotConfigs[idx];
     if (cfg?.type !== 'ai') return;
@@ -1235,6 +1527,14 @@ export class GameRoom extends DurableObject {
     // Skip dead AI slots (authoritative roster may lag mid-combat; still safe).
     if (this.state.players[idx]?.tank?.isDead) {
       // Should not happen if nextLivingPlayerIndex worked; force another advance only if stuck.
+      return;
+    }
+
+    if (this.state.players[idx]?.id === this.state.zeusState.activeZeusId) {
+      const zeusTurnPromise = this.beginZeusStrike().catch((error: unknown) => {
+        console.error('[GameRoom] Error starting Zeus strike:', String(error));
+      });
+      this.ctx.waitUntil(zeusTurnPromise);
       return;
     }
 
@@ -1402,6 +1702,8 @@ export class GameRoom extends DurableObject {
     this.state.roundNumber++;
     this.state.shotNumberInRound = 0;
     this.state.lastAppliedEarnings = null;
+    this.state.lastAppliedZeusStrike = null;
+    this.resetZeusRoundState();
     this.state.currentPlayerIndex = 0;
     const roster = players.length > 0 ? players : this.state.players;
     this.state.players = roster.map((p) => ({
@@ -1411,6 +1713,7 @@ export class GameRoom extends DurableObject {
         isDead: false,
         health: p.tank?.maxHealth ?? 100,
         shield: p.tank?.maxShield ?? 40,
+        lastDirectAttackerId: undefined,
       },
     }));
     await this.saveState();
