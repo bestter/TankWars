@@ -130,7 +130,28 @@ describe('MainMenu (Hotseat configuration)', () => {
     ).toBe(false);
   });
 
+  it('rejects duplicate accented and Unicode names case-insensitively', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Élise' } });
+    fireEvent.blur(inputs[0]);
+    fireEvent.change(inputs[1], { target: { value: '  ÉLISE  ' } });
+    fireEvent.blur(inputs[1]);
+
+    expect(inputs[0].getAttribute('aria-invalid')).toBe('false');
+    expect(inputs[0].classList.contains('retro-input-conflict-source')).toBe(true);
+    expect(inputs[1].getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByRole('alert').textContent).toBe(
+      'player_name_duplicate_error_1',
+    );
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
   it('validates pending duplicate names when another button is pressed', () => {
+
     render(<MainMenu onStartGame={vi.fn()} />);
 
     const inputs = screen.getAllByRole('textbox');
@@ -433,4 +454,71 @@ describe('MainMenu (Hotseat configuration)', () => {
       screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
     ).toBe(true);
   });
+
+  it('detects duplicate created by switching AI to human and blocks start on click', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    const selects = screen.getAllByRole('combobox');
+    const startButton = screen.getByRole('button', { name: 'start_battle_button' });
+
+    // Rename player 1 (Human) to "Sniper"
+    fireEvent.change(inputs[0], { target: { value: 'Sniper' } });
+    fireEvent.blur(inputs[0]);
+
+    // Set player 2 name to "Sniper" while still AI
+    fireEvent.change(inputs[1], { target: { value: 'Sniper' } });
+
+    // Switch player 2 controller to human
+    fireEvent.change(selects[1], { target: { value: 'human' } });
+
+    // Both players have name "Sniper", but visibleErrorIds is not committed yet; start is enabled
+    expect(startButton.hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // Clicking Start triggers validation, reveals error, and blocks onStartGame
+    fireEvent.click(startButton);
+
+    expect(onStartGame).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(startButton.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('clears duplicate error when reducing player count removes the conflicting slot', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    // Expand to 4 players
+    fireEvent.click(screen.getByRole('button', { name: '4' }));
+
+    let inputs = screen.getAllByRole('textbox');
+    expect(inputs.length).toBe(4);
+
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.blur(inputs[0]);
+
+    // Player 4 duplicates Player 1's name
+    fireEvent.change(inputs[3], { target: { value: 'Patate' } });
+    fireEvent.blur(inputs[3]);
+
+    const startButton = screen.getByRole('button', { name: 'start_battle_button' });
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(startButton.hasAttribute('disabled')).toBe(true);
+
+    // Reduce to 2 players (slots 3 and 4 are removed)
+    fireEvent.click(screen.getByRole('button', { name: '2' }));
+
+    inputs = screen.getAllByRole('textbox');
+    expect(inputs.length).toBe(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(startButton.hasAttribute('disabled')).toBe(false);
+
+    // Start now works cleanly
+    fireEvent.click(startButton);
+    expect(onStartGame).toHaveBeenCalledTimes(1);
+    expect(onStartGame.mock.calls[0][0].length).toBe(2);
+  });
 });
+
+

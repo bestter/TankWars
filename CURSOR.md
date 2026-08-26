@@ -31,7 +31,7 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared turn helper: `src/game/online/turnOrder.ts`; strict messages: `src/game/online/protocol.ts`. Server owns turn order, reward/balance application and round end. First connected human is reward authority with persistent ordered failover. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **619** across **68** files (`npm run test`).
+- Tests: **628** across **69** files (`npm run test`).
 - Version: `0.7.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

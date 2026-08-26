@@ -63,4 +63,29 @@ describe("usePlayerNameValidation", () => {
     expect(result.current.visibleErrorIds.size).toBe(0);
     expect(result.current.conflictSourceIds.size).toBe(0);
   });
+
+  it("clears visible errors when player count is reduced and the removed player had the error", () => {
+    const p1 = player("p1", "Patate");
+    const p2 = player("p2", "Carotte");
+    const p3 = player("p3", "Salade");
+    const p4 = player("p4", "Patate");
+
+    const { result, rerender } = renderHook(
+      ({ configs }: { configs: readonly NamedPlayerConfig[] }) =>
+        usePlayerNameValidation(configs),
+      { initialProps: { configs: [p1, p2, p3, p4] } },
+    );
+
+    act(() => {
+      result.current.validateNames("p4");
+    });
+    expect([...result.current.visibleErrorIds]).toEqual(["p4"]);
+    expect([...result.current.conflictSourceIds]).toEqual(["p1"]);
+
+    // Reduce to 2 players: [p1, p2]
+    rerender({ configs: [p1, p2] });
+    expect(result.current.visibleErrorIds.size).toBe(0);
+    expect(result.current.conflictSourceIds.size).toBe(0);
+  });
 });
+
