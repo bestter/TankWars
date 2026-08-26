@@ -159,6 +159,29 @@ describe('MainMenu (Hotseat configuration)', () => {
     expect(screen.getByRole('alert')).toBeDefined();
   });
 
+  it('marks only the edited field invalid for a triple duplicate', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.change(inputs[1], { target: { value: 'PATATE' } });
+    fireEvent.change(inputs[2], { target: { value: ' patate ' } });
+    fireEvent.blur(inputs[2]);
+
+    expect(inputs[0].getAttribute('aria-invalid')).toBe('false');
+    expect(inputs[1].getAttribute('aria-invalid')).toBe('false');
+    expect(inputs[2].getAttribute('aria-invalid')).toBe('true');
+    expect(inputs[0].classList.contains('retro-input-conflict-source')).toBe(true);
+    expect(inputs[1].classList.contains('retro-input-conflict-source')).toBe(true);
+    expect(screen.getByRole('alert').textContent).toBe(
+      'player_name_duplicate_error_1, 2',
+    );
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
   it('enforces 16 character name limit', () => {
     const onStartGame = vi.fn();
     render(<MainMenu onStartGame={onStartGame} />);
@@ -258,6 +281,25 @@ describe('MainMenu (Hotseat configuration)', () => {
 
     expect((inputs[1] as HTMLInputElement).value).toBe('Ace Bot');
     expect((inputs[2] as HTMLInputElement).value).toBe('Simple-1');
+  });
+
+  it('preserves the AI name when switching its controller back to human', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    const controller = screen.getAllByRole('combobox')[1];
+    const nameInput = screen.getAllByRole('textbox')[1] as HTMLInputElement;
+    fireEvent.change(controller, { target: { value: 'v3-sniper' } });
+    expect(nameInput.value).toBe('Sniper');
+
+    fireEvent.change(controller, { target: { value: 'human' } });
+    expect(nameInput.value).toBe('Sniper');
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    const players: Player[] = onStartGame.mock.calls[0][0];
+    expect(players[1].name).toBe('Sniper');
+    expect(players[1].isHuman).toBe(true);
+    expect(players[1].aiProfile).toBeUndefined();
   });
 
   it('avoids AI name collisions with human names regardless of case or whitespace', () => {
@@ -372,5 +414,23 @@ describe('MainMenu (Hotseat configuration)', () => {
     fireEvent.click(onlineButton);
 
     expect(onPlayOnline).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows online play while local duplicate names remain invalid', () => {
+    const onStartGame = vi.fn();
+    const onPlayOnline = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} onPlayOnline={onPlayOnline} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.change(inputs[1], { target: { value: 'patate' } });
+    fireEvent.click(screen.getByRole('button', { name: 'online_multiplayer_button' }));
+
+    expect(onPlayOnline).toHaveBeenCalledTimes(1);
+    expect(onStartGame).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(true);
   });
 });
