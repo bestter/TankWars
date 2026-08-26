@@ -32,6 +32,8 @@ describe("playerControllerUi", () => {
     (profile) => {
       expect(isAiProfile(profile)).toBe(true);
       expect(AI_PROFILE_UI[profile].badge).toBeTruthy();
+      expect(AI_PROFILE_UI[profile].nameKey).toMatch(/^ai_name_/);
+      expect(AI_PROFILE_UI[profile].optionKey).toMatch(/^controller_ai_/);
     },
   );
 

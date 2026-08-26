@@ -104,6 +104,8 @@ Toute IA doit implémenter `AIEngine` (`src/game/entities/ai/AIEngine.ts`) :
 executeTurn(tankId, gameState, terrainManager): Promise<FireCommand>
 ```
 
+Noms IA du menu local (`MainMenu.tsx`) : le champ reçoit le nom court localisé du profil (`Simple`, `OK`, `Sniper`, `Expert`) au moment de la création ou de la sélection. Le suffixe correspond au nombre des **autres** joueurs qui utilisent déjà ce profil, peu importe leur position (`Simple`, `Simple-1`, `Simple-2`). Seul le joueur sélectionné est renommé : aucun renommage rétroactif. Le nom demeure éditable et reste figé si la langue change ensuite.
+
 Profils (mixables dans une même partie) :
 | Profile | Classe | Label |
 |---------|--------|-------|

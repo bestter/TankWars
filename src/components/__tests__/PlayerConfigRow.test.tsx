@@ -36,8 +36,7 @@ function renderRow(
     nameInputRef: () => {},
     onNameChange: () => {},
     onColorSelect: () => {},
-    onTypeChange: () => {},
-    onUpdatePlayer: () => {},
+    onControllerChange: () => {},
     cfg: defaultCfg,
     ...overrides,
   };
@@ -67,22 +66,19 @@ describe("PlayerConfigRow", () => {
     expect(onNameChange).toHaveBeenCalledWith(0, "Commander Z");
   });
 
-  it("triggers onUpdatePlayer with AI profile when changing controller to an AI option", () => {
-    const onUpdatePlayer = vi.fn();
-    renderRow({ onUpdatePlayer });
+  it("triggers onControllerChange with the selected AI profile", () => {
+    const onControllerChange = vi.fn();
+    renderRow({ onControllerChange });
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "v3-sniper" } });
-    expect(onUpdatePlayer).toHaveBeenCalledWith(0, {
-      isHuman: false,
-      aiProfile: "v3-sniper",
-    });
+    expect(onControllerChange).toHaveBeenCalledWith(0, "v3-sniper");
   });
 
-  it("triggers onTypeChange when changing controller from AI back to human", () => {
-    const onTypeChange = vi.fn();
+  it("triggers onControllerChange when changing controller from AI back to human", () => {
+    const onControllerChange = vi.fn();
     renderRow({
       index: 1,
-      onTypeChange,
+      onControllerChange,
       cfg: {
         id: "p-2",
         name: "CPU Bot",
@@ -96,7 +92,7 @@ describe("PlayerConfigRow", () => {
     expect(select.value).toBe("v2-heuristic");
 
     fireEvent.change(select, { target: { value: "human" } });
-    expect(onTypeChange).toHaveBeenCalledWith(1, true);
+    expect(onControllerChange).toHaveBeenCalledWith(1, "human");
   });
 
   it("triggers onColorSelect when a ColorPicker swatch is clicked", () => {

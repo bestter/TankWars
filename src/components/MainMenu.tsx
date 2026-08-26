@@ -23,10 +23,12 @@ import { VGA_PALETTE } from "../types/game";
 type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
 import { DEFAULT_INVENTORY } from "../types/weapon";
 import { version } from "../../package.json";
-
-
-
 import { PlayerConfigRow } from "./PlayerConfigRow";
+import {
+  AI_PROFILE_UI,
+  DEFAULT_AI_PROFILE,
+  type PlayerController,
+} from "./playerControllerUi";
 
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
@@ -62,22 +64,49 @@ const TANK_COLOR_POOL: readonly Color[] = [
 export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   const { t } = useTranslation();
 
-  const getDefaultName = (index: number, isHuman: boolean): string => {
-    if (index === 0) return isHuman ? t("default_player_name_1") : t("default_cpu_name_1");
-    return isHuman ? t("default_player_name_n", { num: index + 1 }) : t("default_cpu_name_n", { num: index + 1 });
+  const getDefaultHumanName = (index: number): string => {
+    if (index === 0) return t("default_player_name_1");
+    return t("default_player_name_n", { num: index + 1 });
+  };
+
+  const getDefaultAiName = (
+    profile: AiProfile,
+    configs: readonly PlayerConfig[],
+    index: number,
+  ): string => {
+    const baseName = t(AI_PROFILE_UI[profile].nameKey);
+    const duplicateCount = configs.filter(
+      (cfg, configIndex) =>
+        configIndex !== index &&
+        !cfg.isHuman &&
+        (cfg.aiProfile ?? DEFAULT_AI_PROFILE) === profile,
+    ).length;
+    return duplicateCount === 0 ? baseName : `${baseName}-${duplicateCount}`;
   };
 
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
-  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => [
-    { name: t("default_player_name_1"), isHuman: true, color: TANK_COLOR_POOL[0], id: crypto.randomUUID() },
-    {
-      name: t("default_cpu_name_1"),
+  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => {
+    const initialConfigs: PlayerConfig[] = [
+      {
+        name: getDefaultHumanName(0),
+        isHuman: true,
+        color: TANK_COLOR_POOL[0],
+        id: crypto.randomUUID(),
+      },
+    ];
+    initialConfigs.push({
+      name: getDefaultAiName(
+        DEFAULT_AI_PROFILE,
+        initialConfigs,
+        initialConfigs.length,
+      ),
       isHuman: false,
       color: TANK_COLOR_POOL[1],
       id: crypto.randomUUID(),
-      aiProfile: "v1-random",
-    },
-  ]);
+      aiProfile: DEFAULT_AI_PROFILE,
+    });
+    return initialConfigs;
+  });
 
   // Refs for name inputs, to auto-focus/select when switching a player to Human
   const nameInputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -101,14 +130,17 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
         const available = TANK_COLOR_POOL.filter((c) => !usedColors.has(c));
         const newColor =
           available[0] ?? TANK_COLOR_POOL[idx % TANK_COLOR_POOL.length];
+        const defaultAiProfile = DEFAULT_AI_PROFILE;
         const newCfg: PlayerConfig = {
-          name: getDefaultName(idx, defaultIsHuman),
+          name: defaultIsHuman
+            ? getDefaultHumanName(idx)
+            : getDefaultAiName(defaultAiProfile, next, idx),
           isHuman: defaultIsHuman,
           color: newColor,
           id: `p-${crypto.randomUUID()}-${idx}`,
         };
         if (!defaultIsHuman) {
-          newCfg.aiProfile = "v1-random"; // default IA SIMPLE
+          newCfg.aiProfile = defaultAiProfile;
         }
         next.push(newCfg);
       }
@@ -131,13 +163,12 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
     updatePlayer(index, { name: value.slice(0, 16) });
   };
 
-  const handleTypeChange = (index: number, isHuman: boolean): void => {
-    if (isHuman) {
-      updatePlayer(index, { isHuman, aiProfile: undefined });
-    } else {
-      updatePlayer(index, { isHuman, aiProfile: "v1-random" });
-    }
-    if (isHuman) {
+  const handleControllerChange = (
+    index: number,
+    controller: PlayerController,
+  ): void => {
+    if (controller === "human") {
+      updatePlayer(index, { isHuman: true, aiProfile: undefined });
       // After re-render, focus and select the name input so user can immediately edit
       setTimeout(() => {
         const input = nameInputRefs.current[index];
@@ -146,7 +177,21 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
           input.select();
         }
       }, 0);
+      return;
     }
+
+    setPlayerConfigs((prev) =>
+      prev.map((cfg, i) =>
+        i === index
+          ? {
+              ...cfg,
+              name: getDefaultAiName(controller, prev, index),
+              isHuman: false,
+              aiProfile: controller,
+            }
+          : cfg,
+      ),
+    );
   };
 
   const handleColorSelect = (index: number, newColor: Color): void => {
@@ -246,8 +291,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
                     }}
                     onNameChange={handleNameChange}
                     onColorSelect={handleColorSelect}
-                    onTypeChange={handleTypeChange}
-                    onUpdatePlayer={updatePlayer}
+                    onControllerChange={handleControllerChange}
                   />
                 );
               });

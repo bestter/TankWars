@@ -19,7 +19,7 @@
 
 ## Game Specs (current)
 
-- Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`).
+- Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`). Local AI names use the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`); duplicate suffixes count all other slots with that profile (`Simple`, `Simple-1`, `Simple-2`). Existing names are not renumbered, remain editable, and stay frozen after language changes.
 - Tanks: `drawTankSprite` only (`src/game/rendering/tankSprite.ts`), 24×15, hull tilt + independent `turretAngle`. Active triangle, `ownerColor` shells, micro recoil.
 - State machine (`src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas (constants `TANK_GAUGE_*`): single dark cyan bar (`VGA_PALETTE.DARK_CYAN`) at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0 (red if $\le 40\%$).

@@ -9,6 +9,7 @@ import {
   DEFAULT_AI_PROFILE,
   controllerBadge,
   isAiProfile,
+  type PlayerController,
 } from "./playerControllerUi";
 
 export interface PlayerConfigRowProps {
@@ -19,8 +20,7 @@ export interface PlayerConfigRowProps {
   nameInputRef: (el: HTMLInputElement | null) => void;
   onNameChange: (index: number, value: string) => void;
   onColorSelect: (index: number, newColor: Color) => void;
-  onTypeChange: (index: number, isHuman: boolean) => void;
-  onUpdatePlayer: (index: number, patch: Partial<PlayerConfig>) => void;
+  onControllerChange: (index: number, controller: PlayerController) => void;
 }
 
 export function PlayerConfigRow({
@@ -31,8 +31,7 @@ export function PlayerConfigRow({
   nameInputRef,
   onNameChange,
   onColorSelect,
-  onTypeChange,
-  onUpdatePlayer,
+  onControllerChange,
 }: PlayerConfigRowProps) {
   const { t } = useTranslation();
   const color = cfg.color;
@@ -77,11 +76,11 @@ export function PlayerConfigRow({
         onChange={(e) => {
           const val = e.target.value;
           if (val === "human") {
-            onTypeChange(index, true);
+            onControllerChange(index, val);
             return;
           }
           if (isAiProfile(val)) {
-            onUpdatePlayer(index, { isHuman: false, aiProfile: val });
+            onControllerChange(index, val);
           }
         }}
         aria-label={t("controller_type_aria_label", { num: index + 1 })}

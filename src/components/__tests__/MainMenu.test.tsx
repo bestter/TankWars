@@ -4,10 +4,16 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { MainMenu } from '../MainMenu';
 import type { Player } from '../../types/player';
 
+const translationState = vi.hoisted(() => ({
+  aiNames: {} as Record<string, string>,
+}));
+
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
+      const aiName = translationState.aiNames[key];
+      if (aiName !== undefined) return aiName;
       if (options && options.num !== undefined) {
         return `${key}_${options.num}`;
       }
@@ -20,6 +26,12 @@ describe('MainMenu (Hotseat configuration)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
+    translationState.aiNames = {
+      ai_name_simple: 'Simple',
+      ai_name_ok: 'OK',
+      ai_name_sniper: 'Sniper',
+      ai_name_expert: 'Expert',
+    };
   });
 
   it('renders initial setup with 2 players (1 human, 1 CPU)', () => {
@@ -32,6 +44,7 @@ describe('MainMenu (Hotseat configuration)', () => {
     // 2 player inputs by default
     const inputs = screen.getAllByRole('textbox');
     expect(inputs.length).toBe(2);
+    expect((inputs[1] as HTMLInputElement).value).toBe('Simple');
 
     // Start button is present and enabled
     const startButton = screen.getByRole('button', { name: 'start_battle_button' });
@@ -56,6 +69,12 @@ describe('MainMenu (Hotseat configuration)', () => {
 
     inputs = screen.getAllByRole('textbox');
     expect(inputs.length).toBe(4);
+    expect(inputs.map((input) => (input as HTMLInputElement).value)).toEqual([
+      'default_player_name_1',
+      'Simple',
+      'Simple-1',
+      'Simple-2',
+    ]);
 
     // Reduce back to 2 players
     const btn2 = screen.getByRole('button', { name: '2' });
@@ -122,6 +141,119 @@ describe('MainMenu (Hotseat configuration)', () => {
     expect(players[1].aiProfile).toBe('v1-random');
     expect(players[1].money).toBe(250);
     expect(players[1].tank.health).toBe(100);
+  });
+
+  it.each([
+    ['v1-random', 'Simple'],
+    ['v2-heuristic', 'OK'],
+    ['v3-sniper', 'Sniper'],
+    ['v4-smart', 'Expert'],
+  ] as const)('names the selected %s profile %s', (profile, expectedName) => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: profile },
+    });
+
+    expect((screen.getAllByRole('textbox')[1] as HTMLInputElement).value).toBe(
+      expectedName,
+    );
+  });
+
+  it('numbers repeated AI profiles from all other current players', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '4' }));
+
+    const selects = screen.getAllByRole('combobox');
+    fireEvent.change(selects[1], { target: { value: 'v3-sniper' } });
+    fireEvent.change(selects[2], { target: { value: 'v3-sniper' } });
+    fireEvent.change(selects[3], { target: { value: 'v3-sniper' } });
+
+    expect(
+      screen.getAllByRole('textbox').map((input) => (input as HTMLInputElement).value),
+    ).toEqual(['default_player_name_1', 'Sniper', 'Sniper-1', 'Sniper-2']);
+  });
+
+  it('counts a matching AI configured in a later player slot', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '4' }));
+
+    const selects = screen.getAllByRole('combobox');
+    fireEvent.change(selects[3], { target: { value: 'v3-sniper' } });
+    fireEvent.change(selects[2], { target: { value: 'v3-sniper' } });
+
+    const inputs = screen.getAllByRole('textbox');
+    expect((inputs[2] as HTMLInputElement).value).toBe('Sniper-1');
+    expect((inputs[3] as HTMLInputElement).value).toBe('Sniper');
+  });
+
+  it('counts a manually renamed AI as an occurrence of its profile', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    const inputs = screen.getAllByRole('textbox');
+    const selects = screen.getAllByRole('combobox');
+    fireEvent.change(inputs[1], { target: { value: 'Ace Bot' } });
+    fireEvent.change(selects[2], { target: { value: 'v2-heuristic' } });
+    fireEvent.change(selects[2], { target: { value: 'v1-random' } });
+
+    expect((inputs[1] as HTMLInputElement).value).toBe('Ace Bot');
+    expect((inputs[2] as HTMLInputElement).value).toBe('Simple-1');
+  });
+
+  it('renames only the selected player and does not renumber existing names', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '4' }));
+
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'v4-smart' },
+    });
+
+    expect(
+      screen.getAllByRole('textbox').map((input) => (input as HTMLInputElement).value),
+    ).toEqual(['default_player_name_1', 'Expert', 'Simple-1', 'Simple-2']);
+  });
+
+  it('keeps an assigned AI name frozen across translation changes', () => {
+    const onStartGame = vi.fn();
+    const view = render(<MainMenu onStartGame={onStartGame} />);
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'v3-sniper' },
+    });
+    expect((screen.getAllByRole('textbox')[1] as HTMLInputElement).value).toBe('Sniper');
+
+    translationState.aiNames = {
+      ai_name_simple: 'Simple EN',
+      ai_name_ok: 'OK EN',
+      ai_name_sniper: 'Sniper EN',
+      ai_name_expert: 'Expert EN',
+    };
+    view.rerender(<MainMenu onStartGame={onStartGame} />);
+    expect((screen.getAllByRole('textbox')[1] as HTMLInputElement).value).toBe('Sniper');
+
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'v4-smart' },
+    });
+    expect((screen.getAllByRole('textbox')[1] as HTMLInputElement).value).toBe(
+      'Expert EN',
+    );
+  });
+
+  it('keeps an AI name editable after profile selection', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'v4-smart' },
+    });
+    fireEvent.change(screen.getAllByRole('textbox')[1], {
+      target: { value: 'Ace Bot' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+
+    const players: Player[] = onStartGame.mock.calls[0][0];
+    expect(players[1].name).toBe('Ace Bot');
+    expect(players[1].aiProfile).toBe('v4-smart');
   });
 
   it('triggers onPlayOnline callback when clicking the online multiplayer button', () => {

@@ -1,5 +1,9 @@
 {
   "ai_auto_buy_note": "Les IA achètent automatiquement",
+  "ai_name_expert": "Expert",
+  "ai_name_ok": "OK",
+  "ai_name_simple": "Simple",
+  "ai_name_sniper": "Sniper",
   "zeus_appointed_announcement": "⚡ Les dieux s’impatientent! {{name}} reçoit l’Éclair de Zeus!",
   "ai_shopping_status": "L'IA <strong>{{name}}</strong> fait ses achats...",
   "battle_configuration": "CONFIGURATION DE LA BATAILLE",
@@ -26,8 +30,6 @@
   "controls_explanation": "Chaque manche se joue jusqu'au dernier survivant ; la boutique ouvre après chaque manche",
   "controls_title": "Commandes :",
   "damage_inflicted": "Dégâts infligés cette manche : {{damage}} pts",
-  "default_cpu_name_1": "CPU-1",
-  "default_cpu_name_n": "CPU-{{num}}",
   "default_player_name_1": "Joueur-1",
   "default_player_name_n": "Joueur {{num}}",
   "game_over": "Fin de partie",
