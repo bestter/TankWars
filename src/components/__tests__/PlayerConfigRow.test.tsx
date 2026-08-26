@@ -34,10 +34,12 @@ function renderRow(
     unavailableColors: new Set(),
     colorPool: sampleColorPool,
     nameInputRef: () => {},
+    isNameConflictSource: false,
     onNameChange: () => {},
+    onNameFocus: () => {},
+    onNameBlur: () => {},
     onColorSelect: () => {},
-    onTypeChange: () => {},
-    onUpdatePlayer: () => {},
+    onControllerChange: () => {},
     cfg: defaultCfg,
     ...overrides,
   };
@@ -67,22 +69,66 @@ describe("PlayerConfigRow", () => {
     expect(onNameChange).toHaveBeenCalledWith(0, "Commander Z");
   });
 
-  it("triggers onUpdatePlayer with AI profile when changing controller to an AI option", () => {
-    const onUpdatePlayer = vi.fn();
-    renderRow({ onUpdatePlayer });
+  it("reports focus and blur for deferred name validation", () => {
+    const onNameFocus = vi.fn();
+    const onNameBlur = vi.fn();
+    renderRow({ onNameFocus, onNameBlur });
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "v3-sniper" } });
-    expect(onUpdatePlayer).toHaveBeenCalledWith(0, {
-      isHuman: false,
-      aiProfile: "v3-sniper",
-    });
+    const input = screen.getByRole("textbox");
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+
+    expect(onNameFocus).toHaveBeenCalledWith(0);
+    expect(onNameBlur).toHaveBeenCalledWith(0);
   });
 
-  it("triggers onTypeChange when changing controller from AI back to human", () => {
-    const onTypeChange = vi.fn();
+  it("shows a duplicate error and highlights a conflicting source", () => {
+    const { rerender } = renderRow({
+      nameError: "Name already used by player 2.",
+    });
+
+    const input = screen.getByRole("textbox");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.classList.contains("retro-input-error")).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Name already used by player 2.",
+    );
+
+    rerender(
+      <PlayerConfigRow
+        index={0}
+        unavailableColors={new Set()}
+        colorPool={sampleColorPool}
+        nameInputRef={() => {}}
+        isNameConflictSource
+        onNameChange={() => {}}
+        onNameFocus={() => {}}
+        onNameBlur={() => {}}
+        onColorSelect={() => {}}
+        onControllerChange={() => {}}
+        cfg={defaultCfg}
+      />,
+    );
+
+    expect(screen.getByRole("textbox").classList.contains("retro-input-conflict-source")).toBe(
+      true,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("triggers onControllerChange with the selected AI profile", () => {
+    const onControllerChange = vi.fn();
+    renderRow({ onControllerChange });
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "v3-sniper" } });
+    expect(onControllerChange).toHaveBeenCalledWith(0, "v3-sniper");
+  });
+
+  it("triggers onControllerChange when changing controller from AI back to human", () => {
+    const onControllerChange = vi.fn();
     renderRow({
       index: 1,
-      onTypeChange,
+      onControllerChange,
       cfg: {
         id: "p-2",
         name: "CPU Bot",
@@ -96,7 +142,7 @@ describe("PlayerConfigRow", () => {
     expect(select.value).toBe("v2-heuristic");
 
     fireEvent.change(select, { target: { value: "human" } });
-    expect(onTypeChange).toHaveBeenCalledWith(1, true);
+    expect(onControllerChange).toHaveBeenCalledWith(1, "human");
   });
 
   it("triggers onColorSelect when a ColorPicker swatch is clicked", () => {

@@ -19,7 +19,7 @@
 - Loop: `requestAnimationFrame` + `PHYSICS_DT = 1/120` in `GameEngine`.
 - Terrain: custom heightmap in `Terrain.ts` (multi-octaves, bumps/creux). Materials (`src/types/terrain.ts`): `DIRT` (normal), `ROCK` (indestructible stone wall for side blast; exploding on top: +50% blast, radius unaffected), `SOFT` (2.5x destruction). DRILLER: oriented shaft (`destroyTerrainShaft`, `DRILLER_SHAFT_DEPTH` = 53). GRENADE: ~2× bounce on ROCK; first contact on SOFT sticks and detonates (`grenadeBounceParams`).
 - Spawns: shuffled X biased toward hollows, 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
-- Players: 2–4, any mix Human / `v1-random` (IA SIMPLE) / `v2-heuristic` (IA OK) / `v3-sniper` (IA SNIPER) / `v4-smart` (IA EXPERT).
+- Players: 2–4, any mix Human / `v1-random` (IA SIMPLE) / `v2-heuristic` (IA OK) / `v3-sniper` (IA SNIPER) / `v4-smart` (IA EXPERT). Local AI names use short localized profile names; suffixes count every other configured matching profile and advance past names used by any human or AI (`Simple`, `Simple-1`, `Simple-2`), regardless of slot order. Names remain editable, frozen across language changes, and are not retroactively renumbered. Manual names must be unique after locale-independent `trim().toLowerCase()` normalization; duplicates are highlighted after blur/button interaction and block local start. Never use default-locale `toLocaleLowerCase()` for this comparison.
 - Palette: `VGA_PALETTE` only (16 VGA + neon arcade extras).
 - Tanks: `drawTankSprite` only, 24×15, slope tilt, independent turret. Active triangle, `ownerColor` shells, micro recoil.
 - Phases: `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
@@ -29,7 +29,7 @@
 - Zeus Lightning: `src/game/zeus/` is a special anti-deadlock action, never a weapon. With ≥2 living AIs/no living human, `living AI × 5` shots without a paid hit (`hasEarnings`) appoint Zeus fairly. Reset on earnings/human/<2 survivors/Zeus death/round end; keep history across rounds. Consume the last living direct attacker except BULLDOZER, else injected RNG; kill only the target and pay `25X`. Never add `ZEUS_LIGHTNING` to weapon types/registry, `FireCommand`, shop, or `AIEngine`.
 - Online (in `main`): `worker/` + `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts`. Shared turn helper: `src/game/online/turnOrder.ts`; strict protocol: `src/game/online/protocol.ts`. Server owns turn order, authoritative rewards/balances and round end; first connected human is reward authority with persistent failover. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Zeus online is Durable Object-authoritative and persisted before broadcast through `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, and reconnect `ZEUS_STATE`. IDs are idempotent; economic failover has no effect; cosmetic geometry never consumes room RNG.
-- Tests: **589** across **66** files. Version `0.7.0`.
+- Tests: **631** across **69** files. Version `0.7.0`.
 
 ## AI
 

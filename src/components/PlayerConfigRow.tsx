@@ -9,6 +9,7 @@ import {
   DEFAULT_AI_PROFILE,
   controllerBadge,
   isAiProfile,
+  type PlayerController,
 } from "./playerControllerUi";
 
 export interface PlayerConfigRowProps {
@@ -17,10 +18,13 @@ export interface PlayerConfigRowProps {
   unavailableColors: Set<Color>;
   colorPool: readonly Color[];
   nameInputRef: (el: HTMLInputElement | null) => void;
+  nameError?: string;
+  isNameConflictSource: boolean;
   onNameChange: (index: number, value: string) => void;
+  onNameFocus: (index: number) => void;
+  onNameBlur: (index: number) => void;
   onColorSelect: (index: number, newColor: Color) => void;
-  onTypeChange: (index: number, isHuman: boolean) => void;
-  onUpdatePlayer: (index: number, patch: Partial<PlayerConfig>) => void;
+  onControllerChange: (index: number, controller: PlayerController) => void;
 }
 
 export function PlayerConfigRow({
@@ -29,10 +33,13 @@ export function PlayerConfigRow({
   unavailableColors,
   colorPool,
   nameInputRef,
+  nameError,
+  isNameConflictSource,
   onNameChange,
+  onNameFocus,
+  onNameBlur,
   onColorSelect,
-  onTypeChange,
-  onUpdatePlayer,
+  onControllerChange,
 }: PlayerConfigRowProps) {
   const { t } = useTranslation();
   const color = cfg.color;
@@ -47,16 +54,36 @@ export function PlayerConfigRow({
       <TankPreview color={color} />
 
       {/* Nom du joueur (éditable) */}
-      <input
-        ref={nameInputRef}
-        type="text"
-        className="retro-input"
-        value={cfg.name}
-        maxLength={16}
-        onChange={(e) => onNameChange(index, e.target.value)}
-        placeholder={t("player_name_placeholder", { num: index + 1 })}
-        aria-label={t("player_name_aria_label", { num: index + 1 })}
-      />
+      <div className="retro-player-name-field">
+        <input
+          ref={nameInputRef}
+          type="text"
+          className={`retro-input${nameError ? " retro-input-error" : ""}${isNameConflictSource ? " retro-input-conflict-source" : ""}`}
+          value={cfg.name}
+          maxLength={16}
+          onChange={(e) => onNameChange(index, e.target.value)}
+          onFocus={() => onNameFocus(index)}
+          onBlur={() => onNameBlur(index)}
+          placeholder={t("player_name_placeholder", { num: index + 1 })}
+          aria-label={t("player_name_aria_label", { num: index + 1 })}
+          aria-invalid={nameError !== undefined}
+          aria-describedby={nameError ? `${cfg.id}-name-error` : undefined}
+          title={
+            isNameConflictSource
+              ? t("player_name_conflict_source")
+              : undefined
+          }
+        />
+        {nameError && (
+          <span
+            id={`${cfg.id}-name-error`}
+            className="retro-player-name-error"
+            role="alert"
+          >
+            {nameError}
+          </span>
+        )}
+      </div>
 
       {/* Sélecteur de couleur avec exclusion mutuelle */}
       <ColorPicker
@@ -77,11 +104,11 @@ export function PlayerConfigRow({
         onChange={(e) => {
           const val = e.target.value;
           if (val === "human") {
-            onTypeChange(index, true);
+            onControllerChange(index, val);
             return;
           }
           if (isAiProfile(val)) {
-            onUpdatePlayer(index, { isHuman: false, aiProfile: val });
+            onControllerChange(index, val);
           }
         }}
         aria-label={t("controller_type_aria_label", { num: index + 1 })}

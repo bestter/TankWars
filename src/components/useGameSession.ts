@@ -911,7 +911,7 @@ export function useGameSession({
       aiProfiles: playerStats.aiProfiles,
     });
 
-    // Inject profile-aware AI (v1-random = IA Simple / Mr. Simple; v2-heuristic = IA OK smarter).
+    // Inject profile-aware AI (v1-random = IA SIMPLE; v2-heuristic = IA OK).
     engine.setAIEngine(new AIByProfileStrategy());
 
     engine.onWindChange = (w) => dispatch({ type: "SET_WIND", wind: w });

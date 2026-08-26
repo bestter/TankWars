@@ -22,6 +22,17 @@ describe("i18n locale parity", () => {
     expect(frKeys).toEqual(enKeys);
   });
 
+  it("keeps the short AI player names aligned in both languages", () => {
+    const expectedNames = {
+      ai_name_expert: "Expert",
+      ai_name_ok: "OK",
+      ai_name_simple: "Simple",
+      ai_name_sniper: "Sniper",
+    };
+    expect(en).toMatchObject(expectedNames);
+    expect(fr).toMatchObject(expectedNames);
+  });
+
   // react-i18next <Trans> copies HTML attributes onto React nodes.
   // A string `style="..."` on <strong> crashes React and freezes the shop → next-round flow.
   it("does not embed HTML style attributes that React rejects as string style props", () => {

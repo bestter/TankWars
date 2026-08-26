@@ -19,7 +19,7 @@
 
 ## Game Specs (current)
 
-- Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`).
+- Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`). Local AI names use the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`); suffixes count all other slots with that profile and advance past names used by any human or AI (`Simple`, `Simple-1`, `Simple-2`). Existing names are not renumbered, remain editable, and stay frozen after language changes. Manual names must be unique after locale-independent `trim().toLowerCase()` normalization; duplicates are highlighted after blur/button interaction and block local start. Never use default-locale `toLocaleLowerCase()` for this comparison.
 - Tanks: `drawTankSprite` only (`src/game/rendering/tankSprite.ts`), 24×15, hull tilt + independent `turretAngle`. Active triangle, `ownerColor` shells, micro recoil.
 - State machine (`src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
 - Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas (constants `TANK_GAUGE_*`): single dark cyan bar (`VGA_PALETTE.DARK_CYAN`) at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0 (red if $\le 40\%$).
@@ -31,7 +31,7 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared turn helper: `src/game/online/turnOrder.ts`; strict messages: `src/game/online/protocol.ts`. Server owns turn order, reward/balance application and round end. First connected human is reward authority with persistent ordered failover. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **589** across **66** files (`npm run test`).
+- Tests: **631** across **69** files (`npm run test`).
 - Version: `0.7.0` (footer on the main menu).
 
 ## AI (Cursor must respect)

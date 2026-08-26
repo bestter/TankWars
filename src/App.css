@@ -405,6 +405,53 @@
   border-color: #55FFFF;
 }
 
+.retro-player-name-field {
+  flex: 1;
+  min-width: 80px;
+}
+
+.retro-player-name-field .retro-input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.retro-input.retro-input-error,
+.retro-input.retro-input-error:focus {
+  border-color: #FF5555;
+  box-shadow: 0 0 0 1px #FF5555;
+}
+
+.retro-input.retro-input-conflict-source,
+.retro-input.retro-input-conflict-source:focus {
+  border-color: #FFFF55;
+  box-shadow: 0 0 0 1px #FFFF55;
+}
+
+.retro-player-name-error {
+  display: block;
+  margin-top: 3px;
+  color: #FF5555;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.retro-color-picker-help {
+  margin-top: -2px;
+  margin-bottom: 8px;
+  color: #666666;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.retro-online-btn {
+  padding: 6px 14px;
+  border: 1px solid #555555;
+  background: transparent;
+  color: #00F7FF;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .retro-type-btn {
   font-family: monospace;
   font-size: 10px;

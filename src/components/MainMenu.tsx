@@ -4,7 +4,7 @@
  * Écran d'accueil rétro DOS/VGA :
  * - Fond noir + bordure double ligne style ancien terminal
  * - Titre géant clignotant jaune VGA (#FFFF55 / blanc)
- * - Configuration joueurs (2-4) : nom + type Humain / IA Simple (Mr. Simple) / IA OK (smarter v2)
+ * - Configuration joueurs (2-4) : nom unique + type Humain / IA Simple / IA OK / IA Sniper / IA Expert
  * - Attribution auto de couleurs VGA uniques (palette partagée)
  * - Au clic START : fabrique les Player[] valides + invoke callback
  *
@@ -16,17 +16,20 @@
  * - Couleurs depuis VGA_PALETTE
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Player, AiProfile } from "../types/player";
 import { VGA_PALETTE } from "../types/game";
 type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
 import { DEFAULT_INVENTORY } from "../types/weapon";
-import { version } from "../../package.json";
-
-
-
-import { PlayerConfigRow } from "./PlayerConfigRow";
+import { MainMenuView } from "./MainMenuView";
+import {
+  AI_PROFILE_UI,
+  DEFAULT_AI_PROFILE,
+  type PlayerController,
+} from "./playerControllerUi";
+import { getUniqueAiName } from "./playerNameUi";
+import { usePlayerNameValidation } from "./usePlayerNameValidation";
 
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
@@ -41,7 +44,7 @@ export interface PlayerConfig {
   color: Color;
   /** stable identifier for React list keys (avoids array index keys) */
   id: string;
-  /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE" (Mr. Simple). */
+  /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE". */
   aiProfile?: AiProfile;
 }
 
@@ -62,25 +65,47 @@ const TANK_COLOR_POOL: readonly Color[] = [
 export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   const { t } = useTranslation();
 
-  const getDefaultName = (index: number, isHuman: boolean): string => {
-    if (index === 0) return isHuman ? t("default_player_name_1") : t("default_cpu_name_1");
-    return isHuman ? t("default_player_name_n", { num: index + 1 }) : t("default_cpu_name_n", { num: index + 1 });
+  const getDefaultHumanName = (index: number): string => {
+    if (index === 0) return t("default_player_name_1");
+    return t("default_player_name_n", { num: index + 1 });
+  };
+
+  const getDefaultAiName = (
+    profile: AiProfile,
+    configs: readonly PlayerConfig[],
+    index: number,
+  ): string => {
+    const baseName = t(AI_PROFILE_UI[profile].nameKey);
+    return getUniqueAiName(baseName, profile, configs, index);
   };
 
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
-  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => [
-    { name: t("default_player_name_1"), isHuman: true, color: TANK_COLOR_POOL[0], id: crypto.randomUUID() },
-    {
-      name: t("default_cpu_name_1"),
+  const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => {
+    const initialConfigs: PlayerConfig[] = [
+      {
+        name: getDefaultHumanName(0),
+        isHuman: true,
+        color: TANK_COLOR_POOL[0],
+        id: crypto.randomUUID(),
+      },
+    ];
+    initialConfigs.push({
+      name: getDefaultAiName(
+        DEFAULT_AI_PROFILE,
+        initialConfigs,
+        initialConfigs.length,
+      ),
       isHuman: false,
       color: TANK_COLOR_POOL[1],
       id: crypto.randomUUID(),
-      aiProfile: "v1-random",
-    },
-  ]);
+      aiProfile: DEFAULT_AI_PROFILE,
+    });
+    return initialConfigs;
+  });
 
   // Refs for name inputs, to auto-focus/select when switching a player to Human
   const nameInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const nameValidation = usePlayerNameValidation(playerConfigs);
 
   // (couleurs maintenant gérées par playerConfigs, sélectionnables par l'utilisateur)
 
@@ -101,14 +126,17 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
         const available = TANK_COLOR_POOL.filter((c) => !usedColors.has(c));
         const newColor =
           available[0] ?? TANK_COLOR_POOL[idx % TANK_COLOR_POOL.length];
+        const defaultAiProfile = DEFAULT_AI_PROFILE;
         const newCfg: PlayerConfig = {
-          name: getDefaultName(idx, defaultIsHuman),
+          name: defaultIsHuman
+            ? getDefaultHumanName(idx)
+            : getDefaultAiName(defaultAiProfile, next, idx),
           isHuman: defaultIsHuman,
           color: newColor,
           id: `p-${crypto.randomUUID()}-${idx}`,
         };
         if (!defaultIsHuman) {
-          newCfg.aiProfile = "v1-random"; // default IA SIMPLE
+          newCfg.aiProfile = defaultAiProfile;
         }
         next.push(newCfg);
       }
@@ -128,16 +156,43 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   const handleNameChange = (index: number, value: string): void => {
     // Security enhancement: enforce input length limit at state level
     // to prevent DoS/memory exhaustion if HTML maxLength is bypassed
+    const player = playerConfigs[index];
+    if (!player) return;
+    nameValidation.beginNameEdit(player);
     updatePlayer(index, { name: value.slice(0, 16) });
   };
 
-  const handleTypeChange = (index: number, isHuman: boolean): void => {
-    if (isHuman) {
-      updatePlayer(index, { isHuman, aiProfile: undefined });
-    } else {
-      updatePlayer(index, { isHuman, aiProfile: "v1-random" });
+  const handleNameFocus = (index: number): void => {
+    const player = playerConfigs[index];
+    if (player) nameValidation.focusName(player.id);
+  };
+
+  const handleNameBlur = (index: number): void => {
+    nameValidation.validateNames(playerConfigs[index]?.id);
+  };
+
+  const handleMenuClickCapture = (
+    event: ReactMouseEvent<HTMLDivElement>,
+  ): void => {
+    if (!(event.target instanceof Element) || !event.target.closest("button")) {
+      return;
     }
-    if (isHuman) {
+    nameValidation.validateNames(nameValidation.pendingPlayerId());
+  };
+
+  const handleControllerChange = (
+    index: number,
+    controller: PlayerController,
+  ): void => {
+    if (controller === "human") {
+      const nextConfigs = playerConfigs.map((cfg, i) =>
+        i === index ? { ...cfg, isHuman: true, aiProfile: undefined } : cfg,
+      );
+      setPlayerConfigs(nextConfigs);
+      const changedPlayer = nextConfigs[index];
+      if (changedPlayer) {
+        nameValidation.validateNames(changedPlayer.id, nextConfigs);
+      }
       // After re-render, focus and select the name input so user can immediately edit
       setTimeout(() => {
         const input = nameInputRefs.current[index];
@@ -146,6 +201,23 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
           input.select();
         }
       }, 0);
+      return;
+    }
+
+    const nextConfigs = playerConfigs.map((cfg, i) =>
+      i === index
+        ? {
+            ...cfg,
+            name: getDefaultAiName(controller, playerConfigs, index).slice(0, 16),
+            isHuman: false,
+            aiProfile: controller,
+          }
+        : cfg,
+    );
+    setPlayerConfigs(nextConfigs);
+    const changedPlayer = nextConfigs[index];
+    if (changedPlayer) {
+      nameValidation.validateNames(changedPlayer.id, nextConfigs);
     }
   };
 
@@ -154,11 +226,18 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   };
 
   // Validation légère avant start
-  const canStart = playerConfigs.every((cfg) => cfg.name.trim().length > 0);
+  const hasEmptyName = playerConfigs.some(
+    (cfg) => cfg.name.trim().length === 0,
+  );
+  const canStart =
+    !hasEmptyName && nameValidation.visibleErrorIds.size === 0;
 
   // Crée les objets Player complets (le GameEngine / TankManager écrasera les positions via spawnTanks)
   const handleStartClick = (): void => {
-    if (!canStart) return;
+    const namesAreUnique = nameValidation.validateNames(
+      nameValidation.pendingPlayerId(),
+    );
+    if (hasEmptyName || !namesAreUnique) return;
 
     const players: Player[] = playerConfigs.map((cfg, i) => {
       const color = cfg.color;
@@ -193,121 +272,26 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   };
 
   return (
-    <div
-      className="retro-menu-container"
-    >
-      <div className="retro-menu-frame">
-        <div className="retro-menu-inner">
-          {/* === TITRE PRINCIPAL FLASHY === */}
-          <h1 className="retro-title">{t("main_title")}</h1>
-
-          {/* Sous-titre / description rapide */}
-          <p className="retro-subtitle" style={{ whiteSpace: "pre-line" }}>
-            {t("retro_subtitle")}
-          </p>
-
-          {/* === CONFIGURATION JOUEURS === */}
-          <div className="retro-section">{t("battle_configuration")}</div>
-
-          {/* Sélecteur nombre de joueurs (boutons style rétro) */}
-          <div style={{ marginBottom: 10 }}>
-            <span style={{ color: "#AAAAAA", fontSize: 12, marginRight: 8 }}>
-              {t("num_players")}
-            </span>
-            {[2, 3, 4].map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={`retro-num-btn ${n === numPlayers ? "active" : ""}`}
-                onClick={() => changeNumPlayers(n as 2 | 3 | 4)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-
-          {/* Liste des joueurs configurables */}
-          <div style={{ marginBottom: 6 }}>
-            {(() => {
-              const usedColors = new Set(playerConfigs.map((p) => p.color));
-              return playerConfigs.map((cfg, index) => {
-                const unavailableColors = new Set(usedColors);
-                unavailableColors.delete(cfg.color);
-
-                return (
-                  <PlayerConfigRow
-                    key={cfg.id}
-                    cfg={cfg}
-                    index={index}
-                    unavailableColors={unavailableColors}
-                    colorPool={TANK_COLOR_POOL}
-                    nameInputRef={(el) => {
-                      nameInputRefs.current[index] = el;
-                    }}
-                    onNameChange={handleNameChange}
-                    onColorSelect={handleColorSelect}
-                    onTypeChange={handleTypeChange}
-                    onUpdatePlayer={updatePlayer}
-                  />
-                );
-              });
-            })()}
-          </div>
-
-          <div
-            style={{
-              fontSize: 12,
-              color: "#666666",
-              marginTop: -2,
-              marginBottom: 8,
-              lineHeight: "1.4",
-            }}
-          >
-            {t("color_picker_help_1")}
-            <br />
-            {t("color_picker_help_2")}
-          </div>
-
-          {/* === GROS BOUTON D'ACTION (LOCAL) === */}
-          <div style={{ textAlign: "center" }}>
-            <button
-              type="button"
-              className="retro-start-btn"
-              onClick={handleStartClick}
-              disabled={!canStart}
-              style={{
-                opacity: canStart ? 1 : 0.5,
-                cursor: canStart ? "pointer" : "not-allowed",
-              }}
-            >
-              {t("start_battle_button")}
-            </button>
-
-            {/* Online entry point (parallel to local hotseat, per spec) */}
-            <div style={{ marginTop: 10 }}>
-              <button
-                type="button"
-                onClick={() => onPlayOnline?.()}
-                style={{
-                  fontSize: 12,
-                  padding: "6px 14px",
-                  background: "transparent",
-                  border: "1px solid #555",
-                  color: VGA_PALETTE.ELECTRIC_CYAN,
-                  cursor: "pointer",
-                }}
-              >
-                {t("online_multiplayer_button")}
-              </button>
-            </div>
-          </div>
-
-          {/* Mentions légales en bas */}
-          <div className="retro-legal">
-            {t("legal_footer")} | v{version}
-          </div>
-        </div>
-      </div>
-    </div>
+    <MainMenuView
+      numPlayers={numPlayers}
+      playerConfigs={playerConfigs}
+      colorPool={TANK_COLOR_POOL}
+      nameErrorIds={nameValidation.visibleErrorIds}
+      emptyNameErrorIds={nameValidation.emptyNameErrorIds}
+      nameConflictSourceIds={nameValidation.conflictSourceIds}
+      canStart={canStart}
+      onMenuClickCapture={handleMenuClickCapture}
+      onNumPlayersChange={changeNumPlayers}
+      onNameInputRef={(index, el) => {
+        nameInputRefs.current[index] = el;
+      }}
+      onNameChange={handleNameChange}
+      onNameFocus={handleNameFocus}
+      onNameBlur={handleNameBlur}
+      onColorSelect={handleColorSelect}
+      onControllerChange={handleControllerChange}
+      onStart={handleStartClick}
+      onPlayOnline={onPlayOnline}
+    />
   );
 }

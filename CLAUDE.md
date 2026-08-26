@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **589 tests** (66 files)
+- Run tests: `npm run test` (or `vitest run`) — **631 tests** (69 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
@@ -38,6 +38,8 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 ## AI Strategy Pattern
 
 Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire through `AIByProfileStrategy` in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
+
+In the local menu, selecting an AI assigns its short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). The suffix is the count of all other configured players with that profile, including later slots (`Simple`, `Simple-1`, `Simple-2`), and advances past names already used by any human or AI. Existing names are not renumbered; manual edits remain allowed, and language changes do not translate an already assigned name. Duplicate validation uses locale-independent `trim().toLowerCase()` normalization; never replace it with default-locale `toLocaleLowerCase()`. Manual duplicates are highlighted after blur/button interaction and block local match start.
 
 | Profile | Class | Label | Notes |
 |---------|--------|-------|-------|

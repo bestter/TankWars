@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 589 tests, 66 fichiers) |
+| Tests | `npm run test` (vitest, 631 tests, 69 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -104,6 +104,8 @@ Toute IA doit implémenter `AIEngine` (`src/game/entities/ai/AIEngine.ts`) :
 executeTurn(tankId, gameState, terrainManager): Promise<FireCommand>
 ```
 
+Noms IA du menu local (`MainMenu.tsx`) : le champ reçoit le nom court localisé du profil (`Simple`, `OK`, `Sniper`, `Expert`) au moment de la création ou de la sélection. Le suffixe correspond au nombre des **autres** joueurs qui utilisent déjà ce profil, peu importe leur position (`Simple`, `Simple-1`, `Simple-2`), puis avance si ce nom est déjà utilisé par un humain ou une autre IA. Seul le joueur sélectionné est renommé : aucun renommage rétroactif. Le nom demeure éditable et reste figé si la langue change ensuite. Tous les noms doivent être uniques après `trim()` + `toLowerCase()`; cette normalisation doit rester indépendante de la locale du navigateur (jamais de `toLocaleLowerCase()` sans locale explicite). Les doublons manuels sont signalés après blur/clic et bloquent le démarrage local.
+
 Profils (mixables dans une même partie) :
 | Profile | Classe | Label |
 |---------|--------|-------|
@@ -168,6 +170,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Anti-impasse / Éclair de Zeus | `game/zeus/zeusDomain.ts`, `game/zeus/zeusRewards.ts`, `GameEngine.ts`, `TurnManager.ts`, `TankManager.ts` |
 | Autorité Zeus / reconnexion | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
 | Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
+| Noms joueurs du menu local | `MainMenu.tsx`, `MainMenuView.tsx`, `PlayerConfigList.tsx`, `PlayerConfigRow.tsx`, `playerControllerUi.ts`, `playerNameUi.ts`, `usePlayerNameValidation.ts` |
 | Audio combat / victoire | `GameEngine.ts` |
 
 ## Compétences disponibles

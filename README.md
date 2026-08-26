@@ -29,7 +29,7 @@
   - Bullet (precision shot, ×3 direct hitbox damage)
   - Bulldozer ($150; 0 HP / 0 blast; direct hit pushes the target and recoils the shooter; falls use existing gravity / lava; does not go through `applyExplosionDamage`)
   - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; outer tanks fall into the crater; large VFX + deep bomb sound)
-- **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Unique VGA colors with live previews and a mutual-exclusion picker.
+- **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, editable names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Local AI names default to the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). Suffixes preserve profile ordering while skipping every name already used by a human or an AI (`Simple`, `Simple-1`, `Simple-2`). Name comparisons are trimmed, case-insensitive, and locale-independent (`trim()` + `toLowerCase()`), so browser locale cannot change collision results. Manual duplicate names are highlighted after leaving the field or pressing a button and block local match start until corrected. Names are assigned in the active language, remain frozen after language changes, and are never retroactively renumbered. Unique VGA colors include live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Zeus Lightning Anti-Deadlock** — If only two or more AIs remain and five full rotations produce no paid hit (`hasEarnings`), one eligible AI is appointed Zeus and immediately takes the next turn. Zeus then vaporizes one opponent per turn, preferring its last living direct attacker, until the round ends or Zeus dies. `ZEUS_LIGHTNING` is an internal special action: players cannot select, buy, fire, or teach it to an AI strategy.
 - **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (589 unit tests across 66 files)
+# Run tests (631 unit tests across 69 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -157,7 +157,7 @@ In the build today:
 - Online lobby + strict combat protocol, authoritative reward/balance application, Durable Object authority failover, shop relay, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **589 unit tests** across **66 files** (Vitest)
+- **631 unit tests** across **69 files** (Vitest)
 
 Still planned:
 
@@ -194,7 +194,8 @@ This project stays architecture-first. Contributions that respect the React/Canv
 
 To explore the codebase:
 
-- Start with `src/main.tsx` (entry; production console suppression), `src/App.tsx` + `src/appReducer.ts` (top-level phase), and `src/components/MainMenu.tsx`
+- Start with `src/main.tsx` (entry; production console suppression) and `src/App.tsx` + `src/appReducer.ts` (top-level phase)
+- Local menu and player naming: `src/components/MainMenu.tsx`, `MainMenuView.tsx`, `PlayerConfigList.tsx`, `PlayerConfigRow.tsx`, `playerControllerUi.ts`, `playerNameUi.ts`, and `usePlayerNameValidation.ts`
 - Main game view + engine integration: `src/components/GameCanvas.tsx` + `useGameSession.ts`
 - Core simulation: `src/game/engine/GameEngine.ts` (indicator, recoil trigger, celebration, audio)
 - Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`) + `src/types/terrain.ts` (materials, spawn, grenade bounce)
