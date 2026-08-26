@@ -46,6 +46,7 @@
   "player_name_aria_label": "Nom du joueur {{num}}",
   "player_name_conflict_source": "Ce nom est en conflit avec un autre joueur.",
   "player_name_duplicate_error": "Nom déjà utilisé par le(s) joueur(s) {{players}}.",
+  "player_name_empty_error": "Le nom ne peut pas être vide.",
   "player_name_placeholder": "Joueur {{num}}",
   "retro_subtitle": "Combat d'artillerie • Terrain 100% destructible (heightmap custom)\n2 à 4 joueurs • Humains ou IA • Palette VGA 16 couleurs",
   "round_summary_title": "FIN DE MANCHE {{round}}",

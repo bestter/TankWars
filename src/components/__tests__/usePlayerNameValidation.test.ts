@@ -87,5 +87,35 @@ describe("usePlayerNameValidation", () => {
     expect(result.current.visibleErrorIds.size).toBe(0);
     expect(result.current.conflictSourceIds.size).toBe(0);
   });
+
+  it("marks empty names as invalid and populates emptyNameErrorIds", () => {
+    const p1 = player("p1", "Patate");
+    const p2 = player("p2", "   ");
+    const { result } = renderHook(() => usePlayerNameValidation([p1, p2]));
+
+    let isValid = true;
+    act(() => {
+      isValid = result.current.validateNames("p2");
+    });
+
+    expect(isValid).toBe(false);
+    expect([...result.current.visibleErrorIds]).toEqual(["p2"]);
+    expect([...result.current.emptyNameErrorIds]).toEqual(["p2"]);
+    expect(result.current.conflictSourceIds.size).toBe(0);
+  });
+
+  it("supports immediate validation with overrideConfigs before state re-renders", () => {
+    const p1 = player("p1", "Sniper");
+    const p2 = player("p2", "Simple");
+    const { result } = renderHook(() => usePlayerNameValidation([p1, p2]));
+
+    const nextConfigs: NamedPlayerConfig[] = [p1, { ...p2, name: "Sniper" }];
+    let isValid = true;
+    act(() => {
+      isValid = result.current.validateNames("p2", nextConfigs);
+    });
+
+    expect(isValid).toBe(false);
+  });
 });
 

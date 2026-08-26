@@ -52,6 +52,18 @@ export const getDuplicateNameGroups = (
   return duplicateGroups;
 };
 
+export const getEmptyNamePlayerIds = (
+  configs: readonly NamedPlayerConfig[],
+): string[] => {
+  const emptyIds: string[] = [];
+  for (const cfg of configs) {
+    if (normalizePlayerName(cfg.name).length === 0) {
+      emptyIds.push(cfg.id);
+    }
+  }
+  return emptyIds;
+};
+
 export const getUniqueAiName = (
   baseName: string,
   profile: AiProfile,

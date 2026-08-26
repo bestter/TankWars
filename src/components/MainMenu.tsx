@@ -185,7 +185,14 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
     controller: PlayerController,
   ): void => {
     if (controller === "human") {
-      updatePlayer(index, { isHuman: true, aiProfile: undefined });
+      const nextConfigs = playerConfigs.map((cfg, i) =>
+        i === index ? { ...cfg, isHuman: true, aiProfile: undefined } : cfg,
+      );
+      setPlayerConfigs(nextConfigs);
+      const changedPlayer = nextConfigs[index];
+      if (changedPlayer) {
+        nameValidation.validateNames(changedPlayer.id, nextConfigs);
+      }
       // After re-render, focus and select the name input so user can immediately edit
       setTimeout(() => {
         const input = nameInputRefs.current[index];
@@ -197,18 +204,21 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
       return;
     }
 
-    setPlayerConfigs((prev) =>
-      prev.map((cfg, i) =>
-        i === index
-          ? {
-              ...cfg,
-              name: getDefaultAiName(controller, prev, index),
-              isHuman: false,
-              aiProfile: controller,
-            }
-          : cfg,
-      ),
+    const nextConfigs = playerConfigs.map((cfg, i) =>
+      i === index
+        ? {
+            ...cfg,
+            name: getDefaultAiName(controller, playerConfigs, index).slice(0, 16),
+            isHuman: false,
+            aiProfile: controller,
+          }
+        : cfg,
     );
+    setPlayerConfigs(nextConfigs);
+    const changedPlayer = nextConfigs[index];
+    if (changedPlayer) {
+      nameValidation.validateNames(changedPlayer.id, nextConfigs);
+    }
   };
 
   const handleColorSelect = (index: number, newColor: Color): void => {
@@ -267,6 +277,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
       playerConfigs={playerConfigs}
       colorPool={TANK_COLOR_POOL}
       nameErrorIds={nameValidation.visibleErrorIds}
+      emptyNameErrorIds={nameValidation.emptyNameErrorIds}
       nameConflictSourceIds={nameValidation.conflictSourceIds}
       canStart={canStart}
       onMenuClickCapture={handleMenuClickCapture}

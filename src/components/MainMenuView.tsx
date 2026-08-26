@@ -11,6 +11,7 @@ interface MainMenuViewProps {
   playerConfigs: readonly PlayerConfig[];
   colorPool: readonly Color[];
   nameErrorIds: ReadonlySet<string>;
+  emptyNameErrorIds: ReadonlySet<string>;
   nameConflictSourceIds: ReadonlySet<string>;
   canStart: boolean;
   onMenuClickCapture: MouseEventHandler<HTMLDivElement>;
@@ -30,6 +31,7 @@ export function MainMenuView({
   playerConfigs,
   colorPool,
   nameErrorIds,
+  emptyNameErrorIds,
   nameConflictSourceIds,
   canStart,
   onMenuClickCapture,
@@ -76,6 +78,7 @@ export function MainMenuView({
               playerConfigs={playerConfigs}
               colorPool={colorPool}
               nameErrorIds={nameErrorIds}
+              emptyNameErrorIds={emptyNameErrorIds}
               nameConflictSourceIds={nameConflictSourceIds}
               onNameInputRef={onNameInputRef}
               onNameChange={onNameChange}

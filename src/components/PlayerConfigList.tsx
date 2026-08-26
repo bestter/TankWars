@@ -9,6 +9,7 @@ interface PlayerConfigListProps {
   playerConfigs: readonly PlayerConfig[];
   colorPool: readonly Color[];
   nameErrorIds: ReadonlySet<string>;
+  emptyNameErrorIds?: ReadonlySet<string>;
   nameConflictSourceIds: ReadonlySet<string>;
   onNameInputRef: (index: number, el: HTMLInputElement | null) => void;
   onNameChange: (index: number, value: string) => void;
@@ -22,6 +23,7 @@ export function PlayerConfigList({
   playerConfigs,
   colorPool,
   nameErrorIds,
+  emptyNameErrorIds,
   nameConflictSourceIds,
   onNameInputRef,
   onNameChange,
@@ -43,10 +45,22 @@ export function PlayerConfigList({
     unavailableColors.delete(cfg.color);
     const conflictIds = getNameConflictIds(playerConfigs, cfg.id);
     const hasNameError = nameErrorIds.has(cfg.id);
+    const isEmptyError = emptyNameErrorIds?.has(cfg.id) ?? false;
     const conflictNumbers: number[] = [];
     for (const conflictId of conflictIds) {
       const playerNumber = playerNumberById.get(conflictId);
       if (playerNumber !== undefined) conflictNumbers.push(playerNumber);
+    }
+
+    let errorMessage: string | undefined;
+    if (hasNameError) {
+      if (isEmptyError) {
+        errorMessage = t("player_name_empty_error");
+      } else if (conflictNumbers.length > 0) {
+        errorMessage = t("player_name_duplicate_error", {
+          players: conflictNumbers.join(", "),
+        });
+      }
     }
 
     return (
@@ -57,13 +71,7 @@ export function PlayerConfigList({
         unavailableColors={unavailableColors}
         colorPool={colorPool}
         nameInputRef={(el) => onNameInputRef(index, el)}
-        nameError={
-          hasNameError
-            ? t("player_name_duplicate_error", {
-                players: conflictNumbers.join(", "),
-              })
-            : undefined
-        }
+        nameError={errorMessage}
         isNameConflictSource={
           !hasNameError && nameConflictSourceIds.has(cfg.id)
         }

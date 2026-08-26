@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDuplicateNameGroups,
+  getEmptyNamePlayerIds,
   getNameConflictIds,
   getUniqueAiName,
   normalizePlayerName,
@@ -48,6 +49,17 @@ describe("playerNameUi", () => {
     const groups = getDuplicateNameGroups(configs);
     expect(groups).toHaveLength(1);
     expect(groups[0]?.map((player) => player.id)).toEqual(["p1", "p2", "p3"]);
+  });
+
+  it("identifies player configs with empty or whitespace-only names", () => {
+    const configs: NamedPlayerConfig[] = [
+      human("p1", "Patate"),
+      human("p2", ""),
+      human("p3", "   "),
+      human("p4", "Carotte"),
+    ];
+
+    expect(getEmptyNamePlayerIds(configs)).toEqual(["p2", "p3"]);
   });
 
   it("normalizes accented and non-ASCII Unicode names case-insensitively", () => {

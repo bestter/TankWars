@@ -87,19 +87,24 @@ describe('MainMenu (Hotseat configuration)', () => {
     expect(inputs.length).toBe(2);
   });
 
-  it('disables start button when a player name is empty or only whitespace', () => {
+  it('disables start button and shows visual error when a player name is empty or only whitespace', () => {
     const onStartGame = vi.fn();
     render(<MainMenu onStartGame={onStartGame} />);
 
     const inputs = screen.getAllByRole('textbox');
     const startButton = screen.getByRole('button', { name: 'start_battle_button' });
 
-    // Empty first player's name
+    // Empty first player's name and blur
     fireEvent.change(inputs[0], { target: { value: '   ' } });
+    fireEvent.blur(inputs[0]);
+
+    expect(inputs[0].getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByRole('alert').textContent).toBe('player_name_empty_error');
     expect(startButton.hasAttribute('disabled')).toBe(true);
 
     // Fill back
     fireEvent.change(inputs[0], { target: { value: 'TankAce' } });
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(startButton.hasAttribute('disabled')).toBe(false);
   });
 
@@ -455,7 +460,7 @@ describe('MainMenu (Hotseat configuration)', () => {
     ).toBe(true);
   });
 
-  it('detects duplicate created by switching AI to human and blocks start on click', () => {
+  it('detects duplicate immediately when switching AI to human and blocks start', () => {
     const onStartGame = vi.fn();
     render(<MainMenu onStartGame={onStartGame} />);
 
@@ -470,19 +475,16 @@ describe('MainMenu (Hotseat configuration)', () => {
     // Set player 2 name to "Sniper" while still AI
     fireEvent.change(inputs[1], { target: { value: 'Sniper' } });
 
-    // Switch player 2 controller to human
+    // Switch player 2 controller to human -> validation is immediate
     fireEvent.change(selects[1], { target: { value: 'human' } });
 
-    // Both players have name "Sniper", but visibleErrorIds is not committed yet; start is enabled
-    expect(startButton.hasAttribute('disabled')).toBe(false);
-    expect(screen.queryByRole('alert')).toBeNull();
-
-    // Clicking Start triggers validation, reveals error, and blocks onStartGame
-    fireEvent.click(startButton);
-
-    expect(onStartGame).not.toHaveBeenCalled();
+    // Both players have name "Sniper"; error is immediately shown and start is disabled
     expect(screen.getByRole('alert')).toBeDefined();
     expect(startButton.hasAttribute('disabled')).toBe(true);
+
+    // Clicking Start is blocked
+    fireEvent.click(startButton);
+    expect(onStartGame).not.toHaveBeenCalled();
   });
 
   it('clears duplicate error when reducing player count removes the conflicting slot', () => {
