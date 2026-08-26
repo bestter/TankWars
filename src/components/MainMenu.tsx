@@ -4,7 +4,7 @@
  * Écran d'accueil rétro DOS/VGA :
  * - Fond noir + bordure double ligne style ancien terminal
  * - Titre géant clignotant jaune VGA (#FFFF55 / blanc)
- * - Configuration joueurs (2-4) : nom + type Humain / IA Simple (Mr. Simple) / IA OK (smarter v2)
+ * - Configuration joueurs (2-4) : nom unique + type Humain / IA Simple / IA OK / IA Sniper / IA Expert
  * - Attribution auto de couleurs VGA uniques (palette partagée)
  * - Au clic START : fabrique les Player[] valides + invoke callback
  *
@@ -44,7 +44,7 @@ export interface PlayerConfig {
   color: Color;
   /** stable identifier for React list keys (avoids array index keys) */
   id: string;
-  /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE" (Mr. Simple). */
+  /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE". */
   aiProfile?: AiProfile;
 }
 

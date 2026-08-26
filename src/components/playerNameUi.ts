@@ -8,8 +8,9 @@ export interface NamedPlayerConfig {
   aiProfile?: AiProfile;
 }
 
+/** Normalisation déterministe des noms, indépendante de la locale du navigateur. */
 export const normalizePlayerName = (name: string): string =>
-  name.trim().toLocaleLowerCase();
+  name.trim().toLowerCase();
 
 export const getNameConflictIds = (
   configs: readonly NamedPlayerConfig[],

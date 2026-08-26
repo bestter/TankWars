@@ -1,7 +1,7 @@
 /**
  * TankWars - AIByProfileStrategy (dispatcher)
  *
- * Allows mixed AI profiles in one match (some 'v1-random' Mr. Simple, some 'v2-heuristic' IA OK).
+ * Allows mixed AI profiles in one match (some 'v1-random' IA SIMPLE, some 'v2-heuristic' IA OK).
  * Looks up the specific tank's aiProfile from the GameState snapshot and delegates.
  * This is the single instance wired in GameCanvas (satisfies "register new strategies" guideline).
  *

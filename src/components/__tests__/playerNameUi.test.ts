@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   getDuplicateNameGroups,
   getEmptyNamePlayerIds,
@@ -70,10 +70,17 @@ describe("playerNameUi", () => {
     expect(normalizePlayerName("  ČESKÝ  ")).toBe("český");
   });
 
-  it("handles Turkish I characters predictably", () => {
-    expect(normalizePlayerName("  ISPARTA  ")).toBe("ISPARTA".toLocaleLowerCase());
-    expect(normalizePlayerName("  ısparta  ")).toBe("ısparta");
-    expect(normalizePlayerName("  İSTANBUL  ")).toBe("İSTANBUL".toLocaleLowerCase());
+  it("normalizes ASCII casing independently of the host locale", () => {
+    const localeLowerCaseSpy = vi
+      .spyOn(String.prototype, "toLocaleLowerCase")
+      .mockReturnValue("sımple");
+
+    try {
+      expect(normalizePlayerName("  SIMPLE  ")).toBe("simple");
+      expect(localeLowerCaseSpy).not.toHaveBeenCalled();
+    } finally {
+      localeLowerCaseSpy.mockRestore();
+    }
   });
 
   it("groups duplicate names with accented characters", () => {
@@ -132,4 +139,3 @@ describe("playerNameUi", () => {
     ).toBe(expected);
   });
 });
-

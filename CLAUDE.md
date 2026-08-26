@@ -39,7 +39,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 
 Tank AI must implement **`AIEngine`** (`src/game/entities/ai/AIEngine.ts`). Wire through `AIByProfileStrategy` in `GameCanvas.tsx` via `engine.setAIEngine(...)`.
 
-In the local menu, selecting an AI assigns its short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). The suffix is the count of all other configured players with that profile, including later slots (`Simple`, `Simple-1`, `Simple-2`). Existing names are not renumbered; manual edits remain allowed, and language changes do not translate an already assigned name.
+In the local menu, selecting an AI assigns its short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). The suffix is the count of all other configured players with that profile, including later slots (`Simple`, `Simple-1`, `Simple-2`), and advances past names already used by any human or AI. Existing names are not renumbered; manual edits remain allowed, and language changes do not translate an already assigned name. Duplicate validation uses locale-independent `trim().toLowerCase()` normalization; never replace it with default-locale `toLocaleLowerCase()`. Manual duplicates are highlighted after blur/button interaction and block local match start.
 
 | Profile | Class | Label | Notes |
 |---------|--------|-------|-------|
