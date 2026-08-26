@@ -44,6 +44,8 @@
   "outcome_round_ended": "Round ended",
   "outcome_winner": "Round winner: {{name}}",
   "player_name_aria_label": "Player {{num}} name",
+  "player_name_conflict_source": "This name conflicts with another player.",
+  "player_name_duplicate_error": "Name already used by player(s) {{players}}.",
   "player_name_placeholder": "Player {{num}}",
   "retro_subtitle": "Artillery combat • 100% destructible terrain (custom heightmap)\n2 to 4 players • Humans or AI • 16-color VGA palette",
   "round_summary_title": "END OF ROUND {{round}}",

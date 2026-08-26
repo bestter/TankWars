@@ -16,19 +16,20 @@
  * - Couleurs depuis VGA_PALETTE
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Player, AiProfile } from "../types/player";
 import { VGA_PALETTE } from "../types/game";
 type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
 import { DEFAULT_INVENTORY } from "../types/weapon";
-import { version } from "../../package.json";
-import { PlayerConfigRow } from "./PlayerConfigRow";
+import { MainMenuView } from "./MainMenuView";
 import {
   AI_PROFILE_UI,
   DEFAULT_AI_PROFILE,
   type PlayerController,
 } from "./playerControllerUi";
+import { getUniqueAiName } from "./playerNameUi";
+import { usePlayerNameValidation } from "./usePlayerNameValidation";
 
 export interface MainMenuProps {
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
@@ -75,13 +76,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
     index: number,
   ): string => {
     const baseName = t(AI_PROFILE_UI[profile].nameKey);
-    const duplicateCount = configs.filter(
-      (cfg, configIndex) =>
-        configIndex !== index &&
-        !cfg.isHuman &&
-        (cfg.aiProfile ?? DEFAULT_AI_PROFILE) === profile,
-    ).length;
-    return duplicateCount === 0 ? baseName : `${baseName}-${duplicateCount}`;
+    return getUniqueAiName(baseName, profile, configs, index);
   };
 
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
@@ -110,6 +105,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
 
   // Refs for name inputs, to auto-focus/select when switching a player to Human
   const nameInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const nameValidation = usePlayerNameValidation(playerConfigs);
 
   // (couleurs maintenant gérées par playerConfigs, sélectionnables par l'utilisateur)
 
@@ -160,7 +156,28 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   const handleNameChange = (index: number, value: string): void => {
     // Security enhancement: enforce input length limit at state level
     // to prevent DoS/memory exhaustion if HTML maxLength is bypassed
+    const player = playerConfigs[index];
+    if (!player) return;
+    nameValidation.beginNameEdit(player);
     updatePlayer(index, { name: value.slice(0, 16) });
+  };
+
+  const handleNameFocus = (index: number): void => {
+    const player = playerConfigs[index];
+    if (player) nameValidation.focusName(player.id);
+  };
+
+  const handleNameBlur = (index: number): void => {
+    nameValidation.validateNames(playerConfigs[index]?.id);
+  };
+
+  const handleMenuClickCapture = (
+    event: ReactMouseEvent<HTMLDivElement>,
+  ): void => {
+    if (!(event.target instanceof Element) || !event.target.closest("button")) {
+      return;
+    }
+    nameValidation.validateNames(nameValidation.pendingPlayerId());
   };
 
   const handleControllerChange = (
@@ -199,11 +216,18 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   };
 
   // Validation légère avant start
-  const canStart = playerConfigs.every((cfg) => cfg.name.trim().length > 0);
+  const hasEmptyName = playerConfigs.some(
+    (cfg) => cfg.name.trim().length === 0,
+  );
+  const canStart =
+    !hasEmptyName && nameValidation.visibleErrorIds.size === 0;
 
   // Crée les objets Player complets (le GameEngine / TankManager écrasera les positions via spawnTanks)
   const handleStartClick = (): void => {
-    if (!canStart) return;
+    const namesAreUnique = nameValidation.validateNames(
+      nameValidation.pendingPlayerId(),
+    );
+    if (hasEmptyName || !namesAreUnique) return;
 
     const players: Player[] = playerConfigs.map((cfg, i) => {
       const color = cfg.color;
@@ -238,120 +262,25 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
   };
 
   return (
-    <div
-      className="retro-menu-container"
-    >
-      <div className="retro-menu-frame">
-        <div className="retro-menu-inner">
-          {/* === TITRE PRINCIPAL FLASHY === */}
-          <h1 className="retro-title">{t("main_title")}</h1>
-
-          {/* Sous-titre / description rapide */}
-          <p className="retro-subtitle" style={{ whiteSpace: "pre-line" }}>
-            {t("retro_subtitle")}
-          </p>
-
-          {/* === CONFIGURATION JOUEURS === */}
-          <div className="retro-section">{t("battle_configuration")}</div>
-
-          {/* Sélecteur nombre de joueurs (boutons style rétro) */}
-          <div style={{ marginBottom: 10 }}>
-            <span style={{ color: "#AAAAAA", fontSize: 12, marginRight: 8 }}>
-              {t("num_players")}
-            </span>
-            {[2, 3, 4].map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={`retro-num-btn ${n === numPlayers ? "active" : ""}`}
-                onClick={() => changeNumPlayers(n as 2 | 3 | 4)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-
-          {/* Liste des joueurs configurables */}
-          <div style={{ marginBottom: 6 }}>
-            {(() => {
-              const usedColors = new Set(playerConfigs.map((p) => p.color));
-              return playerConfigs.map((cfg, index) => {
-                const unavailableColors = new Set(usedColors);
-                unavailableColors.delete(cfg.color);
-
-                return (
-                  <PlayerConfigRow
-                    key={cfg.id}
-                    cfg={cfg}
-                    index={index}
-                    unavailableColors={unavailableColors}
-                    colorPool={TANK_COLOR_POOL}
-                    nameInputRef={(el) => {
-                      nameInputRefs.current[index] = el;
-                    }}
-                    onNameChange={handleNameChange}
-                    onColorSelect={handleColorSelect}
-                    onControllerChange={handleControllerChange}
-                  />
-                );
-              });
-            })()}
-          </div>
-
-          <div
-            style={{
-              fontSize: 12,
-              color: "#666666",
-              marginTop: -2,
-              marginBottom: 8,
-              lineHeight: "1.4",
-            }}
-          >
-            {t("color_picker_help_1")}
-            <br />
-            {t("color_picker_help_2")}
-          </div>
-
-          {/* === GROS BOUTON D'ACTION (LOCAL) === */}
-          <div style={{ textAlign: "center" }}>
-            <button
-              type="button"
-              className="retro-start-btn"
-              onClick={handleStartClick}
-              disabled={!canStart}
-              style={{
-                opacity: canStart ? 1 : 0.5,
-                cursor: canStart ? "pointer" : "not-allowed",
-              }}
-            >
-              {t("start_battle_button")}
-            </button>
-
-            {/* Online entry point (parallel to local hotseat, per spec) */}
-            <div style={{ marginTop: 10 }}>
-              <button
-                type="button"
-                onClick={() => onPlayOnline?.()}
-                style={{
-                  fontSize: 12,
-                  padding: "6px 14px",
-                  background: "transparent",
-                  border: "1px solid #555",
-                  color: VGA_PALETTE.ELECTRIC_CYAN,
-                  cursor: "pointer",
-                }}
-              >
-                {t("online_multiplayer_button")}
-              </button>
-            </div>
-          </div>
-
-          {/* Mentions légales en bas */}
-          <div className="retro-legal">
-            {t("legal_footer")} | v{version}
-          </div>
-        </div>
-      </div>
-    </div>
+    <MainMenuView
+      numPlayers={numPlayers}
+      playerConfigs={playerConfigs}
+      colorPool={TANK_COLOR_POOL}
+      nameErrorIds={nameValidation.visibleErrorIds}
+      nameConflictSourceIds={nameValidation.conflictSourceIds}
+      canStart={canStart}
+      onMenuClickCapture={handleMenuClickCapture}
+      onNumPlayersChange={changeNumPlayers}
+      onNameInputRef={(index, el) => {
+        nameInputRefs.current[index] = el;
+      }}
+      onNameChange={handleNameChange}
+      onNameFocus={handleNameFocus}
+      onNameBlur={handleNameBlur}
+      onColorSelect={handleColorSelect}
+      onControllerChange={handleControllerChange}
+      onStart={handleStartClick}
+      onPlayOnline={onPlayOnline}
+    />
   );
 }

@@ -34,7 +34,10 @@ function renderRow(
     unavailableColors: new Set(),
     colorPool: sampleColorPool,
     nameInputRef: () => {},
+    isNameConflictSource: false,
     onNameChange: () => {},
+    onNameFocus: () => {},
+    onNameBlur: () => {},
     onColorSelect: () => {},
     onControllerChange: () => {},
     cfg: defaultCfg,
@@ -64,6 +67,53 @@ describe("PlayerConfigRow", () => {
 
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Commander Z" } });
     expect(onNameChange).toHaveBeenCalledWith(0, "Commander Z");
+  });
+
+  it("reports focus and blur for deferred name validation", () => {
+    const onNameFocus = vi.fn();
+    const onNameBlur = vi.fn();
+    renderRow({ onNameFocus, onNameBlur });
+
+    const input = screen.getByRole("textbox");
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+
+    expect(onNameFocus).toHaveBeenCalledWith(0);
+    expect(onNameBlur).toHaveBeenCalledWith(0);
+  });
+
+  it("shows a duplicate error and highlights a conflicting source", () => {
+    const { rerender } = renderRow({
+      nameError: "Name already used by player 2.",
+    });
+
+    const input = screen.getByRole("textbox");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.classList.contains("retro-input-error")).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Name already used by player 2.",
+    );
+
+    rerender(
+      <PlayerConfigRow
+        index={0}
+        unavailableColors={new Set()}
+        colorPool={sampleColorPool}
+        nameInputRef={() => {}}
+        isNameConflictSource
+        onNameChange={() => {}}
+        onNameFocus={() => {}}
+        onNameBlur={() => {}}
+        onColorSelect={() => {}}
+        onControllerChange={() => {}}
+        cfg={defaultCfg}
+      />,
+    );
+
+    expect(screen.getByRole("textbox").classList.contains("retro-input-conflict-source")).toBe(
+      true,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("triggers onControllerChange with the selected AI profile", () => {

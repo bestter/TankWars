@@ -14,6 +14,9 @@ vi.mock('react-i18next', () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       const aiName = translationState.aiNames[key];
       if (aiName !== undefined) return aiName;
+      if (options && options.players !== undefined) {
+        return `${key}_${String(options.players)}`;
+      }
       if (options && options.num !== undefined) {
         return `${key}_${options.num}`;
       }
@@ -98,6 +101,62 @@ describe('MainMenu (Hotseat configuration)', () => {
     // Fill back
     fireEvent.change(inputs[0], { target: { value: 'TankAce' } });
     expect(startButton.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('rejects duplicate manual names case-insensitively after trimming', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.blur(inputs[0]);
+    fireEvent.change(inputs[1], { target: { value: '  patate  ' } });
+    fireEvent.blur(inputs[1]);
+
+    expect(inputs[0].getAttribute('aria-invalid')).toBe('false');
+    expect(inputs[0].classList.contains('retro-input-conflict-source')).toBe(true);
+    expect(inputs[1].getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByRole('alert').textContent).toBe(
+      'player_name_duplicate_error_1',
+    );
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(true);
+
+    fireEvent.change(inputs[1], { target: { value: 'Carotte' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(false);
+  });
+
+  it('validates pending duplicate names when another button is pressed', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.change(inputs[1], { target: { value: 'PATATE' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: 'start_battle_button' }).hasAttribute('disabled'),
+    ).toBe(true);
+  });
+
+  it('validates duplicate names and blocks starting the game', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: 'Patate' } });
+    fireEvent.change(inputs[1], { target: { value: 'patate' } });
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+
+    expect(onStartGame).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeDefined();
   });
 
   it('enforces 16 character name limit', () => {
@@ -199,6 +258,54 @@ describe('MainMenu (Hotseat configuration)', () => {
 
     expect((inputs[1] as HTMLInputElement).value).toBe('Ace Bot');
     expect((inputs[2] as HTMLInputElement).value).toBe('Simple-1');
+  });
+
+  it('avoids AI name collisions with human names regardless of case or whitespace', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'human' },
+    });
+    fireEvent.change(inputs[0], { target: { value: '  simple  ' } });
+    fireEvent.change(inputs[1], { target: { value: 'Patate' } });
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    expect((screen.getAllByRole('textbox')[2] as HTMLInputElement).value).toBe(
+      'Simple-1',
+    );
+  });
+
+  it('avoids AI name collisions with a differently profiled AI', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'v4-smart' },
+    });
+    fireEvent.change(screen.getAllByRole('textbox')[1], {
+      target: { value: 'simple' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    expect((screen.getAllByRole('textbox')[2] as HTMLInputElement).value).toBe(
+      'Simple-1',
+    );
+  });
+
+  it('uses the first available AI suffix when generated names have a gap', () => {
+    render(<MainMenu onStartGame={vi.fn()} />);
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: 'human' },
+    });
+    fireEvent.change(inputs[0], { target: { value: 'Simple' } });
+    fireEvent.change(inputs[1], { target: { value: 'Simple-2' } });
+    fireEvent.click(screen.getByRole('button', { name: '3' }));
+
+    expect((screen.getAllByRole('textbox')[2] as HTMLInputElement).value).toBe(
+      'Simple-1',
+    );
   });
 
   it('renames only the selected player and does not renumber existing names', () => {
