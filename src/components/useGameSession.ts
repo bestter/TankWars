@@ -205,6 +205,7 @@ export function useGameSession({
     resumeCanvas?.shopSession ?? INITIAL_STATE.shopSession,
   );
   const pendingFireRef = useRef<PendingFireIntent | null>(null);
+  const fireRejectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shotQueueRef = useRef<QueuedAuthoritativeShot[]>([]);
   const queuedShotIdsRef = useRef<Set<number>>(new Set());
   const replayedShotIdsRef = useRef<Set<number>>(new Set());
@@ -631,22 +632,20 @@ export function useGameSession({
       drainAuthoritativeShotQueue();
     };
 
-    tm.onAuthoritativeShotSettled = (shotId, mode) => {
+    tm.onAuthoritativeShotSettled = (shotId) => {
       shotReplayActiveRef.current = false;
       replayedShotIdsRef.current.add(shotId);
       lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
       dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
-      if (
-        mode === "CATCH_UP" &&
-        catchUpActiveShotIdRef.current === shotId
-      ) {
-        catchUpActiveShotIdRef.current = shotId;
-      }
       drainAuthoritativeShotQueue();
     };
 
     tm.setFireIntentHandler((command) => {
       if (pendingFireRef.current) return;
+      if (fireRejectionTimerRef.current !== null) {
+        clearTimeout(fireRejectionTimerRef.current);
+        fireRejectionTimerRef.current = null;
+      }
       const actionId = crypto.randomUUID();
       const pending: PendingFireIntent = {
         actionId,
@@ -774,7 +773,14 @@ export function useGameSession({
       }
       pendingFireRef.current = null;
       tm.rejectPendingFireIntent();
+      if (fireRejectionTimerRef.current !== null) {
+        clearTimeout(fireRejectionTimerRef.current);
+      }
       dispatch({ type: "SET_FIRE_REJECTION", reason: message.reason });
+      fireRejectionTimerRef.current = setTimeout(() => {
+        fireRejectionTimerRef.current = null;
+        dispatch({ type: "SET_FIRE_REJECTION", reason: null });
+      }, 3500);
     };
 
     const applyRoundEndMessage = (message: RoundEndMessage): void => {
@@ -1489,6 +1495,10 @@ export function useGameSession({
       }
       clearShopAiTimeout();
       clearCelebrationTimer();
+      if (fireRejectionTimerRef.current !== null) {
+        clearTimeout(fireRejectionTimerRef.current);
+        fireRejectionTimerRef.current = null;
+      }
       if (zeusAnnouncementTimerRef.current !== null) {
         clearTimeout(zeusAnnouncementTimerRef.current);
         zeusAnnouncementTimerRef.current = null;

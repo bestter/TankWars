@@ -6,11 +6,14 @@
 import type { GamePhase, RoundResult } from '../types/game';
 import type { Player } from '../types/player';
 import type { TerrainMaterial } from '../types/terrain';
+import { ALL_WEAPON_IDS, type WeaponId } from '../types/weapon';
 import type { EarningsOverlayState } from '../components/gameCanvasReducer';
 import {
   createEmptyShopSession,
+  type PendingShopIntent,
   type ShopClientSessionState,
 } from '../components/gameCanvasReducer';
+import type { ShopDenial, ShopVisitCounters } from '../game/shop/shopTransaction';
 import type { FireRejectedReason } from '../game/online/protocol';
 
 export interface OnlineSessionMeta {
@@ -54,6 +57,99 @@ export interface PersistedOnlineSession {
 
 const STORAGE_KEY = 'tankwars-online-session-v1';
 
+const VALID_FIRE_REJECTED_REASONS: ReadonlySet<string> = new Set<FireRejectedReason>([
+  'MALFORMED',
+  'NOT_YOUR_TURN',
+  'SHOT_IN_FLIGHT',
+  'ROUND_ENDED',
+  'NO_AMMO',
+  'ILLEGAL_INVENTORY',
+]);
+
+const VALID_SHOP_DENIALS: ReadonlySet<string> = new Set<ShopDenial>([
+  'STOCK_CAP',
+  'PURCHASE_LIMIT',
+  'INSUFFICIENT_FUNDS',
+  'NO_STOCK',
+  'NOT_SOLD',
+  'ILLEGAL_INVENTORY',
+  'MALFORMED',
+  'NOT_YOUR_SLOT',
+  'ALREADY_READY',
+  'SHOP_CLOSED',
+  'SHOP_NOT_AVAILABLE',
+  'STALE_SHOP_EPOCH',
+]);
+
+export function isFireRejectedReason(value: unknown): value is FireRejectedReason {
+  return typeof value === 'string' && VALID_FIRE_REJECTED_REASONS.has(value);
+}
+
+export function isShopDenial(value: unknown): value is ShopDenial {
+  return typeof value === 'string' && VALID_SHOP_DENIALS.has(value);
+}
+
+function isWeaponId(value: unknown): value is WeaponId {
+  return typeof value === 'string' && (ALL_WEAPON_IDS as readonly string[]).includes(value);
+}
+
+function isPendingShopIntent(value: unknown): value is PendingShopIntent {
+  if (!isRecord(value) || typeof value.actionId !== 'string' || !isSafeNonNegativeInteger(value.shopEpoch)) {
+    return false;
+  }
+  if (value.kind === 'READY') {
+    return true;
+  }
+  if (value.kind === 'BUY_SELL') {
+    return (
+      isWeaponId(value.weaponId) &&
+      (value.delta === 1 || value.delta === -1) &&
+      typeof value.expectedMoney === 'number' &&
+      Number.isSafeInteger(value.expectedMoney) &&
+      isSafeNonNegativeInteger(value.expectedStock) &&
+      isSafeNonNegativeInteger(value.expectedPurchaseCount)
+    );
+  }
+  return false;
+}
+
+function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
+  if (!isRecord(value)) return false;
+  for (const playerCounters of Object.values(value)) {
+    if (!isRecord(playerCounters)) return false;
+    for (const [weaponKey, count] of Object.entries(playerCounters)) {
+      if (!isWeaponId(weaponKey) || !isSafeNonNegativeInteger(count)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+export function isShopClientSessionState(value: unknown): value is ShopClientSessionState {
+  if (!isRecord(value)) return false;
+  const epochValid = value.epoch === null || isSafeNonNegativeInteger(value.epoch);
+  const roundNumberValid = value.roundNumber === null || isSafeNonNegativeInteger(value.roundNumber);
+  const readySlotsValid =
+    Array.isArray(value.readySlots) && value.readySlots.every((slot) => isSafeNonNegativeInteger(slot));
+  const aiShopAppliedValid = typeof value.aiShopApplied === 'boolean';
+  const authoritativeReceivedValid = typeof value.authoritativeReceived === 'boolean';
+  const pendingIntentValid = value.pendingIntent === null || isPendingShopIntent(value.pendingIntent);
+  const denialValid = value.denial === null || isShopDenial(value.denial);
+  const countersValid = isShopVisitCounters(value.counters);
+
+  return (
+    epochValid &&
+    roundNumberValid &&
+    readySlotsValid &&
+    aiShopAppliedValid &&
+    authoritativeReceivedValid &&
+    pendingIntentValid &&
+    denialValid &&
+    countersValid
+  );
+}
+
 export function persistOnlineSession(session: PersistedOnlineSession): void {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
@@ -86,8 +182,37 @@ export function readOnlineSession(): PersistedOnlineSession | null {
 
     const validPhases: GamePhase[] = ['MENU', 'SHOP', 'COMBAT', 'RESOLUTION', 'CELEBRATION', 'SUMMARY', 'GAME_OVER'];
     if (!validPhases.includes(canvas.gamePhase as GamePhase)) return null;
+
+    const parsedMeta: OnlineSessionMeta = {
+      roomId: meta.roomId,
+      localPlayerId: meta.localPlayerId,
+      slot: meta.slot,
+      token: meta.token,
+    };
+    if (Array.isArray(meta.initialHeights) && meta.initialHeights.every((h) => typeof h === 'number' && Number.isFinite(h))) {
+      parsedMeta.initialHeights = meta.initialHeights;
+    }
+    if (Array.isArray(meta.initialMaterials) && meta.initialMaterials.every((m) => typeof m === 'string')) {
+      parsedMeta.initialMaterials = meta.initialMaterials as TerrainMaterial[];
+    }
+    if (typeof meta.initialWind === 'number' && Number.isFinite(meta.initialWind)) {
+      parsedMeta.initialWind = meta.initialWind;
+    }
+    if (isSafeNonNegativeInteger(meta.initialCurrentPlayerIndex)) {
+      parsedMeta.initialCurrentPlayerIndex = meta.initialCurrentPlayerIndex;
+    }
+
+    const roundEarningsByPlayer: Record<string, number> = {};
+    if (isRecord(canvas.roundEarningsByPlayer)) {
+      for (const [playerId, earnings] of Object.entries(canvas.roundEarningsByPlayer)) {
+        if (typeof earnings === 'number' && Number.isSafeInteger(earnings)) {
+          roundEarningsByPlayer[playerId] = earnings;
+        }
+      }
+    }
+
     return {
-      meta: meta as unknown as OnlineSessionMeta,
+      meta: parsedMeta,
       players: parsed.players,
       canvas: {
         gamePhase: canvas.gamePhase as GamePhase,
@@ -95,17 +220,22 @@ export function readOnlineSession(): PersistedOnlineSession | null {
         uiPlayers: canvas.uiPlayers,
         shopPlayers: canvas.shopPlayers,
         currentShopIndex: canvas.currentShopIndex,
-        roundResult: isRecord(canvas.roundResult) ? canvas.roundResult as unknown as RoundResult : null,
+        roundResult: isRecord(canvas.roundResult) ? (canvas.roundResult as unknown as RoundResult) : null,
         lastRoundOutcome: isRecord(canvas.lastRoundOutcome)
-          ? canvas.lastRoundOutcome as unknown as OnlineCanvasSnapshot['lastRoundOutcome']
+          ? {
+              isDraw: Boolean(canvas.lastRoundOutcome.isDraw),
+              winner: isRecord(canvas.lastRoundOutcome.winner)
+                ? (canvas.lastRoundOutcome.winner as unknown as Player)
+                : null,
+            }
           : null,
         wind: canvas.wind,
         authoritySlot: typeof canvas.authoritySlot === 'number' ? canvas.authoritySlot : null,
         authorityEpoch: typeof canvas.authorityEpoch === 'number' && Number.isSafeInteger(canvas.authorityEpoch) ? canvas.authorityEpoch : 0,
         lastAppliedShotId: typeof canvas.lastAppliedShotId === 'number' && Number.isSafeInteger(canvas.lastAppliedShotId) ? canvas.lastAppliedShotId : 0,
         lastAppliedZeusStrikeId: typeof canvas.lastAppliedZeusStrikeId === 'number' && Number.isSafeInteger(canvas.lastAppliedZeusStrikeId) ? canvas.lastAppliedZeusStrikeId : 0,
-        shopSession: isRecord(canvas.shopSession)
-          ? canvas.shopSession as unknown as ShopClientSessionState
+        shopSession: isShopClientSessionState(canvas.shopSession)
+          ? canvas.shopSession
           : createEmptyShopSession(),
         lastAppliedShopEpoch: isSafeNonNegativeInteger(canvas.lastAppliedShopEpoch)
           ? canvas.lastAppliedShopEpoch
@@ -116,16 +246,11 @@ export function readOnlineSession(): PersistedOnlineSession | null {
         lastSeenShotId: isSafeNonNegativeInteger(canvas.lastSeenShotId)
           ? canvas.lastSeenShotId
           : 0,
-        fireRejection:
-          typeof canvas.fireRejection === 'string'
-            ? canvas.fireRejection as FireRejectedReason
-            : null,
-        roundEarningsByPlayer: isRecord(canvas.roundEarningsByPlayer)
-          ? canvas.roundEarningsByPlayer as Record<string, number>
-          : {},
-        earningsOverlay: isRecord(canvas.earningsOverlay)
-          ? canvas.earningsOverlay as unknown as EarningsOverlayState
+        fireRejection: isFireRejectedReason(canvas.fireRejection)
+          ? canvas.fireRejection
           : null,
+        roundEarningsByPlayer,
+        earningsOverlay: isRecord(canvas.earningsOverlay) ? (canvas.earningsOverlay as unknown as EarningsOverlayState) : null,
       },
     };
   } catch {

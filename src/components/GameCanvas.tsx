@@ -269,7 +269,7 @@ export function GameCanvas({
         )}
 
         {fireRejection && gamePhase === "COMBAT" && (
-          <div className="retro-ai-overlay" role="alert">
+          <div className="fire-rejection-toast" role="alert">
             {t(FIRE_REJECTION_KEYS[fireRejection])}
           </div>
         )}

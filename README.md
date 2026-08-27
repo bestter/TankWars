@@ -45,7 +45,7 @@
 - **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A Zeus strike pays only the standard destruction reward `25X`, with no damage or last-survivor component. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS and authoritatively owns turn order, FIRE validation/ammo consumption, the transactional shop, rewards, round end, and every Zeus decision. `FIRE` is server-first: all clients, including the shooter, launch only from the correlated `SHOT` echo. Ordered shot history plus persisted `SHOP_STATE` / `SHOP_FINISH` restore reconnecting clients without replaying economic effects. Physics stays local; full authoritative terrain/damage simulation is still planned.
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS and authoritatively owns turn order, FIRE validation/ammo consumption, the transactional shop (composite idempotency keys), rewards, round end, and every Zeus decision. `FIRE` is server-first: all clients, including the shooter, launch only from the correlated `SHOT` echo; client FIRE during an AI turn is rejected (`NOT_YOUR_TURN`); rejection notices display via a non-blocking toast alert (`.fire-rejection-toast`). Round-scoped shot history plus persisted `SHOP_STATE` / `SHOP_FINISH` restore reconnecting clients without replaying economic effects. Physics stays local; full authoritative terrain/damage simulation is still planned.
 - **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
 
 ---
@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (656 unit tests across 69 files)
+# Run tests (667 unit tests across 69 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)

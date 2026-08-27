@@ -183,6 +183,14 @@ function seedFromString(value: string): number {
   return seed >>> 0;
 }
 
+function makeShopActionKey(
+  kind: 'BUY_SELL' | 'READY',
+  slot: number,
+  actionId: string,
+): string {
+  return `${kind}:${slot}:${actionId}`;
+}
+
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
@@ -209,11 +217,12 @@ export class GameRoom extends DurableObject {
     command: { angle: number; power: number; weaponId: WeaponId };
     ownerId?: string;
   } | null = null;
+
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as Record<string, unknown>);
     ctx.blockConcurrencyWhile(async () => {
-      const stored = await this.ctx.storage.get<RoomState>("state");
+      const stored = await ctx.storage.get<RoomState>("state");
       if (stored) {
         this.state = stored;
         if (!this.state.materials) this.state.materials = [];
@@ -1042,10 +1051,7 @@ export class GameRoom extends DurableObject {
 
     const fromSlot = this.state.currentPlayerIndex;
     const currentConfig = this.state.slotConfigs[fromSlot];
-    const authorized =
-      currentConfig?.type === 'human'
-        ? slot === fromSlot
-        : slot === this.state.earningsAuthoritySlot;
+    const authorized = currentConfig?.type === 'human' && slot === fromSlot;
     if (!authorized) {
       await this.rejectFire(slot, 'NOT_YOUR_TURN', actionId);
       return;
@@ -1629,10 +1635,12 @@ export class GameRoom extends DurableObject {
   private async rejectShopAction(
     slot: number,
     rejection: ShopRejectedMessage,
+    kind: 'BUY_SELL' | 'READY' = rejection.weaponId ? 'BUY_SELL' : 'READY',
   ): Promise<void> {
     if (!this.state) return;
     if (rejection.actionId) {
-      this.state.processedShopActions[rejection.actionId] = {
+      const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
+      this.state.processedShopActions[actionKey] = {
         slot,
         result: rejection,
       };
@@ -1705,14 +1713,17 @@ export class GameRoom extends DurableObject {
     message: ShopBuySellMessage,
   ): Promise<void> {
     if (!this.state) return;
-    const previous = this.state.processedShopActions[message.actionId];
+    const actionKey = makeShopActionKey('BUY_SELL', slot, message.actionId);
+    const previous = this.state.processedShopActions[actionKey];
     if (previous) {
       if (previous.slot === slot) {
         const result =
           !this.state.shopSession &&
           this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
             ? this.state.lastCompletedShop
-            : previous.result;
+            : previous.result.type === 'SHOP_STATE' && this.state.shopSession
+              ? this.buildShopStateMessage()
+              : previous.result;
         this.sendToSlot(slot, result);
       }
       else {
@@ -1749,7 +1760,7 @@ export class GameRoom extends DurableObject {
         weaponId: message.weaponId,
         delta: message.delta,
         reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
-      });
+      }, 'BUY_SELL');
       return;
     }
     const player = this.state.players[slot];
@@ -1761,7 +1772,7 @@ export class GameRoom extends DurableObject {
         weaponId: message.weaponId,
         delta: message.delta,
         reason: 'MALFORMED',
-      });
+      }, 'BUY_SELL');
       return;
     }
     const result = applyShopTransaction({
@@ -1778,7 +1789,7 @@ export class GameRoom extends DurableObject {
         weaponId: message.weaponId,
         delta: message.delta,
         reason: result.reason,
-      });
+      }, 'BUY_SELL');
       return;
     }
     this.state.players = this.state.players.map((candidate, index) =>
@@ -1786,7 +1797,7 @@ export class GameRoom extends DurableObject {
     );
     session.purchasesByPlayerId = result.counters;
     const stateMessage = this.buildShopStateMessage();
-    this.state.processedShopActions[message.actionId] = {
+    this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
     };
@@ -1799,14 +1810,17 @@ export class GameRoom extends DurableObject {
     message: ShopReadyMessage,
   ): Promise<void> {
     if (!this.state) return;
-    const previous = this.state.processedShopActions[message.actionId];
+    const actionKey = makeShopActionKey('READY', slot, message.actionId);
+    const previous = this.state.processedShopActions[actionKey];
     if (previous) {
       if (previous.slot === slot) {
         const result =
           !this.state.shopSession &&
           this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
             ? this.state.lastCompletedShop
-            : previous.result;
+            : previous.result.type === 'SHOP_STATE' && this.state.shopSession
+              ? this.buildShopStateMessage()
+              : previous.result;
         this.sendToSlot(slot, result);
       }
       return;
@@ -1831,7 +1845,7 @@ export class GameRoom extends DurableObject {
         shopEpoch: session?.shopEpoch ?? null,
         actionId: message.actionId,
         reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
-      });
+      }, 'READY');
       return;
     }
     session.readySlots = [...session.readySlots, slot].sort(
@@ -1846,7 +1860,7 @@ export class GameRoom extends DurableObject {
       return;
     }
     const stateMessage = this.buildShopStateMessage();
-    this.state.processedShopActions[message.actionId] = {
+    this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
     };
@@ -1882,7 +1896,8 @@ export class GameRoom extends DurableObject {
 
     // Le résultat terminal existe dans l'état avant le nettoyage de session.
     this.state.lastCompletedShop = finish;
-    this.state.processedShopActions[actionId] = {
+    const finishKey = makeShopActionKey('READY', fromSlot, actionId);
+    this.state.processedShopActions[finishKey] = {
       slot: fromSlot,
       result: finish,
     };
@@ -1892,6 +1907,7 @@ export class GameRoom extends DurableObject {
     this.state.roundEnded = false;
     this.state.roundNumber = nextRoundNumber;
     this.state.shotNumberInRound = 0;
+    this.state.shotHistory = [];
     this.state.lastAppliedEarnings = null;
     this.state.lastAppliedZeusStrike = null;
     this.state.processedFireActions = {};

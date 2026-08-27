@@ -359,4 +359,27 @@ describe("GameCanvas component", () => {
     const { unmount } = render(<GameCanvas />);
     expect(() => unmount()).not.toThrow();
   });
+
+  it("renders fireRejection alert toast during COMBAT phase", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "COMBAT",
+        fireRejection: "NO_AMMO",
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toBeDefined();
+    expect(alert.className).toBe("fire-rejection-toast");
+    expect(alert.textContent).toBe("fire_rejected_no_ammo");
+  });
 });

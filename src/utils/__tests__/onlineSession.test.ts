@@ -3,6 +3,9 @@ import {
   persistOnlineSession,
   readOnlineSession,
   clearOnlineSession,
+  isFireRejectedReason,
+  isShopDenial,
+  isShopClientSessionState,
   type PersistedOnlineSession,
 } from '../onlineSession';
 import { makePlayer } from '../../game/__tests__/helpers';
@@ -134,5 +137,95 @@ describe('onlineSession', () => {
 
     expect(() => persistOnlineSession(makeSession())).not.toThrow();
     expect(readOnlineSession()).toBeNull();
+  });
+
+  it('validates FireRejectedReason and ShopDenial guards accurately', () => {
+    expect(isFireRejectedReason('NOT_YOUR_TURN')).toBe(true);
+    expect(isFireRejectedReason('NO_AMMO')).toBe(true);
+    expect(isFireRejectedReason('UNKNOWN_REASON')).toBe(false);
+    expect(isFireRejectedReason(123)).toBe(false);
+
+    expect(isShopDenial('STOCK_CAP')).toBe(true);
+    expect(isShopDenial('STALE_SHOP_EPOCH')).toBe(true);
+    expect(isShopDenial('INVALID_DENIAL')).toBe(false);
+  });
+
+  it('validates isShopClientSessionState accurately', () => {
+    expect(isShopClientSessionState(createEmptyShopSession())).toBe(true);
+    expect(isShopClientSessionState({ epoch: -1 })).toBe(false);
+    expect(isShopClientSessionState(null)).toBe(false);
+  });
+
+  it('safely falls back to empty shop session when persisted shopSession is malformed', () => {
+    const rawSession = makeSession();
+    store.set(
+      'tankwars-online-session-v1',
+      JSON.stringify({
+        ...rawSession,
+        canvas: {
+          ...rawSession.canvas,
+          shopSession: {
+            epoch: -1, // invalid negative epoch
+            roundNumber: 'not-a-number',
+            readySlots: 'invalid',
+          },
+        },
+      }),
+    );
+
+    const read = readOnlineSession();
+    expect(read).not.toBeNull();
+    expect(read?.canvas.shopSession).toEqual(createEmptyShopSession());
+  });
+
+  it('safely falls back to null fireRejection when persisted string is not a valid FireRejectedReason', () => {
+    const rawSession = makeSession();
+    store.set(
+      'tankwars-online-session-v1',
+      JSON.stringify({
+        ...rawSession,
+        canvas: {
+          ...rawSession.canvas,
+          fireRejection: 'UNAUTHORIZED_HACKER_REASON',
+        },
+      }),
+    );
+
+    const read = readOnlineSession();
+    expect(read).not.toBeNull();
+    expect(read?.canvas.fireRejection).toBeNull();
+  });
+
+  it('correctly reads valid active shopSession with counters and pendingIntent', () => {
+    const rawSession = makeSession();
+    const activeShopSession = {
+      epoch: 2,
+      roundNumber: 1,
+      counters: {
+        'player-1': { GRENADE: 2 },
+      },
+      readySlots: [0],
+      aiShopApplied: true,
+      authoritativeReceived: true,
+      pendingIntent: {
+        kind: 'BUY_SELL' as const,
+        actionId: 'action-intent-1',
+        shopEpoch: 2,
+        weaponId: 'GRENADE' as const,
+        delta: 1 as const,
+        expectedMoney: 175,
+        expectedStock: 3,
+        expectedPurchaseCount: 3,
+      },
+      denial: null,
+    };
+    rawSession.canvas.shopSession = activeShopSession;
+    rawSession.canvas.fireRejection = 'NO_AMMO';
+    persistOnlineSession(rawSession);
+
+    const read = readOnlineSession();
+    expect(read).not.toBeNull();
+    expect(read?.canvas.shopSession).toEqual(activeShopSession);
+    expect(read?.canvas.fireRejection).toBe('NO_AMMO');
   });
 });
