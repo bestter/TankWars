@@ -130,6 +130,35 @@ describe('WeaponShop', () => {
     expect(buyButtons[2].hasAttribute('disabled')).toBe(true);
   });
 
+  it('exposes the domain denial and never invokes a disabled purchase', () => {
+    const player = makePlayer({
+      id: 'p-1',
+      name: 'Broke Soldier',
+      money: 0,
+      inventory: { GRENADE: 0 },
+    });
+    const onBuySell = vi.fn();
+
+    render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={onBuySell}
+        onReady={() => {}}
+      />
+    );
+
+    const grenadeBuy = screen.getAllByTitle('title_buy')[0];
+    const reasonId = grenadeBuy.getAttribute('aria-describedby');
+    expect(reasonId).toBe('shop-buy-reason-GRENADE');
+    expect(document.getElementById(reasonId ?? '')?.textContent).toBe(
+      'shop_reason_insufficient_funds',
+    );
+    fireEvent.click(grenadeBuy);
+    expect(onBuySell).not.toHaveBeenCalled();
+  });
+
   it('disables sell button if player has 0 count of weapon', () => {
     const player = makePlayer({
       id: 'p-1',
@@ -171,5 +200,28 @@ describe('WeaponShop', () => {
     fireEvent.click(readyBtn);
 
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks every callback while an authoritative intention is pending', () => {
+    const player = makePlayer({ money: 1_000, inventory: { GRENADE: 2 } });
+    const onBuySell = vi.fn();
+    const onReady = vi.fn();
+
+    render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={onBuySell}
+        onReady={onReady}
+        controlsDisabled
+      />
+    );
+
+    fireEvent.click(screen.getAllByTitle('title_buy')[0]);
+    fireEvent.click(screen.getAllByTitle('title_sell')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'btn_ready_next_player' }));
+    expect(onBuySell).not.toHaveBeenCalled();
+    expect(onReady).not.toHaveBeenCalled();
   });
 });

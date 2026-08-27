@@ -1,7 +1,7 @@
 /**
  * GameRoom Durable Object (worker/src/game-room.ts)
  *
- * Responsibilities (MVP - 1 round combat only):
+ * Responsibilities (online authority around a still-local physics simulation):
  * - Store room config (numPlayers, per-slot type human/ai + aiProfile)
  * - Generate per-slot join secrets/tokens
  * - Manage presence: human slots claim via WS with token
@@ -9,15 +9,13 @@
  * - Auto-start when all human slots have joined
  * - On start: build authoritative Player[] roster, generate initial terrain heights + wind
  * - Accept FIRE commands only from the correct human slot on their turn
- * - For AI turns: use existing AIByProfileStrategy (headless) to decide + fire
- * - Run full authoritative simulation (headless fast-forward) for every shot
- * - Broadcast SHOT (for client-side visual replay) + STATE_UPDATE (authoritative patches)
- * - Hold the full game state for the single round (Terrain heights, players, turn, etc.)
+ * - Validate and consume each FIRE before persisting and broadcasting its SHOT
+ * - Own transactional shop sessions, AI purchases and idempotent SHOP_FINISH
+ * - Persist shot history, active coordination and reconnect catch-up state
  *
  * NOTE for MVP: The real headless GameEngine / SimulationCore + RNG seeding lives in the client
- * engine files (will be extended with headless flag). For now the DO keeps a minimal pure-TS
- * simulation stub that will be replaced by importing/calling the real core once the client
- * side headless work is done. The structure (state, broadcast, turn order) is already correct.
+ * engine files (will be extended with headless flag). For now the DO validates intentions and
+ * economy while each client replays the same persisted SHOT through its local Canvas physics.
  *
  * All random MUST go through a seeded RNG for determinism (injected later).
  */
@@ -28,20 +26,42 @@ import type { Player } from '../../src/types/player'; // share types from root (
 import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import type { TerrainMaterial } from '../../src/types/terrain';
-import { DEFAULT_INVENTORY, ALL_WEAPON_IDS } from '../../src/types/weapon';
+import { DEFAULT_INVENTORY } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 import {
+  decodeFireMessage,
+  decodeShopBuySellMessage,
+  decodeShopReadyMessage,
   isStrictOnlineMessage,
   type AuthorityChangedMessage,
+  type FireRejectedMessage,
+  type RequestGameStartMessage,
   type RoundEndMessage,
+  type ShopFinishMessage,
+  type ShopBuySellMessage,
+  type ShopRejectedMessage,
+  type ShopReadyMessage,
+  type ShopStateMessage,
   type ShotEarningsAppliedMessage,
   type ShotEarningsMessage,
+  type ShotCatchUpMessage,
   type ShotMessage,
   type ZeusAppointedMessage,
   type ZeusStateMessage,
   type ZeusStrikeAppliedMessage,
   type ZeusStrikeMessage,
 } from '../../src/game/online/protocol';
+import { autoBuyForAI } from '../../src/game/entities/ai/aiShopHelper';
+import {
+  applyShopTransaction,
+  consumeWeaponForFire,
+  normalizeRosterAtShopOpen,
+  type ShopVisitCounters,
+} from '../../src/game/shop/shopTransaction';
+import {
+  guardShopAction,
+  guardShopEnter,
+} from '../../src/game/shop/shopSessionGuard';
 import {
   allocateZeusStrike,
   createZeusState,
@@ -62,6 +82,31 @@ interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   deadSlots: boolean[];
   authorityEpoch: number;
   directHitVictimIds: string[];
+}
+
+type PersistedShopActionResult =
+  | ShopStateMessage
+  | ShopRejectedMessage
+  | ShopFinishMessage;
+
+interface PersistedShopSession {
+  shopEpoch: number;
+  roundNumber: number;
+  readySlots: number[];
+  purchasesByPlayerId: ShopVisitCounters;
+  aiShopApplied: boolean;
+}
+
+interface PersistedShopAction {
+  slot: number;
+  result: PersistedShopActionResult;
+}
+
+type PersistedFireResult = ShotMessage | FireRejectedMessage;
+
+interface PersistedFireAction {
+  slot: number;
+  result: PersistedFireResult;
 }
 
 // Very small serializable state for MVP (will be enriched with real engine state later)
@@ -91,7 +136,14 @@ interface RoomState {
   roundNumber: number;
   shotNumberInRound: number;
   activeShot: PersistedActiveShot | null;
+  shotHistory: ShotMessage[];
+  processedFireActions: Record<string, PersistedFireAction>;
+  lastFireResultBySlot: Record<number, PersistedFireResult>;
   lastAppliedEarnings: PersistedEarningsResult | null;
+  shopEpoch: number;
+  shopSession: PersistedShopSession | null;
+  processedShopActions: Record<string, PersistedShopAction>;
+  lastCompletedShop: ShopFinishMessage | null;
   zeusState: ZeusState;
   zeusRotationSlots: number[];
   lastDirectAttackerByPlayerId: Record<string, string>;
@@ -131,106 +183,6 @@ function seedFromString(value: string): number {
   return seed >>> 0;
 }
 
-function sanitizePlayer(p: unknown): Player | null {
-  if (!p || typeof p !== 'object') return null;
-  const pRecord = p as Record<string, unknown>;
-  if (typeof pRecord.id !== 'string') return null;
-
-  // Extract base player properties
-  const sanitized: Player = {
-    id: pRecord.id,
-    name: typeof pRecord.name === 'string' ? pRecord.name.trim().slice(0, 32) : 'Unknown',
-    isHuman: Boolean(pRecord.isHuman),
-    money:
-      typeof pRecord.money === 'number' && Number.isSafeInteger(pRecord.money)
-        ? Math.max(0, pRecord.money)
-        : 0,
-    aiProfile: undefined,
-    tank: {
-      id: '',
-      position: { x: 0, y: 0 },
-      angle: 0,
-      power: 0,
-      health: 0,
-      maxHealth: 0,
-      shield: 0,
-      maxShield: 0,
-      isDead: false,
-      color: '#FFFFFF',
-      currentWeapon: 'MISSILE',
-    },
-    inventory: {},
-  };
-
-  if (
-    typeof pRecord.aiProfile === 'string' &&
-    ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'].includes(pRecord.aiProfile)
-  ) {
-    sanitized.aiProfile = pRecord.aiProfile as Player['aiProfile'];
-  }
-
-  // Extract and sanitize inventory
-  if (pRecord.inventory && typeof pRecord.inventory === 'object') {
-    const inv = pRecord.inventory as Record<string, unknown>;
-    ALL_WEAPON_IDS.forEach((wid) => {
-      const count = inv[wid];
-      if (typeof count === 'number' && Number.isFinite(count)) {
-        sanitized.inventory[wid] = Math.max(0, Math.floor(count));
-      }
-    });
-  }
-
-  // Extract and sanitize tank
-  const t = pRecord.tank;
-  if (!t || typeof t !== 'object') return null; // Tank is required and must have id
-  const tRecord = t as Record<string, unknown>;
-  if (typeof tRecord.id !== 'string') return null;
-
-  const pos =
-    tRecord.position && typeof tRecord.position === 'object'
-      ? (tRecord.position as Record<string, unknown>)
-      : undefined;
-
-  sanitized.tank = {
-    id: tRecord.id,
-    position: {
-      x: typeof pos?.x === 'number' && Number.isFinite(pos.x) ? pos.x : 0,
-      y: typeof pos?.y === 'number' && Number.isFinite(pos.y) ? pos.y : 0,
-    },
-    angle: typeof tRecord.angle === 'number' && Number.isFinite(tRecord.angle) ? tRecord.angle : 0,
-    power:
-      typeof tRecord.power === 'number' && Number.isFinite(tRecord.power)
-        ? Math.max(0, Math.min(100, tRecord.power))
-        : 50,
-    health: typeof tRecord.health === 'number' && Number.isFinite(tRecord.health) ? tRecord.health : 0,
-    maxHealth:
-      typeof tRecord.maxHealth === 'number' && Number.isFinite(tRecord.maxHealth)
-        ? Math.max(1, tRecord.maxHealth)
-        : 100,
-    shield: typeof tRecord.shield === 'number' && Number.isFinite(tRecord.shield) ? Math.max(0, tRecord.shield) : 0,
-    maxShield:
-      typeof tRecord.maxShield === 'number' && Number.isFinite(tRecord.maxShield)
-        ? Math.max(0, tRecord.maxShield)
-        : 0,
-    isDead: Boolean(tRecord.isDead),
-    color: typeof tRecord.color === 'string' ? (tRecord.color as Color) : '#FFFFFF', // In a real app we might validate against VGA_PALETTE
-    currentWeapon:
-      typeof tRecord.currentWeapon === 'string' && ALL_WEAPON_IDS.includes(tRecord.currentWeapon as WeaponId)
-        ? (tRecord.currentWeapon as WeaponId)
-        : 'MISSILE',
-  };
-
-  if (typeof tRecord.lastHitBy === 'string') {
-    sanitized.tank.lastHitBy = tRecord.lastHitBy;
-  }
-  if (typeof tRecord.lastDirectAttackerId === 'string') {
-    sanitized.tank.lastDirectAttackerId = tRecord.lastDirectAttackerId;
-  }
-
-  return sanitized;
-}
-
-
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
@@ -257,13 +209,6 @@ export class GameRoom extends DurableObject {
     command: { angle: number; power: number; weaponId: WeaponId };
     ownerId?: string;
   } | null = null;
-  /**
-   * Authoritative parallel boutique session (in-memory).
-   * Every human slot shops independently and sends SHOP_READY; the DO finishes when all humans are ready.
-   * Dead tanks still shop (they respawn next round) — never skip isDead slots.
-   */
-  private shopSession: { active: boolean; readySlots: number[] } | null = null;
-
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as Record<string, unknown>);
@@ -283,7 +228,14 @@ export class GameRoom extends DurableObject {
         this.state.roundNumber ??= 1;
         this.state.shotNumberInRound ??= 0;
         this.state.activeShot ??= null;
+        this.state.shotHistory ??= [];
+        this.state.processedFireActions ??= {};
+        this.state.lastFireResultBySlot ??= {};
         this.state.lastAppliedEarnings ??= null;
+        this.state.shopEpoch ??= 0;
+        this.state.shopSession ??= null;
+        this.state.processedShopActions ??= {};
+        this.state.lastCompletedShop ??= null;
         if (this.state.lastAppliedEarnings) {
           this.state.lastAppliedEarnings.directHitVictimIds ??= [];
         }
@@ -332,7 +284,16 @@ export class GameRoom extends DurableObject {
   }
 
   /** Catch-up payload for a socket that (re)joins an in-progress match. */
-  private sendCombatCatchUpToSocket(ws: WebSocket): void {
+  private sendCombatCatchUpToSocket(
+    ws: WebSocket,
+    slot: number,
+    request: RequestGameStartMessage = {
+      type: 'REQUEST_GAME_START',
+      roundNumber: 0,
+      lastSeenShotId: 0,
+      lastAppliedShopEpoch: 0,
+    },
+  ): void {
     this.sendGameStartToSocket(ws);
     if (!this.state?.started) return;
 
@@ -357,6 +318,29 @@ export class GameRoom extends DurableObject {
     };
     try {
       ws.send(JSON.stringify(authority));
+    } catch {
+      // ignore stale
+    }
+
+    try {
+      const catchUp: ShotCatchUpMessage = {
+        type: 'SHOT_CATCH_UP',
+        roundNumber: this.state.roundNumber,
+        activeShotId: this.state.activeShot?.shotId ?? null,
+        shots: this.state.shotHistory
+          .filter((shot) => shot.shotId > request.lastSeenShotId)
+          .sort((left, right) => left.shotId - right.shotId),
+        lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
+      };
+      ws.send(JSON.stringify(catchUp));
+      if (this.state.shopSession) {
+        ws.send(JSON.stringify(this.buildShopStateMessage()));
+      } else if (
+        this.state.lastCompletedShop &&
+        this.state.lastCompletedShop.shopEpoch > request.lastAppliedShopEpoch
+      ) {
+        ws.send(JSON.stringify(this.state.lastCompletedShop));
+      }
       if (this.state.lastAppliedEarnings) {
         ws.send(JSON.stringify(this.state.lastAppliedEarnings));
       }
@@ -382,26 +366,6 @@ export class GameRoom extends DurableObject {
       }
     } catch {
       // ignore stale
-    }
-
-    // Re-broadcast the in-flight SHOT so a late/reconnected observer can still see it.
-    if (this.state.activeShot) {
-      try {
-        ws.send(
-          JSON.stringify({
-            type: 'SHOT',
-            shotId: this.state.activeShot.shotId,
-            roundNumber: this.state.activeShot.roundNumber,
-            shotNumberInRound: this.state.activeShot.shotNumberInRound,
-            isFirstShotOfRound: this.state.activeShot.isFirstShotOfRound,
-            slot: this.state.activeShot.slot,
-            command: this.state.activeShot.command,
-            ownerId: this.state.activeShot.ownerId,
-          }),
-        );
-      } catch {
-        // ignore stale
-      }
     }
   }
 
@@ -481,7 +445,14 @@ export class GameRoom extends DurableObject {
       roundNumber: 1,
       shotNumberInRound: 0,
       activeShot: null,
+      shotHistory: [],
+      processedFireActions: {},
+      lastFireResultBySlot: {},
       lastAppliedEarnings: null,
+      shopEpoch: 0,
+      shopSession: null,
+      processedShopActions: {},
+      lastCompletedShop: null,
       zeusState: createZeusState(),
       zeusRotationSlots: [],
       lastDirectAttackerByPlayerId: {},
@@ -566,7 +537,7 @@ export class GameRoom extends DurableObject {
         const old = this.sockets.get(slot);
         this.sockets.delete(slot);
         try {
-          (old as any).close(4001, 'replaced by new connection for same slot');
+          old?.close(4001, 'replaced by new connection for same slot');
         } catch {}
       }
 
@@ -577,7 +548,7 @@ export class GameRoom extends DurableObject {
         const server = pair[1];
 
         // Store the socket (we will send messages to it)
-        this.sockets.set(slot, server as any);
+        this.sockets.set(slot, server);
 
         // Handle messages from this player
         server.accept();
@@ -588,13 +559,13 @@ export class GameRoom extends DurableObject {
           });
         });
         server.addEventListener('close', () => {
-          this.handleSocketDisconnect(slot, server as any).catch((err) => {
+          this.handleSocketDisconnect(slot, server).catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error('[GameRoom] Error on socket disconnect for slot=', slot, ':', errorMessage);
           });
         });
         server.addEventListener('error', () => {
-          this.handleSocketDisconnect(slot, server as any).catch((err) => {
+          this.handleSocketDisconnect(slot, server).catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error('[GameRoom] Error on socket error for slot=', slot, ':', errorMessage);
           });
@@ -613,7 +584,7 @@ export class GameRoom extends DurableObject {
                 if (this.state?.started) {
                   // Catch-up: turn index + any in-flight SHOT the client may have missed
                   // (lobby→combat transition, Strict Mode remount, brief disconnect).
-                  this.sendCombatCatchUpToSocket(server as WebSocket);
+                  this.sendCombatCatchUpToSocket(server, slot);
                 }
                 resolve();
               })
@@ -663,12 +634,17 @@ export class GameRoom extends DurableObject {
     }
 
     if (!this.state) return;
+    const strictMessage = isStrictOnlineMessage(msg) ? msg : null;
 
     // Catch-up: client missed the GAME_START broadcast (e.g. host tab still in lobby)
     // or reconnected mid-shot and needs the in-flight SHOT replayed.
-    if (msg?.type === 'REQUEST_GAME_START' && this.state.started) {
+    if (
+      msg?.type === 'REQUEST_GAME_START' &&
+      strictMessage?.type === 'REQUEST_GAME_START' &&
+      this.state.started
+    ) {
       const wsConn = this.sockets.get(slot);
-      if (wsConn) this.sendCombatCatchUpToSocket(wsConn as WebSocket);
+      if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
       return;
     }
 
@@ -684,13 +660,13 @@ export class GameRoom extends DurableObject {
 
     if (!this.state.started) return;
 
-    if (msg?.type === 'SHOT_SETTLED' && isStrictOnlineMessage(msg)) {
+    if (strictMessage?.type === 'SHOT_SETTLED') {
       console.log(
         `[GameRoom] Received SHOT_SETTLED from slot ${slot}. currentPlayerIndex=${this.state?.currentPlayerIndex}, awaitingShotFromSlot=${this.awaitingShotFromSlot}, shotInFlight=${this.shotInFlight}`,
       );
       if (
         this.shotInFlight &&
-        msg.shotId === this.state.activeShot?.shotId &&
+        strictMessage.shotId === this.state.activeShot?.shotId &&
         slot === this.state.currentPlayerIndex &&
         slot === this.awaitingShotFromSlot
       ) {
@@ -707,126 +683,45 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (isStrictOnlineMessage(msg) && msg.type === 'SHOT_EARNINGS') {
-      await this.applyAuthoritativeEarnings(slot, msg);
+    if (strictMessage?.type === 'SHOT_EARNINGS') {
+      await this.applyAuthoritativeEarnings(slot, strictMessage);
       return;
     }
 
-    // Shop inventory relay — merge only the sender's player so parallel buys don't clobber each other.
     if (msg?.type === 'SHOP_BUY_SELL') {
-      const updated = this.mergeShopPlayerUpdate(slot, msg);
-      if (updated) {
-        await this.saveState();
-        this.broadcast({ type: 'SHOP_BUY_SELL', players: this.state.players, slot });
+      const decoded = decodeShopBuySellMessage(msg);
+      if (!decoded.ok) {
+        await this.rejectShopAction(slot, decoded.rejection);
+        return;
       }
+      await this.handleShopBuySell(slot, decoded.message);
       return;
     }
     if (msg?.type === 'SHOP_ENTER') {
-      const enterPlayers = Array.isArray(msg?.players)
-        ? msg.players.reduce((acc: Player[], p: unknown) => {
-          const s = sanitizePlayer(p);
-          if (s !== null) acc.push(s);
-          return acc;
-        }, [])
-        : undefined;
-      await this.handleShopEnter(
-        slot,
-        enterPlayers && enterPlayers.length > 0 ? enterPlayers : undefined,
-      );
+      if (strictMessage?.type !== 'SHOP_ENTER') {
+        this.sendToSlot(slot, {
+          type: 'SHOP_REJECTED',
+          shopEpoch: this.state.shopSession?.shopEpoch ?? null,
+          reason: 'MALFORMED',
+        } satisfies ShopRejectedMessage);
+        return;
+      }
+      await this.handleShopEnter(slot, strictMessage.roundNumber);
       return;
     }
     if (msg?.type === 'SHOP_READY') {
-      const readyPlayers = Array.isArray(msg?.players)
-        ? msg.players.reduce((acc: Player[], p: unknown) => {
-          const s = sanitizePlayer(p);
-          if (s !== null) acc.push(s);
-          return acc;
-        }, [])
-        : undefined;
-      await this.handleShopReady(slot, readyPlayers && readyPlayers.length > 0 ? readyPlayers : undefined);
-      return;
-    }
-    // Legacy client relay (pre-authoritative shop). Prefer SHOP_READY; keep for mid-deploy compat.
-    if (msg?.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number') {
-      console.warn(`[GameRoom] Legacy SHOP_ADVANCE from slot ${slot} — treating as SHOP_READY`);
-      const legacyReadyPlayers = Array.isArray(msg?.players)
-        ? msg.players.reduce((acc: Player[], p: unknown) => {
-          const s = sanitizePlayer(p);
-          if (s !== null) acc.push(s);
-          return acc;
-        }, [])
-        : undefined;
-      await this.handleShopReady(slot, legacyReadyPlayers && legacyReadyPlayers.length > 0 ? legacyReadyPlayers : undefined);
-      return;
-    }
-    const finishPlayers = Array.isArray(msg?.players)
-      ? msg.players.reduce((acc: Player[], p: unknown) => {
-          const s = sanitizePlayer(p);
-          if (s !== null) acc.push(s);
-          return acc;
-        }, [])
-      : null;
-    if (msg?.type === 'SHOP_FINISH' && finishPlayers && finishPlayers.length > 0) {
-      // SECURE: Enforce authorization - only the host (slot 0) can force-finish and dictate the full roster.
-      if (slot !== 0) {
-        console.warn(`[GameRoom] Unauthorized SHOP_FINISH from non-host slot ${slot}`);
+      const decoded = decodeShopReadyMessage(msg);
+      if (!decoded.ok) {
+        await this.rejectShopAction(slot, decoded.rejection);
         return;
       }
-      // Legacy: only accept if shop session already completed or absent (belt-and-suspenders).
-      await this.completeShopPhase(finishPlayers, slot);
+      await this.handleShopReady(slot, decoded.message);
       return;
     }
-
-    if (this.state.roundEnded) return;
-
-    const current = this.state.currentPlayerIndex;
-    if (slot !== current) return; // not your turn
-
-    const cfg = this.state.slotConfigs[slot];
-    if (cfg.type !== 'human') return;
 
     if (msg && msg.type === 'FIRE') {
-      if (!msg.command || typeof msg.command !== 'object') {
-         console.warn(`[GameRoom] Missing or invalid command in FIRE from slot ${slot}`);
-         return;
-      }
-
-      const cmdObj = msg.command as Record<string, unknown>;
-      const { angle, power, weaponId } = cmdObj;
-      if (typeof angle !== 'number' || !Number.isFinite(angle) || typeof power !== 'number' || !Number.isFinite(power) || typeof weaponId !== 'string') {
-         console.warn(`[GameRoom] Invalid FIRE command payload from slot ${slot}:`, msg.command);
-         return;
-      }
-      if (!ALL_WEAPON_IDS.includes(weaponId as WeaponId)) {
-         console.warn(`[GameRoom] Invalid weaponId in FIRE from slot ${slot}:`, weaponId);
-         return;
-      }
-      if (power < 0 || power > 100) {
-         console.warn(`[GameRoom] Power out of bounds in FIRE from slot ${slot}:`, power);
-         return;
-      }
-      if (angle < -360 || angle > 360) {
-         console.warn(`[GameRoom] Angle out of bounds in FIRE from slot ${slot}:`, angle);
-         return;
-      }
-
-      // One shot in flight at a time — blocks double-fire on the same turn (client unlock races).
-      if (this.shotInFlight || this.awaitingShotFromSlot != null) {
-        console.warn(
-          `[GameRoom] Ignoring FIRE from slot ${slot} — shot already in flight (awaiting=${this.awaitingShotFromSlot}, shotInFlight=${this.shotInFlight})`,
-        );
-        return;
-      }
-      console.log(
-        '[GameRoom] Received FIRE from slot=',
-        slot,
-        ', current=',
-        this.state.currentPlayerIndex,
-        ', cmd=',
-        msg.command,
-      );
-      const cmd = msg.command as { angle: number; power: number; weaponId: WeaponId };
-      await this.executeFire(slot, cmd);
+      await this.handleFireIntent(slot, msg);
+      return;
     }
   }
 
@@ -835,10 +730,20 @@ export class GameRoom extends DurableObject {
     const data = JSON.stringify(obj);
     for (const ws of this.sockets.values()) {
       try {
-        (ws as any).send(data);
+        ws.send(data);
       } catch {
         // ignore stale
       }
+    }
+  }
+
+  private sendToSlot(slot: number, obj: unknown): void {
+    const socket = this.sockets.get(slot);
+    if (!socket) return;
+    try {
+      socket.send(JSON.stringify(obj));
+    } catch {
+      // ignore stale
     }
   }
 
@@ -1048,7 +953,7 @@ export class GameRoom extends DurableObject {
     this.broadcastAuthorityChanged();
     if (next !== null && this.state.activeShot) {
       const socket = this.sockets.get(next);
-      if (socket) this.sendCombatCatchUpToSocket(socket);
+      if (socket) this.sendCombatCatchUpToSocket(socket, next);
     }
   }
 
@@ -1060,8 +965,113 @@ export class GameRoom extends DurableObject {
     return palette[slot % palette.length];
   }
 
+  private buildFireRejection(
+    slot: number,
+    reason: FireRejectedMessage['reason'],
+    actionId?: string,
+  ): FireRejectedMessage {
+    const player = this.state?.players?.[slot];
+    return {
+      type: 'FIRE_REJECTED',
+      ...(actionId ? { actionId } : {}),
+      reason,
+      inventory: { ...(player?.inventory ?? {}) },
+      currentWeapon: player?.tank.currentWeapon ?? 'MISSILE',
+    };
+  }
+
+  private async rejectFire(
+    slot: number,
+    reason: FireRejectedMessage['reason'],
+    actionId?: string,
+  ): Promise<void> {
+    if (!this.state) return;
+    const rejection = this.buildFireRejection(slot, reason, actionId);
+    if (actionId) {
+      this.state.processedFireActions[actionId] = {
+        slot,
+        result: rejection,
+      };
+      this.state.lastFireResultBySlot[slot] = rejection;
+      await this.saveState();
+    }
+    this.sendToSlot(slot, rejection);
+  }
+
+  private async handleFireIntent(slot: number, value: unknown): Promise<void> {
+    if (!this.state) return;
+    const decoded = decodeFireMessage(value);
+    if (!decoded.ok) {
+      await this.rejectFire(slot, 'MALFORMED', decoded.actionId);
+      return;
+    }
+
+    const { actionId, command } = decoded.message;
+    const previous = this.state.processedFireActions[actionId];
+    if (previous) {
+      if (previous.slot !== slot) {
+        this.sendToSlot(
+          slot,
+          this.buildFireRejection(slot, 'MALFORMED', actionId),
+        );
+      } else if (previous.result.type === 'FIRE_REJECTED') {
+        this.sendToSlot(slot, previous.result);
+      } else if (this.state.activeShot?.shotId === previous.result.shotId) {
+        this.sendToSlot(slot, previous.result);
+      }
+      return;
+    }
+
+    if (
+      command.power < 0 ||
+      command.power > 100 ||
+      command.angle < -360 ||
+      command.angle > 360
+    ) {
+      await this.rejectFire(slot, 'MALFORMED', actionId);
+      return;
+    }
+    if (this.state.roundEnded || this.state.shopSession) {
+      await this.rejectFire(slot, 'ROUND_ENDED', actionId);
+      return;
+    }
+    if (this.shotInFlight || this.state.activeShot) {
+      await this.rejectFire(slot, 'SHOT_IN_FLIGHT', actionId);
+      return;
+    }
+
+    const fromSlot = this.state.currentPlayerIndex;
+    const currentConfig = this.state.slotConfigs[fromSlot];
+    const authorized =
+      currentConfig?.type === 'human'
+        ? slot === fromSlot
+        : slot === this.state.earningsAuthoritySlot;
+    if (!authorized) {
+      await this.rejectFire(slot, 'NOT_YOUR_TURN', actionId);
+      return;
+    }
+
+    const currentPlayer = this.state.players[fromSlot];
+    if (!currentPlayer) {
+      await this.rejectFire(slot, 'MALFORMED', actionId);
+      return;
+    }
+    const consumed = consumeWeaponForFire(currentPlayer, command.weaponId);
+    if (!consumed.ok) {
+      await this.rejectFire(slot, consumed.reason, actionId);
+      return;
+    }
+    this.state.players[fromSlot] = consumed.player;
+    await this.executeFire(fromSlot, command, actionId, slot);
+  }
+
   // Execute a fire (either from human WS or from server AI)
-  private async executeFire(fromSlot: number, command: { angle: number; power: number; weaponId: WeaponId }): Promise<void> {
+  private async executeFire(
+    fromSlot: number,
+    command: { angle: number; power: number; weaponId: WeaponId },
+    actionId: string,
+    requesterSlot?: number,
+  ): Promise<void> {
     if (!this.state || this.state.roundEnded) return;
 
     // Defense in depth: AI timer + human FIRE path both funnel here.
@@ -1073,13 +1083,12 @@ export class GameRoom extends DurableObject {
     }
 
     console.log('[GameRoom] executeFire: fromSlot=', fromSlot, ', command=', command);
+    const ownerId = this.state.players[fromSlot]?.id;
+    if (!ownerId) return;
     this.clearShotSettledTimeout();
     this.shotInFlight = true;
     this.shotEpoch++;
     const epoch = this.shotEpoch;
-
-    const ownerId = this.state.players[fromSlot]?.id;
-    if (!ownerId) return;
     const shotId = this.state.nextShotId++;
     this.state.shotNumberInRound++;
     this.lastShot = { slot: fromSlot, command, ownerId };
@@ -1088,6 +1097,7 @@ export class GameRoom extends DurableObject {
       roundNumber: this.state.roundNumber,
       shotNumberInRound: this.state.shotNumberInRound,
       isFirstShotOfRound: this.state.shotNumberInRound === 1,
+      actionId,
       slot: fromSlot,
       command,
       ownerId,
@@ -1095,9 +1105,9 @@ export class GameRoom extends DurableObject {
       earningsApplied: false,
       releaseAt: null,
     };
-    await this.saveState();
     const shotEvent: ShotMessage = {
       type: 'SHOT',
+      actionId,
       shotId,
       roundNumber: this.state.roundNumber,
       shotNumberInRound: this.state.shotNumberInRound,
@@ -1106,6 +1116,15 @@ export class GameRoom extends DurableObject {
       command,
       ownerId,
     };
+    this.state.shotHistory.push(shotEvent);
+    if (requesterSlot !== undefined) {
+      this.state.processedFireActions[actionId] = {
+        slot: requesterSlot,
+        result: shotEvent,
+      };
+      this.state.lastFireResultBySlot[requesterSlot] = shotEvent;
+    }
+    await this.saveState();
     this.broadcast(shotEvent);
 
     const cfg = this.state.slotConfigs[fromSlot];
@@ -1558,7 +1577,20 @@ export class GameRoom extends DurableObject {
           resolve();
           return;
         }
-        this.executeFire(idx, fakeCommand)
+        const aiPlayer = this.state.players[idx];
+        const consumed = aiPlayer
+          ? consumeWeaponForFire(aiPlayer, fakeCommand.weaponId)
+          : null;
+        if (!consumed?.ok) {
+          resolve();
+          return;
+        }
+        this.state.players[idx] = consumed.player;
+        this.executeFire(
+          idx,
+          fakeCommand,
+          `ai-${crypto.randomUUID()}`,
+        )
           .then(resolve)
           .catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1579,156 +1611,301 @@ export class GameRoom extends DurableObject {
     return slots;
   }
 
-  /**
-   * Apply only the purchasing slot's player to the authoritative roster.
-   * Accepts either `{ player }` (preferred) or full `{ players[] }` (legacy).
-   */
-  private mergeShopPlayerUpdate(slot: number, msg: { player?: Player; players?: Player[] }): boolean {
-    if (!this.state) return false;
-    if (this.state.slotConfigs[slot]?.type !== 'human') return false;
-
-    let patch: Player | undefined;
-    const sanitizedSingle = sanitizePlayer(msg.player);
-    if (sanitizedSingle) {
-      patch = sanitizedSingle;
-    } else if (Array.isArray(msg.players)) {
-      const sanitizedArrayEl = sanitizePlayer(msg.players[slot]);
-      if (sanitizedArrayEl) patch = sanitizedArrayEl;
+  private buildShopStateMessage(): ShopStateMessage {
+    if (!this.state?.shopSession) {
+      throw new Error('Aucune session boutique active.');
     }
-    if (!patch) return false;
-
-    // Enforce that a slot can only update its own canonical player index.
-    // IDOR protection: Do not allow a client to modify another player's state by sending a different player ID.
-    const idx = slot;
-    if (idx < 0 || idx >= this.state.numPlayers) return false;
-
-    // Ensure the patched ID matches the server's expected ID for this slot (if it exists yet).
-    if (this.state.players[idx] && this.state.players[idx].id !== patch.id) {
-      console.warn(`[GameRoom] IDOR prevented: Slot ${slot} attempted to update player ID ${patch.id}`);
-      return false;
-    }
-
-    const next = [...this.state.players];
-    // Ensure array length if server roster was still empty.
-    while (next.length < this.state.numPlayers) {
-      next.push(patch);
-    }
-    next[idx] = patch;
-    this.state.players = next;
-    return true;
+    return {
+      type: 'SHOP_STATE',
+      shopEpoch: this.state.shopSession.shopEpoch,
+      roundNumber: this.state.shopSession.roundNumber,
+      readySlots: [...this.state.shopSession.readySlots],
+      players: this.state.players,
+      purchasesByPlayerId: this.state.shopSession.purchasesByPlayerId,
+      aiShopApplied: this.state.shopSession.aiShopApplied,
+    };
   }
 
-  /** Client entered the boutique — init parallel session and re-sync ready set. */
-  private async handleShopEnter(slot: number, players?: Player[]): Promise<void> {
+  private async rejectShopAction(
+    slot: number,
+    rejection: ShopRejectedMessage,
+  ): Promise<void> {
     if (!this.state) return;
-
-    if (!this.shopSession?.active) {
-      this.shopSession = { active: true, readySlots: [] };
-      console.log(`[GameRoom] Parallel shop session started by slot ${slot}`);
-    }
-
-    // Host often sends post-AI-buy roster on enter; accept first full snapshot.
-    // SECURE: Enforce authorization - only the host (slot 0) can override the full roster.
-    if (players && players.length === this.state.numPlayers && slot === 0) {
-      this.state.players = players;
+    if (rejection.actionId) {
+      this.state.processedShopActions[rejection.actionId] = {
+        slot,
+        result: rejection,
+      };
       await this.saveState();
     }
-
-    this.broadcast({
-      type: 'SHOP_STATE',
-      mode: 'parallel',
-      readySlots: [...this.shopSession.readySlots],
-      done: false,
-      players: this.state.players.length > 0 ? this.state.players : undefined,
-    });
+    this.sendToSlot(slot, rejection);
   }
 
-  /**
-   * A human finished their own shopping. When every human slot has readied, end boutique.
-   * AI purchases are applied client-side (host) before SHOP_ENTER / via BUY_SELL — not via ready gate.
-   */
-  private async handleShopReady(slot: number, players?: Player[]): Promise<void> {
+  /** Ouvre la boutique depuis le dernier ROUND_END; aucun snapshot client n'est lu. */
+  private async handleShopEnter(
+    slot: number,
+    requestedRoundNumber: number,
+  ): Promise<void> {
     if (!this.state) return;
-
-    if (!this.shopSession?.active) {
-      this.shopSession = { active: true, readySlots: [] };
+    const guard = guardShopEnter({
+      isHumanSlot: this.state.slotConfigs[slot]?.type === 'human',
+      roundEnded: this.state.roundEnded,
+      shotInFlight: this.shotInFlight || this.state.activeShot !== null,
+      zeusStrikeActive: this.state.activeZeusStrike !== null,
+      serverRoundNumber: this.state.roundNumber,
+      requestedRoundNumber,
+      session: this.state.shopSession
+        ? {
+            epoch: this.state.shopSession.shopEpoch,
+            roundNumber: this.state.shopSession.roundNumber,
+            readySlots: this.state.shopSession.readySlots,
+          }
+        : null,
+    });
+    if (!guard.ok) {
+      this.sendToSlot(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: this.state.shopSession?.shopEpoch ?? null,
+        reason: guard.reason,
+      } satisfies ShopRejectedMessage);
+      return;
     }
-
-    const cfg = this.state.slotConfigs[slot];
-    if (!cfg || cfg.type !== 'human') {
-      console.warn(`[GameRoom] SHOP_READY ignored from non-human slot ${slot}`);
+    if (guard.mode === 'RESUME') {
+      this.sendToSlot(slot, this.buildShopStateMessage());
       return;
     }
 
-    // Merge only this human's final snapshot — do not replace the whole roster from one client.
-    if (players && players.length === this.state.numPlayers && players[slot]) {
-      this.mergeShopPlayerUpdate(slot, { player: players[slot], players });
-      await this.saveState();
+    this.state.shopEpoch++;
+    this.state.processedShopActions = {};
+    let players = normalizeRosterAtShopOpen(this.state.players);
+    let counters: ShopVisitCounters = {};
+    for (let index = 0; index < players.length; index++) {
+      const player = players[index];
+      if (player.isHuman) continue;
+      const autoBuy = autoBuyForAI(player, counters);
+      players = players.map((candidate, playerIndex) =>
+        playerIndex === index ? autoBuy.player : candidate,
+      );
+      counters = autoBuy.counters;
     }
-
-    if (!this.shopSession.readySlots.includes(slot)) {
-      this.shopSession.readySlots.push(slot);
-    }
-
-    const humans = this.getHumanSlots();
-    const ready = this.shopSession.readySlots;
-    const readySet = new Set(ready);
-    console.log(
-      `[GameRoom] SHOP_READY slot ${slot} — ready=[${ready.join(',')}] humans=[${humans.join(',')}]`,
-    );
-
-    this.broadcast({
-      type: 'SHOP_STATE',
-      mode: 'parallel',
-      readySlots: [...ready],
-      done: false,
-      players: this.state.players,
-    });
-
-    const allHumansReady =
-      humans.length > 0 && humans.every((h) => readySet.has(h));
-    if (allHumansReady) {
-      console.log(`[GameRoom] All humans ready — completing shop`);
-      await this.completeShopPhase(this.state.players, slot);
-    }
+    this.state.players = players;
+    this.state.shopSession = {
+      shopEpoch: this.state.shopEpoch,
+      roundNumber: this.state.roundNumber,
+      readySlots: [],
+      purchasesByPlayerId: counters,
+      aiShopApplied: true,
+    };
+    await this.saveState();
+    this.broadcast(this.buildShopStateMessage());
   }
 
-  private async completeShopPhase(players: Player[], fromSlot: number): Promise<void> {
+  private async handleShopBuySell(
+    slot: number,
+    message: ShopBuySellMessage,
+  ): Promise<void> {
     if (!this.state) return;
+    const previous = this.state.processedShopActions[message.actionId];
+    if (previous) {
+      if (previous.slot === slot) {
+        const result =
+          !this.state.shopSession &&
+          this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
+            ? this.state.lastCompletedShop
+            : previous.result;
+        this.sendToSlot(slot, result);
+      }
+      else {
+        this.sendToSlot(slot, {
+          type: 'SHOP_REJECTED',
+          shopEpoch: this.state.shopSession?.shopEpoch ?? null,
+          actionId: message.actionId,
+          weaponId: message.weaponId,
+          delta: message.delta,
+          reason: 'MALFORMED',
+        } satisfies ShopRejectedMessage);
+      }
+      return;
+    }
+    const session = this.state.shopSession;
+    const guard = guardShopAction({
+      isHumanSlot: this.state.slotConfigs[slot]?.type === 'human',
+      slot,
+      actionId: message.actionId,
+      requestedEpoch: message.shopEpoch,
+      session: session
+        ? {
+            epoch: session.shopEpoch,
+            roundNumber: session.roundNumber,
+            readySlots: session.readySlots,
+          }
+        : null,
+    });
+    if (!guard.ok || !session) {
+      await this.rejectShopAction(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session?.shopEpoch ?? null,
+        actionId: message.actionId,
+        weaponId: message.weaponId,
+        delta: message.delta,
+        reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
+      });
+      return;
+    }
+    const player = this.state.players[slot];
+    if (!player) {
+      await this.rejectShopAction(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session.shopEpoch,
+        actionId: message.actionId,
+        weaponId: message.weaponId,
+        delta: message.delta,
+        reason: 'MALFORMED',
+      });
+      return;
+    }
+    const result = applyShopTransaction({
+      player,
+      counters: session.purchasesByPlayerId,
+      weaponId: message.weaponId,
+      delta: message.delta,
+    });
+    if (!result.ok) {
+      await this.rejectShopAction(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session.shopEpoch,
+        actionId: message.actionId,
+        weaponId: message.weaponId,
+        delta: message.delta,
+        reason: result.reason,
+      });
+      return;
+    }
+    this.state.players = this.state.players.map((candidate, index) =>
+      index === slot ? result.player : candidate,
+    );
+    session.purchasesByPlayerId = result.counters;
+    const stateMessage = this.buildShopStateMessage();
+    this.state.processedShopActions[message.actionId] = {
+      slot,
+      result: stateMessage,
+    };
+    await this.saveState();
+    this.broadcast(stateMessage);
+  }
 
-    this.shopSession = null;
-    this.resetShotCoordination();
-    this.state.roundEnded = false;
-    this.state.roundNumber++;
-    this.state.shotNumberInRound = 0;
-    this.state.lastAppliedEarnings = null;
-    this.state.lastAppliedZeusStrike = null;
-    this.resetZeusRoundState();
-    this.state.currentPlayerIndex = 0;
-    const roster = players.length > 0 ? players : this.state.players;
-    this.state.players = roster.map((p) => ({
-      ...p,
+  private async handleShopReady(
+    slot: number,
+    message: ShopReadyMessage,
+  ): Promise<void> {
+    if (!this.state) return;
+    const previous = this.state.processedShopActions[message.actionId];
+    if (previous) {
+      if (previous.slot === slot) {
+        const result =
+          !this.state.shopSession &&
+          this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
+            ? this.state.lastCompletedShop
+            : previous.result;
+        this.sendToSlot(slot, result);
+      }
+      return;
+    }
+    const session = this.state.shopSession;
+    const guard = guardShopAction({
+      isHumanSlot: this.state.slotConfigs[slot]?.type === 'human',
+      slot,
+      actionId: message.actionId,
+      requestedEpoch: message.shopEpoch,
+      session: session
+        ? {
+            epoch: session.shopEpoch,
+            roundNumber: session.roundNumber,
+            readySlots: session.readySlots,
+          }
+        : null,
+    });
+    if (!guard.ok || !session) {
+      await this.rejectShopAction(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session?.shopEpoch ?? null,
+        actionId: message.actionId,
+        reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
+      });
+      return;
+    }
+    session.readySlots = [...session.readySlots, slot].sort(
+      (left, right) => left - right,
+    );
+    const readySlots = new Set(session.readySlots);
+    const allHumansReady = this.getHumanSlots().every((humanSlot) =>
+      readySlots.has(humanSlot),
+    );
+    if (allHumansReady) {
+      await this.completeShopPhase(slot, message.actionId);
+      return;
+    }
+    const stateMessage = this.buildShopStateMessage();
+    this.state.processedShopActions[message.actionId] = {
+      slot,
+      result: stateMessage,
+    };
+    await this.saveState();
+    this.broadcast(stateMessage);
+  }
+
+  private async completeShopPhase(
+    fromSlot: number,
+    actionId: string,
+  ): Promise<void> {
+    if (!this.state?.shopSession) return;
+    const completedRoundNumber = this.state.shopSession.roundNumber;
+    const shopEpoch = this.state.shopSession.shopEpoch;
+    const nextRoundNumber = completedRoundNumber + 1;
+    const nextPlayers = this.state.players.map((player) => ({
+      ...player,
       tank: {
-        ...p.tank,
+        ...player.tank,
         isDead: false,
-        health: p.tank?.maxHealth ?? 100,
-        shield: p.tank?.maxShield ?? 40,
+        health: player.tank.maxHealth,
+        shield: player.tank.maxShield,
         lastDirectAttackerId: undefined,
       },
     }));
+    const finish: ShopFinishMessage = {
+      type: 'SHOP_FINISH',
+      shopEpoch,
+      completedRoundNumber,
+      nextRoundNumber,
+      players: nextPlayers,
+    };
+
+    // Le résultat terminal existe dans l'état avant le nettoyage de session.
+    this.state.lastCompletedShop = finish;
+    this.state.processedShopActions[actionId] = {
+      slot: fromSlot,
+      result: finish,
+    };
+    this.state.players = nextPlayers;
+    this.state.shopSession = null;
+    this.resetShotCoordination();
+    this.state.roundEnded = false;
+    this.state.roundNumber = nextRoundNumber;
+    this.state.shotNumberInRound = 0;
+    this.state.lastAppliedEarnings = null;
+    this.state.lastAppliedZeusStrike = null;
+    this.state.processedFireActions = {};
+    this.state.lastFireResultBySlot = {};
+    this.resetZeusRoundState();
+    this.state.currentPlayerIndex = 0;
     await this.saveState();
 
-    // Single completion signal — clients must apply players only inside finishShopPhase
-    // (before startNextRound).
-    this.broadcast({
-      type: 'SHOP_FINISH',
-      players: this.state.players,
-      slot: fromSlot,
-    });
+    this.broadcast(finish);
     this.broadcast({
       type: 'STATE_UPDATE',
       currentPlayerIndex: 0,
       roundEnded: false,
+      players: this.state.players,
     });
     this.maybeRunAIServerTurn();
   }

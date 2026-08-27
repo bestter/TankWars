@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { isStrictOnlineMessage, parseStrictOnlineMessage } from "../protocol";
+import {
+  decodeFireMessage,
+  decodeShopBuySellMessage,
+  decodeShopReadyMessage,
+  isStrictOnlineMessage,
+  parseStrictOnlineMessage,
+} from "../protocol";
 
 describe("strict online protocol", () => {
   it("accepts a complete SHOT identity", () => {
     expect(isStrictOnlineMessage({
       type: "SHOT",
+      actionId: "fire-4",
       shotId: 4,
       roundNumber: 2,
       shotNumberInRound: 1,
@@ -17,7 +24,7 @@ describe("strict online protocol", () => {
 
   it("rejects malformed, decimal, and unknown-weapon payloads", () => {
     expect(isStrictOnlineMessage({ type: "SHOT_EARNINGS", shotId: 1, authorityEpoch: 1, awards: [{ playerId: "p1", amount: 1.5 }], deadSlots: [false], directHitVictimIds: [], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } })).toBe(false);
-    expect(isStrictOnlineMessage({ type: "SHOT", shotId: 1, roundNumber: 1, shotNumberInRound: 1, isFirstShotOfRound: true, slot: 0, ownerId: "p1", command: { angle: 0, power: 1, weaponId: "LASER" } })).toBe(false);
+    expect(isStrictOnlineMessage({ type: "SHOT", actionId: "fire-1", shotId: 1, roundNumber: 1, shotNumberInRound: 1, isFirstShotOfRound: true, slot: 0, ownerId: "p1", command: { angle: 0, power: 1, weaponId: "LASER" } })).toBe(false);
     expect(parseStrictOnlineMessage("{bad-json")).toBeNull();
   });
 
@@ -58,6 +65,7 @@ describe("strict online protocol", () => {
     })).toBe(true);
     expect(isStrictOnlineMessage({
       type: "SHOT",
+      actionId: "fire-1",
       shotId: 1,
       roundNumber: 1,
       shotNumberInRound: 1,
@@ -66,5 +74,84 @@ describe("strict online protocol", () => {
       ownerId: "p1",
       command: { angle: 45, power: 50, weaponId: "ZEUS_LIGHTNING" },
     })).toBe(false);
+  });
+
+  it("décode les intentions boutique et omet les champs malformés du refus", () => {
+    expect(
+      decodeShopBuySellMessage({
+        type: "SHOP_BUY_SELL",
+        shopEpoch: 2,
+        actionId: "buy-1",
+        weaponId: "NUKE",
+        delta: 1,
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      decodeShopBuySellMessage({
+        type: "SHOP_BUY_SELL",
+        shopEpoch: 2,
+        actionId: "buy-2",
+        weaponId: "LASER",
+        delta: 2,
+      }),
+    ).toEqual({
+      ok: false,
+      rejection: {
+        type: "SHOP_REJECTED",
+        shopEpoch: 2,
+        actionId: "buy-2",
+        reason: "MALFORMED",
+      },
+    });
+
+    expect(
+      decodeShopReadyMessage({ type: "SHOP_READY", shopEpoch: 2 }),
+    ).toEqual({
+      ok: false,
+      rejection: {
+        type: "SHOP_REJECTED",
+        shopEpoch: 2,
+        reason: "MALFORMED",
+      },
+    });
+  });
+
+  it("valide FIRE, SHOP_STATE et SHOT_CATCH_UP avec identités strictes", () => {
+    expect(
+      decodeFireMessage({
+        type: "FIRE",
+        actionId: "fire-1",
+        command: { angle: 45, power: 50, weaponId: "NUKE" },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      decodeFireMessage({
+        type: "FIRE",
+        actionId: "fire-2",
+        command: { angle: 45, power: 50, weaponId: "LASER" },
+      }),
+    ).toEqual({ ok: false, actionId: "fire-2" });
+
+    expect(
+      isStrictOnlineMessage({
+        type: "SHOP_STATE",
+        shopEpoch: 3,
+        roundNumber: 2,
+        readySlots: [0],
+        players: [],
+        purchasesByPlayerId: { p1: { NUKE: 1 } },
+        aiShopApplied: true,
+      }),
+    ).toBe(true);
+    expect(
+      isStrictOnlineMessage({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 2,
+        activeShotId: null,
+        shots: [],
+        lastFireResult: null,
+      }),
+    ).toBe(true);
   });
 });

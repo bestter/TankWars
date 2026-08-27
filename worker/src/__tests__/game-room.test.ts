@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GameRoom } from '../game-room';
 import type { WeaponId } from '../../../src/types/weapon';
 import type { Player } from '../../../src/types/player';
+import type { ShotMessage } from '../../../src/game/online/protocol';
 
 class MockWebSocket {
   public sent: string[] = [];
@@ -56,8 +57,7 @@ describe('GameRoom Durable Object', () => {
     const setup = createMockCtx();
     mockCtx = setup.ctx;
     // Instantiate GameRoom and ensure ctx is attached
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    room = new GameRoom(mockCtx as any, {});
+    room = new GameRoom(mockCtx as DurableObjectState, {});
     Object.defineProperty(room, 'ctx', { value: mockCtx, writable: true });
   });
 
@@ -314,6 +314,7 @@ describe('GameRoom Durable Object', () => {
 
       const fireMsg = {
         type: 'FIRE',
+        actionId: crypto.randomUUID(),
         command: { angle: 45, power: 60, weaponId: 'MISSILE' as WeaponId },
       };
 
@@ -332,6 +333,60 @@ describe('GameRoom Durable Object', () => {
       expect(shotMsg0?.command.angle).toBe(45);
     });
 
+    it('consumes the last ammo once and keeps an accepted FIRE idempotent', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const state = Reflect.get(room, 'state') as {
+        players: Player[];
+      };
+      state.players[0].inventory = { GRENADE: 1 };
+      state.players[0].tank.currentWeapon = 'GRENADE';
+      const fire = {
+        type: 'FIRE',
+        actionId: 'stable-fire-action',
+        command: { angle: 45, power: 60, weaponId: 'GRENADE' },
+      };
+
+      await handleClientMessage.call(room, 0, JSON.stringify(fire));
+      await handleClientMessage.call(room, 0, JSON.stringify(fire));
+
+      const shooterShots = ws0
+        .getAllMessages<{ type: string; actionId?: string; shotId?: number }>()
+        .filter((message) => message.type === 'SHOT' && message.actionId === fire.actionId);
+      const observerShots = ws1
+        .getAllMessages<{ type: string; actionId?: string }>()
+        .filter((message) => message.type === 'SHOT' && message.actionId === fire.actionId);
+      expect(shooterShots).toHaveLength(2);
+      expect(observerShots).toHaveLength(1);
+      expect(shooterShots[0].shotId).toBe(shooterShots[1].shotId);
+      expect(state.players[0].inventory.GRENADE).toBe(0);
+      expect(state.players[0].tank.currentWeapon).toBe('MISSILE');
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED',
+        shotId: shooterShots[0].shotId,
+        slot: 0,
+        deadSlots: [false, false],
+      }));
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS',
+        shotId: shooterShots[0].shotId,
+        authorityEpoch: 1,
+        awards: [],
+        deadSlots: [false, false],
+        directHitVictimIds: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+      ws0.sent.length = 0;
+
+      await handleClientMessage.call(room, 0, JSON.stringify(fire));
+      expect(
+        ws0.getAllMessages<{ type: string }>().filter((message) => message.type === 'SHOT'),
+      ).toHaveLength(0);
+    });
+
     it('rejects FIRE command from inactive player (slot 1 while turn is slot 0)', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
@@ -340,6 +395,7 @@ describe('GameRoom Durable Object', () => {
 
       const fireMsg = {
         type: 'FIRE',
+        actionId: crypto.randomUUID(),
         command: { angle: 45, power: 60, weaponId: 'MISSILE' as WeaponId },
       };
 
@@ -362,6 +418,7 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'FIRE',
+          actionId: crypto.randomUUID(),
           command: { angle: 50, power: 70, weaponId: 'MISSILE' },
         })
       );
@@ -416,6 +473,16 @@ describe('GameRoom Durable Object', () => {
       const claimMethod = Reflect.get(room, 'claimHumanSlot') as (s: number, n: string) => Promise<void>;
       await claimMethod.call(room, 0, 'Alice');
       await claimMethod.call(room, 1, 'Bob');
+      const state = Reflect.get(room, 'state') as { roundEnded: boolean };
+      state.roundEnded = true;
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_ENTER',
+        roundNumber: 1,
+      }));
     });
 
     it('synchronizes SHOP_BUY_SELL without clobbering other players', async () => {
@@ -424,42 +491,147 @@ describe('GameRoom Durable Object', () => {
         raw: string
       ) => Promise<void>;
 
-      // Slot 0 purchases a grenade with complete player object
+      // Slot 0 purchases a grenade; no client-owned roster is accepted.
       await handleClientMessage.call(
         room,
         0,
         JSON.stringify({
           type: 'SHOP_BUY_SELL',
-          player: {
-            id: 'player-1',
-            name: 'Alice',
-            isHuman: true,
-            money: 175,
-            inventory: { GRENADE: 1 },
-            tank: {
-              id: 'tank-1',
-              position: { x: 80, y: 280 },
-              angle: 45,
-              power: 50,
-              health: 100,
-              maxHealth: 100,
-              shield: 40,
-              maxShield: 40,
-              isDead: false,
-              color: '#5555FF',
-              currentWeapon: 'MISSILE',
-            },
-          },
+          shopEpoch: 1,
+          actionId: 'shop-buy-1',
+          weaponId: 'GRENADE',
+          delta: 1,
         })
       );
 
-      const buyMsg = ws1.getAllMessages<{ type: string; slot: number; players: Array<{ id: string; money: number }> }>().find(
-        (m) => m.type === 'SHOP_BUY_SELL'
+      const buyMsg = ws1.getAllMessages<{ type: string; players: Array<{ id: string; money: number }> }>().find(
+        (m) => m.type === 'SHOP_STATE' && m.players.some((player) => player.money === 175)
       );
 
       expect(buyMsg).toBeDefined();
-      expect(buyMsg?.slot).toBe(0);
       expect(buyMsg?.players.find((p) => p.id === 'player-1')?.money).toBe(175);
+    });
+
+    it('applies parallel purchases and retries each action exactly once', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const buy0 = {
+        type: 'SHOP_BUY_SELL',
+        shopEpoch: 1,
+        actionId: 'parallel-buy-0',
+        weaponId: 'GRENADE',
+        delta: 1,
+      };
+      const buy1 = {
+        type: 'SHOP_BUY_SELL',
+        shopEpoch: 1,
+        actionId: 'parallel-buy-1',
+        weaponId: 'DRILLER',
+        delta: 1,
+      };
+
+      await handleClientMessage.call(room, 0, JSON.stringify(buy0));
+      await handleClientMessage.call(room, 1, JSON.stringify(buy1));
+      await handleClientMessage.call(room, 0, JSON.stringify(buy0));
+
+      const state = Reflect.get(room, 'state') as { players: Player[] };
+      expect(state.players[0]).toMatchObject({
+        money: 175,
+        inventory: { GRENADE: 3 },
+      });
+      expect(state.players[1]).toMatchObject({
+        money: 160,
+        inventory: { DRILLER: 1 },
+      });
+    });
+
+    it('rejects a stale shop epoch without mutating the roster', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      const state = Reflect.get(room, 'state') as { players: Player[] };
+      const before = state.players[0].money;
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL',
+        shopEpoch: 0,
+        actionId: 'stale-buy',
+        weaponId: 'GRENADE',
+        delta: 1,
+      }));
+
+      expect(state.players[0].money).toBe(before);
+      expect(
+        ws0.getAllMessages<{ type: string; reason?: string }>().find(
+          (message) =>
+            message.type === 'SHOP_REJECTED' &&
+            message.reason === 'STALE_SHOP_EPOCH',
+        ),
+      ).toBeDefined();
+    });
+
+    it('normalizes and shops for AI exactly once when the session opens', async () => {
+      const setup = createMockCtx();
+      const aiRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(aiRoom, 'ctx', { value: setup.ctx, writable: true });
+      await aiRoom.fetchCreate(
+        new Request('http://localhost/api/room', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'room-ai-shop-once',
+            numPlayers: 2,
+            slotConfigs: [
+              { type: 'human' },
+              { type: 'ai', aiProfile: 'v4-smart' },
+            ],
+            origin: 'http://localhost:5173',
+          }),
+        }),
+      );
+      const socket = new MockWebSocket();
+      const sockets = Reflect.get(aiRoom, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, socket as unknown as WebSocket);
+      const claim = Reflect.get(aiRoom, 'claimHumanSlot') as (
+        slot: number,
+        name: string,
+      ) => Promise<void>;
+      await claim.call(aiRoom, 0, 'Alice');
+      const state = Reflect.get(aiRoom, 'state') as {
+        roundEnded: boolean;
+        players: Player[];
+        shopSession: { purchasesByPlayerId: Record<string, Record<string, number>> } | null;
+      };
+      state.roundEnded = true;
+      state.players[1].money = 1_000;
+      state.players[1].inventory = { NUKE: 9 };
+      const handle = Reflect.get(aiRoom, 'handleClientMessage') as (
+        slot: number,
+        raw: string,
+      ) => Promise<void>;
+
+      await handle.call(aiRoom, 0, JSON.stringify({
+        type: 'SHOP_ENTER',
+        roundNumber: 1,
+      }));
+      const afterFirst = {
+        money: state.players[1].money,
+        inventory: { ...state.players[1].inventory },
+        counters: JSON.stringify(state.shopSession?.purchasesByPlayerId ?? {}),
+      };
+      await handle.call(aiRoom, 0, JSON.stringify({
+        type: 'SHOP_ENTER',
+        roundNumber: 1,
+      }));
+
+      expect(state.players[1].money).toBe(afterFirst.money);
+      expect(state.players[1].inventory).toEqual(afterFirst.inventory);
+      expect(JSON.stringify(state.shopSession?.purchasesByPlayerId ?? {})).toBe(
+        afterFirst.counters,
+      );
+      expect(state.players[1].inventory.NUKE).toBeLessThanOrEqual(2);
     });
 
     it('broadcasts SHOP_FINISH only when all human slots have sent SHOP_READY', async () => {
@@ -474,7 +646,8 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'SHOP_READY',
-          players: [],
+          shopEpoch: 1,
+          actionId: 'ready-0',
         })
       );
 
@@ -487,12 +660,29 @@ describe('GameRoom Durable Object', () => {
         1,
         JSON.stringify({
           type: 'SHOP_READY',
-          players: [],
+          shopEpoch: 1,
+          actionId: 'ready-1',
         })
       );
 
       shopFinish = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'SHOP_FINISH');
       expect(shopFinish).toBeDefined();
+
+      ws0.sent.length = 0;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'REQUEST_GAME_START',
+        roundNumber: 2,
+        lastSeenShotId: 0,
+        lastAppliedShopEpoch: 0,
+      }));
+      const catchUpTypes = ws0
+        .getAllMessages<{ type: string }>()
+        .map((message) => message.type);
+      expect(catchUpTypes).toContain('SHOT_CATCH_UP');
+      expect(catchUpTypes).toContain('SHOP_FINISH');
+      expect(catchUpTypes.indexOf('SHOT_CATCH_UP')).toBeLessThan(
+        catchUpTypes.indexOf('SHOP_FINISH'),
+      );
     });
 
     it('advances turn to slot 1 in round 2 when slot 1 died in round 1 and respawned', async () => {
@@ -555,8 +745,12 @@ describe('GameRoom Durable Object', () => {
       );
 
       // 2. Both players ready up in shop (Round 2 starts)
-      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'SHOP_READY', players: [] }));
-      await handleClientMessage.call(room, 1, JSON.stringify({ type: 'SHOP_READY', players: [] }));
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_READY', shopEpoch: 1, actionId: 'round-two-ready-0',
+      }));
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'SHOP_READY', shopEpoch: 1, actionId: 'round-two-ready-1',
+      }));
 
       // 3. Slot 0 fires in Round 2
       await handleClientMessage.call(
@@ -564,6 +758,7 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'FIRE',
+          actionId: crypto.randomUUID(),
           command: { angle: 45, power: 50, weaponId: 'MISSILE' },
         })
       );
@@ -597,53 +792,64 @@ describe('GameRoom Durable Object', () => {
   });
 
   describe('Security and edge cases', () => {
-    it('rejects FIRE payloads with invalid weaponId', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+    async function startSecurityRoom(): Promise<{
+      ws0: MockWebSocket;
+      handle: (slot: number, raw: string) => Promise<void>;
+    }> {
+      await room.fetchCreate(new Request('http://localhost/api/room', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'room-security',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+      const ws0 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, new MockWebSocket() as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (
         slot: number,
-        raw: string
+        name: string,
       ) => Promise<void>;
-      // Force room into started state
-      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+      const handle = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string,
+      ) => Promise<void>;
+      return { ws0, handle };
+    }
 
-      const payload = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: 50, weaponId: 'INVALID_WEAPON' } });
-      await handleClientMessage.call(room, 0, payload);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid weaponId'), 'INVALID_WEAPON');
-      warnSpy.mockRestore();
+    it('rejects FIRE payloads with invalid weaponId', async () => {
+      const { ws0, handle } = await startSecurityRoom();
+      const payload = JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 0, power: 50, weaponId: 'INVALID_WEAPON' } });
+      await handle.call(room, 0, payload);
+      expect(ws0.getAllMessages<{ type: string; reason?: string }>().some(
+        (message) => message.type === 'FIRE_REJECTED' && message.reason === 'MALFORMED',
+      )).toBe(true);
     });
 
     it('rejects FIRE payloads with power out of bounds', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
-        slot: number,
-        raw: string
-      ) => Promise<void>;
-      // Force room into started state
-      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
+      const { ws0, handle } = await startSecurityRoom();
+      const payloadHigh = JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 0, power: 150, weaponId: 'MISSILE' } });
+      await handle.call(room, 0, payloadHigh);
 
-      const payloadHigh = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: 150, weaponId: 'MISSILE' } });
-      await handleClientMessage.call(room, 0, payloadHigh);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Power out of bounds'), 150);
-
-      const payloadLow = JSON.stringify({ type: 'FIRE', command: { angle: 0, power: -10, weaponId: 'MISSILE' } });
-      await handleClientMessage.call(room, 0, payloadLow);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Power out of bounds'), -10);
-      warnSpy.mockRestore();
+      const payloadLow = JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 0, power: -10, weaponId: 'MISSILE' } });
+      await handle.call(room, 0, payloadLow);
+      expect(ws0.getAllMessages<{ type: string; reason?: string }>().filter(
+        (message) => message.type === 'FIRE_REJECTED' && message.reason === 'MALFORMED',
+      )).toHaveLength(2);
     });
 
     it('rejects FIRE payloads with angle out of bounds', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
-        slot: number,
-        raw: string
-      ) => Promise<void>;
-      // Force room into started state
-      Reflect.set(room, 'state', { started: true, currentPlayerIndex: 0, slotConfigs: [{type: 'human'}], numPlayers: 1 });
-
-      const payloadHigh = JSON.stringify({ type: 'FIRE', command: { angle: 400, power: 50, weaponId: 'MISSILE' } });
-      await handleClientMessage.call(room, 0, payloadHigh);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Angle out of bounds'), 400);
-      warnSpy.mockRestore();
+      const { ws0, handle } = await startSecurityRoom();
+      const payloadHigh = JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 400, power: 50, weaponId: 'MISSILE' } });
+      await handle.call(room, 0, payloadHigh);
+      expect(ws0.getAllMessages<{ type: string; reason?: string }>().some(
+        (message) => message.type === 'FIRE_REJECTED' && message.reason === 'MALFORMED',
+      )).toBe(true);
     });
 
     it('handles invalid JSON gracefully without throwing', async () => {
@@ -716,11 +922,11 @@ describe('GameRoom Durable Object', () => {
       await claimMethod.call(room, 0, 'Alice');
       await claimMethod.call(room, 1, 'Bob');
 
-      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'FIRE' }));
+      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID() }));
       await handleClientMessage.call(
         room,
         0,
-        JSON.stringify({ type: 'FIRE', command: { angle: 45, power: 50, weaponId: 12 } }),
+        JSON.stringify({ type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 12 } }),
       );
 
       const shots = ws0.getAllMessages<{ type: string }>().filter((m) => m.type === 'SHOT');
@@ -772,7 +978,7 @@ describe('GameRoom Durable Object', () => {
     it('rejects non-authority, stale epoch, and decimal awards', async () => {
       const { ws0, handle } = await startTwoHumanRoom();
       await handle.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       const base = {
@@ -789,7 +995,7 @@ describe('GameRoom Durable Object', () => {
     it('applies a report atomically once and advances as soon as physics settles', async () => {
       const { ws0, handle } = await startTwoHumanRoom();
       await handle.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       const report = {
@@ -812,7 +1018,7 @@ describe('GameRoom Durable Object', () => {
     it('advances immediately once physics and a zero-gain report are both present', async () => {
       const { ws0, handle } = await startTwoHumanRoom();
       await handle.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       await handle.call(room, 0, JSON.stringify({
@@ -830,7 +1036,7 @@ describe('GameRoom Durable Object', () => {
     it('records direct-hit revenge authoritatively and rejects BULLDOZER victim reports', async () => {
       const { ws0, handle } = await startTwoHumanRoom();
       await handle.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       await handle.call(room, 0, JSON.stringify({
@@ -849,7 +1055,7 @@ describe('GameRoom Durable Object', () => {
       }));
       state.players[1].inventory.BULLDOZER = 1;
       await handle.call(room, 1, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'BULLDOZER' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'BULLDOZER' },
       }));
       const bulldozerShot = ws0.getAllMessages<{ type: string; shotId: number }>()
         .filter((message) => message.type === 'SHOT')
@@ -873,7 +1079,7 @@ describe('GameRoom Durable Object', () => {
       state.zeusState.shotsWithoutEarnings = 9;
 
       await handle.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       await handle.call(room, 0, JSON.stringify({
@@ -967,11 +1173,50 @@ describe('GameRoom Durable Object', () => {
         slot: number,
         raw: string
       ) => Promise<void>;
-      await handleClientMessage.call(room, 0, JSON.stringify({ type: 'REQUEST_GAME_START' }));
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'REQUEST_GAME_START',
+        roundNumber: 1,
+        lastSeenShotId: 0,
+        lastAppliedShopEpoch: 0,
+      }));
 
       const types = ws0.getAllMessages<{ type: string }>().map((m) => m.type);
       expect(types).toContain('GAME_START');
       expect(types).toContain('STATE_UPDATE');
+
+      const state = Reflect.get(room, 'state') as {
+        shotHistory: ShotMessage[];
+        activeShot: { shotId: number } | null;
+      };
+      const createShot = (shotId: number): ShotMessage => ({
+        type: 'SHOT',
+        actionId: `catch-up-${shotId}`,
+        shotId,
+        roundNumber: 1,
+        shotNumberInRound: shotId,
+        isFirstShotOfRound: shotId === 1,
+        slot: shotId % 2,
+        ownerId: `player-${(shotId % 2) + 1}`,
+        command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      });
+      state.shotHistory = [createShot(3), createShot(1), createShot(2)];
+      state.activeShot = { shotId: 3 };
+      ws0.sent.length = 0;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'REQUEST_GAME_START',
+        roundNumber: 1,
+        lastSeenShotId: 1,
+        lastAppliedShopEpoch: 0,
+      }));
+      const catchUp = ws0
+        .getAllMessages<{
+          type: string;
+          activeShotId?: number | null;
+          shots?: ShotMessage[];
+        }>()
+        .find((message) => message.type === 'SHOT_CATCH_UP');
+      expect(catchUp?.activeShotId).toBe(3);
+      expect(catchUp?.shots?.map((shot) => shot.shotId)).toEqual([2, 3]);
     });
 
     it('broadcasts authoritative ROUND_END after settled earnings', async () => {
@@ -1001,7 +1246,7 @@ describe('GameRoom Durable Object', () => {
         raw: string
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
-        type: 'FIRE', command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
       await handleClientMessage.call(
@@ -1075,7 +1320,7 @@ describe('GameRoom Durable Object', () => {
       expect(roundEnd1).toBeUndefined();
     });
 
-    it('rejects unauthorized SHOP_FINISH from non-host slot', async () => {
+    it('ignores client-authored SHOP_FINISH snapshots', async () => {
       const payload = {
         roomId: 'room-idor-shop-finish',
         numPlayers: 2,
@@ -1126,7 +1371,7 @@ describe('GameRoom Durable Object', () => {
       expect(postPlayers[1].money).not.toBe(99999);
     });
 
-    it('rejects unauthorized full roster override on SHOP_ENTER from non-host slot', async () => {
+    it('ignores a roster attached to an otherwise valid SHOP_ENTER', async () => {
       const payload = {
         roomId: 'room-idor-shop-enter',
         numPlayers: 2,
@@ -1155,6 +1400,7 @@ describe('GameRoom Durable Object', () => {
       const currentPlayers = (
         Reflect.get(room, 'state') as { players: Array<{ id: string; money: number; tank: { id: string } }> }
       ).players;
+      (Reflect.get(room, 'state') as { roundEnded: boolean }).roundEnded = true;
 
       const spoofedPlayers = currentPlayers.map((p, idx) => ({
         ...p,
@@ -1167,6 +1413,7 @@ describe('GameRoom Durable Object', () => {
         1,
         JSON.stringify({
           type: 'SHOP_ENTER',
+          roundNumber: 1,
           players: spoofedPlayers,
         }),
       );
@@ -1175,6 +1422,7 @@ describe('GameRoom Durable Object', () => {
         Reflect.get(room, 'state') as { players: Array<{ id: string; money: number }> }
       ).players;
       expect(postPlayers[1].money).not.toBe(88888);
+      expect((Reflect.get(room, 'state') as { shopSession: unknown }).shopSession).not.toBeNull();
     });
   });
 });

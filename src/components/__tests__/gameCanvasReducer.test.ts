@@ -157,6 +157,77 @@ describe("gameCanvasReducer", () => {
     expect(nextState.currentShopIndex).toBe(0);
   });
 
+  it("starts a local visit with a fresh epoch and fresh counters", () => {
+    const roster = [createMockPlayer("p1", "Alice"), createMockPlayer("p2", "Bob")];
+    const stateBefore: GameCanvasState = {
+      ...INITIAL_STATE,
+      lastAppliedShopEpoch: 4,
+      shopSession: {
+        ...INITIAL_STATE.shopSession,
+        counters: { p1: { NUKE: 1 } },
+      },
+    };
+
+    const nextState = gameCanvasReducer(stateBefore, {
+      type: "START_SHOP",
+      roster,
+      mode: "local",
+      completedRoundNumber: 2,
+    });
+
+    expect(nextState.shopSession).toMatchObject({
+      epoch: 5,
+      roundNumber: 2,
+      counters: {},
+      authoritativeReceived: true,
+    });
+  });
+
+  it("waits for the first authoritative SHOP_STATE online", () => {
+    const roster = [createMockPlayer("p1", "Alice"), createMockPlayer("p2", "Bob")];
+    const started = gameCanvasReducer(INITIAL_STATE, {
+      type: "START_SHOP",
+      roster,
+      mode: "online",
+      completedRoundNumber: 3,
+    });
+    expect(started.shopSession).toMatchObject({
+      epoch: null,
+      roundNumber: 3,
+      authoritativeReceived: false,
+      counters: {},
+    });
+
+    const pendingIntent = {
+      kind: "READY" as const,
+      actionId: "ready-1",
+      shopEpoch: 7,
+    };
+    const withPending = gameCanvasReducer(started, {
+      type: "SET_SHOP_PENDING",
+      intent: pendingIntent,
+    });
+    const authoritative = gameCanvasReducer(withPending, {
+      type: "APPLY_SHOP_STATE",
+      shopEpoch: 7,
+      roundNumber: 3,
+      readySlots: [1],
+      players: roster,
+      counters: { p1: { NUKE: 1 }, p2: { GRENADE: 2 } },
+      aiShopApplied: true,
+    });
+    expect(authoritative.shopSession).toEqual({
+      epoch: 7,
+      roundNumber: 3,
+      readySlots: [1],
+      counters: { p1: { NUKE: 1 }, p2: { GRENADE: 2 } },
+      aiShopApplied: true,
+      authoritativeReceived: true,
+      pendingIntent,
+      denial: null,
+    });
+  });
+
   it("should handle ADVANCE_SHOPPER action", () => {
     const action: GameCanvasAction = { type: "ADVANCE_SHOPPER", nextIndex: 1 };
     const nextState = gameCanvasReducer(INITIAL_STATE, action);
@@ -215,7 +286,11 @@ describe("gameCanvasReducer", () => {
       roundResult: { damageDealt: {}, earningsByPlayer: {}, terrainDestroyed: 5, survivors: [] },
     };
 
-    const action: GameCanvasAction = { type: "FINISH_SHOP", uiPlayers: roster };
+    const action: GameCanvasAction = {
+      type: "FINISH_SHOP",
+      uiPlayers: roster,
+      shopEpoch: 6,
+    };
     const nextState = gameCanvasReducer(stateBefore, action);
 
     expect(nextState.gamePhase).toBe("COMBAT");
@@ -224,6 +299,8 @@ describe("gameCanvasReducer", () => {
     expect(nextState.shopPlayers).toEqual([]);
     expect(nextState.currentShopIndex).toBe(0);
     expect(nextState.uiPlayers).toEqual(roster);
+    expect(nextState.lastAppliedShopEpoch).toBe(6);
+    expect(nextState.shopSession).toEqual(INITIAL_STATE.shopSession);
   });
 
   it("should handle END_MATCH_FROM_SHOP action", () => {
@@ -255,6 +332,7 @@ describe("gameCanvasReducer", () => {
   it("should handle RESET_GAME action", () => {
     const newPlayers = [createMockPlayer("p1", "Alice"), createMockPlayer("p2", "Bob")];
     const dirtyState: GameCanvasState = {
+      ...INITIAL_STATE,
       gamePhase: "GAME_OVER",
       wind: 20,
       turnInfo: {

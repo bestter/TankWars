@@ -76,7 +76,12 @@ export function useOnlineLobby({
   const requestGameStartCatchUp = useCallback((ws: WebSocket): void => {
     if (gameStartedRef.current || ws.readyState !== WebSocket.OPEN) return;
     missedGameStartRef.current = true;
-    ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+    ws.send(JSON.stringify({
+      type: 'REQUEST_GAME_START',
+      roundNumber: 0,
+      lastSeenShotId: 0,
+      lastAppliedShopEpoch: 0,
+    }));
   }, []);
 
   // Keep slotConfigs in sync with numPlayers (exact same pattern as local MainMenu — no setState inside effect)

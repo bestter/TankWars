@@ -1,6 +1,11 @@
 import type { Player } from "../../../types/player";
 import type { WeaponId } from "../../../types/weapon";
 import { WEAPON_REGISTRY } from "../../../types/weapon";
+import { getShopPolicy } from "../../shop/shopPolicy";
+import {
+  applyShopTransaction,
+  type ShopVisitCounters,
+} from "../../shop/shopTransaction";
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
@@ -28,28 +33,29 @@ function maxStockFor(
   return Number.POSITIVE_INFINITY;
 }
 
-function toSafeInventory(
-  inventory: Player["inventory"],
-): NonNullable<Player["inventory"]> {
-  const safe = Object.create(null) as NonNullable<Player["inventory"]>;
-  if (!inventory || typeof inventory !== "object") return safe;
-  for (const [k, v] of Object.entries(inventory)) {
-    if (!FORBIDDEN_KEYS.has(k)) {
-      (safe as Record<string, unknown>)[k] = v;
-    }
-  }
-  return safe;
+export interface AutoBuyResult {
+  readonly player: Player;
+  readonly counters: ShopVisitCounters;
 }
 
 /**
- * Logique d'achat automatique pour les IA en fonction de leur profil stratégique.
- * Modifie directement l'objet joueur passé en paramètre.
+ * Logique d'achat automatique immutable pour les IA en fonction de leur profil stratégique.
+ * Chaque achat unitaire passe par le domaine boutique partagé.
  */
-export function autoBuyForAI(aiPlayer: Player): void {
-  if (!isSafePlayerTarget(aiPlayer) || aiPlayer.isHuman) return;
-  if (hasForbiddenOwnKey(aiPlayer)) return;
+export function autoBuyForAI(
+  aiPlayer: Player,
+  initialCounters: ShopVisitCounters = {},
+): AutoBuyResult {
+  if (
+    !isSafePlayerTarget(aiPlayer) ||
+    aiPlayer.isHuman ||
+    hasForbiddenOwnKey(aiPlayer)
+  ) {
+    return { player: aiPlayer, counters: initialCounters };
+  }
 
-  const inventory = toSafeInventory(aiPlayer.inventory);
+  let player = aiPlayer;
+  let counters = initialCounters;
   const profile = aiPlayer.aiProfile ?? "v1-random";
   const isDisplacementFocused = profile === "v4-smart";
 
@@ -89,7 +95,7 @@ export function autoBuyForAI(aiPlayer: Player): void {
   }
 
   let spent = 0;
-  let money = aiPlayer.money ?? 0;
+  let money = player.money;
   const budget = Math.floor(money * budgetRatio);
 
   for (const wid of preferredOrder) {
@@ -99,25 +105,36 @@ export function autoBuyForAI(aiPlayer: Player): void {
     const def = WEAPON_REGISTRY[wid];
     if (!def) continue;
 
-    let buysThisWeapon = 0;
-    const maxStock = maxStockFor(wid, profile, isDisplacementFocused);
-    const maxBuysPerWeapon = 12;
+    const strategyMaxStock = maxStockFor(
+      wid,
+      profile,
+      isDisplacementFocused,
+    );
+    const targetStock = Math.min(
+      strategyMaxStock,
+      getShopPolicy(wid).maxStock,
+    );
 
     while (
-      buysThisWeapon < maxBuysPerWeapon &&
-      (inventory[wid] ?? 0) < maxStock &&
+      (player.inventory[wid] ?? 0) < targetStock &&
       money >= def.price &&
       spent + def.price <= budget &&
       money > 80 // garde un peu d'argent
     ) {
-      const currentStock = inventory[wid] ?? 0;
-      money -= def.price;
-      inventory[wid] = currentStock + 1;
-      spent += def.price;
-      buysThisWeapon++;
+      const transaction = applyShopTransaction({
+        player,
+        counters,
+        weaponId: wid,
+        delta: 1,
+      });
+      if (!transaction.ok) break;
+      const previousMoney = player.money;
+      player = transaction.player;
+      counters = transaction.counters;
+      money = player.money;
+      spent += previousMoney - money;
     }
   }
 
-  aiPlayer.money = money;
-  aiPlayer.inventory = inventory;
+  return { player, counters };
 }

@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
-import type { CurrentTurnInfo } from "../game/engine/TurnManager";
-import { VGA_PALETTE } from "../types/game";
+import type {
+  AuthoritativeReplayMode,
+  CurrentTurnInfo,
+} from "../game/engine/TurnManager";
+import { VGA_PALETTE, type FireCommand } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
 import type { TerrainMaterial } from "../types/terrain";
-import { DEFAULT_INVENTORY } from "../types/weapon";
-import { applyShopDelta } from "./shopBuySell";
+import { ALL_WEAPON_IDS, DEFAULT_INVENTORY } from "../types/weapon";
 import type { GamePhase } from "../types/game";
 import {
   gameCanvasReducer,
   INITIAL_STATE,
   ZEUS_ANNOUNCEMENT_DURATION_MS,
   type EarningsOverlayState,
+  type PendingShopIntent,
+  type ShopClientSessionState,
 } from "./gameCanvasReducer";
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
@@ -25,7 +29,20 @@ import {
   type OnlineCanvasSnapshot,
 } from "../utils/onlineSession";
 import {
+  applyShopTransaction,
+  normalizeRosterAtShopOpen,
+} from "../game/shop/shopTransaction";
+import {
   isStrictOnlineMessage,
+  type ClientFireMessage,
+  type FireRejectedMessage,
+  type RequestGameStartMessage,
+  type RoundEndMessage,
+  type ShopBuySellMessage,
+  type ShopEnterMessage,
+  type ShopStateMessage,
+  type ShopReadyMessage,
+  type ShotMessage,
   type ShotEarningsMessage,
 } from "../game/online/protocol";
 import type {
@@ -133,6 +150,23 @@ interface UseGameSessionProps {
  */
 let combatWsEffectGen = 0;
 
+interface PendingFireIntent {
+  readonly actionId: string;
+  readonly command: FireCommand;
+}
+
+interface QueuedAuthoritativeShot {
+  readonly message: ShotMessage;
+  readonly mode: AuthoritativeReplayMode;
+}
+
+interface AuthoritativeEconomyPlayer {
+  readonly id: string;
+  readonly money: number;
+  readonly inventory: Partial<Record<WeaponId, number>>;
+  readonly currentWeapon: WeaponId;
+}
+
 export function useGameSession({
   initialPlayers,
   onReturnToMenu,
@@ -160,30 +194,48 @@ export function useGameSession({
   const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
   const activeServerShotIdRef = useRef<number | null>(null);
   const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
+  const lastSeenShotIdRef = useRef(resumeCanvas?.lastSeenShotId ?? 0);
+  const lastAppliedShopEpochRef = useRef(
+    resumeCanvas?.lastAppliedShopEpoch ?? 0,
+  );
+  const lastCompletedRoundNumberRef = useRef(
+    resumeCanvas?.lastCompletedRoundNumber ?? 0,
+  );
+  const shopSessionRef = useRef<ShopClientSessionState>(
+    resumeCanvas?.shopSession ?? INITIAL_STATE.shopSession,
+  );
+  const pendingFireRef = useRef<PendingFireIntent | null>(null);
+  const shotQueueRef = useRef<QueuedAuthoritativeShot[]>([]);
+  const queuedShotIdsRef = useRef<Set<number>>(new Set());
+  const replayedShotIdsRef = useRef<Set<number>>(new Set());
+  const shotReplayActiveRef = useRef(false);
+  const catchUpActiveShotIdRef = useRef<number | null>(null);
+  const authoritativeEconomyRef = useRef<AuthoritativeEconomyPlayer[]>([]);
+  const reapplyAuthoritativeEconomyRef = useRef<() => void>(() => {});
+  const pendingRoundEndApplyRef = useRef<(() => void) | null>(null);
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
   const lastAppliedZeusStrikeIdRef = useRef(resumeCanvas?.lastAppliedZeusStrikeId ?? 0);
   const pendingShotPreviewsRef = useRef<Map<number, ResolvedShotPreview>>(new Map());
   const submitShotEarningsRef = useRef<(preview: ResolvedShotPreview) => void>(() => {});
-  const shopSyncRef = useRef({
-    applyRemoteAdvance: (nextIndex: number) => {
-      void nextIndex;
-    },
-    applyRemoteBuySell: (players: Player[]) => {
-      void players;
-    },
-    /** Optional final roster (money/inventory) applied only before startNextRound. */
-    finishShop: (players?: Player[]) => {
-      void players;
-    },
-  });
   /** Shop WS messages received before this client entered SHOP (SUMMARY/CELEBRATION lag). */
-  const pendingShopNextIndexRef = useRef<number | null>(null);
-  const pendingShopFinishRef = useRef(false);
-  const pendingShopPlayersRef = useRef<Player[] | null>(null);
+  const pendingShopFinishRef = useRef<{
+    players: Player[];
+    shopEpoch: number;
+    nextRoundNumber: number;
+  } | null>(null);
   const handleGoToShopRef = useRef<() => void>(() => {});
-  const finishShopPhaseRef = useRef<(finalPlayers?: Player[]) => void>(() => {});
+  const finishShopPhaseRef = useRef<
+    (
+      finalPlayers?: Player[],
+      shopEpoch?: number,
+      nextRoundNumber?: number,
+    ) => void
+  >(() => {});
+  const applyShopFinishRef = useRef<
+    (players: Player[], shopEpoch: number, nextRoundNumber: number) => void
+  >(() => {});
 
   const [state, dispatch] = useReducer(
     gameCanvasReducer,
@@ -199,6 +251,10 @@ export function useGameSession({
     roundResult,
     lastRoundOutcome,
     wind: canvasWind,
+    shopSession,
+    lastAppliedShopEpoch,
+    lastCompletedRoundNumber,
+    lastSeenShotId,
   } = state;
 
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
@@ -237,6 +293,22 @@ export function useGameSession({
   useEffect(() => {
     currentMancheRef.current = state.currentManche;
   }, [state.currentManche]);
+
+  useEffect(() => {
+    shopSessionRef.current = shopSession;
+  }, [shopSession]);
+
+  useEffect(() => {
+    lastAppliedShopEpochRef.current = lastAppliedShopEpoch;
+  }, [lastAppliedShopEpoch]);
+
+  useEffect(() => {
+    lastCompletedRoundNumberRef.current = lastCompletedRoundNumber;
+  }, [lastCompletedRoundNumber]);
+
+  useEffect(() => {
+    lastSeenShotIdRef.current = lastSeenShotId;
+  }, [lastSeenShotId]);
 
   // Persist online match so refresh / accidental MENU does not drop into the waiting-room lobby.
   useEffect(() => {
@@ -286,6 +358,11 @@ export function useGameSession({
           roundResult?.earningsByPlayer ??
           {},
         earningsOverlay: state.earningsOverlay,
+        shopSession,
+        lastAppliedShopEpoch,
+        lastCompletedRoundNumber,
+        lastSeenShotId,
+        fireRejection: state.fireRejection,
       },
     });
   }, [
@@ -308,6 +385,11 @@ export function useGameSession({
     initialWind,
     initialCurrentPlayerIndex,
     state.earningsOverlay,
+    shopSession,
+    lastAppliedShopEpoch,
+    lastCompletedRoundNumber,
+    lastSeenShotId,
+    state.fireRejection,
   ]);
 
   const clearShopAiTimeout = useCallback((): void => {
@@ -378,9 +460,6 @@ export function useGameSession({
       ? onlineShopPlayer
       : (shopPlayers[currentShopIndex] ?? null);
 
-  /** Host (slot 0) applies AI auto-buy once when entering online boutique. */
-  const isOnlineShopHost = gameMode === 'online' && slot === 0;
-
   const clearCelebrationTimer = useCallback(() => {
     if (celebrationTimerRef.current !== null) {
       clearTimeout(celebrationTimerRef.current);
@@ -436,7 +515,6 @@ export function useGameSession({
 
     ctxRef.current = ctx;
 
-    let fireChannel: BroadcastChannel | null = null;
     let gameWs: WebSocket | null = null;
 
     // === GAME ENGINE ===
@@ -444,6 +522,7 @@ export function useGameSession({
       gravity: 260,
       baseShotSpeed: 420,
     });
+    const tm = engine.getTurnManager();
 
     // Online: load the authoritative terrain heights sent by the server
     // BEFORE setPlayers, so spawnTanks will snap tank Y positions to the server heights.
@@ -460,55 +539,9 @@ export function useGameSession({
       setRNG(createSeededRNG(seedFromRoomRound(roomId, 1)));
     }
 
-    // Cross-tab sync for online dev testing (same browser, multiple tabs)
-    // When one tab fires, it announces the command via BroadcastChannel so other tabs can replay the exact same shot.
-    // This keeps terrain/damage in sync until we have real server-authoritative simulation + WS broadcast.
-    /** Dedup remote SHOT replays (reconnect catch-up can re-send the same in-flight shot). */
-    let lastReplayedShotKey: string | null = null;
-
-    if (gameMode === 'online' && roomId && localPlayerId) {
-      fireChannel = new BroadcastChannel(`tankwars-fire-${roomId}`);
-
-      // Listen for fires announced by other tabs
-      fireChannel.onmessage = (ev) => {
-        if (ev.data?.type === 'FIRE' && ev.data.command) {
-          const tm = engine.getTurnManager();
-          // Only replay if it's not our own local fire (to avoid double execution)
-          if (ev.data.fromPlayerId !== localPlayerId) {
-            tm.executeRemoteFire(ev.data.command);
-          }
-        }
-      };
-
-      // Wrap tryFire so that when *we* successfully fire as local human, we announce to other tabs
-      const tm = engine.getTurnManager();
-      const origTryFire = tm.tryFire.bind(tm);
-      tm.tryFire = () => {
-        const ok = origTryFire();
-        console.log(`[Game] tm.tryFire called. ok=${ok}, localPlayerId=${localPlayerId}`);
-        if (ok && localPlayerId) {
-          // Use the exact command captured before ammo consume / weapon auto-switch.
-          const command = tm.getLastLocalFireCommand();
-          if (command) {
-            console.log('[Game] Sending FIRE to server via WebSocket');
-            sendCombatMessage({ type: 'FIRE', command });
-            // Same-browser multi-tab fallback (does not replace the server path).
-            if (fireChannel) {
-              fireChannel.postMessage({
-                type: 'FIRE',
-                fromPlayerId: localPlayerId,
-                command,
-              });
-            }
-          }
-        }
-        return ok;
-      };
-    }
-
     // === Game phase persistent WS connection to the room DO for authoritative sync ===
-    // This survives the lobby unmount. Client sends FIRE to server; server simulates and broadcasts SHOT + STATE_UPDATE to all sockets in room.
-    // Clients apply server state for sync, and replay SHOT for visuals.
+    // This survives the lobby unmount. FIRE is only an intention: every client,
+    // including the shooter, launches physics from the persisted SHOT echo.
     let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let combatStartTimer: ReturnType<typeof setTimeout> | null = null;
     let isMounted = true;
@@ -521,6 +554,113 @@ export function useGameSession({
     const combatToken = token;
     const wsBase = getOnlineWsBase();
     const localSlotNum = Number(combatSlot);
+
+    const buildCatchUpRequest = (): RequestGameStartMessage => ({
+      type: "REQUEST_GAME_START",
+      roundNumber: currentMancheRef.current,
+      lastSeenShotId: lastSeenShotIdRef.current,
+      lastAppliedShopEpoch: lastAppliedShopEpochRef.current,
+    });
+    let pendingAuthoritativeTransition: (() => void) | null = null;
+
+    const drainAuthoritativeShotQueue = (): void => {
+      if (shotReplayActiveRef.current) return;
+      if (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused()) return;
+
+      const next = shotQueueRef.current.shift();
+      if (!next) {
+        reapplyAuthoritativeEconomyRef.current();
+        const applyRoundEnd = pendingRoundEndApplyRef.current;
+        pendingRoundEndApplyRef.current = null;
+        applyRoundEnd?.();
+        const applyTransition = pendingAuthoritativeTransition;
+        pendingAuthoritativeTransition = null;
+        applyTransition?.();
+        if (catchUpActiveShotIdRef.current === null) tm.unlockAfterCatchUp();
+        return;
+      }
+      queuedShotIdsRef.current.delete(next.message.shotId);
+      if (
+        replayedShotIdsRef.current.has(next.message.shotId) ||
+        next.message.shotId <= lastSeenShotIdRef.current
+      ) {
+        drainAuthoritativeShotQueue();
+        return;
+      }
+
+      shotReplayActiveRef.current = true;
+      activeServerShotIdRef.current = next.message.shotId;
+      if (
+        pendingFireRef.current?.actionId === next.message.actionId
+      ) {
+        pendingFireRef.current = null;
+        dispatch({ type: "SET_FIRE_REJECTION", reason: null });
+      }
+      tm.executeRemoteFire(next.message.command, {
+        fromSlot: next.message.slot,
+        ownerId: next.message.ownerId,
+        identity: {
+          shotId: next.message.shotId,
+          isFirstShotOfRound: next.message.isFirstShotOfRound,
+        },
+        mode: next.mode,
+      });
+    };
+
+    const enqueueAuthoritativeShots = (
+      shots: readonly ShotMessage[],
+      mode: AuthoritativeReplayMode,
+    ): void => {
+      for (const message of [...shots].sort((a, b) => a.shotId - b.shotId)) {
+        if (
+          message.shotId <= lastSeenShotIdRef.current ||
+          replayedShotIdsRef.current.has(message.shotId) ||
+          queuedShotIdsRef.current.has(message.shotId) ||
+          (shotReplayActiveRef.current &&
+            activeServerShotIdRef.current === message.shotId)
+        ) {
+          continue;
+        }
+        queuedShotIdsRef.current.add(message.shotId);
+        shotQueueRef.current.push({ message, mode });
+      }
+      shotQueueRef.current.sort(
+        (a, b) => a.message.shotId - b.message.shotId,
+      );
+      if (mode === "CATCH_UP") tm.lockForCatchUp();
+      drainAuthoritativeShotQueue();
+    };
+
+    tm.onAuthoritativeShotSettled = (shotId, mode) => {
+      shotReplayActiveRef.current = false;
+      replayedShotIdsRef.current.add(shotId);
+      lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
+      dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
+      if (
+        mode === "CATCH_UP" &&
+        catchUpActiveShotIdRef.current === shotId
+      ) {
+        catchUpActiveShotIdRef.current = shotId;
+      }
+      drainAuthoritativeShotQueue();
+    };
+
+    tm.setFireIntentHandler((command) => {
+      if (pendingFireRef.current) return;
+      const actionId = crypto.randomUUID();
+      const pending: PendingFireIntent = {
+        actionId,
+        command: { ...command },
+      };
+      pendingFireRef.current = pending;
+      dispatch({ type: "SET_FIRE_REJECTION", reason: null });
+      const message: ClientFireMessage = {
+        type: "FIRE",
+        actionId,
+        command: pending.command,
+      };
+      sendCombatMessage(message);
+    });
 
     const clearCombatReconnect = (): void => {
       if (combatReconnectTimer !== null) {
@@ -544,31 +684,234 @@ export function useGameSession({
     };
     submitShotEarningsRef.current = submitShotEarnings;
 
-    const syncWireBalances = (value: unknown): void => {
+    const syncWireEconomy = (value: unknown): void => {
       if (!Array.isArray(value)) return;
-      const balances: Array<{ playerId: string; money: number }> = [];
+      const updates: AuthoritativeEconomyPlayer[] = [];
       for (const entry of value) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-        const player = entry as Record<string, unknown>;
+        const wirePlayer = entry as Record<string, unknown>;
         if (
-          typeof player.id !== 'string' ||
-          typeof player.money !== 'number' ||
-          !Number.isSafeInteger(player.money) ||
-          player.money < 0
+          typeof wirePlayer.id !== 'string' ||
+          typeof wirePlayer.money !== 'number' ||
+          !Number.isSafeInteger(wirePlayer.money) ||
+          wirePlayer.money < 0
         ) return;
-        balances.push({ playerId: player.id, money: player.money });
+        if (
+          !wirePlayer.inventory ||
+          typeof wirePlayer.inventory !== "object" ||
+          Array.isArray(wirePlayer.inventory) ||
+          !wirePlayer.tank ||
+          typeof wirePlayer.tank !== "object" ||
+          Array.isArray(wirePlayer.tank)
+        ) return;
+        const inventory: Partial<Record<WeaponId, number>> = {};
+        for (const [weaponId, stock] of Object.entries(
+          wirePlayer.inventory as Record<string, unknown>,
+        )) {
+          if (
+            !ALL_WEAPON_IDS.includes(weaponId as WeaponId) ||
+            typeof stock !== "number" ||
+            !Number.isSafeInteger(stock) ||
+            stock < 0
+          ) return;
+          inventory[weaponId as WeaponId] = stock;
+        }
+        const currentWeapon = (wirePlayer.tank as Record<string, unknown>)[
+          "currentWeapon"
+        ];
+        if (
+          typeof currentWeapon !== "string" ||
+          !ALL_WEAPON_IDS.includes(currentWeapon as WeaponId)
+        ) return;
+        updates.push({
+          id: wirePlayer.id,
+          money: wirePlayer.money,
+          inventory,
+          currentWeapon: currentWeapon as WeaponId,
+        });
       }
-      engine.syncAuthoritativeBalances(balances);
-      dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
+      authoritativeEconomyRef.current = updates;
+      reapplyAuthoritativeEconomyRef.current();
+    };
+
+    reapplyAuthoritativeEconomyRef.current = (): void => {
+      const livePlayers = engine.getTankManager().getPlayers();
+      const livePlayersById = new Map(
+        livePlayers.map((player) => [player.id, player]),
+      );
+      for (const update of authoritativeEconomyRef.current) {
+        const livePlayer = livePlayersById.get(update.id);
+        if (!livePlayer) continue;
+        livePlayer.money = update.money;
+        livePlayer.inventory = { ...update.inventory };
+        livePlayer.tank.currentWeapon = update.currentWeapon;
+      }
+      dispatch({ type: "SET_UI_PLAYERS", players: [...livePlayers] });
+    };
+
+    const applyFireRejection = (message: FireRejectedMessage): void => {
+      const pending = pendingFireRef.current;
+      if (
+        message.actionId !== undefined &&
+        pending?.actionId !== message.actionId
+      ) return;
+      const roster = engine.getTankManager().getPlayers();
+      const localPlayer = roster[localSlotNum];
+      if (localPlayer) {
+        localPlayer.inventory = { ...message.inventory };
+        localPlayer.tank.currentWeapon = message.currentWeapon;
+        authoritativeEconomyRef.current =
+          authoritativeEconomyRef.current.map((entry) =>
+            entry.id === localPlayer.id
+              ? {
+                  ...entry,
+                  inventory: { ...message.inventory },
+                  currentWeapon: message.currentWeapon,
+                }
+              : entry,
+          );
+        dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
+      }
+      pendingFireRef.current = null;
+      tm.rejectPendingFireIntent();
+      dispatch({ type: "SET_FIRE_REJECTION", reason: message.reason });
+    };
+
+    const applyRoundEndMessage = (message: RoundEndMessage): void => {
+      if (message.roundNumber <= lastCompletedRoundNumberRef.current) return;
+      if (gamePhaseRef.current !== 'COMBAT') return;
+      lastCompletedRoundNumberRef.current = Math.max(
+        lastCompletedRoundNumberRef.current,
+        message.roundNumber,
+      );
+      dispatch({
+        type: "SET_LAST_COMPLETED_ROUND",
+        roundNumber: message.roundNumber,
+      });
+      roundEndFromNetworkRef.current = true;
+      engine.syncRoundEndFromRemote(
+        message.players,
+        message.roundWinnerId,
+        message.isDraw,
+      );
+    };
+
+    const applyShopStateMessage = (message: ShopStateMessage): void => {
+      if (message.shopEpoch <= lastAppliedShopEpochRef.current) return;
+      const pending = shopSessionRef.current.pendingIntent;
+      const localPlayer = message.players[localSlotNum];
+      let acknowledged = false;
+      if (pending?.shopEpoch === message.shopEpoch) {
+        if (pending.kind === "READY") {
+          acknowledged = message.readySlots.includes(localSlotNum);
+        } else if (localPlayer) {
+          acknowledged =
+            localPlayer.money === pending.expectedMoney &&
+            (localPlayer.inventory[pending.weaponId] ?? 0) ===
+              pending.expectedStock &&
+            (message.purchasesByPlayerId[localPlayer.id]?.[
+              pending.weaponId
+            ] ?? 0) === pending.expectedPurchaseCount;
+        }
+      }
+      const relevantPending =
+        pending?.shopEpoch === message.shopEpoch ? pending : null;
+      const nextShopSession: ShopClientSessionState = {
+        epoch: message.shopEpoch,
+        roundNumber: message.roundNumber,
+        counters: message.purchasesByPlayerId,
+        readySlots: message.readySlots,
+        aiShopApplied: message.aiShopApplied,
+        authoritativeReceived: true,
+        pendingIntent: acknowledged ? null : relevantPending,
+        denial: null,
+      };
+      const liveById = new Map(
+        engine.getTankManager().getPlayers().map((player) => [player.id, player]),
+      );
+      const mergedPlayers = message.players.map((authoritativePlayer) => {
+        const livePlayer = liveById.get(authoritativePlayer.id);
+        if (!livePlayer) return authoritativePlayer;
+        return {
+          ...livePlayer,
+          name: authoritativePlayer.name,
+          isHuman: authoritativePlayer.isHuman,
+          aiProfile: authoritativePlayer.aiProfile,
+          money: authoritativePlayer.money,
+          inventory: { ...authoritativePlayer.inventory },
+          tank: {
+            ...livePlayer.tank,
+            currentWeapon: authoritativePlayer.tank.currentWeapon,
+          },
+        };
+      });
+
+      clearCelebrationTimer();
+      engine.clearRoundCelebration();
+      shopSessionRef.current = nextShopSession;
+      engine.getTankManager().setPlayers(mergedPlayers);
+      shopPlayersRef.current = mergedPlayers;
+      localShopDoneRef.current = message.readySlots.includes(localSlotNum);
+      setLocalShopDone(localShopDoneRef.current);
+      dispatch({
+        type: "APPLY_SHOP_STATE",
+        shopEpoch: message.shopEpoch,
+        roundNumber: message.roundNumber,
+        readySlots: message.readySlots,
+        players: mergedPlayers,
+        counters: message.purchasesByPlayerId,
+        aiShopApplied: message.aiShopApplied,
+      });
+      dispatch({
+        type: "SET_SHOP_PENDING",
+        intent: nextShopSession.pendingIntent,
+      });
+      currentMancheRef.current = Math.max(
+        currentMancheRef.current,
+        message.roundNumber + 1,
+      );
+      lastCompletedRoundNumberRef.current = Math.max(
+        lastCompletedRoundNumberRef.current,
+        message.roundNumber,
+      );
+      gamePhaseRef.current = "SHOP";
+      tm.pauseForInterRound();
     };
 
     function bindCombatWsHandlers(ws: WebSocket): void {
       ws.onopen = () => {
         console.log('[Game] Combat WS connected to server');
         flushCombatMessages();
-        // Pull turn index + any in-flight SHOT we may have missed during transition/reconnect.
+        const pendingFire = pendingFireRef.current;
+        if (pendingFire) {
+          const retry: ClientFireMessage = {
+            type: "FIRE",
+            actionId: pendingFire.actionId,
+            command: pendingFire.command,
+          };
+          ws.send(JSON.stringify(retry));
+        }
+        const pendingShop = shopSessionRef.current.pendingIntent;
+        if (pendingShop?.kind === "BUY_SELL") {
+          const retry: ShopBuySellMessage = {
+            type: "SHOP_BUY_SELL",
+            shopEpoch: pendingShop.shopEpoch,
+            actionId: pendingShop.actionId,
+            weaponId: pendingShop.weaponId,
+            delta: pendingShop.delta,
+          };
+          ws.send(JSON.stringify(retry));
+        } else if (pendingShop?.kind === "READY") {
+          const retry: ShopReadyMessage = {
+            type: "SHOP_READY",
+            shopEpoch: pendingShop.shopEpoch,
+            actionId: pendingShop.actionId,
+          };
+          ws.send(JSON.stringify(retry));
+        }
+        // Pull ordered shots and any active shop transition missed during reconnect.
         try {
-          ws.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+          ws.send(JSON.stringify(buildCatchUpRequest()));
         } catch {
           // ignore
         }
@@ -588,44 +931,39 @@ export function useGameSession({
             if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
               engine.setWindForce(msg.wind);
             }
-            syncWireBalances(msg.players);
+            syncWireEconomy(msg.players);
           }
 
           if (strictMessage?.type === 'SHOT') {
-            const shotSlot = strictMessage.slot;
-            activeServerShotIdRef.current = strictMessage.shotId;
-            console.log('[Game] Received SHOT from slot=', shotSlot, ', cmd=', strictMessage.command);
-            // For the firer, we already executed the full local fire for immediate feedback.
-            // Replay for every other slot so observers always see the projectile.
-            if (
-              shotSlot !== localSlotNum &&
-              gamePhaseRef.current === 'COMBAT' &&
-              !tm.isInterRoundPaused()
-            ) {
-              const shotKey = String(strictMessage.shotId);
-              if (shotKey === lastReplayedShotKey && engine.getActiveProjectiles().length > 0) {
-                console.log('[Game] Skipping duplicate in-flight SHOT replay');
-              } else {
-                lastReplayedShotKey = shotKey;
-                tm.executeRemoteFire(strictMessage.command, {
-                  fromSlot: shotSlot,
-                  ownerId: strictMessage.ownerId,
-                  identity: {
-                    shotId: strictMessage.shotId,
-                    isFirstShotOfRound: strictMessage.isFirstShotOfRound,
-                  },
-                });
-              }
-            } else if (shotSlot === localSlotNum) {
-              engine.associateActiveShotId(
-                strictMessage.shotId,
-                strictMessage.isFirstShotOfRound,
-              );
-            } else {
-              console.log(
-                `[Game] SHOT not replayed (shotSlot=${shotSlot}, localSlot=${localSlotNum}, phase=${gamePhaseRef.current}, paused=${tm.isInterRoundPaused()})`,
+            enqueueAuthoritativeShots(
+              [strictMessage],
+              strictMessage.slot === localSlotNum
+                ? "LIVE_LOCAL"
+                : "LIVE_REMOTE",
+            );
+          }
+
+          if (strictMessage?.type === "SHOT_CATCH_UP") {
+            catchUpActiveShotIdRef.current = strictMessage.activeShotId;
+            enqueueAuthoritativeShots(strictMessage.shots, "CATCH_UP");
+            if (strictMessage.lastFireResult?.type === "FIRE_REJECTED") {
+              applyFireRejection(strictMessage.lastFireResult);
+            } else if (strictMessage.lastFireResult?.type === "SHOT") {
+              enqueueAuthoritativeShots(
+                [strictMessage.lastFireResult],
+                "CATCH_UP",
               );
             }
+            if (
+              strictMessage.shots.length === 0 &&
+              strictMessage.activeShotId === null
+            ) {
+              tm.unlockAfterCatchUp();
+            }
+          }
+
+          if (strictMessage?.type === "FIRE_REJECTED") {
+            applyFireRejection(strictMessage);
           }
 
           if (strictMessage?.type === 'AUTHORITY_CHANGED') {
@@ -643,6 +981,15 @@ export function useGameSession({
           ) {
             engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
             lastAppliedShotIdRef.current = strictMessage.shotId;
+            if (activeServerShotIdRef.current === strictMessage.shotId) {
+              activeServerShotIdRef.current = null;
+            }
+            if (catchUpActiveShotIdRef.current === strictMessage.shotId) {
+              catchUpActiveShotIdRef.current = null;
+              if (!shotReplayActiveRef.current && shotQueueRef.current.length === 0) {
+                tm.unlockAfterCatchUp();
+              }
+            }
             pendingShotPreviewsRef.current.delete(strictMessage.shotId);
             const roster = [...engine.getTankManager().getPlayers()];
             dispatch({ type: "SET_UI_PLAYERS", players: roster });
@@ -697,13 +1044,17 @@ export function useGameSession({
           if (strictMessage?.type === 'ZEUS_STATE') {
             engine.syncRemoteZeusState(strictMessage.activeZeusId);
             const roster = engine.getTankManager().getPlayers();
-            for (let index = 0; index < strictMessage.deadSlots.length; index++) {
-              if (!strictMessage.deadSlots[index]) continue;
-              const player = roster[index];
-              if (!player) continue;
-              player.tank.health = 0;
-              player.tank.shield = 0;
-              player.tank.isDead = true;
+            const isReplayingShots =
+              shotReplayActiveRef.current || shotQueueRef.current.length > 0;
+            if (!isReplayingShots) {
+              for (let index = 0; index < strictMessage.deadSlots.length; index++) {
+                if (!strictMessage.deadSlots[index]) continue;
+                const player = roster[index];
+                if (!player) continue;
+                player.tank.health = 0;
+                player.tank.shield = 0;
+                player.tank.isDead = true;
+              }
             }
             if (strictMessage.activeStrike) {
               engine.startRemoteZeusStrike(
@@ -711,7 +1062,7 @@ export function useGameSession({
                 strictMessage.activeStrike.resolveAt,
               );
             }
-            if (gamePhaseRef.current === 'COMBAT') {
+            if (gamePhaseRef.current === 'COMBAT' && !isReplayingShots) {
               tm.syncTurn(strictMessage.currentPlayerIndex);
             }
             dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
@@ -728,54 +1079,72 @@ export function useGameSession({
               !tm.isInterRoundPaused()
             ) {
               tm.syncTurn(strictMessage.currentPlayerIndex);
-              if (strictMessage.players) syncWireBalances(strictMessage.players);
+              if (strictMessage.players) syncWireEconomy(strictMessage.players);
               if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
                 engine.setWindForce(msg.wind);
               }
             }
           }
 
-          if (msg.type === 'SHOP_BUY_SELL' && Array.isArray(msg.players) && msg.slot !== slot) {
-            shopSyncRef.current.applyRemoteBuySell(msg.players);
+          if (strictMessage?.type === "SHOP_STATE") {
+            if (
+              shotReplayActiveRef.current ||
+              shotQueueRef.current.length > 0
+            ) {
+              pendingAuthoritativeTransition = () => {
+                applyShopStateMessage(strictMessage);
+              };
+            } else {
+              applyShopStateMessage(strictMessage);
+            }
           }
 
-          // Authoritative parallel shop state from the Durable Object.
-          if (msg.type === 'SHOP_STATE') {
-            if (Array.isArray(msg.players) && msg.players.length > 0) {
-              shopSyncRef.current.applyRemoteBuySell(msg.players);
+          if (strictMessage?.type === "SHOP_REJECTED") {
+            const pending = shopSessionRef.current.pendingIntent;
+            if (
+              strictMessage.actionId === undefined ||
+              pending?.actionId === strictMessage.actionId
+            ) {
+              shopSessionRef.current = {
+                ...shopSessionRef.current,
+                pendingIntent: null,
+                denial: strictMessage.reason,
+              };
+              dispatch({
+                type: "SET_SHOP_DENIAL",
+                denial: strictMessage.reason,
+              });
             }
-            if (msg.done === true) {
-              shopSyncRef.current.finishShop(
-                Array.isArray(msg.players) && msg.players.length > 0
-                  ? msg.players
-                  : undefined,
+          }
+
+          if (strictMessage?.type === "SHOP_FINISH") {
+            const applyFinish = () => {
+              applyShopFinishRef.current(
+                strictMessage.players,
+                strictMessage.shopEpoch,
+                strictMessage.nextRoundNumber,
               );
-            } else if (typeof msg.shopIndex === 'number' && Number.isInteger(msg.shopIndex) && msg.mode !== 'parallel') {
-              // Legacy sequential cursor (older server).
-              shopSyncRef.current.applyRemoteAdvance(msg.shopIndex);
+            };
+            if (
+              shotReplayActiveRef.current ||
+              shotQueueRef.current.length > 0
+            ) {
+              pendingAuthoritativeTransition = applyFinish;
+            } else {
+              applyFinish();
             }
-            // Parallel mode: readySlots is informational only; combat starts on SHOP_FINISH.
-          }
-
-          // Legacy advance relay (older server / mid-deploy). Prefer SHOP_STATE.
-          if (msg.type === 'SHOP_ADVANCE' && typeof msg.nextIndex === 'number' && Number.isInteger(msg.nextIndex) && msg.slot !== slot) {
-            shopSyncRef.current.applyRemoteAdvance(msg.nextIndex);
-          }
-
-          // Server authority for boutique end. Must not setPlayers after combat already started
-          // (that stomped spawnTanks and re-applied isDead → P1 "turn" but cannot fire).
-          if (msg.type === 'SHOP_FINISH' && Array.isArray(msg.players)) {
-            shopSyncRef.current.finishShop(msg.players);
           }
 
           if (strictMessage?.type === 'ROUND_END') {
-            if (gamePhaseRef.current === 'COMBAT') {
-              roundEndFromNetworkRef.current = true;
-              engine.syncRoundEndFromRemote(
-                strictMessage.players,
-                strictMessage.roundWinnerId,
-                strictMessage.isDraw,
-              );
+            if (
+              shotReplayActiveRef.current ||
+              shotQueueRef.current.length > 0
+            ) {
+              pendingRoundEndApplyRef.current = () => {
+                applyRoundEndMessage(strictMessage);
+              };
+            } else {
+              applyRoundEndMessage(strictMessage);
             }
           }
         } catch (e) {
@@ -828,7 +1197,7 @@ export function useGameSession({
       // Lobby socket is already OPEN — onopen will not fire again; flush + catch-up now.
       flushCombatMessages();
       try {
-        incomingWs.send(JSON.stringify({ type: 'REQUEST_GAME_START' }));
+        incomingWs.send(JSON.stringify(buildCatchUpRequest()));
       } catch {
         // ignore
       }
@@ -852,8 +1221,6 @@ export function useGameSession({
     }
 
     const resumed = resumeCanvas;
-    const tm = engine.getTurnManager();
-
     if (resumed && resumed.uiPlayers.length >= 2) {
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
       engine.restoreRoundEarningsByPlayer(resumed.roundEarningsByPlayer);
@@ -1037,6 +1404,14 @@ export function useGameSession({
 
       const res = engine.buildRoundResult();
       const nextPlayers = [...engine.getTankManager().getPlayers()];
+      lastCompletedRoundNumberRef.current = Math.max(
+        lastCompletedRoundNumberRef.current,
+        currentMancheRef.current,
+      );
+      dispatch({
+        type: "SET_LAST_COMPLETED_ROUND",
+        roundNumber: currentMancheRef.current,
+      });
 
       // Track round end event (custom Zaraz analytics)
       const winner = payload.roundWinner;
@@ -1057,6 +1432,7 @@ export function useGameSession({
       // Trigger the engine-level fireworks celebration
       engine.triggerRoundCelebration(payload.roundWinner || undefined);
 
+      currentMancheRef.current += 1;
       dispatch({
         type: "START_CELEBRATION",
         payload: {
@@ -1142,17 +1518,12 @@ export function useGameSession({
         }
       }, 0);
 
-      if (fireChannel) {
-        fireChannel.onmessage = null;
-        try {
-          fireChannel.close();
-        } catch {
-          void 0;
-        }
-      }
-
       engine.stop();
-      engine.getTurnManager().removeInputListeners();
+      tm.setFireIntentHandler(null);
+      tm.onAuthoritativeShotSettled = undefined;
+      tm.removeInputListeners();
+      reapplyAuthoritativeEconomyRef.current = () => {};
+      pendingRoundEndApplyRef.current = null;
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
@@ -1253,55 +1624,55 @@ export function useGameSession({
       return;
     }
 
-    // Online host: deterministic AI auto-buy once, then share roster via SHOP_ENTER.
-    if (gameMode === 'online' && isOnlineShopHost) {
-      for (const p of roster) {
-        if (!p.isHuman) autoBuyForAI(p);
-      }
+    const completedRoundNumber =
+      gameMode === "online"
+        ? lastCompletedRoundNumberRef.current
+        : Math.max(1, currentMancheRef.current - 1);
+
+    if (gameMode !== "online") {
+      roster = normalizeRosterAtShopOpen(roster);
       engine.getTankManager().setPlayers(roster);
     }
 
-    dispatch({ type: "START_SHOP", roster });
+    dispatch({
+      type: "START_SHOP",
+      roster,
+      mode: gameMode,
+      completedRoundNumber,
+    });
+    const nextShopEpoch =
+      gameMode === "online"
+        ? null
+        : lastAppliedShopEpochRef.current + 1;
+    shopSessionRef.current = {
+      ...INITIAL_STATE.shopSession,
+      epoch: nextShopEpoch,
+      roundNumber: completedRoundNumber,
+      authoritativeReceived: gameMode !== "online",
+    };
     shopPlayersRef.current = roster;
     currentShopIndexRef.current = 0;
     gamePhaseRef.current = "SHOP";
 
-    if (pendingShopPlayersRef.current) {
-      engine.getTankManager().setPlayers(pendingShopPlayersRef.current);
-      dispatch({ type: "MUTATE_SHOP_PLAYERS", players: pendingShopPlayersRef.current });
-      shopPlayersRef.current = pendingShopPlayersRef.current;
-      roster = pendingShopPlayersRef.current;
-    }
-
-    if (pendingShopFinishRef.current) {
-      pendingShopFinishRef.current = false;
-      pendingShopNextIndexRef.current = null;
-      finishShopPhaseRef.current();
+    const pendingFinish = pendingShopFinishRef.current;
+    if (pendingFinish !== null) {
+      pendingShopFinishRef.current = null;
+      finishShopPhaseRef.current(
+        pendingFinish.players,
+        pendingFinish.shopEpoch,
+        pendingFinish.nextRoundNumber,
+      );
       return;
     }
 
     // Online parallel boutique: every human shops; server waits for all SHOP_READY.
     if (gameMode === 'online') {
-      sendCombatMessage({
-        type: 'SHOP_ENTER',
-        players: [...engine.getTankManager().getPlayers()],
-        slot,
-      });
+      const message: ShopEnterMessage = {
+        type: "SHOP_ENTER",
+        roundNumber: completedRoundNumber,
+      };
+      sendCombatMessage(message);
       return;
-    }
-
-    // Local / hotseat: sequential shop index.
-    const pendingNext = pendingShopNextIndexRef.current;
-    if (pendingNext !== null) {
-      pendingShopNextIndexRef.current = null;
-      if (pendingNext >= shopPlayersRef.current.length) {
-        finishShopPhaseRef.current();
-        return;
-      }
-      if (pendingNext > 0) {
-        currentShopIndexRef.current = pendingNext;
-        dispatch({ type: "ADVANCE_SHOPPER", nextIndex: pendingNext });
-      }
     }
 
     if (!roster[0]?.isHuman) {
@@ -1353,29 +1724,81 @@ export function useGameSession({
       return;
     }
 
-    let localUpdated = currentPlayer;
-    const updatedPlayers = enginePlayers.map((p) => {
-      if (p.id !== currentPlayer.id) return p;
-      const updated = applyShopDelta(p, weaponId, delta);
-      if (!updated) return p;
-      if (p.id === localPlayerId) localUpdated = updated;
-      return updated;
+    const transaction = applyShopTransaction({
+      player: currentPlayer,
+      counters: shopSessionRef.current.counters,
+      weaponId,
+      delta,
     });
-
-    // Mettre à jour les joueurs dans le TankManager de l'engine de façon immuable
-    engine.getTankManager().setPlayers(updatedPlayers);
-
-    dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
-
-    if (gameMode === 'online') {
-      // Send only the local player so parallel buys merge cleanly on the server.
-      sendCombatMessage({ type: 'SHOP_BUY_SELL', player: localUpdated, slot });
+    if (!transaction.ok) {
+      dispatch({ type: "SET_SHOP_DENIAL", denial: transaction.reason });
+      return;
     }
+
+    if (gameMode === "online") {
+      const shopEpoch = shopSessionRef.current.epoch;
+      if (
+        shopEpoch === null ||
+        !shopSessionRef.current.authoritativeReceived ||
+        shopSessionRef.current.pendingIntent
+      ) return;
+      const actionId = crypto.randomUUID();
+      const expectedPurchaseCount =
+        transaction.counters[currentPlayer.id]?.[weaponId] ?? 0;
+      const intent: PendingShopIntent = {
+        kind: "BUY_SELL",
+        actionId,
+        shopEpoch,
+        weaponId,
+        delta,
+        expectedMoney: transaction.player.money,
+        expectedStock: transaction.player.inventory[weaponId] ?? 0,
+        expectedPurchaseCount,
+      };
+      shopSessionRef.current = {
+        ...shopSessionRef.current,
+        pendingIntent: intent,
+        denial: null,
+      };
+      dispatch({ type: "SET_SHOP_PENDING", intent });
+      const message: ShopBuySellMessage = {
+        type: "SHOP_BUY_SELL",
+        shopEpoch,
+        actionId,
+        weaponId,
+        delta,
+      };
+      sendCombatMessage(message);
+      return;
+    }
+
+    const updatedPlayers = enginePlayers.map((player) =>
+      player.id === currentPlayer.id ? transaction.player : player,
+    );
+    engine.getTankManager().setPlayers(updatedPlayers);
+    shopPlayersRef.current = updatedPlayers;
+    shopSessionRef.current = {
+      ...shopSessionRef.current,
+      counters: transaction.counters,
+      denial: null,
+    };
+    dispatch({
+      type: "APPLY_LOCAL_SHOP_TRANSACTION",
+      players: updatedPlayers,
+      counters: transaction.counters,
+      denial: null,
+    });
   };
 
   const handleShopReady = (): void => {
     if (gameMode === 'online' && localPlayerId) {
-      if (localShopDoneRef.current) return;
+      const shopEpoch = shopSessionRef.current.epoch;
+      if (
+        localShopDoneRef.current ||
+        shopEpoch === null ||
+        !shopSessionRef.current.authoritativeReceived ||
+        shopSessionRef.current.pendingIntent
+      ) return;
       const eng = engineRef.current;
       const me = eng
         ?.getTankManager()
@@ -1383,14 +1806,24 @@ export function useGameSession({
         .find((p) => p.id === localPlayerId);
       if (!me?.isHuman) return;
 
-      localShopDoneRef.current = true;
-      setLocalShopDone(true);
-
-      const players = eng
-        ? [...eng.getTankManager().getPlayers()]
-        : [...shopPlayersRef.current];
-      // Parallel shop: server waits until every human slot has SHOP_READY.
-      sendCombatMessage({ type: 'SHOP_READY', players, slot });
+      const actionId = crypto.randomUUID();
+      const intent: PendingShopIntent = {
+        kind: "READY",
+        actionId,
+        shopEpoch,
+      };
+      shopSessionRef.current = {
+        ...shopSessionRef.current,
+        pendingIntent: intent,
+        denial: null,
+      };
+      dispatch({ type: "SET_SHOP_PENDING", intent });
+      const message: ShopReadyMessage = {
+        type: "SHOP_READY",
+        shopEpoch,
+        actionId,
+      };
+      sendCombatMessage(message);
       return;
     }
 
@@ -1454,13 +1887,11 @@ export function useGameSession({
       inventory: safeInventory,
     } as Player;
 
-    autoBuyForAI(safeAiPlayer);
-
-    const updatedAiPlayer: Player = {
-      ...current,
-      money: safeAiPlayer.money,
-      inventory: safeAiPlayer.inventory,
-    };
+    const autoBuy = autoBuyForAI(
+      safeAiPlayer,
+      shopSessionRef.current.counters,
+    );
+    const updatedAiPlayer = autoBuy.player;
 
     const engine = engineRef.current;
     const basePlayers = engine
@@ -1474,7 +1905,16 @@ export function useGameSession({
       engine.getTankManager().setPlayers(updatedPlayers);
     }
     shopPlayersRef.current = updatedPlayers;
-    dispatch({ type: "MUTATE_SHOP_PLAYERS", players: updatedPlayers });
+    shopSessionRef.current = {
+      ...shopSessionRef.current,
+      counters: autoBuy.counters,
+    };
+    dispatch({
+      type: "APPLY_LOCAL_SHOP_TRANSACTION",
+      players: updatedPlayers,
+      counters: autoBuy.counters,
+      denial: null,
+    });
 
     advanceToNextShopper();
   };
@@ -1485,8 +1925,16 @@ export function useGameSession({
    *   before startNextRound. Re-applying shop players after spawn restored isDead and left
    *   P1 unable to fire while P2 waited for P1's shot.
    */
-  const finishShopPhase = (finalPlayers?: Player[]): void => {
+  const finishShopPhase = (
+    finalPlayers?: Player[],
+    shopEpoch?: number,
+    nextRoundNumber?: number,
+  ): void => {
     if (shopFinishingRef.current) return;
+    if (
+      shopEpoch !== undefined &&
+      shopEpoch <= lastAppliedShopEpochRef.current
+    ) return;
     // Duplicate SHOP_FINISH / SHOP_STATE after combat already began for this round.
     if (gamePhaseRef.current === "COMBAT" && shopPlayersRef.current.length === 0) {
       return;
@@ -1497,19 +1945,21 @@ export function useGameSession({
 
     shopFinishingRef.current = true;
     clearShopAiTimeout();
-    pendingShopFinishRef.current = false;
-    pendingShopNextIndexRef.current = null;
+    pendingShopFinishRef.current = null;
     localShopDoneRef.current = false;
     setLocalShopDone(false);
 
     if (finalPlayers && finalPlayers.length >= 2) {
       engine.getTankManager().setPlayers(finalPlayers);
       shopPlayersRef.current = finalPlayers;
-    } else if (pendingShopPlayersRef.current && pendingShopPlayersRef.current.length >= 2) {
-      engine.getTankManager().setPlayers(pendingShopPlayersRef.current);
-      shopPlayersRef.current = pendingShopPlayersRef.current;
     }
-    pendingShopPlayersRef.current = null;
+
+    if (nextRoundNumber !== undefined) {
+      currentMancheRef.current = Math.max(
+        currentMancheRef.current,
+        nextRoundNumber,
+      );
+    }
 
     // Re-seed before each new combat round — RNG may have diverged (fireworks, shop, etc.)
     if (gameMode === 'online' && roomId) {
@@ -1539,7 +1989,23 @@ export function useGameSession({
     if (gameMode === 'online') tm.syncTurn(0);
 
     const nextPlayers = [...engine.getTankManager().getPlayers()];
-    dispatch({ type: "FINISH_SHOP", uiPlayers: nextPlayers });
+    const completedShopEpoch =
+      shopEpoch ??
+      (gameMode !== "online"
+        ? shopSessionRef.current.epoch ?? undefined
+        : undefined);
+    if (completedShopEpoch !== undefined) {
+      lastAppliedShopEpochRef.current = Math.max(
+        lastAppliedShopEpochRef.current,
+        completedShopEpoch,
+      );
+    }
+    dispatch({
+      type: "FINISH_SHOP",
+      uiPlayers: nextPlayers,
+      shopEpoch: completedShopEpoch,
+      nextRoundNumber,
+    });
     gamePhaseRef.current = "COMBAT";
     shopPlayersRef.current = [];
     currentShopIndexRef.current = 0;
@@ -1551,94 +2017,48 @@ export function useGameSession({
   useEffect(() => {
     handleGoToShopRef.current = handleGoToShop;
     finishShopPhaseRef.current = finishShopPhase;
-
-    shopSyncRef.current.applyRemoteBuySell = (players: Player[]) => {
-      const eng = engineRef.current;
-      if (!eng) return;
-
-      // While still shopping, keep our in-progress cart for the local human.
-      let merged = players;
-      if (
-        gameMode === "online" &&
-        localPlayerId &&
-        gamePhaseRef.current === "SHOP" &&
-        !localShopDoneRef.current
-      ) {
-        const localLive = eng
-          .getTankManager()
-          .getPlayers()
-          .find((p) => p.id === localPlayerId);
-        if (localLive) {
-          merged = players.map((p) => (p.id === localPlayerId ? localLive : p));
-        }
-      }
-
-      eng.getTankManager().setPlayers(merged);
-      pendingShopPlayersRef.current = merged;
-      if (gamePhaseRef.current === "SHOP") {
-        dispatch({ type: "MUTATE_SHOP_PLAYERS", players: merged });
-        shopPlayersRef.current = merged;
-      }
-    };
-
-    shopSyncRef.current.applyRemoteAdvance = (nextIndex: number) => {
-      // Legacy sequential cursor only — online uses parallel SHOP_READY set.
-      if (gameMode === 'online') return;
+    applyShopFinishRef.current = (
+      finalPlayers: Player[],
+      shopEpoch: number,
+      nextRoundNumber: number,
+    ) => {
       if (shopFinishingRef.current) return;
+      if (shopEpoch <= lastAppliedShopEpochRef.current) return;
 
       const phase = gamePhaseRef.current;
       if (phase !== "SHOP") {
-        pendingShopNextIndexRef.current = Math.max(
-          pendingShopNextIndexRef.current ?? -1,
-          nextIndex,
+        lastCompletedRoundNumberRef.current = Math.max(
+          lastCompletedRoundNumberRef.current,
+          nextRoundNumber - 1,
         );
-        if (phase === "SUMMARY") {
+        currentMancheRef.current = Math.max(
+          currentMancheRef.current,
+          nextRoundNumber,
+        );
+        pendingShopFinishRef.current = {
+          players: finalPlayers,
+          shopEpoch,
+          nextRoundNumber,
+        };
+        if (phase === "CELEBRATION") {
+          clearCelebrationTimer();
+          engineRef.current?.clearRoundCelebration();
+        }
+        if (phase === "COMBAT" || phase === "CELEBRATION") {
+          dispatch({ type: "GO_TO_SUMMARY" });
+          gamePhaseRef.current = "SUMMARY";
+        }
+        if (
+          phase === "COMBAT" ||
+          phase === "CELEBRATION" ||
+          phase === "SUMMARY"
+        ) {
+          // Enter a transient shop then immediately apply the persisted terminal result.
           handleGoToShopRef.current();
         }
         return;
       }
-
-      if (nextIndex >= shopPlayersRef.current.length) {
-        finishShopPhase();
-        return;
-      }
-
-      currentShopIndexRef.current = nextIndex;
-      dispatch({ type: "ADVANCE_SHOPPER", nextIndex });
-
-      const nextPlayer = shopPlayersRef.current[nextIndex];
-      if (nextPlayer && !nextPlayer.isHuman) {
-        clearShopAiTimeout();
-        shopAiTimeoutRef.current = setTimeout(() => {
-          shopAiTimeoutRef.current = null;
-          processNextShopperIfAI();
-        }, 80);
-      }
-    };
-
-    shopSyncRef.current.finishShop = (finalPlayers?: Player[]) => {
-      if (shopFinishingRef.current) return;
-
-      // Duplicate SHOP_FINISH after we already started the next combat round: ignore.
-      if (gamePhaseRef.current === "COMBAT" && shopPlayersRef.current.length === 0) {
-        return;
-      }
-
-      const phase = gamePhaseRef.current;
-      if (phase !== "SHOP") {
-        if (finalPlayers && finalPlayers.length >= 2) {
-          pendingShopPlayersRef.current = finalPlayers;
-        }
-        pendingShopFinishRef.current = true;
-        pendingShopNextIndexRef.current = null;
-        if (phase === "SUMMARY") {
-          // Enter shop then immediately finish with pending roster.
-          handleGoToShopRef.current();
-        }
-        // CELEBRATION: keep pending; SUMMARY → SHOP will drain it.
-        return;
-      }
-      finishShopPhase(finalPlayers);
+      finishShopPhase(finalPlayers, shopEpoch, nextRoundNumber);
     };
 
     // No cleanup here: this effect refreshes handler refs on every render.

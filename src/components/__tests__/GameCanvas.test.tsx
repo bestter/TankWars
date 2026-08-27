@@ -8,6 +8,7 @@ import type { Color, GamePhase, RoundResult } from "../../types/game";
 import type { Player } from "../../types/player";
 import type { WeaponId } from "../../types/weapon";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
+import { createEmptyShopSession } from "../gameCanvasReducer";
 
 // Mock react-i18next
 vi.mock("react-i18next", () => ({
@@ -73,6 +74,11 @@ describe("GameCanvas component", () => {
     uiPlayers: [p1, p2],
     earningsOverlay: null,
     zeusAnnouncement: null,
+    shopSession: createEmptyShopSession(),
+    lastAppliedShopEpoch: 0,
+    lastCompletedRoundNumber: 0,
+    lastSeenShotId: 0,
+    fireRejection: null,
   };
 
   let mockHandlers: {

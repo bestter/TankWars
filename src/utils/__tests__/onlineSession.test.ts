@@ -6,6 +6,7 @@ import {
   type PersistedOnlineSession,
 } from '../onlineSession';
 import { makePlayer } from '../../game/__tests__/helpers';
+import { createEmptyShopSession } from '../../components/gameCanvasReducer';
 
 function installSessionStorageMock(): Map<string, string> {
   const store = new Map<string, string>();
@@ -53,6 +54,11 @@ function makeSession(overrides: Partial<PersistedOnlineSession> = {}): Persisted
       lastAppliedZeusStrikeId: 0,
       roundEarningsByPlayer: {},
       earningsOverlay: null,
+      shopSession: createEmptyShopSession(),
+      lastAppliedShopEpoch: 0,
+      lastCompletedRoundNumber: 0,
+      lastSeenShotId: 0,
+      fireRejection: null,
     },
     ...overrides,
   };

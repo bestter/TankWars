@@ -69,6 +69,7 @@ interface ActiveShotLedger {
   shooterId: string;
   weaponId: WeaponId;
   isFirstShotOfRound: boolean;
+  suppressEconomyReport: boolean;
   aliveBeforeShot: string[];
   damageEvents: CombatDamageEvent[];
   destructionEvents: CombatDestructionEvent[];
@@ -424,7 +425,11 @@ export class GameEngine {
     from: Vector2,
     command: FireCommand,
     ownerId: string = "unknown",
-    identity?: { shotId: number; isFirstShotOfRound: boolean },
+    identity?: {
+      shotId: number;
+      isFirstShotOfRound: boolean;
+      suppressEconomyReport?: boolean;
+    },
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
@@ -446,6 +451,7 @@ export class GameEngine {
       shooterId: ownerId,
       weaponId: command.weaponId,
       isFirstShotOfRound,
+      suppressEconomyReport: identity?.suppressEconomyReport === true,
       aliveBeforeShot,
       damageEvents: [],
       destructionEvents: [],
@@ -553,6 +559,12 @@ export class GameEngine {
   private finalizeActiveShot(): ResolvedShotPreview | null {
     if (!this.activeShotLedger) return this.pendingShotResult;
     const ledger = this.activeShotLedger;
+    if (ledger.suppressEconomyReport) {
+      this.activeShotLedger = null;
+      this.pendingShotResult = null;
+      this.tankManager.clearShotAttribution();
+      return null;
+    }
     const reward = calculateShotRewards({
       ...ledger,
       playerCountAtMatchStart: this.tankManager.getPlayers().length,

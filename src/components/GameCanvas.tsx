@@ -12,6 +12,16 @@ import { MobileControls } from "./MobileControls";
 import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
 import type { TerrainMaterial } from "../types/terrain";
 import { ShotEarningsOverlay } from "./ShotEarningsOverlay";
+import type { FireRejectedReason } from "../game/online/protocol";
+
+const FIRE_REJECTION_KEYS = {
+  MALFORMED: "fire_rejected_malformed",
+  NOT_YOUR_TURN: "fire_rejected_not_your_turn",
+  SHOT_IN_FLIGHT: "fire_rejected_shot_in_flight",
+  ROUND_ENDED: "fire_rejected_round_ended",
+  NO_AMMO: "fire_rejected_no_ammo",
+  ILLEGAL_INVENTORY: "fire_rejected_illegal_inventory",
+} as const satisfies Record<FireRejectedReason, string>;
 
 export interface GameCanvasProps {
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
@@ -84,6 +94,8 @@ export function GameCanvas({
     uiPlayers,
     earningsOverlay,
     zeusAnnouncement,
+    shopSession,
+    fireRejection,
   } = state;
 
   return (
@@ -185,7 +197,11 @@ export function GameCanvas({
         {/* Weapon Shop — online: parallel (each human shops self); local: sequential index */}
         {gamePhase === "SHOP" && shopPlayers.length > 0 && (
           <>
-            {gameMode === "online" ? (
+            {gameMode === "online" && !shopSession.authoritativeReceived ? (
+              <div className="retro-ai-overlay">
+                {t("shop_waiting_state")}
+              </div>
+            ) : gameMode === "online" ? (
               isLocalShopTurn && shopDisplayPlayer ? (
                 <WeaponShop
                   player={shopDisplayPlayer}
@@ -196,6 +212,9 @@ export function GameCanvas({
                   totalShoppers={shopPlayers.filter((p) => p.isHuman).length}
                   onBuySell={handleShopBuySell}
                   onReady={handleShopReady}
+                  purchaseCounters={shopSession.counters[shopDisplayPlayer.id]}
+                  controlsDisabled={shopSession.pendingIntent !== null}
+                  denial={shopSession.denial}
                 />
               ) : (
                 <div className="retro-ai-overlay">
@@ -214,6 +233,11 @@ export function GameCanvas({
                   totalShoppers={shopPlayers.length}
                   onBuySell={handleShopBuySell}
                   onReady={handleShopReady}
+                  purchaseCounters={
+                    shopSession.counters[shopPlayers[currentShopIndex].id]
+                  }
+                  controlsDisabled={shopSession.pendingIntent !== null}
+                  denial={shopSession.denial}
                 />
               ) : (
                 <div className="retro-ai-overlay">
@@ -242,6 +266,12 @@ export function GameCanvas({
               </div>
             )}
           </>
+        )}
+
+        {fireRejection && gamePhase === "COMBAT" && (
+          <div className="retro-ai-overlay" role="alert">
+            {t(FIRE_REJECTION_KEYS[fireRejection])}
+          </div>
         )}
 
         {/* Phase indicator minimal pour SUMMARY seulement (le SHOP a maintenant son propre UI) */}

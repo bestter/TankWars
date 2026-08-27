@@ -280,6 +280,79 @@ describe('TurnManager', () => {
       expect(mockFireCallback).toHaveBeenCalledTimes(1);
     });
 
+    it('locks and emits only an intention before the authoritative SHOT echo', () => {
+      const intent = vi.fn();
+      player1.inventory = { GRENADE: 2 };
+      player1.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.setFireIntentHandler(intent);
+      turnManager.startFirstTurn();
+
+      expect(turnManager.tryFire()).toBe(true);
+      expect(intent).toHaveBeenCalledWith({
+        angle: player1.tank.angle,
+        power: player1.tank.power,
+        weaponId: 'GRENADE',
+      });
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(player1.inventory.GRENADE).toBe(2);
+      expect(turnManager.tryFire()).toBe(false);
+
+      turnManager.rejectPendingFireIntent();
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      player1.tank.currentWeapon = 'MISSILE';
+      player1.inventory = {};
+    });
+
+    it('consumes ammunition only when replaying the authoritative live SHOT', () => {
+      player1.inventory = { GRENADE: 2 };
+      player1.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.setFireIntentHandler(vi.fn());
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'GRENADE' },
+        {
+          fromSlot: 0,
+          identity: { shotId: 11, isFirstShotOfRound: true },
+          mode: 'LIVE_LOCAL',
+        },
+      );
+
+      expect(mockFireCallback).toHaveBeenCalledOnce();
+      expect(player1.inventory.GRENADE).toBe(1);
+      expect(mockFireCallback.mock.calls[0][3]).toMatchObject({
+        shotId: 11,
+        suppressEconomyReport: false,
+      });
+      player1.tank.currentWeapon = 'MISSILE';
+      player1.inventory = {};
+    });
+
+    it('replays catch-up physics without consuming ammo or reporting economy', () => {
+      player2.inventory = { NUKE: 1 };
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 30, power: 75, weaponId: 'NUKE' },
+        {
+          fromSlot: 1,
+          identity: { shotId: 12, isFirstShotOfRound: false },
+          mode: 'CATCH_UP',
+        },
+      );
+
+      expect(player2.inventory.NUKE).toBe(1);
+      expect(mockFireCallback.mock.calls[0][3]).toMatchObject({
+        shotId: 12,
+        suppressEconomyReport: true,
+      });
+      player2.inventory = {};
+    });
+
     it('refreshes input lock when setLocalPlayerId is called after startFirstTurn', () => {
       turnManager.startFirstTurn();
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);

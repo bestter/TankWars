@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**631 tests**, 69 files).
+- After edits: `npm run lint && npm run build && npm run test` (**656 tests**, 69 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -15,9 +15,9 @@
 
 - **Versioned:** `worker/src/index.ts`, `worker/src/game-room.ts`, `worker/wrangler.toml`
 - **Gitignored:** `worker/.wrangler/` (local Wrangler SQLite/cache)
-- **Role:** REST `/api/rooms` + WS to `GameRoom` DO — lobby, turn relay, authoritative rewards/balances, server-owned `ROUND_END`, shop sync
+- **Role:** REST `/api/rooms` + WS to `GameRoom` DO — lobby, server-first FIRE, authoritative rewards/balances and shop, `ROUND_END`, ordered reconnect catch-up
 - **Shared turn math:** `src/game/online/turnOrder.ts` (no DOM, no Workers APIs)
-- **Shared strict protocol:** `src/game/online/protocol.ts`; reward authority is the first connected human with persistent ordered failover.
+- **Shared strict protocol:** `src/game/online/protocol.ts`; `actionId` makes FIRE/shop intentions idempotent, and reward authority is the first connected human with persistent ordered failover.
 - **Deploy:** `npm run worker:deploy` (separate from Cloudflare Pages)
 
 ## Current engine facts (not history)
@@ -38,7 +38,7 @@
 - Zeus deadlock action: `src/game/zeus/` is separate from weapons. With ≥2 living AIs and no living human, appoint fairly after `living AI × 5` shots without a paid hit (`hasEarnings`); reset on earnings, living human, <2 survivors, Zeus death, or round end. Zeus consumes the last living direct attacker (never BULLDOZER), otherwise injected RNG, kills only that target, and earns `25X`. Never add `ZEUS_LIGHTNING` to `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, shop, or `AIEngine`.
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
 - AI v1 is naive and must stay that way. v2–v4 aim through `fallibleAim.ts` (see AGENTS.md table) and pick weapons via `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE) and `bulldozerTactics.ts` (BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). First shot always ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3 (`SHOTS_TO_HIT`). Warmup ease-out then late tighten. Simple is alcoholic with P = `1 − min(1, skill)`. All AI share `hitReaction.ts` (direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%).
-- Online MVP: local physics + server turn order and authoritative reward application. `GameRoom` persists authority epoch/order, active shot, balances, deaths, and the last reward result; duplicate reports cannot double-credit. Full authoritative terrain/damage sim is still planned. `GAME_START` sends `materials` only when the server array matches `heights` length. `loadHeights` resets every column to `DIRT` if materials are omitted or mismatched.
+- Online MVP: local physics launched from authoritative `SHOT` echoes; the server owns turn order, ammo consumption, shop transactions, and reward application. `GameRoom` persists authority epoch/order, active shot/history, shop epochs/actions, balances, deaths, and terminal results; duplicate intentions cannot apply twice. Full authoritative terrain/damage sim is still planned. `GAME_START` sends `materials` only when the server array matches `heights` length. `loadHeights` resets every column to `DIRT` if materials are omitted or mismatched.
 - Online Zeus is Durable Object-authoritative and persisted before broadcast (`ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, reconnect `ZEUS_STATE`). Strike IDs prevent double death/credit; authority failover changes nothing; cosmetic geometry uses only strike ID + time, not room RNG.
 - Test suite: unit/integration coverage for player names (case, whitespace, accents/Unicode, host-locale-independent casing), deferred duplicate validation, and real `i18n.changeLanguage`.
 
@@ -58,7 +58,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (631 / 69)
+3. `npm run test` (656 / 69)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
