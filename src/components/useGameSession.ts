@@ -31,10 +31,8 @@ import {
   normalizeRosterAtShopOpen,
 } from "../game/shop/shopTransaction";
 import {
-  isStrictOnlineMessage,
   ONLINE_PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CLOSE_CODE,
-  readProtocolVersion,
   type ClientFireMessage,
   type FireRejectedMessage,
   type RequestGameStartMessage,
@@ -48,6 +46,7 @@ import {
 } from "../game/online/protocol";
 import { DeferredTransitionBuffer } from "../game/online/deferredTransitions";
 import { AuthoritativeShotQueue } from "../game/online/authoritativeShotQueue";
+import { dispatchCombatMessage } from "./online/combatMessageDispatch";
 import type {
   ZeusAppointment,
   ZeusStrikeResult,
@@ -108,7 +107,7 @@ function createDemoPlayers(): Player[] {
   ];
 }
 
-function buildOverlayAwards(
+export function buildOverlayAwards(
   awards: ReadonlyArray<{ playerId: string; amount: number }>,
   roster: ReadonlyArray<Player>,
 ): EarningsOverlayState["awards"] {
@@ -942,262 +941,36 @@ export function useGameSession({
 
       ws.onmessage = (ev) => {
         try {
-          const parsed: unknown = JSON.parse(ev.data);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-          const msg = parsed as Record<string, unknown>;
-          const strictMessage = isStrictOnlineMessage(parsed) ? parsed : null;
-          const tm = engine.getTurnManager();
-
-          const applyProtocolMismatch = (receivedVersion: number | null): void => {
-            protocolMismatchRef.current = true;
-            dispatch({
-              type: "SET_PROTOCOL_MISMATCH",
-              mismatch: {
-                requiredVersion: ONLINE_PROTOCOL_VERSION,
-                receivedVersion,
+          dispatchCombatMessage(
+            {
+              engine,
+              shotQueue,
+              transitionBuffer,
+              localSlotNum,
+              dispatch,
+              protocolMismatchRef,
+              authoritySlotRef,
+              authorityEpochRef,
+              lastAppliedShotIdRef,
+              pendingShotPreviewsRef,
+              shopSessionRef,
+              gamePhaseRef,
+              applyFireRejection,
+              applyShopStateMessage,
+              applyRoundEndMessage,
+              applyShopFinish: (
+                players,
+                shopEpoch,
+                nextRoundNumber,
+              ) => {
+                applyShopFinishRef.current(players, shopEpoch, nextRoundNumber);
               },
-            });
-          };
-
-          if (strictMessage?.type === "PROTOCOL_MISMATCH") {
-            applyProtocolMismatch(strictMessage.receivedVersion);
-            return;
-          }
-
-          if (msg.type === 'GAME_START') {
-            if (strictMessage?.type !== 'GAME_START') {
-              applyProtocolMismatch(readProtocolVersion(msg));
-              return;
-            }
-            console.log(`[Game] Received GAME_START: currentPlayerIndex=${strictMessage.currentPlayerIndex}`);
-            tm.syncTurn(strictMessage.currentPlayerIndex);
-            if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
-              engine.setWindForce(msg.wind);
-            }
-            syncWireEconomy(msg.players);
-          }
-
-          if (strictMessage?.type === 'SHOT') {
-            shotQueue.enqueue(
-              [strictMessage],
-              strictMessage.slot === localSlotNum
-                ? "LIVE_LOCAL"
-                : "LIVE_REMOTE",
-            );
-          }
-
-          if (strictMessage?.type === "SHOT_CATCH_UP") {
-            shotQueue.setCatchUpActiveShotId(strictMessage.activeShotId);
-            const catchUpMode = (message: ShotMessage) =>
-              message.shotId === strictMessage.activeShotId
-                ? ("ACTIVE_RECOVERY" as const)
-                : ("CATCH_UP" as const);
-            shotQueue.enqueue(strictMessage.shots, catchUpMode);
-            if (strictMessage.lastFireResult?.type === "FIRE_REJECTED") {
-              applyFireRejection(strictMessage.lastFireResult);
-            } else if (strictMessage.lastFireResult?.type === "SHOT") {
-              shotQueue.enqueue(
-                [strictMessage.lastFireResult],
-                catchUpMode,
-              );
-            }
-            if (
-              strictMessage.shots.length === 0 &&
-              strictMessage.activeShotId === null
-            ) {
-              tm.unlockAfterCatchUp();
-            }
-          }
-
-          if (strictMessage?.type === "FIRE_REJECTED") {
-            applyFireRejection(strictMessage);
-          }
-
-          if (strictMessage?.type === 'AUTHORITY_CHANGED') {
-            authoritySlotRef.current = strictMessage.authoritySlot;
-            authorityEpochRef.current = strictMessage.authorityEpoch;
-            if (strictMessage.authoritySlot === localSlotNum && shotQueue.activeServerShotId !== null) {
-              const preview = pendingShotPreviewsRef.current.get(shotQueue.activeServerShotId);
-              if (preview) submitShotEarnings(preview);
-            }
-          }
-
-          if (
-            strictMessage?.type === 'SHOT_EARNINGS_APPLIED' &&
-            strictMessage.shotId > lastAppliedShotIdRef.current
-          ) {
-            engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
-            lastAppliedShotIdRef.current = strictMessage.shotId;
-            if (shotQueue.activeServerShotId === strictMessage.shotId) {
-              shotQueue.clearActiveServerShotId();
-            }
-            shotQueue.noteCatchUpShotApplied(strictMessage.shotId);
-            pendingShotPreviewsRef.current.delete(strictMessage.shotId);
-            const roster = [...engine.getTankManager().getPlayers()];
-            dispatch({ type: "SET_UI_PLAYERS", players: roster });
-            const awards = buildOverlayAwards(strictMessage.awards, roster);
-            if (awards.length > 0) {
-              dispatch({
-                type: "SHOW_EARNINGS",
-                overlay: {
-                  shotId: strictMessage.shotId,
-                  awards,
-                  displayedAt: Date.now(),
-                },
-              });
-            }
-          }
-
-          if (strictMessage?.type === 'ZEUS_APPOINTED') {
-            const roster = engine.getTankManager().getPlayers();
-            const rotationPlayerIds = strictMessage.rotationSlots
-              .map((rotationSlot) => roster[rotationSlot]?.id)
-              .filter((playerId): playerId is string => typeof playerId === "string");
-            engine.applyRemoteZeusAppointment({
-              appointmentId: strictMessage.appointmentId,
-              zeusId: strictMessage.zeusId,
-              rotationPlayerIds,
-            });
-            tm.syncTurn(strictMessage.zeusSlot);
-          }
-
-          if (strictMessage?.type === 'ZEUS_STRIKE') {
-            engine.startRemoteZeusStrike(strictMessage, strictMessage.resolveAt);
-          }
-
-          if (strictMessage?.type === 'ZEUS_STRIKE_APPLIED') {
-            const result: ZeusStrikeResult = {
-              strikeId: strictMessage.strikeId,
-              zeusId: strictMessage.zeusId,
-              targetId: strictMessage.targetId,
-              award: strictMessage.award,
-              balances: strictMessage.balances,
-              roundOutcome: strictMessage.roundOutcome,
-            };
-            engine.applyRemoteZeusStrikeResult(result);
-            if (
-              strictMessage.nextPlayerIndex !== null &&
-              gamePhaseRef.current === 'COMBAT'
-            ) {
-              tm.syncTurn(strictMessage.nextPlayerIndex);
-            }
-          }
-
-          if (strictMessage?.type === 'ZEUS_STATE') {
-            engine.syncRemoteZeusState(strictMessage.activeZeusId);
-            const roster = engine.getTankManager().getPlayers();
-            const isReplayingShots =
-              shotQueue.replayActiveNow || shotQueue.pendingCount > 0;
-            if (!isReplayingShots) {
-              for (let index = 0; index < strictMessage.deadSlots.length; index++) {
-                if (!strictMessage.deadSlots[index]) continue;
-                const player = roster[index];
-                if (!player) continue;
-                player.tank.health = 0;
-                player.tank.shield = 0;
-                player.tank.isDead = true;
-              }
-            }
-            if (strictMessage.activeStrike) {
-              engine.startRemoteZeusStrike(
-                strictMessage.activeStrike,
-                strictMessage.activeStrike.resolveAt,
-              );
-            }
-            if (gamePhaseRef.current === 'COMBAT' && !isReplayingShots) {
-              tm.syncTurn(strictMessage.currentPlayerIndex);
-            }
-            dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
-          }
-
-          if (strictMessage?.type === 'STATE_UPDATE') {
-            console.log(`[Game] Received STATE_UPDATE: currentPlayerIndex=${strictMessage.currentPlayerIndex}`);
-            // MVP: server only coordinates turn order. Clients run local physics after SHOT replay.
-            // Do NOT apply server players/heights here — the DO stub still carries placeholder
-            // spawn Y values (≈280) which teleport tanks into the sky and reset crater terrain.
-            // Ignore late turn updates after round end (prevents desync back into "waiting for shot").
-            if (
-              gamePhaseRef.current === 'COMBAT' &&
-              !tm.isInterRoundPaused()
-            ) {
-              tm.syncTurn(strictMessage.currentPlayerIndex);
-              if (strictMessage.players) syncWireEconomy(strictMessage.players);
-              if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
-                engine.setWindForce(msg.wind);
-              }
-            }
-          }
-
-          if (strictMessage?.type === "SHOP_STATE") {
-            shotQueue.purgeCompletedRound(strictMessage.roundNumber);
-            if (shotQueue.replayActiveNow) {
-              transitionBuffer.enqueue({
-                kind: "SHOP_STATE",
-                message: strictMessage,
-              });
-            } else {
-              applyShopStateMessage(strictMessage);
-            }
-          }
-
-          if (strictMessage?.type === "SHOP_REJECTED") {
-            const pending = shopSessionRef.current.pendingIntent;
-            const matchesPending =
-              strictMessage.actionId !== undefined &&
-              pending?.actionId === strictMessage.actionId;
-            const isUncorrelatedWithoutPending =
-              strictMessage.actionId === undefined && pending === null;
-            if (matchesPending || isUncorrelatedWithoutPending) {
-              shopSessionRef.current = {
-                ...shopSessionRef.current,
-                pendingIntent: null,
-                denial: strictMessage.reason,
-              };
-              dispatch({
-                type: "SET_SHOP_DENIAL",
-                denial: strictMessage.reason,
-              });
-            }
-          }
-
-          if (strictMessage?.type === "SHOP_FINISH") {
-            shotQueue.purgeCompletedRound(strictMessage.completedRoundNumber);
-            const applyFinish = (): void => {
-              applyShopFinishRef.current(
-                strictMessage.players,
-                strictMessage.shopEpoch,
-                strictMessage.nextRoundNumber,
-              );
-              if (
-                gamePhaseRef.current === "COMBAT" &&
-                shotQueue.pendingCount > 0
-              ) {
-                shotQueue.drain();
-              }
-            };
-            if (shotQueue.replayActiveNow) {
-              transitionBuffer.enqueue({
-                kind: "SHOP_FINISH",
-                message: strictMessage,
-              });
-            } else {
-              applyFinish();
-            }
-          }
-
-          if (strictMessage?.type === 'ROUND_END') {
-            if (
-              shotQueue.replayActiveNow ||
-              shotQueue.pendingCount > 0
-            ) {
-              transitionBuffer.enqueue({
-                kind: "ROUND_END",
-                message: strictMessage,
-              });
-            } else {
-              applyRoundEndMessage(strictMessage);
-            }
-          }
+              submitShotEarnings,
+              syncWireEconomy,
+              buildOverlayAwards,
+            },
+            JSON.parse(ev.data) as unknown,
+          );
         } catch (e) {
           console.warn('[Game] invalid WS message', e);
         }
