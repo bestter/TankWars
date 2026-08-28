@@ -20,7 +20,6 @@ import {
 import { autoBuyForAI } from "../game/entities/ai/aiShopHelper";
 import { trackEvent } from "../utils/analytics";
 import { setRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
-import { getOnlineWsBase } from "../utils/onlineApi";
 import {
   clearOnlineSession,
   persistOnlineSession,
@@ -30,30 +29,12 @@ import {
   applyShopTransaction,
   normalizeRosterAtShopOpen,
 } from "../game/shop/shopTransaction";
-import {
-  ONLINE_PROTOCOL_VERSION,
-  PROTOCOL_MISMATCH_CLOSE_CODE,
-  type ClientFireMessage,
-  type FireRejectedMessage,
-  type RequestGameStartMessage,
-  type RoundEndMessage,
-  type ShopBuySellMessage,
-  type ShopEnterMessage,
-  type ShopStateMessage,
-  type ShopReadyMessage,
-  type ShotMessage,
-  type ShotEarningsMessage,
+import type {
+  ShopBuySellMessage,
+  ShopEnterMessage,
+  ShopReadyMessage,
 } from "../game/online/protocol";
-import {
-  DeferredTransitionBuffer,
-  type DeferredAuthoritativeTransition,
-} from "../game/online/deferredTransitions";
-import { AuthoritativeShotQueue } from "../game/online/authoritativeShotQueue";
-import {
-  flushDeferredTransitions,
-  scheduleDeferredTransition,
-} from "../game/online/flushDeferredTransitions";
-import { dispatchCombatMessage } from "./online/combatMessageDispatch";
+import { attachOnlineCombat } from "./online/attachOnlineCombat";
 import type {
   ZeusAppointment,
   ZeusStrikeResult,
@@ -153,19 +134,6 @@ interface UseGameSessionProps {
   ws?: WebSocket;
 }
 
-/**
- * Module-level generation counter for the combat WS mount effect.
- * Lets cleanup defer-close without killing a socket reclaimed by Strict Mode remount.
- */
-let combatWsEffectGen = 0;
-
-interface AuthoritativeEconomyPlayer {
-  readonly id: string;
-  readonly money: number;
-  readonly inventory: Partial<Record<WeaponId, number>>;
-  readonly currentWeapon: WeaponId;
-}
-
 export function useGameSession({
   initialPlayers,
   onReturnToMenu,
@@ -186,14 +154,11 @@ export function useGameSession({
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const gameWsRef = useRef<WebSocket | null>(null);
   const initialWsRef = useRef(ws);
-  /** Outbox for combat WS messages when the socket is not yet OPEN. */
-  const pendingCombatMessagesRef = useRef<string[]>([]);
   const roundEndFromNetworkRef = useRef(false);
   const authoritySlotRef = useRef<number | null>(resumeCanvas?.authoritySlot ?? null);
   const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
   const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
   const lastSeenShotIdRef = useRef(resumeCanvas?.lastSeenShotId ?? 0);
-  const shotQueueRef = useRef<AuthoritativeShotQueue | null>(null);
   const lastAppliedShopEpochRef = useRef(
     resumeCanvas?.lastAppliedShopEpoch ?? 0,
   );
@@ -207,10 +172,9 @@ export function useGameSession({
     resumeCanvas?.pendingFireIntent ?? null,
   );
   const fireRejectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const authoritativeEconomyRef = useRef<AuthoritativeEconomyPlayer[]>([]);
-  const reapplyAuthoritativeEconomyRef = useRef<() => void>(() => {});
-  const transitionBufferRef = useRef<DeferredTransitionBuffer | null>(null);
   const protocolMismatchRef = useRef(false);
+  const combatSendRef = useRef<(message: object) => void>(() => {});
+  const combatActiveShotIdRef = useRef<() => number | null>(() => null);
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
@@ -416,43 +380,9 @@ export function useGameSession({
     }
   }, []);
 
-  const flushCombatMessages = useCallback((): void => {
-    if (protocolMismatchRef.current) return;
-    const ws = gameWsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    while (pendingCombatMessagesRef.current.length > 0) {
-      const payload = pendingCombatMessagesRef.current.shift();
-      if (!payload) continue;
-      try {
-        ws.send(payload);
-      } catch (e) {
-        console.warn('[Game] Failed to flush combat message', e);
-        pendingCombatMessagesRef.current.unshift(payload);
-        break;
-      }
-    }
+  const sendCombatMessage = useCallback((obj: object): void => {
+    combatSendRef.current(obj);
   }, []);
-
-  const sendCombatMessage = useCallback(
-    (obj: object): void => {
-      if (protocolMismatchRef.current) return;
-      const payload = JSON.stringify(obj);
-      const ws = gameWsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(payload);
-          return;
-        } catch (e) {
-          console.warn('[Game] WS send failed, queueuing', e);
-        }
-      }
-      pendingCombatMessagesRef.current.push(payload);
-      console.warn(
-        `[Game] Queued combat message type=${"type" in obj ? String(obj.type) : "unknown"} (ws readyState=${ws?.readyState ?? 'null'})`,
-      );
-    },
-    [],
-  );
 
   /**
    * Online: parallel boutique — each human shops their own tank until they press Ready.
@@ -534,8 +464,6 @@ export function useGameSession({
 
     ctxRef.current = ctx;
 
-    let gameWs: WebSocket | null = null;
-
     // === GAME ENGINE ===
     const engine = new GameEngine(CANVAS_WIDTH, CANVAS_HEIGHT, {
       gravity: 260,
@@ -558,487 +486,42 @@ export function useGameSession({
       setRNG(createSeededRNG(seedFromRoomRound(roomId, 1)));
     }
 
-    // === Game phase persistent WS connection to the room DO for authoritative sync ===
-    // This survives the lobby unmount. FIRE is only an intention: every client,
-    // including the shooter, launches physics from the persisted SHOT echo.
-    let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let combatStartTimer: ReturnType<typeof setTimeout> | null = null;
-    let isMounted = true;
-    /** Bumps on each effect run so Strict Mode remount does not close the live combat socket. */
-    const effectGeneration = ++combatWsEffectGen;
-
-    if (gameMode === 'online' && roomId && slot != null && token) {
-    const combatRoomId = roomId;
-    const combatSlot = slot;
-    const combatToken = token;
-    const wsBase = getOnlineWsBase();
-    const localSlotNum = Number(combatSlot);
-
-    const buildCatchUpRequest = (): RequestGameStartMessage => ({
-      type: "REQUEST_GAME_START",
-      protocolVersion: ONLINE_PROTOCOL_VERSION,
-      roundNumber: currentMancheRef.current,
-      lastSeenShotId: lastSeenShotIdRef.current,
-      lastAppliedShopEpoch: lastAppliedShopEpochRef.current,
-    });
-    const transitionBuffer = new DeferredTransitionBuffer();
-    transitionBufferRef.current = transitionBuffer;
-
-    const acknowledgePendingFire = (message: ShotMessage): void => {
-      if (pendingFireRef.current?.actionId !== message.actionId) return;
-      pendingFireRef.current = null;
-      dispatch({ type: "SET_FIRE_PENDING", intent: null });
-      dispatch({ type: "SET_FIRE_REJECTION", reason: null });
-    };
-
-    tm.setFireIntentHandler((command) => {
-      if (pendingFireRef.current) return;
-      if (fireRejectionTimerRef.current !== null) {
-        clearTimeout(fireRejectionTimerRef.current);
-        fireRejectionTimerRef.current = null;
-      }
-      const actionId = crypto.randomUUID();
-      const pending: PendingFireIntent = {
-        actionId,
-        command: { ...command },
-      };
-      pendingFireRef.current = pending;
-      dispatch({ type: "SET_FIRE_PENDING", intent: pending });
-      dispatch({ type: "SET_FIRE_REJECTION", reason: null });
-      const message: ClientFireMessage = {
-        type: "FIRE",
-        actionId,
-        command: pending.command,
-      };
-      sendCombatMessage(message);
-    });
-
-    const clearCombatReconnect = (): void => {
-      if (combatReconnectTimer !== null) {
-        clearTimeout(combatReconnectTimer);
-        combatReconnectTimer = null;
-      }
-    };
-
-    const submitShotEarnings = (preview: ResolvedShotPreview): void => {
-      if (authoritySlotRef.current !== localSlotNum) return;
-      const message: ShotEarningsMessage = {
-        type: "SHOT_EARNINGS",
-        shotId: preview.shotId,
-        authorityEpoch: authorityEpochRef.current,
-        awards: preview.awards.map(({ playerId, amount }) => ({ playerId, amount })),
-        deadSlots: engine.getTankManager().getPlayers().map((player) => player.tank.isDead),
-        roundOutcome: preview.roundOutcome,
-        directHitVictimIds: preview.directHitVictimIds,
-      };
-      sendCombatMessage(message);
-    };
-    submitShotEarningsRef.current = submitShotEarnings;
-
-    const syncWireEconomy = (value: unknown): void => {
-      if (!Array.isArray(value)) return;
-      const updates: AuthoritativeEconomyPlayer[] = [];
-      for (const entry of value) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-        const wirePlayer = entry as Record<string, unknown>;
-        if (
-          typeof wirePlayer.id !== 'string' ||
-          typeof wirePlayer.money !== 'number' ||
-          !Number.isSafeInteger(wirePlayer.money) ||
-          wirePlayer.money < 0
-        ) return;
-        if (
-          !wirePlayer.inventory ||
-          typeof wirePlayer.inventory !== "object" ||
-          Array.isArray(wirePlayer.inventory) ||
-          !wirePlayer.tank ||
-          typeof wirePlayer.tank !== "object" ||
-          Array.isArray(wirePlayer.tank)
-        ) return;
-        const inventory: Partial<Record<WeaponId, number>> = {};
-        for (const [weaponId, stock] of Object.entries(
-          wirePlayer.inventory as Record<string, unknown>,
-        )) {
-          if (
-            !ALL_WEAPON_IDS.includes(weaponId as WeaponId) ||
-            typeof stock !== "number" ||
-            !Number.isSafeInteger(stock) ||
-            stock < 0
-          ) return;
-          inventory[weaponId as WeaponId] = stock;
-        }
-        const currentWeapon = (wirePlayer.tank as Record<string, unknown>)[
-          "currentWeapon"
-        ];
-        if (
-          typeof currentWeapon !== "string" ||
-          !ALL_WEAPON_IDS.includes(currentWeapon as WeaponId)
-        ) return;
-        updates.push({
-          id: wirePlayer.id,
-          money: wirePlayer.money,
-          inventory,
-          currentWeapon: currentWeapon as WeaponId,
-        });
-      }
-      authoritativeEconomyRef.current = updates;
-      reapplyAuthoritativeEconomyRef.current();
-    };
-
-    reapplyAuthoritativeEconomyRef.current = (): void => {
-      const livePlayers = engine.getTankManager().getPlayers();
-      const livePlayersById = new Map(
-        livePlayers.map((player) => [player.id, player]),
-      );
-      for (const update of authoritativeEconomyRef.current) {
-        const livePlayer = livePlayersById.get(update.id);
-        if (!livePlayer) continue;
-        livePlayer.money = update.money;
-        livePlayer.inventory = { ...update.inventory };
-        livePlayer.tank.currentWeapon = update.currentWeapon;
-      }
-      dispatch({ type: "SET_UI_PLAYERS", players: [...livePlayers] });
-    };
-
-    const applyFireRejection = (message: FireRejectedMessage): void => {
-      const pending = pendingFireRef.current;
-      if (
-        !pending ||
-        message.actionId === undefined ||
-        pending.actionId !== message.actionId
-      ) return;
-      const roster = engine.getTankManager().getPlayers();
-      const localPlayer = roster[localSlotNum];
-      if (localPlayer) {
-        localPlayer.inventory = { ...message.inventory };
-        localPlayer.tank.currentWeapon = message.currentWeapon;
-        authoritativeEconomyRef.current =
-          authoritativeEconomyRef.current.map((entry) =>
-            entry.id === localPlayer.id
-              ? {
-                  ...entry,
-                  inventory: { ...message.inventory },
-                  currentWeapon: message.currentWeapon,
-                }
-              : entry,
-          );
-        dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
-      }
-      pendingFireRef.current = null;
-      dispatch({ type: "SET_FIRE_PENDING", intent: null });
-      tm.rejectPendingFireIntent();
-      dispatch({ type: "SET_FIRE_REJECTION", reason: message.reason });
-    };
-
-    const applyRoundEndMessage = (message: RoundEndMessage): void => {
-      if (message.roundNumber <= lastCompletedRoundNumberRef.current) return;
-      if (gamePhaseRef.current !== 'COMBAT') return;
-      lastCompletedRoundNumberRef.current = Math.max(
-        lastCompletedRoundNumberRef.current,
-        message.roundNumber,
-      );
-      dispatch({
-        type: "SET_LAST_COMPLETED_ROUND",
-        roundNumber: message.roundNumber,
+    let onlineCombat: ReturnType<typeof attachOnlineCombat> | null = null;
+    if (gameMode === "online" && roomId && slot != null && token) {
+      onlineCombat = attachOnlineCombat({
+        engine,
+        dispatch,
+        roomId,
+        slot,
+        token,
+        incomingWs: initialWsRef.current,
+        gameWsRef,
+        protocolMismatchRef,
+        authoritySlotRef,
+        authorityEpochRef,
+        lastAppliedShotIdRef,
+        lastSeenShotIdRef,
+        lastAppliedShopEpochRef,
+        lastCompletedRoundNumberRef,
+        currentMancheRef,
+        gamePhaseRef,
+        shopSessionRef,
+        shopPlayersRef,
+        localShopDoneRef,
+        pendingFireRef,
+        fireRejectionTimerRef,
+        pendingShotPreviewsRef,
+        submitShotEarningsRef,
+        roundEndFromNetworkRef,
+        applyShopFinish: (players, shopEpoch, nextRoundNumber) => {
+          applyShopFinishRef.current(players, shopEpoch, nextRoundNumber);
+        },
+        clearCelebrationTimer,
+        setLocalShopDone,
+        buildOverlayAwards,
       });
-      roundEndFromNetworkRef.current = true;
-      engine.syncRoundEndFromRemote(
-        message.players,
-        message.roundWinnerId,
-        message.isDraw,
-      );
-    };
-
-    const applyShopStateMessage = (message: ShopStateMessage): void => {
-      if (message.shopEpoch <= lastAppliedShopEpochRef.current) return;
-      const pending = shopSessionRef.current.pendingIntent;
-      const localPlayer = message.players[localSlotNum];
-      let acknowledged = false;
-      if (pending?.shopEpoch === message.shopEpoch) {
-        if (pending.kind === "READY") {
-          acknowledged = message.readySlots.includes(localSlotNum);
-        } else if (localPlayer) {
-          acknowledged =
-            localPlayer.money === pending.expectedMoney &&
-            (localPlayer.inventory[pending.weaponId] ?? 0) ===
-              pending.expectedStock &&
-            (message.purchasesByPlayerId[localPlayer.id]?.[
-              pending.weaponId
-            ] ?? 0) === pending.expectedPurchaseCount;
-        }
-      }
-      const relevantPending =
-        pending?.shopEpoch === message.shopEpoch ? pending : null;
-      const nextShopSession: ShopClientSessionState = {
-        epoch: message.shopEpoch,
-        roundNumber: message.roundNumber,
-        counters: message.purchasesByPlayerId,
-        readySlots: message.readySlots,
-        aiShopApplied: message.aiShopApplied,
-        authoritativeReceived: true,
-        pendingIntent: acknowledged ? null : relevantPending,
-        denial: null,
-      };
-      const liveById = new Map(
-        engine.getTankManager().getPlayers().map((player) => [player.id, player]),
-      );
-      const mergedPlayers = message.players.map((authoritativePlayer) => {
-        const livePlayer = liveById.get(authoritativePlayer.id);
-        if (!livePlayer) return authoritativePlayer;
-        return {
-          ...livePlayer,
-          name: authoritativePlayer.name,
-          isHuman: authoritativePlayer.isHuman,
-          aiProfile: authoritativePlayer.aiProfile,
-          money: authoritativePlayer.money,
-          inventory: { ...authoritativePlayer.inventory },
-          tank: {
-            ...livePlayer.tank,
-            currentWeapon: authoritativePlayer.tank.currentWeapon,
-          },
-        };
-      });
-
-      clearCelebrationTimer();
-      engine.clearRoundCelebration();
-      shopSessionRef.current = nextShopSession;
-      engine.getTankManager().setPlayers(mergedPlayers);
-      shopPlayersRef.current = mergedPlayers;
-      localShopDoneRef.current = message.readySlots.includes(localSlotNum);
-      setLocalShopDone(localShopDoneRef.current);
-      dispatch({
-        type: "APPLY_SHOP_STATE",
-        shopEpoch: message.shopEpoch,
-        roundNumber: message.roundNumber,
-        readySlots: message.readySlots,
-        players: mergedPlayers,
-        counters: message.purchasesByPlayerId,
-        aiShopApplied: message.aiShopApplied,
-      });
-      dispatch({
-        type: "SET_SHOP_PENDING",
-        intent: nextShopSession.pendingIntent,
-      });
-      currentMancheRef.current = Math.max(
-        currentMancheRef.current,
-        message.roundNumber + 1,
-      );
-      lastCompletedRoundNumberRef.current = Math.max(
-        lastCompletedRoundNumberRef.current,
-        message.roundNumber,
-      );
-      gamePhaseRef.current = "SHOP";
-      tm.pauseForInterRound();
-    };
-
-    function applyDeferredItem(item: DeferredAuthoritativeTransition): void {
-      if (item.kind === "ROUND_END") {
-        applyRoundEndMessage(item.message);
-        return;
-      }
-      if (item.kind === "SHOP_STATE") {
-        applyShopStateMessage(item.message);
-        return;
-      }
-      applyShopFinishRef.current(
-        item.message.players,
-        item.message.shopEpoch,
-        item.message.nextRoundNumber,
-      );
-      if (gamePhaseRef.current === "COMBAT" && shotQueue.pendingCount > 0) {
-        shotQueue.drain();
-      }
-    }
-
-    const shotQueue = new AuthoritativeShotQueue({
-      getGamePhase: () => gamePhaseRef.current,
-      isInterRoundPaused: () => tm.isInterRoundPaused(),
-      lastSeenShotId: () => lastSeenShotIdRef.current,
-      markSeen: (shotId) => {
-        lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
-        dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
-      },
-      acknowledgePendingFire,
-      executeRemoteFire: (message, mode) => {
-        tm.executeRemoteFire(message.command, {
-          fromSlot: message.slot,
-          ownerId: message.ownerId,
-          identity: {
-            shotId: message.shotId,
-            isFirstShotOfRound: message.isFirstShotOfRound,
-          },
-          mode,
-        });
-      },
-      onIdle: () => {
-        reapplyAuthoritativeEconomyRef.current();
-        flushDeferredTransitions(
-          shotQueue,
-          transitionBuffer,
-          applyDeferredItem,
-        );
-      },
-      lockForCatchUp: () => tm.lockForCatchUp(),
-      unlockAfterCatchUp: () => tm.unlockAfterCatchUp(),
-    });
-    shotQueueRef.current = shotQueue;
-
-    tm.onAuthoritativeShotSettled = (shotId) => {
-      shotQueue.onShotSettled(shotId);
-    };
-
-    const scheduleTransition = (
-      item: DeferredAuthoritativeTransition,
-    ): void => {
-      scheduleDeferredTransition(
-        shotQueue,
-        transitionBuffer,
-        applyDeferredItem,
-        item,
-      );
-    };
-
-    const retryPendingActions = (): void => {
-      const pendingFire = pendingFireRef.current;
-      if (pendingFire) {
-        const retry: ClientFireMessage = {
-          type: "FIRE",
-          actionId: pendingFire.actionId,
-          command: pendingFire.command,
-        };
-        sendCombatMessage(retry);
-      }
-      const shopSession = shopSessionRef.current;
-      if (
-        gamePhaseRef.current === "SHOP" &&
-        !shopSession.authoritativeReceived &&
-        shopSession.roundNumber !== null
-      ) {
-        const retry: ShopEnterMessage = {
-          type: "SHOP_ENTER",
-          roundNumber: shopSession.roundNumber,
-        };
-        sendCombatMessage(retry);
-      }
-      const pendingShop = shopSession.pendingIntent;
-      if (pendingShop?.kind === "BUY_SELL") {
-        const retry: ShopBuySellMessage = {
-          type: "SHOP_BUY_SELL",
-          shopEpoch: pendingShop.shopEpoch,
-          actionId: pendingShop.actionId,
-          weaponId: pendingShop.weaponId,
-          delta: pendingShop.delta,
-        };
-        sendCombatMessage(retry);
-      } else if (pendingShop?.kind === "READY") {
-        const retry: ShopReadyMessage = {
-          type: "SHOP_READY",
-          shopEpoch: pendingShop.shopEpoch,
-          actionId: pendingShop.actionId,
-        };
-        sendCombatMessage(retry);
-      }
-    };
-
-    function bindCombatWsHandlers(ws: WebSocket): void {
-      ws.onopen = () => {
-        console.log('[Game] Combat WS connected to server');
-        flushCombatMessages();
-        retryPendingActions();
-        // Pull ordered shots and any active shop transition missed during reconnect.
-        try {
-          ws.send(JSON.stringify(buildCatchUpRequest()));
-        } catch {
-          // ignore
-        }
-      };
-
-      ws.onmessage = (ev) => {
-        try {
-          dispatchCombatMessage(
-            {
-              engine,
-              shotQueue,
-              localSlotNum,
-              dispatch,
-              protocolMismatchRef,
-              authoritySlotRef,
-              authorityEpochRef,
-              lastAppliedShotIdRef,
-              pendingShotPreviewsRef,
-              shopSessionRef,
-              gamePhaseRef,
-              applyFireRejection,
-              scheduleTransition,
-              submitShotEarnings,
-              syncWireEconomy,
-              buildOverlayAwards,
-            },
-            JSON.parse(ev.data) as unknown,
-          );
-        } catch (e) {
-          console.warn('[Game] invalid WS message', e);
-        }
-      };
-
-      ws.onclose = (ev: CloseEvent) => {
-        console.log('[Game] Combat WS closed', ev.code, ev.reason);
-        if (gameWsRef.current === ws) {
-          gameWsRef.current = null;
-          if (
-            ev.code === 4001 ||
-            ev.code === PROTOCOL_MISMATCH_CLOSE_CODE ||
-            (typeof ev.reason === 'string' && ev.reason.includes('replaced'))
-          ) {
-            console.log('[Game] Socket superseded by another connection, skipping reconnect');
-            return;
-          }
-          if (gamePhaseRef.current !== 'GAME_OVER' && isMounted) {
-            clearCombatReconnect();
-            combatReconnectTimer = setTimeout(() => {
-              combatReconnectTimer = null;
-              connectCombatWs();
-            }, 2000);
-          }
-        }
-      };
-      ws.onerror = (e) => {
-        console.warn('[Game] Combat WS error', e);
-      };
-    }
-
-    function connectCombatWs(): void {
-      if (!isMounted) return;
-      if (
-        gameWsRef.current?.readyState === WebSocket.OPEN ||
-        gameWsRef.current?.readyState === WebSocket.CONNECTING
-      ) {
-        return;
-      }
-      const wsUrl = `${wsBase}/api/rooms/${combatRoomId}/ws?slot=${combatSlot}&token=${encodeURIComponent(combatToken)}`;
-      gameWs = new WebSocket(wsUrl);
-      gameWsRef.current = gameWs;
-      bindCombatWsHandlers(gameWs);
-    }
-
-    const incomingWs = initialWsRef.current;
-    if (incomingWs && incomingWs.readyState === WebSocket.OPEN) {
-      console.log('[Game] Re-using existing WebSocket connection from lobby');
-      gameWs = incomingWs;
-      gameWsRef.current = incomingWs;
-      bindCombatWsHandlers(incomingWs);
-      // Lobby socket is already OPEN — onopen will not fire again; flush + catch-up now.
-      flushCombatMessages();
-      retryPendingActions();
-      try {
-        incomingWs.send(JSON.stringify(buildCatchUpRequest()));
-      } catch {
-        // ignore
-      }
-    } else {
-      console.log('[Game] No existing active WS or not open. Connecting new WebSocket...');
-      combatStartTimer = setTimeout(connectCombatWs, 50);
-    }
+      combatSendRef.current = onlineCombat.send;
+      combatActiveShotIdRef.current = onlineCombat.activeServerShotId;
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
@@ -1132,7 +615,7 @@ export function useGameSession({
         if (shouldNotify) {
           console.log('[Game] Sending SHOT_SETTLED to server');
           const deadSlots = engine.getTankManager().getPlayers().map((p) => Boolean(p.tank.isDead));
-          const shotId = shotQueueRef.current?.activeServerShotId ?? null;
+          const shotId = combatActiveShotIdRef.current();
           if (shotId !== null) {
             sendCombatMessage({ type: 'SHOT_SETTLED', shotId, slot, deadSlots });
           }
@@ -1303,15 +786,9 @@ export function useGameSession({
     renderLoop();
 
     return () => {
-      isMounted = false;
-      if (combatStartTimer !== null) {
-        clearTimeout(combatStartTimer);
-        combatStartTimer = null;
-      }
-      if (combatReconnectTimer !== null) {
-        clearTimeout(combatReconnectTimer);
-        combatReconnectTimer = null;
-      }
+      onlineCombat?.detach();
+      combatSendRef.current = () => {};
+      combatActiveShotIdRef.current = () => null;
       if (celebrationTimerRef.current !== null) {
         clearTimeout(celebrationTimerRef.current);
         celebrationTimerRef.current = null;
@@ -1331,38 +808,10 @@ export function useGameSession({
         zeusAnnouncementTimerRef.current = null;
       }
 
-      const wsToClose = gameWs;
-      const genAtCleanup = effectGeneration;
-      // Defer close so React Strict Mode remount can reuse the same lobby/combat socket
-      // without dropping the DO mapping mid-handshake (which made P2 miss P1's SHOT).
-      setTimeout(() => {
-        if (combatWsEffectGen !== genAtCleanup) return; // a newer effect owns the session
-        if (wsToClose) {
-          wsToClose.onopen = null;
-          wsToClose.onmessage = null;
-          wsToClose.onclose = null;
-          wsToClose.onerror = null;
-          if (wsToClose.readyState === WebSocket.OPEN || wsToClose.readyState === WebSocket.CONNECTING) {
-            try {
-              wsToClose.close();
-            } catch {
-              void 0;
-            }
-          }
-        }
-        if (gameWsRef.current === wsToClose) {
-          gameWsRef.current = null;
-        }
-      }, 0);
-
       engine.stop();
       tm.setFireIntentHandler(null);
       tm.onAuthoritativeShotSettled = undefined;
       tm.removeInputListeners();
-      reapplyAuthoritativeEconomyRef.current = () => {};
-      transitionBufferRef.current?.drain();
-      transitionBufferRef.current = null;
-      shotQueueRef.current = null;
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
