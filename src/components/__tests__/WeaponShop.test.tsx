@@ -12,6 +12,9 @@ vi.mock('react-i18next', () => ({
       if (options && options.current !== undefined && options.total !== undefined) {
         return `${key} ${options.current}/${options.total}`;
       }
+      if (options && options.count !== undefined && options.max !== undefined) {
+        return `${key} ${options.count}/${options.max}`;
+      }
       return key;
     },
   }),
@@ -185,6 +188,21 @@ describe('WeaponShop', () => {
     expect(
       document.getElementById('shop-buy-reason-GRENADE')?.textContent,
     ).toBe('shop_reason_purchase_limit');
+  });
+
+  it('renders a finite per-visit purchase limit for ordinary weapons', () => {
+    render(
+      <WeaponShop
+        player={makePlayer({ money: 10_000, inventory: { GRENADE: 0 } })}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    expect(screen.getAllByText('shop_bought 0/12').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Infinity/)).toBeNull();
   });
 
   it('disables sell button if player has 0 count of weapon', () => {

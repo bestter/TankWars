@@ -478,11 +478,24 @@ describe('GameRoom Durable Object', () => {
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
       ws0.sent.length = 0;
+      ws1.sent.length = 0;
+      const currentPlayerIndex = (
+        Reflect.get(room, 'state') as { currentPlayerIndex: number }
+      ).currentPlayerIndex;
 
       await handleClientMessage.call(room, 0, JSON.stringify(fire));
+      const retriedShots = ws0
+        .getAllMessages<{ type: string; shotId?: number }>()
+        .filter((message) => message.type === 'SHOT');
+      expect(retriedShots).toHaveLength(1);
+      expect(retriedShots[0].shotId).toBe(shooterShots[0].shotId);
       expect(
-        ws0.getAllMessages<{ type: string }>().filter((message) => message.type === 'SHOT'),
+        ws1.getAllMessages<{ type: string }>().filter((message) => message.type === 'SHOT'),
       ).toHaveLength(0);
+      expect(state.players[0].inventory.GRENADE).toBe(0);
+      expect(
+        (Reflect.get(room, 'state') as { currentPlayerIndex: number }).currentPlayerIndex,
+      ).toBe(currentPlayerIndex);
     });
 
     it('isolates identical FIRE actionIds by slot', async () => {

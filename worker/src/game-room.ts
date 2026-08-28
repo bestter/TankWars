@@ -1111,9 +1111,7 @@ export class GameRoom extends DurableObject {
     const { actionId, command } = decoded.message;
     const previous = this.state.processedFireActionsBySlot[slot]?.[actionId];
     if (previous) {
-      if (this.state.activeShot?.shotId === previous.result.shotId) {
-        this.sendToSlot(slot, previous.result);
-      }
+      this.sendToSlot(slot, previous.result);
       return;
     }
     const previousRejection = this.state.lastFireResultBySlot[slot];

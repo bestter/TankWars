@@ -257,7 +257,7 @@ export function useGameSession({
   } = state;
 
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
-  const gamePhaseRef = useRef<GamePhase>("COMBAT");
+  const gamePhaseRef = useRef<GamePhase>(gamePhase);
 
   // Refs to avoid stale closures in the setTimeout-based AI shopping chain (process/advance).
   const shopPlayersRef = useRef<Player[]>([]);
@@ -581,11 +581,42 @@ export function useGameSession({
     });
     let pendingAuthoritativeTransition: (() => void) | null = null;
 
+    const acknowledgePendingFire = (message: ShotMessage): void => {
+      if (pendingFireRef.current?.actionId !== message.actionId) return;
+      pendingFireRef.current = null;
+      dispatch({ type: "SET_FIRE_PENDING", intent: null });
+      dispatch({ type: "SET_FIRE_REJECTION", reason: null });
+    };
+
+    const acknowledgeShotWithoutReplay = (message: ShotMessage): void => {
+      acknowledgePendingFire(message);
+      queuedShotIdsRef.current.delete(message.shotId);
+      replayedShotIdsRef.current.add(message.shotId);
+      if (message.shotId <= lastSeenShotIdRef.current) return;
+      lastSeenShotIdRef.current = message.shotId;
+      dispatch({ type: "SET_LAST_SEEN_SHOT", shotId: message.shotId });
+    };
+
+    const purgeCompletedRoundShots = (completedRoundNumber: number): void => {
+      const retainedShots: QueuedAuthoritativeShot[] = [];
+      for (const queued of shotQueueRef.current) {
+        if (queued.message.roundNumber <= completedRoundNumber) {
+          acknowledgeShotWithoutReplay(queued.message);
+        } else {
+          retainedShots.push(queued);
+        }
+      }
+      shotQueueRef.current = retainedShots;
+      if (!shotReplayActiveRef.current && retainedShots.length === 0) {
+        catchUpActiveShotIdRef.current = null;
+        tm.unlockAfterCatchUp();
+      }
+    };
+
     const drainAuthoritativeShotQueue = (): void => {
       if (shotReplayActiveRef.current) return;
-      if (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused()) return;
 
-      const next = shotQueueRef.current.shift();
+      const next = shotQueueRef.current[0];
       if (!next) {
         reapplyAuthoritativeEconomyRef.current();
         const applyRoundEnd = pendingRoundEndApplyRef.current;
@@ -597,6 +628,9 @@ export function useGameSession({
         if (catchUpActiveShotIdRef.current === null) tm.unlockAfterCatchUp();
         return;
       }
+      if (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused()) return;
+
+      shotQueueRef.current.shift();
       queuedShotIdsRef.current.delete(next.message.shotId);
       if (
         replayedShotIdsRef.current.has(next.message.shotId) ||
@@ -609,13 +643,7 @@ export function useGameSession({
 
       shotReplayActiveRef.current = true;
       activeServerShotIdRef.current = next.message.shotId;
-      if (
-        pendingFireRef.current?.actionId === next.message.actionId
-      ) {
-        pendingFireRef.current = null;
-        dispatch({ type: "SET_FIRE_PENDING", intent: null });
-        dispatch({ type: "SET_FIRE_REJECTION", reason: null });
-      }
+      acknowledgePendingFire(next.message);
       tm.executeRemoteFire(next.message.command, {
         fromSlot: next.message.slot,
         ownerId: next.message.ownerId,
@@ -636,6 +664,14 @@ export function useGameSession({
       let shouldLockForCatchUp = false;
       for (const message of [...shots].sort((a, b) => a.shotId - b.shotId)) {
         const resolvedMode = typeof mode === "function" ? mode(message) : mode;
+        acknowledgePendingFire(message);
+        if (
+          resolvedMode !== "ACTIVE_RECOVERY" &&
+          (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused())
+        ) {
+          acknowledgeShotWithoutReplay(message);
+          continue;
+        }
         if (
           (resolvedMode !== "ACTIVE_RECOVERY" &&
             message.shotId <= lastSeenShotIdRef.current) ||
@@ -1129,10 +1165,8 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === "SHOP_STATE") {
-            if (
-              shotReplayActiveRef.current ||
-              shotQueueRef.current.length > 0
-            ) {
+            purgeCompletedRoundShots(strictMessage.roundNumber);
+            if (shotReplayActiveRef.current) {
               pendingAuthoritativeTransition = () => {
                 applyShopStateMessage(strictMessage);
               };
@@ -1143,10 +1177,12 @@ export function useGameSession({
 
           if (strictMessage?.type === "SHOP_REJECTED") {
             const pending = shopSessionRef.current.pendingIntent;
-            if (
-              strictMessage.actionId === undefined ||
-              pending?.actionId === strictMessage.actionId
-            ) {
+            const matchesPending =
+              strictMessage.actionId !== undefined &&
+              pending?.actionId === strictMessage.actionId;
+            const isUncorrelatedWithoutPending =
+              strictMessage.actionId === undefined && pending === null;
+            if (matchesPending || isUncorrelatedWithoutPending) {
               shopSessionRef.current = {
                 ...shopSessionRef.current,
                 pendingIntent: null,
@@ -1160,6 +1196,7 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === "SHOP_FINISH") {
+            purgeCompletedRoundShots(strictMessage.completedRoundNumber);
             const applyFinish = () => {
               applyShopFinishRef.current(
                 strictMessage.players,
@@ -1167,10 +1204,7 @@ export function useGameSession({
                 strictMessage.nextRoundNumber,
               );
             };
-            if (
-              shotReplayActiveRef.current ||
-              shotQueueRef.current.length > 0
-            ) {
+            if (shotReplayActiveRef.current) {
               pendingAuthoritativeTransition = applyFinish;
             } else {
               applyFinish();
@@ -1496,7 +1530,6 @@ export function useGameSession({
     };
 
     engineRef.current = engine;
-    gamePhaseRef.current = "COMBAT";
 
     // Start the internal physics loop
     engine.start();

@@ -142,11 +142,10 @@ export function applyShopTransaction(
     if (countResult.count >= policy.maxPurchasesPerVisit) {
       return reject(input, "PURCHASE_LIMIT");
     }
-    if (
-      !Number.isSafeInteger(player.money) ||
-      player.money < 0 ||
-      player.money < WEAPON_REGISTRY[weaponId].price
-    ) {
+    if (!Number.isSafeInteger(player.money) || player.money < 0) {
+      return reject(input, "MALFORMED");
+    }
+    if (player.money < WEAPON_REGISTRY[weaponId].price) {
       return reject(input, "INSUFFICIENT_FUNDS");
     }
 

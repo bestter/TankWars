@@ -128,6 +128,27 @@ describe("transactions boutique", () => {
   });
 
   it.each([
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("refuse le solde initial illégal %s à l'achat avec MALFORMED", (money) => {
+    const player = createPlayer({ money, inventory: { GRENADE: 0 } });
+    const counters: ShopVisitCounters = {};
+    const result = applyShopTransaction({
+      player,
+      counters,
+      weaponId: "GRENADE",
+      delta: 1,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "MALFORMED" });
+    expect(result.player).toBe(player);
+    expect(result.counters).toBe(counters);
+  });
+
+  it.each([
     {
       weaponId: "NUKE" as const,
       inventory: { NUKE: 1 },

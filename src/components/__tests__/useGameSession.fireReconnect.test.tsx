@@ -222,6 +222,210 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.fireRejection).toBeNull();
   });
 
+  it("keeps a restored SUMMARY phase outside combat", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SUMMARY",
+      currentManche: 2,
+      lastCompletedRoundNumber: 1,
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "ROUND_END",
+        players,
+        roundWinnerId: "player-1",
+        isDraw: false,
+        roundNumber: 2,
+      });
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("SUMMARY");
+    expect(sessionRef.current?.state.lastCompletedRoundNumber).toBe(1);
+  });
+
+  it("drops completed catch-up shots during SHOP before starting the next round", () => {
+    const players = createPlayers();
+    const completedShot = {
+      type: "SHOT",
+      actionId: "completed-round-one-shot",
+      shotId: 5,
+      roundNumber: 1,
+      shotNumberInRound: 3,
+      isFirstShotOfRound: false,
+      slot: 1,
+      ownerId: "player-2",
+      command: { angle: 133, power: 58, weaponId: "GRENADE" },
+    } as const;
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SHOP",
+      currentManche: 2,
+      shopPlayers: players,
+      lastCompletedRoundNumber: 1,
+      pendingFireIntent: {
+        actionId: completedShot.actionId,
+        command: completedShot.command,
+      },
+      shopSession: {
+        ...createEmptyShopSession(),
+        epoch: 1,
+        roundNumber: 1,
+        authoritativeReceived: true,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(
+      TurnManager.prototype,
+      "executeRemoteFire",
+    );
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 1,
+        activeShotId: null,
+        shots: [completedShot],
+        lastFireResult: null,
+      });
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [0],
+        players,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+      });
+      ws.receive({
+        type: "SHOP_FINISH",
+        shopEpoch: 1,
+        completedRoundNumber: 1,
+        nextRoundNumber: 2,
+        players,
+      });
+    });
+
+    expect(executeRemoteFire).not.toHaveBeenCalled();
+    expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
+    expect(sessionRef.current?.state.lastSeenShotId).toBe(5);
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+
+    act(() => {
+      ws.receive({
+        type: "SHOT",
+        actionId: "round-two-shot",
+        shotId: 6,
+        roundNumber: 2,
+        shotNumberInRound: 1,
+        isFirstShotOfRound: true,
+        slot: 0,
+        ownerId: "player-1",
+        command: { angle: 47, power: 63, weaponId: "GRENADE" },
+      });
+    });
+
+    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
+    expect(executeRemoteFire).toHaveBeenCalledWith(
+      expect.objectContaining({ weaponId: "GRENADE" }),
+      expect.objectContaining({
+        mode: "LIVE_LOCAL",
+        identity: expect.objectContaining({ shotId: 6 }),
+      }),
+    );
+  });
+
+  it("keeps a pending shop intent until its correlated rejection arrives", () => {
+    const players = createPlayers();
+    const pendingIntent = {
+      kind: "BUY_SELL" as const,
+      actionId: "valid-buy-in-flight",
+      shopEpoch: 1,
+      weaponId: "GRENADE" as const,
+      delta: 1 as const,
+      expectedMoney: players[0].money - 75,
+      expectedStock: 2,
+      expectedPurchaseCount: 1,
+    };
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SHOP",
+      currentManche: 2,
+      shopPlayers: players,
+      lastCompletedRoundNumber: 1,
+      shopSession: {
+        ...createEmptyShopSession(),
+        epoch: 1,
+        roundNumber: 1,
+        authoritativeReceived: true,
+        pendingIntent,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOP_REJECTED",
+        shopEpoch: 1,
+        reason: "MALFORMED",
+      });
+      ws.receive({
+        type: "SHOP_REJECTED",
+        shopEpoch: 1,
+        actionId: "orphaned-buy",
+        reason: "MALFORMED",
+      });
+    });
+
+    expect(sessionRef.current?.state.shopSession.pendingIntent).toEqual(
+      pendingIntent,
+    );
+    expect(sessionRef.current?.state.shopSession.denial).toBeNull();
+
+    act(() => {
+      ws.receive({
+        type: "SHOP_REJECTED",
+        shopEpoch: 1,
+        actionId: pendingIntent.actionId,
+        weaponId: pendingIntent.weaponId,
+        delta: pendingIntent.delta,
+        reason: "MALFORMED",
+      });
+    });
+
+    expect(sessionRef.current?.state.shopSession.pendingIntent).toBeNull();
+    expect(sessionRef.current?.state.shopSession.denial).toBe("MALFORMED");
+  });
+
   it("recovers the local active shot and emits settlement plus earnings", () => {
     const players = createPlayers();
     const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 7 });
