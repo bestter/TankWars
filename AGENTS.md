@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 724 tests, 70 fichiers) |
+| Tests | `npm run test` (vitest, 745 tests, 72 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -69,7 +69,8 @@ Le multi est dans `main` (plus une branche `AddMultiplayer`). La physique demeur
 - Client lobby : `OnlineLobby.tsx` (shell) + `useOnlineLobby.ts` + `OnlineLobbyCreate.tsx` / `OnlineLobbyWaiting.tsx` / `onlineLobbyTypes.ts`.
 - Client combat : `useGameSession.ts`, `onlineSession.ts` (reconnexion WS combat, validation stricte `sessionStorage` et résilience aux coupures).
 - Ordre des tours vivant : `src/game/online/turnOrder.ts` (partagé client + worker, sans DOM ni APIs Workers).
-- Protocole combat/boutique strict partagé : `src/game/online/protocol.ts` (`FIRE`/`SHOT` corrélés par `actionId`, refus, catch-up ordonné, gains, manches et messages `SHOP_*`).
+- Protocole combat/boutique strict partagé : `src/game/online/protocol.ts` (`FIRE`/`SHOT` corrélés par `actionId`, refus, catch-up ordonné, gains, manches et messages `SHOP_*`). `ONLINE_PROTOCOL_VERSION` (1) voyage sur `GAME_START` et `REQUEST_GAME_START`. Un Worker/client dépareillé envoie `PROTOCOL_MISMATCH` et ferme en `4402`; le client neuf affiche un overlay « Rafraîchis la page » et ne reconnecte pas. Déployer Pages d'abord, puis le Worker.
+- File SHOT reconnect : `src/game/online/authoritativeShotQueue.ts`. Pendant un replay, `DeferredTransitionBuffer` applique `ROUND_END` → `SHOP_STATE` → `SHOP_FINISH` (un `SHOP_STATE` tardif n'écrase pas un `SHOP_FINISH`). Dispatch WS combat : `src/components/online/combatMessageDispatch.ts`.
 - En ligne, `FIRE` est une intention pessimiste : aucun projectile ni décrément avant l’écho `SHOT`. Tous les clients, tireur inclus, rejouent ce `SHOT`; seul le tireur humain émet `SHOT_SETTLED`. Les tirs clients émis pendant un tour IA sont rejetés (`NOT_YOUR_TURN`), l'IA serveur tirant uniquement via `maybeRunAIServerTurn`. Tout rejet de tir est affiché via un toast non bloquant (`.fire-rejection-toast`) avec auto-dismiss après 3,5 s.
 - La boutique en ligne n’accepte aucun snapshot client. `GameRoom` ouvre une session par époque, normalise le roster, exécute les achats IA une fois, applique chaque transaction avec clé composite d'idempotence (`kind:slot:actionId`) puis diffuse `SHOP_STATE`; les retries d'achats réussis renvoient le `SHOP_STATE` frais incluant les achats concurrents. Un client restauré en `SHOP` sans premier `SHOP_STATE` renvoie `SHOP_ENTER`; le Worker crée ou reprend la même session sans répéter les achats IA. `SHOP_FINISH` vide `shotHistory` et restaure les clients reconnectés.
 - Le premier humain connecté devient l’autorité des gains; `GameRoom` persiste l’ordre, l’époque, le tir actif et le dernier résultat. En cas de déconnexion, l’autorité passe au prochain humain selon l’ordre initial sans reprise automatique par l’ancien premier.
@@ -163,7 +164,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Terrain & matériaux | `Terrain.ts`, `types/terrain.ts` (`spawnAcceptsMaterial`, `grenadeBounceParams`, constantes de blend/distribution) |
 | Phase globale | `App.tsx`, `appReducer.ts`, `types/game.ts` |
 | Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
-| Online sync combat | `useGameSession.ts`, `onlineSession.ts` |
+| Online sync combat | `useGameSession.ts`, `onlineSession.ts`, `authoritativeShotQueue.ts`, `deferredTransitions.ts`, `combatMessageDispatch.ts` |
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
 | Shop métier (buy/sell) | `game/shop/shopPolicy.ts`, `shopTransaction.ts`, `shopSessionGuard.ts` + `useGameSession.ts` |

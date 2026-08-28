@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (724 unit and integration tests across 70 files)
+# Run tests (745 unit and integration tests across 72 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -154,10 +154,10 @@ In the build today:
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
-- Online lobby + strict combat/shop protocol, server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
+- Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **724 unit and integration tests** across **70 files** (Vitest)
+- **745 unit and integration tests** across **72 files** (Vitest)
 
 Still planned:
 
