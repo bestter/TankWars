@@ -956,7 +956,19 @@ export function useGameSession({
         };
         sendCombatMessage(retry);
       }
-      const pendingShop = shopSessionRef.current.pendingIntent;
+      const shopSession = shopSessionRef.current;
+      if (
+        gamePhaseRef.current === "SHOP" &&
+        !shopSession.authoritativeReceived &&
+        shopSession.roundNumber !== null
+      ) {
+        const retry: ShopEnterMessage = {
+          type: "SHOP_ENTER",
+          roundNumber: shopSession.roundNumber,
+        };
+        sendCombatMessage(retry);
+      }
+      const pendingShop = shopSession.pendingIntent;
       if (pendingShop?.kind === "BUY_SELL") {
         const retry: ShopBuySellMessage = {
           type: "SHOP_BUY_SELL",

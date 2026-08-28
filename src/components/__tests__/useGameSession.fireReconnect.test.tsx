@@ -255,7 +255,7 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.lastCompletedRoundNumber).toBe(1);
   });
 
-  it("drops completed catch-up shots during SHOP before starting the next round", () => {
+  it("recovers an unopened SHOP without replaying completed shots", () => {
     const players = createPlayers();
     const completedShot = {
       type: "SHOT",
@@ -279,9 +279,9 @@ describe("useGameSession FIRE reconnect", () => {
       },
       shopSession: {
         ...createEmptyShopSession(),
-        epoch: 1,
+        epoch: null,
         roundNumber: 1,
-        authoritativeReceived: true,
+        authoritativeReceived: false,
       },
     });
     const ws = new MockCombatWebSocket();
@@ -298,6 +298,20 @@ describe("useGameSession FIRE reconnect", () => {
         ws={ws as unknown as WebSocket}
         sessionRef={sessionRef}
       />,
+    );
+
+    const recoveryMessages = getSentMessages(ws);
+    expect(
+      recoveryMessages.filter((message) => message.type === "SHOP_ENTER"),
+    ).toEqual([{ type: "SHOP_ENTER", roundNumber: 1 }]);
+    expect(recoveryMessages).toContainEqual({
+      type: "REQUEST_GAME_START",
+      roundNumber: 2,
+      lastSeenShotId: 0,
+      lastAppliedShopEpoch: 0,
+    });
+    expect(sessionRef.current?.state.shopSession.authoritativeReceived).toBe(
+      false,
     );
 
     act(() => {
@@ -317,6 +331,17 @@ describe("useGameSession FIRE reconnect", () => {
         purchasesByPlayerId: {},
         aiShopApplied: true,
       });
+    });
+
+    expect(executeRemoteFire).not.toHaveBeenCalled();
+    expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
+    expect(sessionRef.current?.state.lastSeenShotId).toBe(5);
+    expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
+    expect(sessionRef.current?.state.shopSession.authoritativeReceived).toBe(
+      true,
+    );
+
+    act(() => {
       ws.receive({
         type: "SHOP_FINISH",
         shopEpoch: 1,
@@ -326,9 +351,6 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).not.toHaveBeenCalled();
-    expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
-    expect(sessionRef.current?.state.lastSeenShotId).toBe(5);
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
 
     act(() => {
@@ -391,6 +413,10 @@ describe("useGameSession FIRE reconnect", () => {
         sessionRef={sessionRef}
       />,
     );
+
+    expect(
+      getSentMessages(ws).filter((message) => message.type === "SHOP_ENTER"),
+    ).toHaveLength(0);
 
     act(() => {
       ws.receive({

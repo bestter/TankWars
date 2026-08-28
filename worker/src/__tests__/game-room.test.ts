@@ -1232,9 +1232,13 @@ describe('GameRoom Durable Object', () => {
       ) => Promise<void>;
       await claim.call(aiRoom, 0, 'Alice');
       const state = Reflect.get(aiRoom, 'state') as {
+        shopEpoch: number;
         roundEnded: boolean;
         players: Player[];
-        shopSession: { purchasesByPlayerId: Record<string, Record<string, number>> } | null;
+        shopSession: {
+          shopEpoch: number;
+          purchasesByPlayerId: Record<string, Record<string, number>>;
+        } | null;
       };
       state.roundEnded = true;
       state.players[1].money = 1_000;
@@ -1249,6 +1253,8 @@ describe('GameRoom Durable Object', () => {
         roundNumber: 1,
       }));
       const afterFirst = {
+        shopEpoch: state.shopEpoch,
+        sessionEpoch: state.shopSession?.shopEpoch,
         money: state.players[1].money,
         inventory: { ...state.players[1].inventory },
         counters: JSON.stringify(state.shopSession?.purchasesByPlayerId ?? {}),
@@ -1258,6 +1264,8 @@ describe('GameRoom Durable Object', () => {
         roundNumber: 1,
       }));
 
+      expect(state.shopEpoch).toBe(afterFirst.shopEpoch);
+      expect(state.shopSession?.shopEpoch).toBe(afterFirst.sessionEpoch);
       expect(state.players[1].money).toBe(afterFirst.money);
       expect(state.players[1].inventory).toEqual(afterFirst.inventory);
       expect(JSON.stringify(state.shopSession?.purchasesByPlayerId ?? {})).toBe(
