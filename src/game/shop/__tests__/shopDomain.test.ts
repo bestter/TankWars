@@ -47,10 +47,32 @@ describe("politique boutique", () => {
       maxStock: Number.POSITIVE_INFINITY,
       maxPurchasesPerVisit: 12,
     });
+    expect(getShopPolicy("MISSILE")).toEqual({
+      maxStock: Number.POSITIVE_INFINITY,
+      maxPurchasesPerVisit: 12,
+    });
   });
 });
 
 describe("transactions boutique", () => {
+  it.each([0, 2, -2, Number.NaN])(
+    "refuse le delta runtime invalide %s sans mutation",
+    (delta) => {
+      const player = createPlayer({ money: 500, inventory: { GRENADE: 1 } });
+      const counters: ShopVisitCounters = {};
+      const result = applyShopTransaction({
+        player,
+        counters,
+        weaponId: "GRENADE",
+        delta: delta as 1 | -1,
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: "MALFORMED" });
+      expect(result.player).toBe(player);
+      expect(result.counters).toBe(counters);
+    },
+  );
+
   it("achète et vend immuablement avec le prix serveur", () => {
     const original = createPlayer({ money: 500, inventory: { GRENADE: 1 } });
     const bought = applyShopTransaction({
@@ -103,6 +125,54 @@ describe("transactions boutique", () => {
       delta: 1,
     });
     expect(poor).toMatchObject({ ok: false, reason: "INSUFFICIENT_FUNDS" });
+  });
+
+  it.each([
+    {
+      weaponId: "NUKE" as const,
+      inventory: { NUKE: 1 },
+      counters: {},
+      expected: { ok: true, stock: 2 },
+    },
+    {
+      weaponId: "THERMONUCLEAR" as const,
+      inventory: { THERMONUCLEAR: 1 },
+      counters: {},
+      expected: { ok: false, reason: "STOCK_CAP" },
+    },
+    {
+      weaponId: "GRENADE" as const,
+      inventory: { GRENADE: 2 },
+      counters: { "player-1": { GRENADE: 12 } },
+      expected: { ok: false, reason: "PURCHASE_LIMIT" },
+    },
+    {
+      weaponId: "MISSILE" as const,
+      inventory: {},
+      counters: {},
+      expected: { ok: false, reason: "NOT_SOLD" },
+    },
+  ])("applique la matrice boutique $weaponId", ({
+    weaponId,
+    inventory,
+    counters,
+    expected,
+  }) => {
+    const result = applyShopTransaction({
+      player: createPlayer({ inventory }),
+      counters,
+      weaponId,
+      delta: 1,
+    });
+
+    expect(result).toMatchObject(
+      expected.ok
+        ? {
+            ok: true,
+            player: { inventory: { [weaponId]: expected.stock } },
+          }
+        : { ok: false, reason: expected.reason },
+    );
   });
 
   it("permet vente puis rachat sans restaurer un quota déjà consommé", () => {
@@ -215,6 +285,47 @@ describe("transactions boutique", () => {
         delta: -1,
       }),
     ).toMatchObject({ ok: false, reason: "MALFORMED" });
+  });
+
+  it.each([
+    -1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("refuse le solde initial illégal %s à la vente", (money) => {
+    const player = createPlayer({ money, inventory: { GRENADE: 1 } });
+    const counters: ShopVisitCounters = {};
+    const result = applyShopTransaction({
+      player,
+      counters,
+      weaponId: "GRENADE",
+      delta: -1,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "MALFORMED" });
+    expect(result.player).toBe(player);
+    expect(result.counters).toBe(counters);
+  });
+
+  it.each([
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("refuse le stock non sûr %s sans toucher aux autres armes", (stock) => {
+    const player = createPlayer({
+      inventory: { NUKE: stock, GRENADE: 1 },
+    });
+    const result = applyShopTransaction({
+      player,
+      counters: {},
+      weaponId: "NUKE",
+      delta: -1,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "ILLEGAL_INVENTORY" });
+    expect(player.inventory.GRENADE).toBe(1);
   });
 });
 

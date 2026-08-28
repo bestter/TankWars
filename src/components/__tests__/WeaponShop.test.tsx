@@ -159,6 +159,34 @@ describe('WeaponShop', () => {
     expect(onBuySell).not.toHaveBeenCalled();
   });
 
+  it('exposes stock caps and per-visit quotas from authoritative counters', () => {
+    const player = makePlayer({
+      money: 10_000,
+      inventory: { NUKE: 2, THERMONUCLEAR: 0, GRENADE: 1 },
+    });
+
+    render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+        purchaseCounters={{ THERMONUCLEAR: 1, GRENADE: 12 }}
+      />
+    );
+
+    expect(document.getElementById('shop-buy-reason-NUKE')?.textContent).toBe(
+      'shop_reason_stock_cap',
+    );
+    expect(
+      document.getElementById('shop-buy-reason-THERMONUCLEAR')?.textContent,
+    ).toBe('shop_reason_purchase_limit');
+    expect(
+      document.getElementById('shop-buy-reason-GRENADE')?.textContent,
+    ).toBe('shop_reason_purchase_limit');
+  });
+
   it('disables sell button if player has 0 count of weapon', () => {
     const player = makePlayer({
       id: 'p-1',

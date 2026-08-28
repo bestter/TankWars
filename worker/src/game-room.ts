@@ -137,7 +137,9 @@ interface RoomState {
   shotNumberInRound: number;
   activeShot: PersistedActiveShot | null;
   shotHistory: ShotMessage[];
-  processedFireActions: Record<string, PersistedFireAction>;
+  processedFireActionsBySlot: Record<number, Record<string, PersistedFireAction>>;
+  /** Ancien index global, lu uniquement pour la migration des salles persistées. */
+  processedFireActions?: Record<string, PersistedFireAction>;
   lastFireResultBySlot: Record<number, PersistedFireResult>;
   lastAppliedEarnings: PersistedEarningsResult | null;
   shopEpoch: number;
@@ -238,7 +240,16 @@ export class GameRoom extends DurableObject {
         this.state.shotNumberInRound ??= 0;
         this.state.activeShot ??= null;
         this.state.shotHistory ??= [];
-        this.state.processedFireActions ??= {};
+        this.state.processedFireActionsBySlot ??= {};
+        const legacyFireActions = this.state.processedFireActions;
+        if (legacyFireActions) {
+          for (const [actionId, action] of Object.entries(legacyFireActions)) {
+            this.state.processedFireActionsBySlot[action.slot] ??= {};
+            this.state.processedFireActionsBySlot[action.slot][actionId] = action;
+          }
+          delete this.state.processedFireActions;
+          await ctx.storage.put("state", this.state);
+        }
         this.state.lastFireResultBySlot ??= {};
         this.state.lastAppliedEarnings ??= null;
         this.state.shopEpoch ??= 0;
@@ -455,7 +466,7 @@ export class GameRoom extends DurableObject {
       shotNumberInRound: 0,
       activeShot: null,
       shotHistory: [],
-      processedFireActions: {},
+      processedFireActionsBySlot: {},
       lastFireResultBySlot: {},
       lastAppliedEarnings: null,
       shopEpoch: 0,
@@ -700,7 +711,7 @@ export class GameRoom extends DurableObject {
     if (msg?.type === 'SHOP_BUY_SELL') {
       const decoded = decodeShopBuySellMessage(msg);
       if (!decoded.ok) {
-        await this.rejectShopAction(slot, decoded.rejection);
+        await this.rejectShopAction(slot, decoded.rejection, 'BUY_SELL');
         return;
       }
       await this.handleShopBuySell(slot, decoded.message);
@@ -721,7 +732,7 @@ export class GameRoom extends DurableObject {
     if (msg?.type === 'SHOP_READY') {
       const decoded = decodeShopReadyMessage(msg);
       if (!decoded.ok) {
-        await this.rejectShopAction(slot, decoded.rejection);
+        await this.rejectShopAction(slot, decoded.rejection, 'READY');
         return;
       }
       await this.handleShopReady(slot, decoded.message);
@@ -997,7 +1008,8 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const rejection = this.buildFireRejection(slot, reason, actionId);
     if (actionId) {
-      this.state.processedFireActions[actionId] = {
+      this.state.processedFireActionsBySlot[slot] ??= {};
+      this.state.processedFireActionsBySlot[slot][actionId] = {
         slot,
         result: rejection,
       };
@@ -1016,14 +1028,9 @@ export class GameRoom extends DurableObject {
     }
 
     const { actionId, command } = decoded.message;
-    const previous = this.state.processedFireActions[actionId];
+    const previous = this.state.processedFireActionsBySlot[slot]?.[actionId];
     if (previous) {
-      if (previous.slot !== slot) {
-        this.sendToSlot(
-          slot,
-          this.buildFireRejection(slot, 'MALFORMED', actionId),
-        );
-      } else if (previous.result.type === 'FIRE_REJECTED') {
+      if (previous.result.type === 'FIRE_REJECTED') {
         this.sendToSlot(slot, previous.result);
       } else if (this.state.activeShot?.shotId === previous.result.shotId) {
         this.sendToSlot(slot, previous.result);
@@ -1031,43 +1038,7 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (
-      command.power < 0 ||
-      command.power > 100 ||
-      command.angle < -360 ||
-      command.angle > 360
-    ) {
-      await this.rejectFire(slot, 'MALFORMED', actionId);
-      return;
-    }
-    if (this.state.roundEnded || this.state.shopSession) {
-      await this.rejectFire(slot, 'ROUND_ENDED', actionId);
-      return;
-    }
-    if (this.shotInFlight || this.state.activeShot) {
-      await this.rejectFire(slot, 'SHOT_IN_FLIGHT', actionId);
-      return;
-    }
-
     const fromSlot = this.state.currentPlayerIndex;
-    const currentConfig = this.state.slotConfigs[fromSlot];
-    const authorized = currentConfig?.type === 'human' && slot === fromSlot;
-    if (!authorized) {
-      await this.rejectFire(slot, 'NOT_YOUR_TURN', actionId);
-      return;
-    }
-
-    const currentPlayer = this.state.players[fromSlot];
-    if (!currentPlayer) {
-      await this.rejectFire(slot, 'MALFORMED', actionId);
-      return;
-    }
-    const consumed = consumeWeaponForFire(currentPlayer, command.weaponId);
-    if (!consumed.ok) {
-      await this.rejectFire(slot, consumed.reason, actionId);
-      return;
-    }
-    this.state.players[fromSlot] = consumed.player;
     await this.executeFire(fromSlot, command, actionId, slot);
   }
 
@@ -1078,19 +1049,66 @@ export class GameRoom extends DurableObject {
     actionId: string,
     requesterSlot?: number,
   ): Promise<void> {
-    if (!this.state || this.state.roundEnded) return;
+    if (!this.state) return;
+
+    const rejectRequester = async (
+      reason: FireRejectedMessage['reason'],
+    ): Promise<void> => {
+      if (requesterSlot !== undefined) {
+        await this.rejectFire(requesterSlot, reason, actionId);
+      }
+    };
+
+    if (
+      !Number.isFinite(command.power) ||
+      command.power < 0 ||
+      command.power > 100 ||
+      !Number.isFinite(command.angle) ||
+      command.angle < -360 ||
+      command.angle > 360
+    ) {
+      await rejectRequester('MALFORMED');
+      return;
+    }
+    if (this.state.roundEnded || this.state.shopSession) {
+      await rejectRequester('ROUND_ENDED');
+      return;
+    }
 
     // Defense in depth: AI timer + human FIRE path both funnel here.
-    if (this.shotInFlight) {
+    if (this.shotInFlight || this.state.activeShot) {
       console.warn(
         `[GameRoom] executeFire ignored for slot ${fromSlot} — shot already in flight`,
       );
+      await rejectRequester('SHOT_IN_FLIGHT');
+      return;
+    }
+
+    const currentConfig = this.state.slotConfigs[fromSlot];
+    const authorized = requesterSlot === undefined
+      ? currentConfig?.type === 'ai'
+      : currentConfig?.type === 'human' && requesterSlot === fromSlot;
+    if (!authorized) {
+      await rejectRequester('NOT_YOUR_TURN');
+      return;
+    }
+
+    const currentPlayer = this.state.players[fromSlot];
+    if (!currentPlayer) {
+      await rejectRequester('MALFORMED');
+      return;
+    }
+    const consumed = consumeWeaponForFire(currentPlayer, command.weaponId);
+    if (!consumed.ok) {
+      await rejectRequester(consumed.reason);
       return;
     }
 
     console.log('[GameRoom] executeFire: fromSlot=', fromSlot, ', command=', command);
-    const ownerId = this.state.players[fromSlot]?.id;
-    if (!ownerId) return;
+    const ownerId = currentPlayer.id;
+
+    // Toutes les validations sont terminées avant la première mutation autoritaire.
+    this.state.players[fromSlot] = consumed.player;
     this.clearShotSettledTimeout();
     this.shotInFlight = true;
     this.shotEpoch++;
@@ -1123,13 +1141,12 @@ export class GameRoom extends DurableObject {
       ownerId,
     };
     this.state.shotHistory.push(shotEvent);
-    if (requesterSlot !== undefined) {
-      this.state.processedFireActions[actionId] = {
-        slot: requesterSlot,
-        result: shotEvent,
-      };
-      this.state.lastFireResultBySlot[requesterSlot] = shotEvent;
-    }
+    this.state.processedFireActionsBySlot[fromSlot] ??= {};
+    this.state.processedFireActionsBySlot[fromSlot][actionId] = {
+      slot: fromSlot,
+      result: shotEvent,
+    };
+    this.state.lastFireResultBySlot[fromSlot] = shotEvent;
     await this.saveState();
     this.broadcast(shotEvent);
 
@@ -1583,15 +1600,6 @@ export class GameRoom extends DurableObject {
           resolve();
           return;
         }
-        const aiPlayer = this.state.players[idx];
-        const consumed = aiPlayer
-          ? consumeWeaponForFire(aiPlayer, fakeCommand.weaponId)
-          : null;
-        if (!consumed?.ok) {
-          resolve();
-          return;
-        }
-        this.state.players[idx] = consumed.player;
         this.executeFire(
           idx,
           fakeCommand,
@@ -1635,7 +1643,7 @@ export class GameRoom extends DurableObject {
   private async rejectShopAction(
     slot: number,
     rejection: ShopRejectedMessage,
-    kind: 'BUY_SELL' | 'READY' = rejection.weaponId ? 'BUY_SELL' : 'READY',
+    kind: 'BUY_SELL' | 'READY',
   ): Promise<void> {
     if (!this.state) return;
     if (rejection.actionId) {
@@ -1910,7 +1918,7 @@ export class GameRoom extends DurableObject {
     this.state.shotHistory = [];
     this.state.lastAppliedEarnings = null;
     this.state.lastAppliedZeusStrike = null;
-    this.state.processedFireActions = {};
+    this.state.processedFireActionsBySlot = {};
     this.state.lastFireResultBySlot = {};
     this.resetZeusRoundState();
     this.state.currentPlayerIndex = 0;

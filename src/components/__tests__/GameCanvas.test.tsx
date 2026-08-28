@@ -78,6 +78,7 @@ describe("GameCanvas component", () => {
     lastAppliedShopEpoch: 0,
     lastCompletedRoundNumber: 0,
     lastSeenShotId: 0,
+    pendingFireIntent: null,
     fireRejection: null,
   };
 

@@ -126,6 +126,7 @@ export function applyShopTransaction(
   input: ShopTransactionInput,
 ): ShopTransactionResult {
   const { player, counters, weaponId, delta } = input;
+  if (delta !== 1 && delta !== -1) return reject(input, "MALFORMED");
   if (!isShopWeapon(weaponId)) return reject(input, "NOT_SOLD");
 
   const stockResult = readLegalStock(player, weaponId);
@@ -178,6 +179,10 @@ export function applyShopTransaction(
   }
 
   if (stock < 1) return reject(input, "NO_STOCK");
+
+  if (!Number.isSafeInteger(player.money) || player.money < 0) {
+    return reject(input, "MALFORMED");
+  }
 
   const nextMoney = player.money + WEAPON_REGISTRY[weaponId].price;
   if (!Number.isSafeInteger(nextMoney) || nextMoney < 0) {

@@ -3,9 +3,9 @@ import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
-import { TankManager } from "../../game/entities/TankManager";
-import type { OnlineCanvasSnapshot } from "../../utils/onlineSession";
 import type { Player } from "../../types/player";
+import type { OnlineCanvasSnapshot } from "../../utils/onlineSession";
+import { createEmptyShopSession } from "../gameCanvasReducer";
 import { useGameSession } from "../useGameSession";
 
 type SessionApi = ReturnType<typeof useGameSession>;
@@ -47,9 +47,9 @@ function Harness({
   const session = useGameSession({
     initialPlayers: players,
     gameMode: "online",
-    roomId: "room-zeus-race",
+    roomId: "room-fire-reconnect",
     localPlayerId: "player-1",
-    initialCurrentPlayerIndex: 1,
+    initialCurrentPlayerIndex: 0,
     resumeCanvas,
     slot: 0,
     token: "TOKEN1",
@@ -62,7 +62,7 @@ function Harness({
   return <canvas ref={canvasRef} width={800} height={480} />;
 }
 
-describe("useGameSession Zeus reconnect", () => {
+describe("useGameSession FIRE reconnect", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
@@ -78,30 +78,26 @@ describe("useGameSession Zeus reconnect", () => {
     vi.unstubAllGlobals();
   });
 
-  it("applies an in-progress reconnect strike once across duplicate and stale messages", () => {
+  it("retries the persisted FIRE and applies only its correlated catch-up rejection", () => {
     const players = [
       makePlayer({
         id: "player-1",
         name: "Local",
         isHuman: true,
-        money: 250,
-        tank: makeTank("tank-1", 120, 300),
+        inventory: { GRENADE: 1 },
+        tank: makeTank("tank-1", 120, 300, { currentWeapon: "GRENADE" }),
       }),
       makePlayer({
         id: "player-2",
-        name: "Zeus",
-        isHuman: false,
-        money: 250,
-        tank: makeTank("tank-2", 400, 300),
-      }),
-      makePlayer({
-        id: "player-3",
-        name: "Target",
-        isHuman: false,
-        money: 250,
-        tank: makeTank("tank-3", 680, 300),
+        name: "Remote",
+        isHuman: true,
+        tank: makeTank("tank-2", 680, 300),
       }),
     ];
+    const pendingFireIntent = {
+      actionId: "fire-survives-refresh",
+      command: { angle: 47, power: 63, weaponId: "GRENADE" as const },
+    };
     const resumeCanvas: OnlineCanvasSnapshot = {
       gamePhase: "COMBAT",
       currentManche: 1,
@@ -115,27 +111,17 @@ describe("useGameSession Zeus reconnect", () => {
       authorityEpoch: 1,
       lastAppliedShotId: 0,
       lastAppliedZeusStrikeId: 0,
-      roundEarningsByPlayer: {},
-      earningsOverlay: null,
-      shopSession: {
-        epoch: null,
-        roundNumber: null,
-        counters: {},
-        readySlots: [],
-        aiShopApplied: false,
-        authoritativeReceived: false,
-        pendingIntent: null,
-        denial: null,
-      },
+      shopSession: createEmptyShopSession(),
       lastAppliedShopEpoch: 0,
       lastCompletedRoundNumber: 0,
       lastSeenShotId: 0,
-      pendingFireIntent: null,
+      pendingFireIntent,
       fireRejection: null,
+      roundEarningsByPlayer: {},
+      earningsOverlay: null,
     };
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };
-    const applyStrike = vi.spyOn(TankManager.prototype, "applyZeusStrike");
 
     render(
       <Harness
@@ -146,57 +132,49 @@ describe("useGameSession Zeus reconnect", () => {
       />,
     );
 
-    const activeStrike = {
-      type: "ZEUS_STRIKE",
-      strikeId: 7,
-      zeusId: "player-2",
-      targetId: "player-3",
-      resolveAt: Date.now() + 350,
-    };
-    const appliedStrike = {
-      type: "ZEUS_STRIKE_APPLIED",
-      strikeId: 7,
-      zeusId: "player-2",
-      targetId: "player-3",
-      award: { playerId: "player-2", amount: 88 },
-      balances: [
-        { playerId: "player-1", money: 250 },
-        { playerId: "player-2", money: 338 },
-        { playerId: "player-3", money: 250 },
-      ],
-      deadSlots: [false, false, true],
-      roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
-      nextPlayerIndex: 0,
-    };
-    const zeusState = {
-      type: "ZEUS_STATE",
-      activeZeusId: "player-2",
-      currentPlayerIndex: 1,
-      rotationSlots: [1, 2, 0],
-      deadSlots: [false, false, false],
-      activeStrike,
-      lastAppliedStrikeId: 0,
-    };
+    const sentMessages = ws.send.mock.calls.map(([payload]) =>
+      JSON.parse(String(payload)) as Record<string, unknown>,
+    );
+    expect(sentMessages).toContainEqual({
+      type: "FIRE",
+      actionId: pendingFireIntent.actionId,
+      command: pendingFireIntent.command,
+    });
 
     act(() => {
-      ws.receive(zeusState);
-      ws.receive(activeStrike);
-      ws.receive(appliedStrike);
-      ws.receive(appliedStrike);
-      ws.receive(zeusState);
-      vi.advanceTimersByTime(1_000);
+      ws.receive({
+        type: "FIRE_REJECTED",
+        actionId: "stale-fire",
+        reason: "NO_AMMO",
+        inventory: { GRENADE: 0 },
+        currentWeapon: "MISSILE",
+      });
+    });
+    expect(sessionRef.current?.state.pendingFireIntent).toEqual(
+      pendingFireIntent,
+    );
+    expect(sessionRef.current?.state.fireRejection).toBeNull();
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 1,
+        activeShotId: null,
+        shots: [],
+        lastFireResult: {
+          type: "FIRE_REJECTED",
+          actionId: pendingFireIntent.actionId,
+          reason: "NO_AMMO",
+          inventory: { GRENADE: 0 },
+          currentWeapon: "MISSILE",
+        },
+      });
     });
 
-    const state = sessionRef.current?.state;
-    expect(applyStrike).toHaveBeenCalledOnce();
-    expect(state?.uiPlayers.find((player) => player.id === "player-3")?.tank).toMatchObject({
-      health: 0,
-      shield: 0,
-      isDead: true,
-    });
-    expect(state?.uiPlayers.find((player) => player.id === "player-2")?.money).toBe(338);
-    expect(state?.earningsOverlay?.awards).toEqual([
-      expect.objectContaining({ playerId: "player-2", amount: 88 }),
-    ]);
+    expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
+    expect(sessionRef.current?.state.fireRejection).toBe("NO_AMMO");
+    expect(
+      sessionRef.current?.state.uiPlayers[0].inventory.GRENADE,
+    ).toBe(0);
   });
 });

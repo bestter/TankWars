@@ -1,4 +1,4 @@
-import type { GamePhase, RoundResult } from "../types/game";
+import type { FireCommand, GamePhase, RoundResult } from "../types/game";
 import type { Player } from "../types/player";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import type { WeaponId } from "../types/weapon";
@@ -27,6 +27,11 @@ export interface ZeusAnnouncementState {
   appointmentId: number;
   playerName: string;
   displayedAt: number;
+}
+
+export interface PendingFireIntent {
+  readonly actionId: string;
+  readonly command: FireCommand;
 }
 
 export type PendingShopIntent =
@@ -88,6 +93,7 @@ export interface GameCanvasState {
   lastAppliedShopEpoch: number;
   lastCompletedRoundNumber: number;
   lastSeenShotId: number;
+  pendingFireIntent: PendingFireIntent | null;
   fireRejection: FireRejectedReason | null;
 }
 
@@ -134,6 +140,7 @@ export type GameCanvasAction =
     }
   | { type: "SET_LAST_COMPLETED_ROUND"; roundNumber: number }
   | { type: "SET_LAST_SEEN_SHOT"; shotId: number }
+  | { type: "SET_FIRE_PENDING"; intent: PendingFireIntent | null }
   | { type: "SET_FIRE_REJECTION"; reason: FireRejectedReason | null }
   | { type: "END_MATCH_FROM_SHOP"; winner: Player | null }
   | { type: "SHOW_NEW_GAME_BUTTON"; show: boolean }
@@ -159,6 +166,7 @@ export type GameCanvasAction =
             | "lastAppliedShopEpoch"
             | "lastCompletedRoundNumber"
             | "lastSeenShotId"
+            | "pendingFireIntent"
             | "fireRejection"
           >
         >;
@@ -182,6 +190,7 @@ export const INITIAL_STATE: GameCanvasState = {
   lastAppliedShopEpoch: 0,
   lastCompletedRoundNumber: 0,
   lastSeenShotId: 0,
+  pendingFireIntent: null,
   fireRejection: null,
 };
 
@@ -346,6 +355,8 @@ export function gameCanvasReducer(
         ...state,
         lastSeenShotId: Math.max(state.lastSeenShotId, action.shotId),
       };
+    case "SET_FIRE_PENDING":
+      return { ...state, pendingFireIntent: action.intent };
     case "SET_FIRE_REJECTION":
       return { ...state, fireRejection: action.reason };
     case "END_MATCH_FROM_SHOP":
@@ -360,6 +371,7 @@ export function gameCanvasReducer(
         lastAppliedShopEpoch: 0,
         lastCompletedRoundNumber: 0,
         lastSeenShotId: 0,
+        pendingFireIntent: null,
         fireRejection: null,
       };
     case "SHOW_NEW_GAME_BUTTON":
@@ -385,6 +397,7 @@ export function gameCanvasReducer(
         lastAppliedShopEpoch: 0,
         lastCompletedRoundNumber: 0,
         lastSeenShotId: 0,
+        pendingFireIntent: null,
         fireRejection: null,
       };
     case "RESUME_CANVAS":
@@ -405,6 +418,7 @@ export function gameCanvasReducer(
         lastCompletedRoundNumber:
           action.snapshot.lastCompletedRoundNumber ?? 0,
         lastSeenShotId: action.snapshot.lastSeenShotId ?? 0,
+        pendingFireIntent: action.snapshot.pendingFireIntent ?? null,
         fireRejection: action.snapshot.fireRejection ?? null,
       };
     default:

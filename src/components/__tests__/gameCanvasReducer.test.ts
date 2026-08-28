@@ -49,6 +49,24 @@ describe("gameCanvasReducer", () => {
     expect(nextState.wind).toBe(15);
   });
 
+  it("conserve puis efface une intention FIRE corrélable", () => {
+    const intent = {
+      actionId: "fire-pending-1",
+      command: { angle: 45, power: 50, weaponId: "GRENADE" as const },
+    };
+    const pendingState = gameCanvasReducer(INITIAL_STATE, {
+      type: "SET_FIRE_PENDING",
+      intent,
+    });
+    expect(pendingState.pendingFireIntent).toEqual(intent);
+
+    const clearedState = gameCanvasReducer(pendingState, {
+      type: "SET_FIRE_PENDING",
+      intent: null,
+    });
+    expect(clearedState.pendingFireIntent).toBeNull();
+  });
+
   it("should handle SET_TURN_INFO action", () => {
     const mockTurnInfo: CurrentTurnInfo = {
       playerId: "p1",

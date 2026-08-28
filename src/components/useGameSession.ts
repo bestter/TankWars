@@ -4,7 +4,7 @@ import type {
   AuthoritativeReplayMode,
   CurrentTurnInfo,
 } from "../game/engine/TurnManager";
-import { VGA_PALETTE, type FireCommand } from "../types/game";
+import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
@@ -16,6 +16,7 @@ import {
   INITIAL_STATE,
   ZEUS_ANNOUNCEMENT_DURATION_MS,
   type EarningsOverlayState,
+  type PendingFireIntent,
   type PendingShopIntent,
   type ShopClientSessionState,
 } from "./gameCanvasReducer";
@@ -150,11 +151,6 @@ interface UseGameSessionProps {
  */
 let combatWsEffectGen = 0;
 
-interface PendingFireIntent {
-  readonly actionId: string;
-  readonly command: FireCommand;
-}
-
 interface QueuedAuthoritativeShot {
   readonly message: ShotMessage;
   readonly mode: AuthoritativeReplayMode;
@@ -204,7 +200,9 @@ export function useGameSession({
   const shopSessionRef = useRef<ShopClientSessionState>(
     resumeCanvas?.shopSession ?? INITIAL_STATE.shopSession,
   );
-  const pendingFireRef = useRef<PendingFireIntent | null>(null);
+  const pendingFireRef = useRef<PendingFireIntent | null>(
+    resumeCanvas?.pendingFireIntent ?? null,
+  );
   const fireRejectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shotQueueRef = useRef<QueuedAuthoritativeShot[]>([]);
   const queuedShotIdsRef = useRef<Set<number>>(new Set());
@@ -363,6 +361,7 @@ export function useGameSession({
         lastAppliedShopEpoch,
         lastCompletedRoundNumber,
         lastSeenShotId,
+        pendingFireIntent: state.pendingFireIntent,
         fireRejection: state.fireRejection,
       },
     });
@@ -390,6 +389,7 @@ export function useGameSession({
     lastAppliedShopEpoch,
     lastCompletedRoundNumber,
     lastSeenShotId,
+    state.pendingFireIntent,
     state.fireRejection,
   ]);
 
@@ -595,6 +595,7 @@ export function useGameSession({
         pendingFireRef.current?.actionId === next.message.actionId
       ) {
         pendingFireRef.current = null;
+        dispatch({ type: "SET_FIRE_PENDING", intent: null });
         dispatch({ type: "SET_FIRE_REJECTION", reason: null });
       }
       tm.executeRemoteFire(next.message.command, {
@@ -652,6 +653,7 @@ export function useGameSession({
         command: { ...command },
       };
       pendingFireRef.current = pending;
+      dispatch({ type: "SET_FIRE_PENDING", intent: pending });
       dispatch({ type: "SET_FIRE_REJECTION", reason: null });
       const message: ClientFireMessage = {
         type: "FIRE",
@@ -751,8 +753,9 @@ export function useGameSession({
     const applyFireRejection = (message: FireRejectedMessage): void => {
       const pending = pendingFireRef.current;
       if (
-        message.actionId !== undefined &&
-        pending?.actionId !== message.actionId
+        !pending ||
+        message.actionId === undefined ||
+        pending.actionId !== message.actionId
       ) return;
       const roster = engine.getTankManager().getPlayers();
       const localPlayer = roster[localSlotNum];
@@ -772,6 +775,7 @@ export function useGameSession({
         dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
       }
       pendingFireRef.current = null;
+      dispatch({ type: "SET_FIRE_PENDING", intent: null });
       tm.rejectPendingFireIntent();
       if (fireRejectionTimerRef.current !== null) {
         clearTimeout(fireRejectionTimerRef.current);
@@ -884,37 +888,41 @@ export function useGameSession({
       tm.pauseForInterRound();
     };
 
+    const retryPendingActions = (): void => {
+      const pendingFire = pendingFireRef.current;
+      if (pendingFire) {
+        const retry: ClientFireMessage = {
+          type: "FIRE",
+          actionId: pendingFire.actionId,
+          command: pendingFire.command,
+        };
+        sendCombatMessage(retry);
+      }
+      const pendingShop = shopSessionRef.current.pendingIntent;
+      if (pendingShop?.kind === "BUY_SELL") {
+        const retry: ShopBuySellMessage = {
+          type: "SHOP_BUY_SELL",
+          shopEpoch: pendingShop.shopEpoch,
+          actionId: pendingShop.actionId,
+          weaponId: pendingShop.weaponId,
+          delta: pendingShop.delta,
+        };
+        sendCombatMessage(retry);
+      } else if (pendingShop?.kind === "READY") {
+        const retry: ShopReadyMessage = {
+          type: "SHOP_READY",
+          shopEpoch: pendingShop.shopEpoch,
+          actionId: pendingShop.actionId,
+        };
+        sendCombatMessage(retry);
+      }
+    };
+
     function bindCombatWsHandlers(ws: WebSocket): void {
       ws.onopen = () => {
         console.log('[Game] Combat WS connected to server');
         flushCombatMessages();
-        const pendingFire = pendingFireRef.current;
-        if (pendingFire) {
-          const retry: ClientFireMessage = {
-            type: "FIRE",
-            actionId: pendingFire.actionId,
-            command: pendingFire.command,
-          };
-          ws.send(JSON.stringify(retry));
-        }
-        const pendingShop = shopSessionRef.current.pendingIntent;
-        if (pendingShop?.kind === "BUY_SELL") {
-          const retry: ShopBuySellMessage = {
-            type: "SHOP_BUY_SELL",
-            shopEpoch: pendingShop.shopEpoch,
-            actionId: pendingShop.actionId,
-            weaponId: pendingShop.weaponId,
-            delta: pendingShop.delta,
-          };
-          ws.send(JSON.stringify(retry));
-        } else if (pendingShop?.kind === "READY") {
-          const retry: ShopReadyMessage = {
-            type: "SHOP_READY",
-            shopEpoch: pendingShop.shopEpoch,
-            actionId: pendingShop.actionId,
-          };
-          ws.send(JSON.stringify(retry));
-        }
+        retryPendingActions();
         // Pull ordered shots and any active shop transition missed during reconnect.
         try {
           ws.send(JSON.stringify(buildCatchUpRequest()));
@@ -1202,6 +1210,7 @@ export function useGameSession({
       bindCombatWsHandlers(incomingWs);
       // Lobby socket is already OPEN — onopen will not fire again; flush + catch-up now.
       flushCombatMessages();
+      retryPendingActions();
       try {
         incomingWs.send(JSON.stringify(buildCatchUpRequest()));
       } catch {
@@ -1731,6 +1740,15 @@ export function useGameSession({
     if (!currentPlayer || !currentPlayer.isHuman) return;
 
     if (gameMode === 'online' && localPlayerId && currentPlayer.id !== localPlayerId) {
+      return;
+    }
+
+    if (
+      gameMode === "online" &&
+      (shopSessionRef.current.epoch === null ||
+        !shopSessionRef.current.authoritativeReceived ||
+        shopSessionRef.current.pendingIntent)
+    ) {
       return;
     }
 

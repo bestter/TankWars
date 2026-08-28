@@ -192,6 +192,40 @@ describe("autoBuyForAI", () => {
     expect(updated.inventory["BULLDOZER"]).toBeUndefined();
   });
 
+  it("applique exactement les quotas v1 et repart avec de nouveaux compteurs à la visite suivante", () => {
+    const player = makePlayer({
+      isHuman: false,
+      aiProfile: "v1-random",
+      money: 20_000,
+      inventory: {},
+    });
+
+    const firstVisit = autoBuyForAI(player);
+    expect(firstVisit.player.inventory).toMatchObject({
+      CLUSTER: 12,
+      DRILLER: 12,
+      GRENADE: 12,
+      NUKE: 1,
+      THERMONUCLEAR: 1,
+    });
+    expect(firstVisit.counters[firstVisit.player.id]).toMatchObject({
+      CLUSTER: 12,
+      DRILLER: 12,
+      GRENADE: 12,
+      NUKE: 1,
+      THERMONUCLEAR: 1,
+    });
+
+    const secondVisit = autoBuyForAI(firstVisit.player, {});
+    expect(secondVisit.player.inventory).toMatchObject({
+      CLUSTER: 24,
+      DRILLER: 24,
+      GRENADE: 24,
+      NUKE: 2,
+      THERMONUCLEAR: 1,
+    });
+  });
+
   it("caps BULLDOZER at 1 for v2-heuristic", () => {
     const player = makePlayer({
       isHuman: false,
