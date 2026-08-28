@@ -694,4 +694,139 @@ describe("useGameSession FIRE reconnect", () => {
     });
     expect(wsCtor).not.toHaveBeenCalled();
   });
+
+  it("applies SHOP_STATE then SHOP_FINISH after an in-flight shot replay", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 4 });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    let capturedTm: TurnManager | undefined;
+    vi.spyOn(TurnManager.prototype, "executeRemoteFire").mockImplementation(
+      function (this: TurnManager) {
+        capturedTm = this;
+      },
+    );
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOT",
+        actionId: "live-round-one",
+        shotId: 5,
+        roundNumber: 1,
+        shotNumberInRound: 5,
+        isFirstShotOfRound: false,
+        slot: 0,
+        ownerId: "player-1",
+        command: { angle: 47, power: 63, weaponId: "GRENADE" },
+      });
+    });
+
+    expect(capturedTm).toBeDefined();
+
+    act(() => {
+      ws.receive({
+        type: "ROUND_END",
+        players,
+        roundWinnerId: "player-1",
+        isDraw: false,
+        roundNumber: 1,
+      });
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [0],
+        players,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+      });
+      ws.receive({
+        type: "SHOP_FINISH",
+        shopEpoch: 1,
+        completedRoundNumber: 1,
+        nextRoundNumber: 2,
+        players,
+      });
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(0);
+
+    act(() => {
+      capturedTm?.onAuthoritativeShotSettled?.(5);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(sessionRef.current?.state.currentManche).toBe(2);
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+  });
+
+  it("does not reopen SHOP when a late SHOP_STATE follows SHOP_FINISH during replay", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 4 });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    let capturedTm: TurnManager | undefined;
+    vi.spyOn(TurnManager.prototype, "executeRemoteFire").mockImplementation(
+      function (this: TurnManager) {
+        capturedTm = this;
+      },
+    );
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOT",
+        actionId: "live-round-one",
+        shotId: 5,
+        roundNumber: 1,
+        shotNumberInRound: 5,
+        isFirstShotOfRound: false,
+        slot: 0,
+        ownerId: "player-1",
+        command: { angle: 47, power: 63, weaponId: "GRENADE" },
+      });
+      ws.receive({
+        type: "SHOP_FINISH",
+        shopEpoch: 1,
+        completedRoundNumber: 1,
+        nextRoundNumber: 2,
+        players,
+      });
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [],
+        players,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+      });
+    });
+
+    act(() => {
+      capturedTm?.onAuthoritativeShotSettled?.(5);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(sessionRef.current?.state.currentManche).toBe(2);
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+  });
 });
