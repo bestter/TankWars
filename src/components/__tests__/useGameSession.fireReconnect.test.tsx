@@ -700,12 +700,9 @@ describe("useGameSession FIRE reconnect", () => {
     const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 4 });
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };
-    let capturedTm: TurnManager | undefined;
-    vi.spyOn(TurnManager.prototype, "executeRemoteFire").mockImplementation(
-      function (this: TurnManager) {
-        capturedTm = this;
-      },
-    );
+    const executeRemoteFire = vi
+      .spyOn(TurnManager.prototype, "executeRemoteFire")
+      .mockImplementation(() => undefined);
 
     render(
       <Harness
@@ -730,6 +727,9 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
+    const capturedTm = executeRemoteFire.mock.instances.at(-1) as
+      | TurnManager
+      | undefined;
     expect(capturedTm).toBeDefined();
 
     act(() => {
@@ -762,7 +762,7 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(0);
 
     act(() => {
-      capturedTm?.onAuthoritativeShotSettled?.(5);
+      capturedTm?.onAuthoritativeShotSettled?.(5, "LIVE_REMOTE");
     });
 
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
@@ -775,12 +775,9 @@ describe("useGameSession FIRE reconnect", () => {
     const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 4 });
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };
-    let capturedTm: TurnManager | undefined;
-    vi.spyOn(TurnManager.prototype, "executeRemoteFire").mockImplementation(
-      function (this: TurnManager) {
-        capturedTm = this;
-      },
-    );
+    const executeRemoteFire = vi
+      .spyOn(TurnManager.prototype, "executeRemoteFire")
+      .mockImplementation(() => undefined);
 
     render(
       <Harness
@@ -821,8 +818,13 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
+    const capturedTm = executeRemoteFire.mock.instances.at(-1) as
+      | TurnManager
+      | undefined;
+    expect(capturedTm).toBeDefined();
+
     act(() => {
-      capturedTm?.onAuthoritativeShotSettled?.(5);
+      capturedTm?.onAuthoritativeShotSettled?.(5, "LIVE_REMOTE");
     });
 
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");

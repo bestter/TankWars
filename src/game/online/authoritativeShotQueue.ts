@@ -30,7 +30,11 @@ export class AuthoritativeShotQueue {
   private activeShotId: number | null = null;
   private catchUpShotId: number | null = null;
 
-  constructor(private readonly host: AuthoritativeShotQueueHost) {}
+  private readonly host: AuthoritativeShotQueueHost;
+
+  constructor(host: AuthoritativeShotQueueHost) {
+    this.host = host;
+  }
 
   get replayActiveNow(): boolean {
     return this.replayActive;
