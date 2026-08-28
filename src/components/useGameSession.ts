@@ -309,6 +309,23 @@ export function useGameSession({
     lastSeenShotIdRef.current = lastSeenShotId;
   }, [lastSeenShotId]);
 
+  useEffect(() => {
+    if (state.fireRejection === null) return;
+    const timeoutId = setTimeout(() => {
+      if (fireRejectionTimerRef.current === timeoutId) {
+        fireRejectionTimerRef.current = null;
+      }
+      dispatch({ type: "SET_FIRE_REJECTION", reason: null });
+    }, 3500);
+    fireRejectionTimerRef.current = timeoutId;
+    return () => {
+      clearTimeout(timeoutId);
+      if (fireRejectionTimerRef.current === timeoutId) {
+        fireRejectionTimerRef.current = null;
+      }
+    };
+  }, [state.fireRejection]);
+
   // Persist online match so refresh / accidental MENU does not drop into the waiting-room lobby.
   useEffect(() => {
     if (
@@ -789,14 +806,7 @@ export function useGameSession({
       pendingFireRef.current = null;
       dispatch({ type: "SET_FIRE_PENDING", intent: null });
       tm.rejectPendingFireIntent();
-      if (fireRejectionTimerRef.current !== null) {
-        clearTimeout(fireRejectionTimerRef.current);
-      }
       dispatch({ type: "SET_FIRE_REJECTION", reason: message.reason });
-      fireRejectionTimerRef.current = setTimeout(() => {
-        fireRejectionTimerRef.current = null;
-        dispatch({ type: "SET_FIRE_REJECTION", reason: null });
-      }, 3500);
     };
 
     const applyRoundEndMessage = (message: RoundEndMessage): void => {

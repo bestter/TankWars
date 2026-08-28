@@ -198,6 +198,30 @@ describe("useGameSession FIRE reconnect", () => {
     ).toBe(0);
   });
 
+  it("expires a persisted fire rejection after reconnecting", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, {
+      fireRejection: "NO_AMMO",
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    expect(sessionRef.current?.state.fireRejection).toBe("NO_AMMO");
+    act(() => vi.advanceTimersByTime(3499));
+    expect(sessionRef.current?.state.fireRejection).toBe("NO_AMMO");
+    act(() => vi.advanceTimersByTime(1));
+    expect(sessionRef.current?.state.fireRejection).toBeNull();
+  });
+
   it("recovers the local active shot and emits settlement plus earnings", () => {
     const players = createPlayers();
     const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 7 });
