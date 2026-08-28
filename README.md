@@ -157,7 +157,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol, server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **656 unit tests** across **69 files** (Vitest)
+- **714 unit tests** across **70 files** (Vitest)
 
 Still planned:
 
