@@ -377,6 +377,81 @@ describe("useGameSession FIRE reconnect", () => {
     );
   });
 
+  it("drains an active next-round catch-up shot after SHOP_FINISH", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SHOP",
+      currentManche: 2,
+      shopPlayers: players,
+      lastCompletedRoundNumber: 1,
+      shopSession: {
+        ...createEmptyShopSession(),
+        epoch: 1,
+        roundNumber: 1,
+        aiShopApplied: true,
+        authoritativeReceived: true,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(
+      TurnManager.prototype,
+      "executeRemoteFire",
+    );
+    const nextRoundShot = {
+      type: "SHOT",
+      actionId: "active-round-two-shot",
+      shotId: 6,
+      roundNumber: 2,
+      shotNumberInRound: 1,
+      isFirstShotOfRound: true,
+      slot: 0,
+      ownerId: "player-1",
+      command: { angle: 47, power: 63, weaponId: "GRENADE" },
+    } as const;
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 2,
+        activeShotId: nextRoundShot.shotId,
+        shots: [nextRoundShot],
+        lastFireResult: null,
+      });
+    });
+
+    expect(executeRemoteFire).not.toHaveBeenCalled();
+
+    act(() => {
+      ws.receive({
+        type: "SHOP_FINISH",
+        shopEpoch: 1,
+        completedRoundNumber: 1,
+        nextRoundNumber: 2,
+        players,
+      });
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
+    expect(executeRemoteFire).toHaveBeenCalledWith(
+      nextRoundShot.command,
+      expect.objectContaining({
+        mode: "ACTIVE_RECOVERY",
+        identity: expect.objectContaining({ shotId: nextRoundShot.shotId }),
+      }),
+    );
+  });
+
   it("keeps a pending shop intent until its correlated rejection arrives", () => {
     const players = createPlayers();
     const pendingIntent = {

@@ -1215,6 +1215,12 @@ export function useGameSession({
                 strictMessage.shopEpoch,
                 strictMessage.nextRoundNumber,
               );
+              if (
+                gamePhaseRef.current === "COMBAT" &&
+                shotQueueRef.current.length > 0
+              ) {
+                drainAuthoritativeShotQueue();
+              }
             };
             if (shotReplayActiveRef.current) {
               pendingAuthoritativeTransition = applyFinish;
