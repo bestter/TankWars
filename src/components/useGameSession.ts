@@ -46,6 +46,7 @@ import {
   type ShotMessage,
   type ShotEarningsMessage,
 } from "../game/online/protocol";
+import { DeferredTransitionBuffer } from "../game/online/deferredTransitions";
 import type {
   ZeusAppointment,
   ZeusStrikeResult,
@@ -211,7 +212,7 @@ export function useGameSession({
   const catchUpActiveShotIdRef = useRef<number | null>(null);
   const authoritativeEconomyRef = useRef<AuthoritativeEconomyPlayer[]>([]);
   const reapplyAuthoritativeEconomyRef = useRef<() => void>(() => {});
-  const pendingRoundEndApplyRef = useRef<(() => void) | null>(null);
+  const transitionBufferRef = useRef(new DeferredTransitionBuffer());
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
@@ -579,7 +580,8 @@ export function useGameSession({
       lastSeenShotId: lastSeenShotIdRef.current,
       lastAppliedShopEpoch: lastAppliedShopEpochRef.current,
     });
-    let pendingAuthoritativeTransition: (() => void) | null = null;
+    const transitionBuffer = new DeferredTransitionBuffer();
+    transitionBufferRef.current = transitionBuffer;
 
     const acknowledgePendingFire = (message: ShotMessage): void => {
       if (pendingFireRef.current?.actionId !== message.actionId) return;
@@ -619,12 +621,26 @@ export function useGameSession({
       const next = shotQueueRef.current[0];
       if (!next) {
         reapplyAuthoritativeEconomyRef.current();
-        const applyRoundEnd = pendingRoundEndApplyRef.current;
-        pendingRoundEndApplyRef.current = null;
-        applyRoundEnd?.();
-        const applyTransition = pendingAuthoritativeTransition;
-        pendingAuthoritativeTransition = null;
-        applyTransition?.();
+        for (const item of transitionBuffer.drain()) {
+          if (item.kind === "ROUND_END") {
+            applyRoundEndMessage(item.message);
+          } else if (item.kind === "SHOP_STATE") {
+            applyShopStateMessage(item.message);
+          } else {
+            applyShopFinishRef.current(
+              item.message.players,
+              item.message.shopEpoch,
+              item.message.nextRoundNumber,
+            );
+            if (
+              gamePhaseRef.current === "COMBAT" &&
+              shotQueueRef.current.length > 0
+            ) {
+              drainAuthoritativeShotQueue();
+              return;
+            }
+          }
+        }
         if (catchUpActiveShotIdRef.current === null) tm.unlockAfterCatchUp();
         return;
       }
@@ -1179,9 +1195,10 @@ export function useGameSession({
           if (strictMessage?.type === "SHOP_STATE") {
             purgeCompletedRoundShots(strictMessage.roundNumber);
             if (shotReplayActiveRef.current) {
-              pendingAuthoritativeTransition = () => {
-                applyShopStateMessage(strictMessage);
-              };
+              transitionBuffer.enqueue({
+                kind: "SHOP_STATE",
+                message: strictMessage,
+              });
             } else {
               applyShopStateMessage(strictMessage);
             }
@@ -1209,7 +1226,7 @@ export function useGameSession({
 
           if (strictMessage?.type === "SHOP_FINISH") {
             purgeCompletedRoundShots(strictMessage.completedRoundNumber);
-            const applyFinish = () => {
+            const applyFinish = (): void => {
               applyShopFinishRef.current(
                 strictMessage.players,
                 strictMessage.shopEpoch,
@@ -1223,7 +1240,10 @@ export function useGameSession({
               }
             };
             if (shotReplayActiveRef.current) {
-              pendingAuthoritativeTransition = applyFinish;
+              transitionBuffer.enqueue({
+                kind: "SHOP_FINISH",
+                message: strictMessage,
+              });
             } else {
               applyFinish();
             }
@@ -1234,9 +1254,10 @@ export function useGameSession({
               shotReplayActiveRef.current ||
               shotQueueRef.current.length > 0
             ) {
-              pendingRoundEndApplyRef.current = () => {
-                applyRoundEndMessage(strictMessage);
-              };
+              transitionBuffer.enqueue({
+                kind: "ROUND_END",
+                message: strictMessage,
+              });
             } else {
               applyRoundEndMessage(strictMessage);
             }
@@ -1621,7 +1642,7 @@ export function useGameSession({
       tm.onAuthoritativeShotSettled = undefined;
       tm.removeInputListeners();
       reapplyAuthoritativeEconomyRef.current = () => {};
-      pendingRoundEndApplyRef.current = null;
+      transitionBufferRef.current.drain();
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
