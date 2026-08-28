@@ -583,7 +583,8 @@ export function useGameSession({
       queuedShotIdsRef.current.delete(next.message.shotId);
       if (
         replayedShotIdsRef.current.has(next.message.shotId) ||
-        next.message.shotId <= lastSeenShotIdRef.current
+        (next.mode !== "ACTIVE_RECOVERY" &&
+          next.message.shotId <= lastSeenShotIdRef.current)
       ) {
         drainAuthoritativeShotQueue();
         return;
@@ -611,11 +612,16 @@ export function useGameSession({
 
     const enqueueAuthoritativeShots = (
       shots: readonly ShotMessage[],
-      mode: AuthoritativeReplayMode,
+      mode:
+        | AuthoritativeReplayMode
+        | ((message: ShotMessage) => AuthoritativeReplayMode),
     ): void => {
+      let shouldLockForCatchUp = false;
       for (const message of [...shots].sort((a, b) => a.shotId - b.shotId)) {
+        const resolvedMode = typeof mode === "function" ? mode(message) : mode;
         if (
-          message.shotId <= lastSeenShotIdRef.current ||
+          (resolvedMode !== "ACTIVE_RECOVERY" &&
+            message.shotId <= lastSeenShotIdRef.current) ||
           replayedShotIdsRef.current.has(message.shotId) ||
           queuedShotIdsRef.current.has(message.shotId) ||
           (shotReplayActiveRef.current &&
@@ -624,12 +630,18 @@ export function useGameSession({
           continue;
         }
         queuedShotIdsRef.current.add(message.shotId);
-        shotQueueRef.current.push({ message, mode });
+        shotQueueRef.current.push({ message, mode: resolvedMode });
+        if (
+          resolvedMode === "CATCH_UP" ||
+          resolvedMode === "ACTIVE_RECOVERY"
+        ) {
+          shouldLockForCatchUp = true;
+        }
       }
       shotQueueRef.current.sort(
         (a, b) => a.message.shotId - b.message.shotId,
       );
-      if (mode === "CATCH_UP") tm.lockForCatchUp();
+      if (shouldLockForCatchUp) tm.lockForCatchUp();
       drainAuthoritativeShotQueue();
     };
 
@@ -959,13 +971,19 @@ export function useGameSession({
 
           if (strictMessage?.type === "SHOT_CATCH_UP") {
             catchUpActiveShotIdRef.current = strictMessage.activeShotId;
-            enqueueAuthoritativeShots(strictMessage.shots, "CATCH_UP");
+            const catchUpMode = (
+              message: ShotMessage,
+            ): AuthoritativeReplayMode =>
+              message.shotId === strictMessage.activeShotId
+                ? "ACTIVE_RECOVERY"
+                : "CATCH_UP";
+            enqueueAuthoritativeShots(strictMessage.shots, catchUpMode);
             if (strictMessage.lastFireResult?.type === "FIRE_REJECTED") {
               applyFireRejection(strictMessage.lastFireResult);
             } else if (strictMessage.lastFireResult?.type === "SHOT") {
               enqueueAuthoritativeShots(
                 [strictMessage.lastFireResult],
-                "CATCH_UP",
+                catchUpMode,
               );
             }
             if (

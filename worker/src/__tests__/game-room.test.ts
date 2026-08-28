@@ -572,20 +572,55 @@ describe('GameRoom Durable Object', () => {
       interface MigratingFireState {
         processedFireActionsBySlot?: Record<number, Record<string, unknown>>;
         processedFireActions?: Record<string, unknown>;
+        lastFireResultBySlot?: Record<number, unknown>;
       }
       const persisted = structuredClone(
         setup.mockStorage.storageData.get('state'),
       ) as MigratingFireState;
       persisted.processedFireActions = {
-        'legacy-fire-action': {
+        'legacy-accepted-action': {
+          slot: 1,
+          result: {
+            type: 'SHOT',
+            actionId: 'legacy-accepted-action',
+            shotId: 4,
+            roundNumber: 1,
+            shotNumberInRound: 4,
+            isFirstShotOfRound: false,
+            slot: 1,
+            ownerId: 'player-2',
+            command: { angle: 135, power: 50, weaponId: 'MISSILE' },
+          },
+        },
+        'legacy-rejected-action': {
           slot: 1,
           result: {
             type: 'FIRE_REJECTED',
-            actionId: 'legacy-fire-action',
+            actionId: 'legacy-rejected-action',
             reason: 'NO_AMMO',
             inventory: {},
             currentWeapon: 'MISSILE',
           },
+        },
+      };
+      persisted.lastFireResultBySlot = {
+        0: {
+          type: 'SHOT',
+          actionId: 'old-shot-result',
+          shotId: 3,
+          roundNumber: 1,
+          shotNumberInRound: 3,
+          isFirstShotOfRound: false,
+          slot: 0,
+          ownerId: 'player-1',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        },
+        1: {
+          type: 'FIRE_REJECTED',
+          actionId: 'last-rejected-action',
+          reason: 'NOT_YOUR_TURN',
+          inventory: {},
+          currentWeapon: 'MISSILE',
         },
       };
       delete persisted.processedFireActionsBySlot;
@@ -603,8 +638,16 @@ describe('GameRoom Durable Object', () => {
       const restoredState = Reflect.get(restoredRoom, 'state') as MigratingFireState;
       expect(restoredState.processedFireActions).toBeUndefined();
       expect(
-        restoredState.processedFireActionsBySlot?.[1]?.['legacy-fire-action'],
+        restoredState.processedFireActionsBySlot?.[1]?.['legacy-accepted-action'],
       ).toBeDefined();
+      expect(
+        restoredState.processedFireActionsBySlot?.[1]?.['legacy-rejected-action'],
+      ).toBeUndefined();
+      expect(restoredState.lastFireResultBySlot?.[0]).toBeUndefined();
+      expect(restoredState.lastFireResultBySlot?.[1]).toMatchObject({
+        type: 'FIRE_REJECTED',
+        actionId: 'last-rejected-action',
+      });
       const rePersisted = setup.mockStorage.storageData.get(
         'state',
       ) as MigratingFireState;
@@ -629,6 +672,131 @@ describe('GameRoom Durable Object', () => {
 
       const shotMsg = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'SHOT');
       expect(shotMsg).toBeUndefined();
+    });
+
+    it('keeps only the latest FIRE rejection per slot', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string,
+      ) => Promise<void>;
+      const command = { angle: 45, power: 60, weaponId: 'MISSILE' };
+
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'rejected-fire-1',
+        command,
+      }));
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'rejected-fire-2',
+        command,
+      }));
+
+      const state = Reflect.get(room, 'state') as {
+        processedFireActionsBySlot: Record<number, Record<string, unknown>>;
+        lastFireResultBySlot: Record<number, { actionId?: string; reason: string }>;
+      };
+      expect(Object.keys(state.processedFireActionsBySlot[1] ?? {})).toHaveLength(0);
+      expect(state.lastFireResultBySlot[1]).toMatchObject({
+        actionId: 'rejected-fire-2',
+        reason: 'NOT_YOUR_TURN',
+      });
+
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'rejected-fire-2',
+        command,
+      }));
+      expect(
+        ws1
+          .getAllMessages<{ type: string; actionId?: string }>()
+          .filter(
+            (message) =>
+              message.type === 'FIRE_REJECTED' &&
+              message.actionId === 'rejected-fire-2',
+          ),
+      ).toHaveLength(2);
+
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'x'.repeat(65),
+        command,
+      }));
+      expect(state.lastFireResultBySlot[1].actionId).toBe('rejected-fire-2');
+      expect(
+        ws1.getLastMessage<{ type: string; actionId?: string; reason?: string }>(),
+      ).toMatchObject({ type: 'FIRE_REJECTED', reason: 'MALFORMED' });
+      expect(
+        ws1.getLastMessage<{ actionId?: string }>()?.actionId,
+      ).toBeUndefined();
+    });
+
+    it('lets a refreshed shooter settle the active shot without consuming ammo twice', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string,
+      ) => Promise<void>;
+      const state = Reflect.get(room, 'state') as {
+        players: Player[];
+        activeShot: { shotId: number; shooterSettled: boolean } | null;
+        currentPlayerIndex: number;
+      };
+      state.players[0].inventory = { GRENADE: 1 };
+      state.players[0].tank.currentWeapon = 'GRENADE';
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'refresh-mid-shot',
+        command: { angle: 45, power: 60, weaponId: 'GRENADE' },
+      }));
+      const shot = ws0
+        .getAllMessages<ShotMessage>()
+        .find(
+          (message) =>
+            message.type === 'SHOT' && message.actionId === 'refresh-mid-shot',
+        );
+      expect(shot).toBeDefined();
+      expect(state.players[0].inventory.GRENADE).toBe(0);
+
+      ws0.sent.length = 0;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'REQUEST_GAME_START',
+        roundNumber: 1,
+        lastSeenShotId: shot?.shotId,
+        lastAppliedShopEpoch: 0,
+      }));
+      const catchUp = ws0
+        .getAllMessages<{
+          type: string;
+          activeShotId?: number | null;
+          shots?: ShotMessage[];
+        }>()
+        .find((message) => message.type === 'SHOT_CATCH_UP');
+      expect(catchUp?.activeShotId).toBe(shot?.shotId);
+      expect(catchUp?.shots?.map((message) => message.shotId)).toContain(
+        shot?.shotId,
+      );
+      expect(state.players[0].inventory.GRENADE).toBe(0);
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_SETTLED',
+        shotId: shot?.shotId,
+        slot: 0,
+        deadSlots: [false, false],
+      }));
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOT_EARNINGS',
+        shotId: shot?.shotId,
+        authorityEpoch: 1,
+        awards: [],
+        deadSlots: [false, false],
+        directHitVictimIds: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      }));
+
+      expect(state.activeShot).toBeNull();
+      expect(state.currentPlayerIndex).toBe(1);
+      expect(state.players[0].inventory.GRENADE).toBe(0);
     });
 
     it('advances turn to slot 1 after receiving SHOT_SETTLED from shooting slot 0', async () => {
@@ -828,7 +996,7 @@ describe('GameRoom Durable Object', () => {
       expect(buyMsg?.players.find((p) => p.id === 'player-1')?.money).toBe(175);
     });
 
-    it('keeps malformed BUY_SELL and READY idempotence in distinct namespaces', async () => {
+    it('does not persist malformed BUY_SELL while keeping READY idempotent', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string,
@@ -861,7 +1029,7 @@ describe('GameRoom Durable Object', () => {
         processedShopActions: Record<string, unknown>;
       };
       expect(state.shopSession?.readySlots).toContain(0);
-      expect(state.processedShopActions).toHaveProperty(`BUY_SELL:0:${actionId}`);
+      expect(state.processedShopActions).not.toHaveProperty(`BUY_SELL:0:${actionId}`);
       expect(state.processedShopActions).toHaveProperty(`READY:0:${actionId}`);
     });
 

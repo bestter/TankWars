@@ -425,4 +425,16 @@ describe("gardes de session", () => {
       reason: "ALREADY_READY",
     });
   });
+
+  it("refuse un actionId de plus de 64 caractères avant les autres gardes", () => {
+    expect(
+      guardShopAction({
+        isHumanSlot: true,
+        slot: 0,
+        actionId: "x".repeat(65),
+        requestedEpoch: 3,
+        session: null,
+      }),
+    ).toEqual({ ok: false, reason: "MALFORMED" });
+  });
 });

@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (704 unit tests across 70 files)
+# Run tests (713 unit tests across 70 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)

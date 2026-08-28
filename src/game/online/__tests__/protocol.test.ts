@@ -6,6 +6,7 @@ import {
   isStrictOnlineMessage,
   parseStrictOnlineMessage,
 } from "../protocol";
+import { MAX_ACTION_ID_LENGTH } from "../actionId";
 
 describe("strict online protocol", () => {
   it("accepts a complete SHOT identity", () => {
@@ -151,6 +152,50 @@ describe("strict online protocol", () => {
         activeShotId: null,
         shots: [],
         lastFireResult: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("borne les actionId réseau à 64 caractères", () => {
+    const maxLengthId = "a".repeat(MAX_ACTION_ID_LENGTH);
+    const overlongId = "b".repeat(MAX_ACTION_ID_LENGTH + 1);
+    const command = { angle: 45, power: 50, weaponId: "MISSILE" } as const;
+
+    expect(
+      decodeFireMessage({ type: "FIRE", actionId: maxLengthId, command }),
+    ).toMatchObject({ ok: true });
+    expect(
+      decodeFireMessage({ type: "FIRE", actionId: overlongId, command }),
+    ).toEqual({ ok: false });
+    expect(
+      decodeShopBuySellMessage({
+        type: "SHOP_BUY_SELL",
+        shopEpoch: 1,
+        actionId: overlongId,
+        weaponId: "GRENADE",
+        delta: 1,
+      }),
+    ).toEqual({
+      ok: false,
+      rejection: {
+        type: "SHOP_REJECTED",
+        shopEpoch: 1,
+        weaponId: "GRENADE",
+        delta: 1,
+        reason: "MALFORMED",
+      },
+    });
+    expect(
+      isStrictOnlineMessage({
+        type: "SHOT",
+        actionId: `ai-${crypto.randomUUID()}`,
+        shotId: 8,
+        roundNumber: 1,
+        shotNumberInRound: 1,
+        isFirstShotOfRound: true,
+        slot: 1,
+        ownerId: "p2",
+        command,
       }),
     ).toBe(true);
   });

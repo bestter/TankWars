@@ -18,7 +18,8 @@ import { consumeWeaponForFire } from "../shop/shopTransaction";
 export type AuthoritativeReplayMode =
   | "LIVE_LOCAL"
   | "LIVE_REMOTE"
-  | "CATCH_UP";
+  | "CATCH_UP"
+  | "ACTIVE_RECOVERY";
 
 export interface AuthoritativeShotIdentity {
   shotId: number;
@@ -162,10 +163,9 @@ export class TurnManager {
   public onSpecialTurn?: (player: Player) => boolean;
 
   /**
-   * True when the shot currently resolving was fired locally (tryFire).
-   * Remote replays (executeRemoteFire) must not emit SHOT_SETTLED — otherwise a late
-   * STATE_UPDATE can advance currentPlayerIndex before the replay settles and the
-   * observer client would notify the server with the wrong slot.
+   * True when the shot currently resolving belongs to the local shooter.
+   * Ordinary remote and historical replays must not emit SHOT_SETTLED — otherwise a
+   * late STATE_UPDATE could make an observer notify the server for the wrong slot.
    */
   private settlingShotWasLocal = false;
   private settlingAuthoritativeShot: {
@@ -635,7 +635,9 @@ export class TurnManager {
     identity: AuthoritativeShotIdentity | undefined,
     mode: AuthoritativeReplayMode,
   ): void {
-    this.settlingShotWasLocal = mode === "LIVE_LOCAL";
+    this.settlingShotWasLocal =
+      mode === "LIVE_LOCAL" ||
+      (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId);
     this.settlingAuthoritativeShot = identity
       ? { shotId: identity.shotId, mode }
       : null;
@@ -651,7 +653,9 @@ export class TurnManager {
           }
         : undefined,
     );
-    if (mode !== "CATCH_UP") this.consumeAmmo(player, command.weaponId);
+    if (mode === "LIVE_LOCAL" || mode === "LIVE_REMOTE") {
+      this.consumeAmmo(player, command.weaponId);
+    }
     this.isInputLocked = true;
     this.armTurnLockSafetyWatchdog();
   }

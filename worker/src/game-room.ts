@@ -106,6 +106,11 @@ type PersistedFireResult = ShotMessage | FireRejectedMessage;
 
 interface PersistedFireAction {
   slot: number;
+  result: ShotMessage;
+}
+
+interface LegacyPersistedFireAction {
+  slot: number;
   result: PersistedFireResult;
 }
 
@@ -139,8 +144,8 @@ interface RoomState {
   shotHistory: ShotMessage[];
   processedFireActionsBySlot: Record<number, Record<string, PersistedFireAction>>;
   /** Ancien index global, lu uniquement pour la migration des salles persistées. */
-  processedFireActions?: Record<string, PersistedFireAction>;
-  lastFireResultBySlot: Record<number, PersistedFireResult>;
+  processedFireActions?: Record<string, LegacyPersistedFireAction>;
+  lastFireResultBySlot: Record<number, FireRejectedMessage>;
   lastAppliedEarnings: PersistedEarningsResult | null;
   shopEpoch: number;
   shopSession: PersistedShopSession | null;
@@ -193,6 +198,63 @@ function makeShopActionKey(
   return `${kind}:${slot}:${actionId}`;
 }
 
+function isPersistedFireAction(value: unknown): value is LegacyPersistedFireAction {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.slot === 'number' &&
+    Number.isSafeInteger(record.slot) &&
+    record.slot >= 0 &&
+    isStrictOnlineMessage(record.result) &&
+    (record.result.type === 'SHOT' || record.result.type === 'FIRE_REJECTED')
+  );
+}
+
+function migrateAcceptedFireActions(
+  actionsBySlot: Record<number, Record<string, unknown>> | undefined,
+  legacyActions: Record<string, unknown> | undefined,
+): {
+  actions: Record<number, Record<string, PersistedFireAction>>;
+  changed: boolean;
+} {
+  const actions: Record<number, Record<string, PersistedFireAction>> = {};
+  let sourceCount = 0;
+  let acceptedCount = 0;
+
+  const addAction = (actionId: string, value: unknown, expectedSlot?: number): void => {
+    sourceCount++;
+    if (!isPersistedFireAction(value) || value.result.type !== 'SHOT') return;
+    const slot = expectedSlot ?? value.slot;
+    if (value.slot !== slot || value.result.slot !== slot || value.result.actionId !== actionId) {
+      return;
+    }
+    actions[slot] ??= {};
+    actions[slot][actionId] = { slot, result: value.result };
+    acceptedCount++;
+  };
+
+  for (const [slotKey, slotActions] of Object.entries(actionsBySlot ?? {})) {
+    const slot = Number(slotKey);
+    if (!Number.isSafeInteger(slot) || slot < 0) {
+      sourceCount += Object.keys(slotActions).length;
+      continue;
+    }
+    for (const [actionId, action] of Object.entries(slotActions)) {
+      addAction(actionId, action, slot);
+    }
+  }
+  for (const [actionId, action] of Object.entries(legacyActions ?? {})) {
+    addAction(actionId, action);
+  }
+
+  return {
+    actions,
+    changed: legacyActions !== undefined || acceptedCount !== sourceCount,
+  };
+}
+
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
@@ -227,6 +289,7 @@ export class GameRoom extends DurableObject {
       const stored = await ctx.storage.get<RoomState>("state");
       if (stored) {
         this.state = stored;
+        let shouldPersistMigration = false;
         if (!this.state.materials) this.state.materials = [];
         this.state.authorityOrder ??= [];
         this.state.earningsAuthoritySlot ??= null;
@@ -240,17 +303,33 @@ export class GameRoom extends DurableObject {
         this.state.shotNumberInRound ??= 0;
         this.state.activeShot ??= null;
         this.state.shotHistory ??= [];
-        this.state.processedFireActionsBySlot ??= {};
         const legacyFireActions = this.state.processedFireActions;
-        if (legacyFireActions) {
-          for (const [actionId, action] of Object.entries(legacyFireActions)) {
-            this.state.processedFireActionsBySlot[action.slot] ??= {};
-            this.state.processedFireActionsBySlot[action.slot][actionId] = action;
-          }
+        const migratedFireActions = migrateAcceptedFireActions(
+          this.state.processedFireActionsBySlot,
+          legacyFireActions,
+        );
+        this.state.processedFireActionsBySlot = migratedFireActions.actions;
+        shouldPersistMigration ||= migratedFireActions.changed;
+        if (legacyFireActions !== undefined) {
           delete this.state.processedFireActions;
-          await ctx.storage.put("state", this.state);
         }
-        this.state.lastFireResultBySlot ??= {};
+        const lastFireRejections: Record<number, FireRejectedMessage> = {};
+        for (const [slotKey, result] of Object.entries(
+          this.state.lastFireResultBySlot ?? {},
+        )) {
+          const slot = Number(slotKey);
+          if (
+            Number.isSafeInteger(slot) &&
+            slot >= 0 &&
+            isStrictOnlineMessage(result) &&
+            result.type === 'FIRE_REJECTED'
+          ) {
+            lastFireRejections[slot] = result;
+          } else {
+            shouldPersistMigration = true;
+          }
+        }
+        this.state.lastFireResultBySlot = lastFireRejections;
         this.state.lastAppliedEarnings ??= null;
         this.state.shopEpoch ??= 0;
         this.state.shopSession ??= null;
@@ -275,6 +354,9 @@ export class GameRoom extends DurableObject {
         }
         if (this.state.activeZeusStrike) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
+        }
+        if (shouldPersistMigration) {
+          await ctx.storage.put("state", this.state);
         }
       }
     });
@@ -348,7 +430,11 @@ export class GameRoom extends DurableObject {
         roundNumber: this.state.roundNumber,
         activeShotId: this.state.activeShot?.shotId ?? null,
         shots: this.state.shotHistory
-          .filter((shot) => shot.shotId > request.lastSeenShotId)
+          .filter(
+            (shot) =>
+              shot.shotId > request.lastSeenShotId ||
+              shot.shotId === this.state?.activeShot?.shotId,
+          )
           .sort((left, right) => left.shotId - right.shotId),
         lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
       };
@@ -1008,11 +1094,6 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const rejection = this.buildFireRejection(slot, reason, actionId);
     if (actionId) {
-      this.state.processedFireActionsBySlot[slot] ??= {};
-      this.state.processedFireActionsBySlot[slot][actionId] = {
-        slot,
-        result: rejection,
-      };
       this.state.lastFireResultBySlot[slot] = rejection;
       await this.saveState();
     }
@@ -1030,11 +1111,14 @@ export class GameRoom extends DurableObject {
     const { actionId, command } = decoded.message;
     const previous = this.state.processedFireActionsBySlot[slot]?.[actionId];
     if (previous) {
-      if (previous.result.type === 'FIRE_REJECTED') {
-        this.sendToSlot(slot, previous.result);
-      } else if (this.state.activeShot?.shotId === previous.result.shotId) {
+      if (this.state.activeShot?.shotId === previous.result.shotId) {
         this.sendToSlot(slot, previous.result);
       }
+      return;
+    }
+    const previousRejection = this.state.lastFireResultBySlot[slot];
+    if (previousRejection?.actionId === actionId) {
+      this.sendToSlot(slot, previousRejection);
       return;
     }
 
@@ -1146,7 +1230,6 @@ export class GameRoom extends DurableObject {
       slot: fromSlot,
       result: shotEvent,
     };
-    this.state.lastFireResultBySlot[fromSlot] = shotEvent;
     await this.saveState();
     this.broadcast(shotEvent);
 
@@ -1646,7 +1729,7 @@ export class GameRoom extends DurableObject {
     kind: 'BUY_SELL' | 'READY',
   ): Promise<void> {
     if (!this.state) return;
-    if (rejection.actionId) {
+    if (rejection.actionId && rejection.reason !== 'MALFORMED') {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
       this.state.processedShopActions[actionKey] = {
         slot,

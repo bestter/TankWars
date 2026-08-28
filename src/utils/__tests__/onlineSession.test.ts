@@ -101,6 +101,38 @@ describe('onlineSession', () => {
     );
   });
 
+  it('drops persisted FIRE and shop intents whose actionId exceeds 64 characters', () => {
+    const session = makeSession();
+    store.set(
+      'tankwars-online-session-v1',
+      JSON.stringify({
+        ...session,
+        canvas: {
+          ...session.canvas,
+          pendingFireIntent: {
+            actionId: 'f'.repeat(65),
+            command: { angle: 42, power: 73, weaponId: 'GRENADE' },
+          },
+          shopSession: {
+            ...createEmptyShopSession(),
+            epoch: 1,
+            roundNumber: 1,
+            pendingIntent: {
+              kind: 'READY',
+              actionId: 's'.repeat(65),
+              shopEpoch: 1,
+            },
+          },
+        },
+      }),
+    );
+
+    const restored = readOnlineSession();
+    expect(restored).not.toBeNull();
+    expect(restored?.canvas.pendingFireIntent).toBeNull();
+    expect(restored?.canvas.shopSession).toEqual(createEmptyShopSession());
+  });
+
   it('returns null when storage is empty', () => {
     expect(readOnlineSession()).toBeNull();
   });

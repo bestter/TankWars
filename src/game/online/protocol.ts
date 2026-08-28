@@ -6,6 +6,7 @@ import type {
   ShopDenial,
   ShopVisitCounters,
 } from "../shop/shopTransaction";
+import { isValidActionId } from "./actionId";
 
 export interface RequestGameStartMessage {
   type: "REQUEST_GAME_START";
@@ -224,10 +225,6 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function isActionId(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
 function isWeaponId(value: unknown): value is WeaponId {
   return (
     typeof value === "string" &&
@@ -415,7 +412,7 @@ function isShotMessage(value: unknown): value is ShotMessage {
   return (
     isRecord(value) &&
     value.type === "SHOT" &&
-    isActionId(value.actionId) &&
+    isValidActionId(value.actionId) &&
     isSafeNonNegativeInteger(value.shotId) &&
     isSafeNonNegativeInteger(value.roundNumber) &&
     isSafeNonNegativeInteger(value.shotNumberInRound) &&
@@ -436,20 +433,20 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isSafeNonNegativeInteger(value.lastAppliedShopEpoch)
       );
     case "FIRE":
-      return isActionId(value.actionId) && isFireCommand(value.command);
+      return isValidActionId(value.actionId) && isFireCommand(value.command);
     case "SHOP_ENTER":
       return isSafeNonNegativeInteger(value.roundNumber);
     case "SHOP_BUY_SELL":
       return (
         isSafeNonNegativeInteger(value.shopEpoch) &&
-        isActionId(value.actionId) &&
+        isValidActionId(value.actionId) &&
         isWeaponId(value.weaponId) &&
         (value.delta === 1 || value.delta === -1)
       );
     case "SHOP_READY":
       return (
         isSafeNonNegativeInteger(value.shopEpoch) &&
-        isActionId(value.actionId)
+        isValidActionId(value.actionId)
       );
     case "AUTHORITY_CHANGED":
       return isNullableSlot(value.authoritySlot) && isSafeNonNegativeInteger(value.authorityEpoch);
@@ -505,7 +502,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       return (
         (value.shopEpoch === null ||
           isSafeNonNegativeInteger(value.shopEpoch)) &&
-        (value.actionId === undefined || isActionId(value.actionId)) &&
+        (value.actionId === undefined || isValidActionId(value.actionId)) &&
         (value.weaponId === undefined || isWeaponId(value.weaponId)) &&
         (value.delta === undefined || value.delta === 1 || value.delta === -1) &&
         isShopDenial(value.reason)
@@ -519,7 +516,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       );
     case "FIRE_REJECTED":
       return (
-        (value.actionId === undefined || isActionId(value.actionId)) &&
+        (value.actionId === undefined || isValidActionId(value.actionId)) &&
         isFireRejectedReason(value.reason) &&
         isInventory(value.inventory) &&
         isWeaponId(value.currentWeapon)
@@ -535,7 +532,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
           (isRecord(value.lastFireResult) &&
             value.lastFireResult.type === "FIRE_REJECTED" &&
             (value.lastFireResult.actionId === undefined ||
-              isActionId(value.lastFireResult.actionId)) &&
+              isValidActionId(value.lastFireResult.actionId)) &&
             isFireRejectedReason(value.lastFireResult.reason) &&
             isInventory(value.lastFireResult.inventory) &&
             isWeaponId(value.lastFireResult.currentWeapon)))
@@ -586,7 +583,7 @@ export function decodeShopBuySellMessage(
   if (isRecord(value) && value.type === "SHOP_BUY_SELL") {
     if (
       isSafeNonNegativeInteger(value.shopEpoch) &&
-      isActionId(value.actionId) &&
+      isValidActionId(value.actionId) &&
       isWeaponId(value.weaponId) &&
       (value.delta === 1 || value.delta === -1)
     ) {
@@ -608,7 +605,7 @@ export function decodeShopBuySellMessage(
         shopEpoch: isSafeNonNegativeInteger(value.shopEpoch)
           ? value.shopEpoch
           : null,
-        ...(isActionId(value.actionId) ? { actionId: value.actionId } : {}),
+        ...(isValidActionId(value.actionId) ? { actionId: value.actionId } : {}),
         ...(isWeaponId(value.weaponId) ? { weaponId: value.weaponId } : {}),
         ...(value.delta === 1 || value.delta === -1
           ? { delta: value.delta }
@@ -636,7 +633,7 @@ export function decodeShopReadyMessage(value: unknown): ShopReadyDecodeResult {
     isRecord(value) &&
     value.type === "SHOP_READY" &&
     isSafeNonNegativeInteger(value.shopEpoch) &&
-    isActionId(value.actionId)
+    isValidActionId(value.actionId)
   ) {
     return {
       ok: true,
@@ -655,7 +652,7 @@ export function decodeShopReadyMessage(value: unknown): ShopReadyDecodeResult {
       shopEpoch: isSafeNonNegativeInteger(record.shopEpoch)
         ? record.shopEpoch
         : null,
-      ...(isActionId(record.actionId) ? { actionId: record.actionId } : {}),
+      ...(isValidActionId(record.actionId) ? { actionId: record.actionId } : {}),
       reason: "MALFORMED",
     },
   };
@@ -669,7 +666,7 @@ export function decodeFireMessage(value: unknown): FireDecodeResult {
   if (
     isRecord(value) &&
     value.type === "FIRE" &&
-    isActionId(value.actionId) &&
+    isValidActionId(value.actionId) &&
     isFireCommand(value.command)
   ) {
     return {
@@ -681,7 +678,7 @@ export function decodeFireMessage(value: unknown): FireDecodeResult {
       },
     };
   }
-  if (isRecord(value) && isActionId(value.actionId)) {
+  if (isRecord(value) && isValidActionId(value.actionId)) {
     return { ok: false, actionId: value.actionId };
   }
   return { ok: false };

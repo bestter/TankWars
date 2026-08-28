@@ -1,4 +1,5 @@
 import type { ShopSessionDenial } from "./shopTransaction";
+import { isValidActionId } from "../online/actionId";
 
 export interface ShopSessionSnapshot {
   readonly epoch: number;
@@ -55,7 +56,7 @@ export interface ShopActionGuardInput {
 export function guardShopAction(
   input: ShopActionGuardInput,
 ): ShopActionGuardResult {
-  if (input.actionId.trim().length === 0) {
+  if (!isValidActionId(input.actionId)) {
     return { ok: false, reason: "MALFORMED" };
   }
   if (!input.session) return { ok: false, reason: "SHOP_CLOSED" };

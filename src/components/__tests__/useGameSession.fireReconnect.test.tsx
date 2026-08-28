@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
+import { TurnManager } from "../../game/engine/TurnManager";
 import type { Player } from "../../types/player";
 import type { OnlineCanvasSnapshot } from "../../utils/onlineSession";
 import { createEmptyShopSession } from "../gameCanvasReducer";
@@ -62,6 +63,60 @@ function Harness({
   return <canvas ref={canvasRef} width={800} height={480} />;
 }
 
+function createPlayers(): Player[] {
+  return [
+    makePlayer({
+      id: "player-1",
+      name: "Local",
+      isHuman: true,
+      inventory: { GRENADE: 1 },
+      tank: makeTank("tank-1", 120, 300, { currentWeapon: "GRENADE" }),
+    }),
+    makePlayer({
+      id: "player-2",
+      name: "Remote",
+      isHuman: true,
+      inventory: { GRENADE: 1 },
+      tank: makeTank("tank-2", 680, 300, { currentWeapon: "GRENADE" }),
+    }),
+  ];
+}
+
+function createResumeCanvas(
+  players: Player[],
+  overrides: Partial<OnlineCanvasSnapshot> = {},
+): OnlineCanvasSnapshot {
+  return {
+    gamePhase: "COMBAT",
+    currentManche: 1,
+    uiPlayers: players,
+    shopPlayers: [],
+    currentShopIndex: 0,
+    roundResult: null,
+    lastRoundOutcome: null,
+    wind: 0,
+    authoritySlot: 0,
+    authorityEpoch: 1,
+    lastAppliedShotId: 0,
+    lastAppliedZeusStrikeId: 0,
+    shopSession: createEmptyShopSession(),
+    lastAppliedShopEpoch: 0,
+    lastCompletedRoundNumber: 0,
+    lastSeenShotId: 0,
+    pendingFireIntent: null,
+    fireRejection: null,
+    roundEarningsByPlayer: {},
+    earningsOverlay: null,
+    ...overrides,
+  };
+}
+
+function getSentMessages(ws: MockCombatWebSocket): Record<string, unknown>[] {
+  return ws.send.mock.calls.map(([payload]) =>
+    JSON.parse(String(payload)) as Record<string, unknown>,
+  );
+}
+
 describe("useGameSession FIRE reconnect", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
@@ -79,47 +134,14 @@ describe("useGameSession FIRE reconnect", () => {
   });
 
   it("retries the persisted FIRE and applies only its correlated catch-up rejection", () => {
-    const players = [
-      makePlayer({
-        id: "player-1",
-        name: "Local",
-        isHuman: true,
-        inventory: { GRENADE: 1 },
-        tank: makeTank("tank-1", 120, 300, { currentWeapon: "GRENADE" }),
-      }),
-      makePlayer({
-        id: "player-2",
-        name: "Remote",
-        isHuman: true,
-        tank: makeTank("tank-2", 680, 300),
-      }),
-    ];
+    const players = createPlayers();
     const pendingFireIntent = {
       actionId: "fire-survives-refresh",
       command: { angle: 47, power: 63, weaponId: "GRENADE" as const },
     };
-    const resumeCanvas: OnlineCanvasSnapshot = {
-      gamePhase: "COMBAT",
-      currentManche: 1,
-      uiPlayers: players,
-      shopPlayers: [],
-      currentShopIndex: 0,
-      roundResult: null,
-      lastRoundOutcome: null,
-      wind: 0,
-      authoritySlot: 0,
-      authorityEpoch: 1,
-      lastAppliedShotId: 0,
-      lastAppliedZeusStrikeId: 0,
-      shopSession: createEmptyShopSession(),
-      lastAppliedShopEpoch: 0,
-      lastCompletedRoundNumber: 0,
-      lastSeenShotId: 0,
+    const resumeCanvas = createResumeCanvas(players, {
       pendingFireIntent,
-      fireRejection: null,
-      roundEarningsByPlayer: {},
-      earningsOverlay: null,
-    };
+    });
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };
 
@@ -132,9 +154,7 @@ describe("useGameSession FIRE reconnect", () => {
       />,
     );
 
-    const sentMessages = ws.send.mock.calls.map(([payload]) =>
-      JSON.parse(String(payload)) as Record<string, unknown>,
-    );
+    const sentMessages = getSentMessages(ws);
     expect(sentMessages).toContainEqual({
       type: "FIRE",
       actionId: pendingFireIntent.actionId,
@@ -176,5 +196,132 @@ describe("useGameSession FIRE reconnect", () => {
     expect(
       sessionRef.current?.state.uiPlayers[0].inventory.GRENADE,
     ).toBe(0);
+  });
+
+  it("recovers the local active shot and emits settlement plus earnings", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 7 });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(
+      TurnManager.prototype,
+      "executeRemoteFire",
+    );
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+    ws.send.mockClear();
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 1,
+        activeShotId: 7,
+        shots: [
+          {
+            type: "SHOT",
+            actionId: "active-local-recovery",
+            shotId: 7,
+            roundNumber: 1,
+            shotNumberInRound: 1,
+            isFirstShotOfRound: true,
+            slot: 0,
+            ownerId: "player-1",
+            command: { angle: 47, power: 63, weaponId: "GRENADE" },
+          },
+        ],
+        lastFireResult: null,
+      });
+    });
+
+    expect(executeRemoteFire).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ mode: "ACTIVE_RECOVERY", fromSlot: 0 }),
+    );
+    expect(sessionRef.current?.state.uiPlayers[0].inventory.GRENADE).toBe(1);
+    const manager = executeRemoteFire.mock.instances.at(-1);
+    if (!manager) throw new Error("TurnManager de reprise introuvable.");
+    const finishShotResolution = Reflect.get(
+      manager,
+      "finishShotResolution",
+    ) as () => void;
+    act(() => finishShotResolution.call(manager));
+
+    const sentMessages = getSentMessages(ws);
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({ type: "SHOT_SETTLED", shotId: 7 }),
+    );
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({ type: "SHOT_EARNINGS", shotId: 7 }),
+    );
+  });
+
+  it("lets a distinct authority recover earnings without settling for the shooter", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 8 });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(
+      TurnManager.prototype,
+      "executeRemoteFire",
+    );
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+    ws.send.mockClear();
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 1,
+        activeShotId: 8,
+        shots: [
+          {
+            type: "SHOT",
+            actionId: "active-authority-recovery",
+            shotId: 8,
+            roundNumber: 1,
+            shotNumberInRound: 2,
+            isFirstShotOfRound: false,
+            slot: 1,
+            ownerId: "player-2",
+            command: { angle: 133, power: 58, weaponId: "GRENADE" },
+          },
+        ],
+        lastFireResult: null,
+      });
+    });
+
+    expect(executeRemoteFire).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ mode: "ACTIVE_RECOVERY", fromSlot: 1 }),
+    );
+    const manager = executeRemoteFire.mock.instances.at(-1);
+    if (!manager) throw new Error("TurnManager de reprise introuvable.");
+    const finishShotResolution = Reflect.get(
+      manager,
+      "finishShotResolution",
+    ) as () => void;
+    act(() => finishShotResolution.call(manager));
+
+    const sentMessages = getSentMessages(ws);
+    expect(
+      sentMessages.some((message) => message.type === "SHOT_SETTLED"),
+    ).toBe(false);
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({ type: "SHOT_EARNINGS", shotId: 8 }),
+    );
   });
 });

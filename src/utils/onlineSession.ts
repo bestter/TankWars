@@ -16,6 +16,7 @@ import {
 } from '../components/gameCanvasReducer';
 import type { ShopDenial, ShopVisitCounters } from '../game/shop/shopTransaction';
 import type { FireRejectedReason } from '../game/online/protocol';
+import { isValidActionId } from '../game/online/actionId';
 
 export interface OnlineSessionMeta {
   roomId: string;
@@ -131,7 +132,7 @@ function isTerrainMaterial(value: unknown): value is TerrainMaterial {
 }
 
 function isPendingFireIntent(value: unknown): value is PendingFireIntent {
-  if (!isRecord(value) || !isNonEmptyString(value.actionId) || !isRecord(value.command)) {
+  if (!isRecord(value) || !isValidActionId(value.actionId) || !isRecord(value.command)) {
     return false;
   }
   return (
@@ -146,7 +147,7 @@ function isPendingFireIntent(value: unknown): value is PendingFireIntent {
 }
 
 function isPendingShopIntent(value: unknown): value is PendingShopIntent {
-  if (!isRecord(value) || !isNonEmptyString(value.actionId) || !isSafeNonNegativeInteger(value.shopEpoch)) {
+  if (!isRecord(value) || !isValidActionId(value.actionId) || !isSafeNonNegativeInteger(value.shopEpoch)) {
     return false;
   }
   if (value.kind === 'READY') {
