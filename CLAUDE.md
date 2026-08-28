@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **745 tests** (72 files)
+- Run tests: `npm run test` (or `vitest run`) — **751 tests** (73 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --scope changed` after React changes)
@@ -58,7 +58,7 @@ New profile → new file under `game/entities/ai/`, register in `AIByProfileStra
 - Do not store per-frame simulation data in React state.
 - Never remove `'unsafe-inline'` from `style-src` (`index.html`, `public/_headers`). `csp.test.ts` guards this.
 - `tsc -b` typechecks `worker/` via project references. Durable Object code uses global platform types (`DurableObjectNamespace`), not platform imports.
-- Local hotseat shop must stay usable for humans in round 2+ (`useGameSession.ts`).
+- Local hotseat shop must stay usable for humans in round 2+ (`src/components/shop/`).
 - Long GRENADE bounces: `TurnManager` must not let the AI take another turn after the settlement safety net fires.
 - `loadHeights` without `materials` (or a length mismatch) resets every column to `DIRT` — no hybrid leftover state.
 - Do not edit rule files (`AGENTS.md`, `CLAUDE.md`, etc.) unless the user asked.

@@ -31,7 +31,7 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Shared turn helper: `src/game/online/turnOrder.ts`; strict messages: `src/game/online/protocol.ts` (`ONLINE_PROTOCOL_VERSION` 1; mismatch overlay + close `4402`; deploy Pages then Worker). Shot replay: `authoritativeShotQueue.ts` + `DeferredTransitionBuffer`. Server owns turn order, FIRE validation/ammo, transactional shop (composite idempotency keys), reward/balance application, round end and ordered reconnect catch-up (round-scoped `shotHistory`). Clients launch physics only from `SHOT`, including the shooter; a restored `SHOP` without its first `SHOP_STATE` retries `SHOP_ENTER`, which creates or resumes one idempotent session and applies AI purchases once. Client FIRE during AI turn is rejected (`NOT_YOUR_TURN`); rejection notices display via a non-blocking toast alert (`.fire-rejection-toast`). First connected human is reward authority with persistent ordered failover. `GAME_START` sends `materials` only when the server array matches `heights`; `loadHeights` falls back to `DIRT`. Dev: `npm run dev` + `npm run worker:dev`. `worker/.wrangler/` gitignored.
 - Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **745** across **72** files (`npm run test`).
+- Tests: **751** across **73** files (`npm run test`).
 - Version: `0.7.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
