@@ -1,14 +1,12 @@
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine, ResolvedShotPreview } from "../../game/engine/GameEngine";
 import type { AuthoritativeShotQueue } from "../../game/online/authoritativeShotQueue";
-import type { DeferredTransitionBuffer } from "../../game/online/deferredTransitions";
+import type { DeferredAuthoritativeTransition } from "../../game/online/deferredTransitions";
 import {
   isStrictOnlineMessage,
   ONLINE_PROTOCOL_VERSION,
   readProtocolVersion,
   type FireRejectedMessage,
-  type RoundEndMessage,
-  type ShopStateMessage,
   type ShotMessage,
 } from "../../game/online/protocol";
 import type { ZeusStrikeResult } from "../../game/zeus/zeusDomain";
@@ -23,7 +21,6 @@ import type {
 export interface CombatMessageContext {
   readonly engine: GameEngine;
   readonly shotQueue: AuthoritativeShotQueue;
-  readonly transitionBuffer: DeferredTransitionBuffer;
   readonly localSlotNum: number;
   readonly dispatch: Dispatch<GameCanvasAction>;
   readonly protocolMismatchRef: MutableRefObject<boolean>;
@@ -36,13 +33,7 @@ export interface CombatMessageContext {
   readonly shopSessionRef: MutableRefObject<ShopClientSessionState>;
   readonly gamePhaseRef: MutableRefObject<GamePhase>;
   readonly applyFireRejection: (message: FireRejectedMessage) => void;
-  readonly applyShopStateMessage: (message: ShopStateMessage) => void;
-  readonly applyRoundEndMessage: (message: RoundEndMessage) => void;
-  readonly applyShopFinish: (
-    players: Player[],
-    shopEpoch: number,
-    nextRoundNumber: number,
-  ) => void;
+  readonly scheduleTransition: (item: DeferredAuthoritativeTransition) => void;
   readonly submitShotEarnings: (preview: ResolvedShotPreview) => void;
   readonly syncWireEconomy: (value: unknown) => void;
   readonly buildOverlayAwards: (
@@ -59,7 +50,7 @@ export function dispatchCombatMessage(
   const msg = parsed as Record<string, unknown>;
   const strictMessage = isStrictOnlineMessage(parsed) ? parsed : null;
   const tm = ctx.engine.getTurnManager();
-  const { shotQueue, transitionBuffer, engine } = ctx;
+  const { shotQueue, engine } = ctx;
 
   const applyProtocolMismatch = (receivedVersion: number | null): void => {
     ctx.protocolMismatchRef.current = true;
@@ -243,14 +234,10 @@ export function dispatchCombatMessage(
 
   if (strictMessage?.type === "SHOP_STATE") {
     shotQueue.purgeCompletedRound(strictMessage.roundNumber);
-    if (shotQueue.replayActiveNow) {
-      transitionBuffer.enqueue({
-        kind: "SHOP_STATE",
-        message: strictMessage,
-      });
-    } else {
-      ctx.applyShopStateMessage(strictMessage);
-    }
+    ctx.scheduleTransition({
+      kind: "SHOP_STATE",
+      message: strictMessage,
+    });
   }
 
   if (strictMessage?.type === "SHOP_REJECTED") {
@@ -275,37 +262,16 @@ export function dispatchCombatMessage(
 
   if (strictMessage?.type === "SHOP_FINISH") {
     shotQueue.purgeCompletedRound(strictMessage.completedRoundNumber);
-    const applyFinish = (): void => {
-      ctx.applyShopFinish(
-        strictMessage.players,
-        strictMessage.shopEpoch,
-        strictMessage.nextRoundNumber,
-      );
-      if (
-        ctx.gamePhaseRef.current === "COMBAT" &&
-        shotQueue.pendingCount > 0
-      ) {
-        shotQueue.drain();
-      }
-    };
-    if (shotQueue.replayActiveNow) {
-      transitionBuffer.enqueue({
-        kind: "SHOP_FINISH",
-        message: strictMessage,
-      });
-    } else {
-      applyFinish();
-    }
+    ctx.scheduleTransition({
+      kind: "SHOP_FINISH",
+      message: strictMessage,
+    });
   }
 
   if (strictMessage?.type === "ROUND_END") {
-    if (shotQueue.replayActiveNow || shotQueue.pendingCount > 0) {
-      transitionBuffer.enqueue({
-        kind: "ROUND_END",
-        message: strictMessage,
-      });
-    } else {
-      ctx.applyRoundEndMessage(strictMessage);
-    }
+    ctx.scheduleTransition({
+      kind: "ROUND_END",
+      message: strictMessage,
+    });
   }
 }

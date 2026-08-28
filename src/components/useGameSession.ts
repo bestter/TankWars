@@ -44,8 +44,15 @@ import {
   type ShotMessage,
   type ShotEarningsMessage,
 } from "../game/online/protocol";
-import { DeferredTransitionBuffer } from "../game/online/deferredTransitions";
+import {
+  DeferredTransitionBuffer,
+  type DeferredAuthoritativeTransition,
+} from "../game/online/deferredTransitions";
 import { AuthoritativeShotQueue } from "../game/online/authoritativeShotQueue";
+import {
+  flushDeferredTransitions,
+  scheduleDeferredTransition,
+} from "../game/online/flushDeferredTransitions";
 import { dispatchCombatMessage } from "./online/combatMessageDispatch";
 import type {
   ZeusAppointment,
@@ -584,42 +591,6 @@ export function useGameSession({
       dispatch({ type: "SET_FIRE_REJECTION", reason: null });
     };
 
-    const idleTransitions = {
-      apply: (): void => {
-        reapplyAuthoritativeEconomyRef.current();
-      },
-    };
-
-    const shotQueue = new AuthoritativeShotQueue({
-      getGamePhase: () => gamePhaseRef.current,
-      isInterRoundPaused: () => tm.isInterRoundPaused(),
-      lastSeenShotId: () => lastSeenShotIdRef.current,
-      markSeen: (shotId) => {
-        lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
-        dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
-      },
-      acknowledgePendingFire,
-      executeRemoteFire: (message, mode) => {
-        tm.executeRemoteFire(message.command, {
-          fromSlot: message.slot,
-          ownerId: message.ownerId,
-          identity: {
-            shotId: message.shotId,
-            isFirstShotOfRound: message.isFirstShotOfRound,
-          },
-          mode,
-        });
-      },
-      onIdle: () => idleTransitions.apply(),
-      lockForCatchUp: () => tm.lockForCatchUp(),
-      unlockAfterCatchUp: () => tm.unlockAfterCatchUp(),
-    });
-    shotQueueRef.current = shotQueue;
-
-    tm.onAuthoritativeShotSettled = (shotId) => {
-      shotQueue.onShotSettled(shotId);
-    };
-
     tm.setFireIntentHandler((command) => {
       if (pendingFireRef.current) return;
       if (fireRejectionTimerRef.current !== null) {
@@ -860,28 +831,71 @@ export function useGameSession({
       tm.pauseForInterRound();
     };
 
-    idleTransitions.apply = (): void => {
-      reapplyAuthoritativeEconomyRef.current();
-      for (const item of transitionBuffer.drain()) {
-        if (item.kind === "ROUND_END") {
-          applyRoundEndMessage(item.message);
-        } else if (item.kind === "SHOP_STATE") {
-          applyShopStateMessage(item.message);
-        } else {
-          applyShopFinishRef.current(
-            item.message.players,
-            item.message.shopEpoch,
-            item.message.nextRoundNumber,
-          );
-          if (
-            gamePhaseRef.current === "COMBAT" &&
-            shotQueue.pendingCount > 0
-          ) {
-            shotQueue.drain();
-            return;
-          }
-        }
+    function applyDeferredItem(item: DeferredAuthoritativeTransition): void {
+      if (item.kind === "ROUND_END") {
+        applyRoundEndMessage(item.message);
+        return;
       }
+      if (item.kind === "SHOP_STATE") {
+        applyShopStateMessage(item.message);
+        return;
+      }
+      applyShopFinishRef.current(
+        item.message.players,
+        item.message.shopEpoch,
+        item.message.nextRoundNumber,
+      );
+      if (gamePhaseRef.current === "COMBAT" && shotQueue.pendingCount > 0) {
+        shotQueue.drain();
+      }
+    }
+
+    const shotQueue = new AuthoritativeShotQueue({
+      getGamePhase: () => gamePhaseRef.current,
+      isInterRoundPaused: () => tm.isInterRoundPaused(),
+      lastSeenShotId: () => lastSeenShotIdRef.current,
+      markSeen: (shotId) => {
+        lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
+        dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
+      },
+      acknowledgePendingFire,
+      executeRemoteFire: (message, mode) => {
+        tm.executeRemoteFire(message.command, {
+          fromSlot: message.slot,
+          ownerId: message.ownerId,
+          identity: {
+            shotId: message.shotId,
+            isFirstShotOfRound: message.isFirstShotOfRound,
+          },
+          mode,
+        });
+      },
+      onIdle: () => {
+        reapplyAuthoritativeEconomyRef.current();
+        flushDeferredTransitions(
+          shotQueue,
+          transitionBuffer,
+          applyDeferredItem,
+        );
+      },
+      lockForCatchUp: () => tm.lockForCatchUp(),
+      unlockAfterCatchUp: () => tm.unlockAfterCatchUp(),
+    });
+    shotQueueRef.current = shotQueue;
+
+    tm.onAuthoritativeShotSettled = (shotId) => {
+      shotQueue.onShotSettled(shotId);
+    };
+
+    const scheduleTransition = (
+      item: DeferredAuthoritativeTransition,
+    ): void => {
+      scheduleDeferredTransition(
+        shotQueue,
+        transitionBuffer,
+        applyDeferredItem,
+        item,
+      );
     };
 
     const retryPendingActions = (): void => {
@@ -945,7 +959,6 @@ export function useGameSession({
             {
               engine,
               shotQueue,
-              transitionBuffer,
               localSlotNum,
               dispatch,
               protocolMismatchRef,
@@ -956,15 +969,7 @@ export function useGameSession({
               shopSessionRef,
               gamePhaseRef,
               applyFireRejection,
-              applyShopStateMessage,
-              applyRoundEndMessage,
-              applyShopFinish: (
-                players,
-                shopEpoch,
-                nextRoundNumber,
-              ) => {
-                applyShopFinishRef.current(players, shopEpoch, nextRoundNumber);
-              },
+              scheduleTransition,
               submitShotEarnings,
               syncWireEconomy,
               buildOverlayAwards,

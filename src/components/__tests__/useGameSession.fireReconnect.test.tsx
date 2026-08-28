@@ -453,6 +453,73 @@ describe("useGameSession FIRE reconnect", () => {
     );
   });
 
+  it("applies SHOP_STATE while a next-round catch-up shot is queued outside combat", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SHOP",
+      currentManche: 2,
+      shopPlayers: players,
+      lastCompletedRoundNumber: 1,
+      shopSession: {
+        ...createEmptyShopSession(),
+        epoch: null,
+        roundNumber: 1,
+        authoritativeReceived: false,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(
+      TurnManager.prototype,
+      "executeRemoteFire",
+    );
+    const nextRoundShot = {
+      type: "SHOT",
+      actionId: "queued-round-two-shot",
+      shotId: 6,
+      roundNumber: 2,
+      shotNumberInRound: 1,
+      isFirstShotOfRound: true,
+      slot: 0,
+      ownerId: "player-1",
+      command: { angle: 47, power: 63, weaponId: "GRENADE" },
+    } as const;
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    act(() => {
+      ws.receive({
+        type: "SHOT_CATCH_UP",
+        roundNumber: 2,
+        activeShotId: nextRoundShot.shotId,
+        shots: [nextRoundShot],
+        lastFireResult: null,
+      });
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [0],
+        players,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+      });
+    });
+
+    expect(executeRemoteFire).not.toHaveBeenCalled();
+    expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
+    expect(sessionRef.current?.state.shopSession.authoritativeReceived).toBe(
+      true,
+    );
+  });
+
   it("keeps a pending shop intent until its correlated rejection arrives", () => {
     const players = createPlayers();
     const pendingIntent = {
