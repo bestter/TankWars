@@ -49,6 +49,17 @@ describe("gameCanvasReducer", () => {
     expect(nextState.wind).toBe(15);
   });
 
+  it("stores a protocol mismatch overlay payload", () => {
+    const nextState = gameCanvasReducer(INITIAL_STATE, {
+      type: "SET_PROTOCOL_MISMATCH",
+      mismatch: { requiredVersion: 1, receivedVersion: null },
+    });
+    expect(nextState.protocolMismatch).toEqual({
+      requiredVersion: 1,
+      receivedVersion: null,
+    });
+  });
+
   it("conserve puis efface une intention FIRE corrélable", () => {
     const intent = {
       actionId: "fire-pending-1",

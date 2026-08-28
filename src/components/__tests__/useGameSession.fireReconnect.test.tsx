@@ -306,6 +306,7 @@ describe("useGameSession FIRE reconnect", () => {
     ).toEqual([{ type: "SHOP_ENTER", roundNumber: 1 }]);
     expect(recoveryMessages).toContainEqual({
       type: "REQUEST_GAME_START",
+      protocolVersion: 1,
       roundNumber: 2,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -652,5 +653,45 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sentMessages).toContainEqual(
       expect.objectContaining({ type: "SHOT_EARNINGS", shotId: 8 }),
     );
+  });
+
+  it("surfaces PROTOCOL_MISMATCH and does not reconnect on close 4402", () => {
+    const players = createPlayers();
+    const resumeCanvas = createResumeCanvas(players);
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    const wsCtor = vi.spyOn(globalThis, "WebSocket");
+
+    act(() => {
+      ws.receive({
+        type: "PROTOCOL_MISMATCH",
+        requiredVersion: 1,
+        receivedVersion: null,
+      });
+      ws.onclose?.({
+        code: 4402,
+        reason: "protocol-mismatch",
+      } as CloseEvent);
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(sessionRef.current?.state.protocolMismatch).toEqual({
+      requiredVersion: 1,
+      receivedVersion: null,
+    });
+    expect(wsCtor).not.toHaveBeenCalled();
   });
 });

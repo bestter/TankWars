@@ -80,6 +80,7 @@ describe("GameCanvas component", () => {
     lastSeenShotId: 0,
     pendingFireIntent: null,
     fireRejection: null,
+    protocolMismatch: null,
   };
 
   let mockHandlers: {
@@ -382,5 +383,29 @@ describe("GameCanvas component", () => {
     expect(alert).toBeDefined();
     expect(alert.className).toBe("fire-rejection-toast");
     expect(alert.textContent).toBe("fire_rejected_no_ammo");
+  });
+
+  it("renders a blocking protocol mismatch overlay", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        protocolMismatch: { requiredVersion: 1, receivedVersion: null },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas />);
+    const alert = screen.getByRole("alert");
+    expect(alert.className).toBe("protocol-mismatch-overlay");
+    expect(alert.textContent).toContain("protocol_mismatch_title");
+    expect(
+      screen.getByRole("button", { name: "protocol_mismatch_refresh" }),
+    ).toBeDefined();
   });
 });

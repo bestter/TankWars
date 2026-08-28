@@ -96,6 +96,7 @@ export function GameCanvas({
     zeusAnnouncement,
     shopSession,
     fireRejection,
+    protocolMismatch,
   } = state;
 
   return (
@@ -268,9 +269,24 @@ export function GameCanvas({
           </>
         )}
 
-        {fireRejection && gamePhase === "COMBAT" && (
+        {fireRejection && gamePhase === "COMBAT" && !protocolMismatch && (
           <div className="fire-rejection-toast" role="alert">
             {t(FIRE_REJECTION_KEYS[fireRejection])}
+          </div>
+        )}
+
+        {protocolMismatch && (
+          <div className="protocol-mismatch-overlay" role="alert">
+            <strong>{t("protocol_mismatch_title")}</strong>
+            <p>{t("protocol_mismatch_body")}</p>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.reload();
+              }}
+            >
+              {t("protocol_mismatch_refresh")}
+            </button>
           </div>
         )}
 

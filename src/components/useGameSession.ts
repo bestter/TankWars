@@ -32,6 +32,9 @@ import {
 } from "../game/shop/shopTransaction";
 import {
   isStrictOnlineMessage,
+  ONLINE_PROTOCOL_VERSION,
+  PROTOCOL_MISMATCH_CLOSE_CODE,
+  readProtocolVersion,
   type ClientFireMessage,
   type FireRejectedMessage,
   type RequestGameStartMessage,
@@ -201,6 +204,7 @@ export function useGameSession({
   const authoritativeEconomyRef = useRef<AuthoritativeEconomyPlayer[]>([]);
   const reapplyAuthoritativeEconomyRef = useRef<() => void>(() => {});
   const transitionBufferRef = useRef<DeferredTransitionBuffer | null>(null);
+  const protocolMismatchRef = useRef(false);
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
@@ -407,6 +411,7 @@ export function useGameSession({
   }, []);
 
   const flushCombatMessages = useCallback((): void => {
+    if (protocolMismatchRef.current) return;
     const ws = gameWsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     while (pendingCombatMessagesRef.current.length > 0) {
@@ -424,6 +429,7 @@ export function useGameSession({
 
   const sendCombatMessage = useCallback(
     (obj: object): void => {
+      if (protocolMismatchRef.current) return;
       const payload = JSON.stringify(obj);
       const ws = gameWsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -564,6 +570,7 @@ export function useGameSession({
 
     const buildCatchUpRequest = (): RequestGameStartMessage => ({
       type: "REQUEST_GAME_START",
+      protocolVersion: ONLINE_PROTOCOL_VERSION,
       roundNumber: currentMancheRef.current,
       lastSeenShotId: lastSeenShotIdRef.current,
       lastAppliedShopEpoch: lastAppliedShopEpochRef.current,
@@ -941,9 +948,29 @@ export function useGameSession({
           const strictMessage = isStrictOnlineMessage(parsed) ? parsed : null;
           const tm = engine.getTurnManager();
 
-          if (msg.type === 'GAME_START' && typeof msg.currentPlayerIndex === 'number' && Number.isInteger(msg.currentPlayerIndex)) {
-            console.log(`[Game] Received GAME_START: currentPlayerIndex=${msg.currentPlayerIndex}`);
-            tm.syncTurn(msg.currentPlayerIndex);
+          const applyProtocolMismatch = (receivedVersion: number | null): void => {
+            protocolMismatchRef.current = true;
+            dispatch({
+              type: "SET_PROTOCOL_MISMATCH",
+              mismatch: {
+                requiredVersion: ONLINE_PROTOCOL_VERSION,
+                receivedVersion,
+              },
+            });
+          };
+
+          if (strictMessage?.type === "PROTOCOL_MISMATCH") {
+            applyProtocolMismatch(strictMessage.receivedVersion);
+            return;
+          }
+
+          if (msg.type === 'GAME_START') {
+            if (strictMessage?.type !== 'GAME_START') {
+              applyProtocolMismatch(readProtocolVersion(msg));
+              return;
+            }
+            console.log(`[Game] Received GAME_START: currentPlayerIndex=${strictMessage.currentPlayerIndex}`);
+            tm.syncTurn(strictMessage.currentPlayerIndex);
             if (typeof msg.wind === 'number' && Number.isFinite(msg.wind)) {
               engine.setWindForce(msg.wind);
             }
@@ -1180,7 +1207,11 @@ export function useGameSession({
         console.log('[Game] Combat WS closed', ev.code, ev.reason);
         if (gameWsRef.current === ws) {
           gameWsRef.current = null;
-          if (ev.code === 4001 || (typeof ev.reason === 'string' && ev.reason.includes('replaced'))) {
+          if (
+            ev.code === 4001 ||
+            ev.code === PROTOCOL_MISMATCH_CLOSE_CODE ||
+            (typeof ev.reason === 'string' && ev.reason.includes('replaced'))
+          ) {
             console.log('[Game] Socket superseded by another connection, skipping reconnect');
             return;
           }

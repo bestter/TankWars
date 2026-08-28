@@ -32,9 +32,15 @@ import {
   decodeFireMessage,
   decodeShopBuySellMessage,
   decodeShopReadyMessage,
+  isLegacyFirePayload,
+  isLegacyShopPayload,
   isStrictOnlineMessage,
+  ONLINE_PROTOCOL_VERSION,
+  PROTOCOL_MISMATCH_CLOSE_CODE,
+  readProtocolVersion,
   type AuthorityChangedMessage,
   type FireRejectedMessage,
+  type ProtocolMismatchMessage,
   type RequestGameStartMessage,
   type RoundEndMessage,
   type ShopFinishMessage,
@@ -391,6 +397,7 @@ export class GameRoom extends DurableObject {
     slot: number,
     request: RequestGameStartMessage = {
       type: 'REQUEST_GAME_START',
+      protocolVersion: ONLINE_PROTOCOL_VERSION,
       roundNumber: 0,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -742,15 +749,20 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const strictMessage = isStrictOnlineMessage(msg) ? msg : null;
 
-    // Catch-up: client missed the GAME_START broadcast (e.g. host tab still in lobby)
-    // or reconnected mid-shot and needs the in-flight SHOT replayed.
-    if (
-      msg?.type === 'REQUEST_GAME_START' &&
-      strictMessage?.type === 'REQUEST_GAME_START' &&
-      this.state.started
-    ) {
-      const wsConn = this.sockets.get(slot);
-      if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
+    if (msg?.type === 'REQUEST_GAME_START') {
+      if (strictMessage?.type !== 'REQUEST_GAME_START') {
+        this.rejectProtocolMismatch(slot, readProtocolVersion(msg));
+        return;
+      }
+      if (this.state.started) {
+        const wsConn = this.sockets.get(slot);
+        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
+      }
+      return;
+    }
+
+    if (isLegacyFirePayload(msg) || isLegacyShopPayload(msg)) {
+      this.rejectProtocolMismatch(slot, readProtocolVersion(msg));
       return;
     }
 
@@ -853,6 +865,25 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private rejectProtocolMismatch(
+    slot: number,
+    receivedVersion: number | null,
+  ): void {
+    const mismatch: ProtocolMismatchMessage = {
+      type: 'PROTOCOL_MISMATCH',
+      requiredVersion: ONLINE_PROTOCOL_VERSION,
+      receivedVersion,
+    };
+    this.sendToSlot(slot, mismatch);
+    const socket = this.sockets.get(slot);
+    if (!socket) return;
+    try {
+      socket.close(PROTOCOL_MISMATCH_CLOSE_CODE, 'protocol-mismatch');
+    } catch {
+      // ignore stale
+    }
+  }
+
   private sendRosterUpdate() {
     if (!this.state) return;
     const roster: Array<{ slot: number; name: string; type: 'human' | 'ai' }> = Object.entries(this.state.joinedHumans).map(([s, info]) => ({
@@ -917,6 +948,7 @@ export class GameRoom extends DurableObject {
     if (!this.state?.started) return null;
     return {
       type: 'GAME_START' as const,
+      protocolVersion: ONLINE_PROTOCOL_VERSION,
       players: this.state.players,
       ...this.terrainWireFields(),
       wind: this.state.wind,

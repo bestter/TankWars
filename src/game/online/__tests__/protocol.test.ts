@@ -3,8 +3,11 @@ import {
   decodeFireMessage,
   decodeShopBuySellMessage,
   decodeShopReadyMessage,
+  isLegacyFirePayload,
+  isLegacyShopPayload,
   isStrictOnlineMessage,
   parseStrictOnlineMessage,
+  readProtocolVersion,
 } from "../protocol";
 import { MAX_ACTION_ID_LENGTH } from "../actionId";
 
@@ -198,5 +201,81 @@ describe("strict online protocol", () => {
         command,
       }),
     ).toBe(true);
+  });
+
+  it("exige protocolVersion sur REQUEST_GAME_START et accepte PROTOCOL_MISMATCH", () => {
+    expect(
+      isStrictOnlineMessage({
+        type: "REQUEST_GAME_START",
+        roundNumber: 1,
+        lastSeenShotId: 0,
+        lastAppliedShopEpoch: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isStrictOnlineMessage({
+        type: "REQUEST_GAME_START",
+        protocolVersion: 1,
+        roundNumber: 1,
+        lastSeenShotId: 0,
+        lastAppliedShopEpoch: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isStrictOnlineMessage({
+        type: "PROTOCOL_MISMATCH",
+        requiredVersion: 1,
+        receivedVersion: null,
+      }),
+    ).toBe(true);
+    expect(
+      isStrictOnlineMessage({
+        type: "GAME_START",
+        protocolVersion: 1,
+        currentPlayerIndex: 0,
+      }),
+    ).toBe(true);
+    expect(readProtocolVersion({ type: "GAME_START" })).toBeNull();
+    expect(
+      readProtocolVersion({ type: "GAME_START", protocolVersion: 1 }),
+    ).toBe(1);
+  });
+
+  it("détecte les payloads FIRE/SHOP de l'ère main", () => {
+    expect(
+      isLegacyFirePayload({
+        type: "FIRE",
+        command: { angle: 45, power: 50, weaponId: "MISSILE" },
+      }),
+    ).toBe(true);
+    expect(
+      isLegacyFirePayload({
+        type: "FIRE",
+        actionId: "fire-1",
+        command: { angle: 45, power: 50, weaponId: "MISSILE" },
+      }),
+    ).toBe(false);
+    expect(
+      isLegacyShopPayload({
+        type: "SHOP_BUY_SELL",
+        player: { id: "p1" },
+        slot: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isLegacyShopPayload({
+        type: "SHOP_BUY_SELL",
+        shopEpoch: 1,
+        actionId: "buy-1",
+        weaponId: "GRENADE",
+        delta: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isLegacyShopPayload({ type: "SHOP_ENTER", roundNumber: 1 }),
+    ).toBe(false);
+    expect(isLegacyShopPayload({ type: "SHOP_ADVANCE", nextIndex: 1 })).toBe(
+      true,
+    );
   });
 });

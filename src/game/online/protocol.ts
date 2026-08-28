@@ -7,12 +7,33 @@ import type {
   ShopVisitCounters,
 } from "../shop/shopTransaction";
 import { isValidActionId } from "./actionId";
+import type { TerrainMaterial } from "../../types/terrain";
+
+export const ONLINE_PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
   type: "REQUEST_GAME_START";
+  protocolVersion: typeof ONLINE_PROTOCOL_VERSION;
   roundNumber: number;
   lastSeenShotId: number;
   lastAppliedShopEpoch: number;
+}
+
+export interface ProtocolMismatchMessage {
+  type: "PROTOCOL_MISMATCH";
+  requiredVersion: number;
+  receivedVersion: number | null;
+}
+
+export interface GameStartMessage {
+  type: "GAME_START";
+  protocolVersion: typeof ONLINE_PROTOCOL_VERSION;
+  currentPlayerIndex: number;
+  wind?: number;
+  players?: Player[];
+  heights?: number[];
+  materials?: TerrainMaterial[];
 }
 
 export interface ClientFireMessage {
@@ -196,6 +217,8 @@ export interface ZeusStateMessage {
 
 export type StrictOnlineMessage =
   | RequestGameStartMessage
+  | ProtocolMismatchMessage
+  | GameStartMessage
   | ClientFireMessage
   | ShopEnterMessage
   | ShopBuySellMessage
@@ -428,9 +451,21 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
   switch (value.type) {
     case "REQUEST_GAME_START":
       return (
+        value.protocolVersion === ONLINE_PROTOCOL_VERSION &&
         isSafeNonNegativeInteger(value.roundNumber) &&
         isSafeNonNegativeInteger(value.lastSeenShotId) &&
         isSafeNonNegativeInteger(value.lastAppliedShopEpoch)
+      );
+    case "PROTOCOL_MISMATCH":
+      return (
+        isSafeNonNegativeInteger(value.requiredVersion) &&
+        (value.receivedVersion === null ||
+          isSafeNonNegativeInteger(value.receivedVersion))
+      );
+    case "GAME_START":
+      return (
+        value.protocolVersion === ONLINE_PROTOCOL_VERSION &&
+        isSafeNonNegativeInteger(value.currentPlayerIndex)
       );
     case "FIRE":
       return isValidActionId(value.actionId) && isFireCommand(value.command);
@@ -691,4 +726,32 @@ export function parseStrictOnlineMessage(raw: string): StrictOnlineMessage | nul
   } catch {
     return null;
   }
+}
+
+export function readProtocolVersion(value: unknown): number | null {
+  if (!isRecord(value)) return null;
+  return isSafeNonNegativeInteger(value.protocolVersion)
+    ? value.protocolVersion
+    : null;
+}
+
+export function isLegacyFirePayload(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.type === "FIRE" &&
+    value.actionId === undefined &&
+    isFireCommand(value.command)
+  );
+}
+
+export function isLegacyShopPayload(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "SHOP_ADVANCE") return true;
+  if (value.type === "SHOP_BUY_SELL") {
+    return isRecord(value.player) || value.actionId === undefined;
+  }
+  if (value.type === "SHOP_READY") {
+    return value.actionId === undefined && Array.isArray(value.players);
+  }
+  return false;
 }

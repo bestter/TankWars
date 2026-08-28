@@ -7,10 +7,12 @@ import type { ShotMessage } from '../../../src/game/online/protocol';
 class MockWebSocket {
   public sent: string[] = [];
   public readyState = 1; // WebSocket.OPEN
+  public closeCode: number | undefined;
   public send(data: string): void {
     this.sent.push(data);
   }
-  public close(_code?: number, _reason?: string): void {
+  public close(code?: number, _reason?: string): void {
+    this.closeCode = code;
     this.readyState = 3; // WebSocket.CLOSED
   }
   public getLastMessage<T>(): T | null {
@@ -331,6 +333,73 @@ describe('GameRoom Durable Object', () => {
       expect(shotMsg1).toBeDefined();
       expect(shotMsg0?.slot).toBe(0);
       expect(shotMsg0?.command.angle).toBe(45);
+    });
+
+    it('closes a main-era REQUEST_GAME_START with PROTOCOL_MISMATCH', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({ type: 'REQUEST_GAME_START' }),
+      );
+      const mismatch = ws0
+        .getAllMessages<{
+          type: string;
+          requiredVersion?: number;
+          receivedVersion?: number | null;
+        }>()
+        .find((m) => m.type === 'PROTOCOL_MISMATCH');
+      expect(mismatch).toMatchObject({
+        type: 'PROTOCOL_MISMATCH',
+        requiredVersion: 1,
+        receivedVersion: null,
+      });
+      expect(ws0.closeCode).toBe(4402);
+    });
+
+    it('closes a main-era FIRE without actionId as protocol mismatch', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({
+          type: 'FIRE',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        }),
+      );
+      expect(
+        ws0.getAllMessages<{ type: string }>().some((m) => m.type === 'PROTOCOL_MISMATCH'),
+      ).toBe(true);
+      expect(ws0.closeCode).toBe(4402);
+    });
+
+    it('accepts REQUEST_GAME_START with protocolVersion 1 and still sends catch-up', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      ws0.sent.length = 0;
+      await handleClientMessage.call(
+        room,
+        0,
+        JSON.stringify({
+          type: 'REQUEST_GAME_START',
+          protocolVersion: 1,
+          roundNumber: 1,
+          lastSeenShotId: 0,
+          lastAppliedShopEpoch: 0,
+        }),
+      );
+      expect(ws0.closeCode).toBeUndefined();
+      const types = ws0.getAllMessages<{ type: string }>().map((m) => m.type);
+      expect(types).toContain('SHOT_CATCH_UP');
+      expect(types).toContain('GAME_START');
     });
 
     it.each([
@@ -774,6 +843,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
+        protocolVersion: 1,
         roundNumber: 1,
         lastSeenShotId: shot?.shotId,
         lastAppliedShopEpoch: 0,
@@ -1311,6 +1381,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
+        protocolVersion: 1,
         roundNumber: 2,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -1843,6 +1914,7 @@ describe('GameRoom Durable Object', () => {
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
+        protocolVersion: 1,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -1872,6 +1944,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
+        protocolVersion: 1,
         roundNumber: 1,
         lastSeenShotId: 1,
         lastAppliedShopEpoch: 0,

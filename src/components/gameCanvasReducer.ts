@@ -95,6 +95,10 @@ export interface GameCanvasState {
   lastSeenShotId: number;
   pendingFireIntent: PendingFireIntent | null;
   fireRejection: FireRejectedReason | null;
+  protocolMismatch: {
+    requiredVersion: number;
+    receivedVersion: number | null;
+  } | null;
 }
 
 export type GameCanvasAction =
@@ -142,6 +146,13 @@ export type GameCanvasAction =
   | { type: "SET_LAST_SEEN_SHOT"; shotId: number }
   | { type: "SET_FIRE_PENDING"; intent: PendingFireIntent | null }
   | { type: "SET_FIRE_REJECTION"; reason: FireRejectedReason | null }
+  | {
+      type: "SET_PROTOCOL_MISMATCH";
+      mismatch: {
+        requiredVersion: number;
+        receivedVersion: number | null;
+      } | null;
+    }
   | { type: "END_MATCH_FROM_SHOP"; winner: Player | null }
   | { type: "SHOW_NEW_GAME_BUTTON"; show: boolean }
   | { type: "RESET_GAME"; newPlayers: Player[] }
@@ -192,6 +203,7 @@ export const INITIAL_STATE: GameCanvasState = {
   lastSeenShotId: 0,
   pendingFireIntent: null,
   fireRejection: null,
+  protocolMismatch: null,
 };
 
 export function gameCanvasReducer(
@@ -359,6 +371,8 @@ export function gameCanvasReducer(
       return { ...state, pendingFireIntent: action.intent };
     case "SET_FIRE_REJECTION":
       return { ...state, fireRejection: action.reason };
+    case "SET_PROTOCOL_MISMATCH":
+      return { ...state, protocolMismatch: action.mismatch };
     case "END_MATCH_FROM_SHOP":
       return {
         ...state,
@@ -373,6 +387,7 @@ export function gameCanvasReducer(
         lastSeenShotId: 0,
         pendingFireIntent: null,
         fireRejection: null,
+        protocolMismatch: null,
       };
     case "SHOW_NEW_GAME_BUTTON":
       return {
@@ -399,6 +414,7 @@ export function gameCanvasReducer(
         lastSeenShotId: 0,
         pendingFireIntent: null,
         fireRejection: null,
+        protocolMismatch: null,
       };
     case "RESUME_CANVAS":
       return {
