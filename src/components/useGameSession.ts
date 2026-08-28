@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
-import type {
-  AuthoritativeReplayMode,
-  CurrentTurnInfo,
-} from "../game/engine/TurnManager";
+import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { VGA_PALETTE } from "../types/game";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
 import type { Player } from "../types/player";
@@ -47,6 +44,7 @@ import {
   type ShotEarningsMessage,
 } from "../game/online/protocol";
 import { DeferredTransitionBuffer } from "../game/online/deferredTransitions";
+import { AuthoritativeShotQueue } from "../game/online/authoritativeShotQueue";
 import type {
   ZeusAppointment,
   ZeusStrikeResult,
@@ -152,11 +150,6 @@ interface UseGameSessionProps {
  */
 let combatWsEffectGen = 0;
 
-interface QueuedAuthoritativeShot {
-  readonly message: ShotMessage;
-  readonly mode: AuthoritativeReplayMode;
-}
-
 interface AuthoritativeEconomyPlayer {
   readonly id: string;
   readonly money: number;
@@ -189,9 +182,9 @@ export function useGameSession({
   const roundEndFromNetworkRef = useRef(false);
   const authoritySlotRef = useRef<number | null>(resumeCanvas?.authoritySlot ?? null);
   const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
-  const activeServerShotIdRef = useRef<number | null>(null);
   const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
   const lastSeenShotIdRef = useRef(resumeCanvas?.lastSeenShotId ?? 0);
+  const shotQueueRef = useRef<AuthoritativeShotQueue | null>(null);
   const lastAppliedShopEpochRef = useRef(
     resumeCanvas?.lastAppliedShopEpoch ?? 0,
   );
@@ -205,14 +198,9 @@ export function useGameSession({
     resumeCanvas?.pendingFireIntent ?? null,
   );
   const fireRejectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const shotQueueRef = useRef<QueuedAuthoritativeShot[]>([]);
-  const queuedShotIdsRef = useRef<Set<number>>(new Set());
-  const replayedShotIdsRef = useRef<Set<number>>(new Set());
-  const shotReplayActiveRef = useRef(false);
-  const catchUpActiveShotIdRef = useRef<number | null>(null);
   const authoritativeEconomyRef = useRef<AuthoritativeEconomyPlayer[]>([]);
   const reapplyAuthoritativeEconomyRef = useRef<() => void>(() => {});
-  const transitionBufferRef = useRef(new DeferredTransitionBuffer());
+  const transitionBufferRef = useRef<DeferredTransitionBuffer | null>(null);
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
@@ -590,136 +578,40 @@ export function useGameSession({
       dispatch({ type: "SET_FIRE_REJECTION", reason: null });
     };
 
-    const acknowledgeShotWithoutReplay = (message: ShotMessage): void => {
-      acknowledgePendingFire(message);
-      queuedShotIdsRef.current.delete(message.shotId);
-      replayedShotIdsRef.current.add(message.shotId);
-      if (message.shotId <= lastSeenShotIdRef.current) return;
-      lastSeenShotIdRef.current = message.shotId;
-      dispatch({ type: "SET_LAST_SEEN_SHOT", shotId: message.shotId });
-    };
-
-    const purgeCompletedRoundShots = (completedRoundNumber: number): void => {
-      const retainedShots: QueuedAuthoritativeShot[] = [];
-      for (const queued of shotQueueRef.current) {
-        if (queued.message.roundNumber <= completedRoundNumber) {
-          acknowledgeShotWithoutReplay(queued.message);
-        } else {
-          retainedShots.push(queued);
-        }
-      }
-      shotQueueRef.current = retainedShots;
-      if (!shotReplayActiveRef.current && retainedShots.length === 0) {
-        catchUpActiveShotIdRef.current = null;
-        tm.unlockAfterCatchUp();
-      }
-    };
-
-    const drainAuthoritativeShotQueue = (): void => {
-      if (shotReplayActiveRef.current) return;
-
-      const next = shotQueueRef.current[0];
-      if (!next) {
+    const idleTransitions = {
+      apply: (): void => {
         reapplyAuthoritativeEconomyRef.current();
-        for (const item of transitionBuffer.drain()) {
-          if (item.kind === "ROUND_END") {
-            applyRoundEndMessage(item.message);
-          } else if (item.kind === "SHOP_STATE") {
-            applyShopStateMessage(item.message);
-          } else {
-            applyShopFinishRef.current(
-              item.message.players,
-              item.message.shopEpoch,
-              item.message.nextRoundNumber,
-            );
-            if (
-              gamePhaseRef.current === "COMBAT" &&
-              shotQueueRef.current.length > 0
-            ) {
-              drainAuthoritativeShotQueue();
-              return;
-            }
-          }
-        }
-        if (catchUpActiveShotIdRef.current === null) tm.unlockAfterCatchUp();
-        return;
-      }
-      if (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused()) return;
-
-      shotQueueRef.current.shift();
-      queuedShotIdsRef.current.delete(next.message.shotId);
-      if (
-        replayedShotIdsRef.current.has(next.message.shotId) ||
-        (next.mode !== "ACTIVE_RECOVERY" &&
-          next.message.shotId <= lastSeenShotIdRef.current)
-      ) {
-        drainAuthoritativeShotQueue();
-        return;
-      }
-
-      shotReplayActiveRef.current = true;
-      activeServerShotIdRef.current = next.message.shotId;
-      acknowledgePendingFire(next.message);
-      tm.executeRemoteFire(next.message.command, {
-        fromSlot: next.message.slot,
-        ownerId: next.message.ownerId,
-        identity: {
-          shotId: next.message.shotId,
-          isFirstShotOfRound: next.message.isFirstShotOfRound,
-        },
-        mode: next.mode,
-      });
+      },
     };
 
-    const enqueueAuthoritativeShots = (
-      shots: readonly ShotMessage[],
-      mode:
-        | AuthoritativeReplayMode
-        | ((message: ShotMessage) => AuthoritativeReplayMode),
-    ): void => {
-      let shouldLockForCatchUp = false;
-      for (const message of [...shots].sort((a, b) => a.shotId - b.shotId)) {
-        const resolvedMode = typeof mode === "function" ? mode(message) : mode;
-        acknowledgePendingFire(message);
-        if (
-          resolvedMode !== "ACTIVE_RECOVERY" &&
-          (gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused())
-        ) {
-          acknowledgeShotWithoutReplay(message);
-          continue;
-        }
-        if (
-          (resolvedMode !== "ACTIVE_RECOVERY" &&
-            message.shotId <= lastSeenShotIdRef.current) ||
-          replayedShotIdsRef.current.has(message.shotId) ||
-          queuedShotIdsRef.current.has(message.shotId) ||
-          (shotReplayActiveRef.current &&
-            activeServerShotIdRef.current === message.shotId)
-        ) {
-          continue;
-        }
-        queuedShotIdsRef.current.add(message.shotId);
-        shotQueueRef.current.push({ message, mode: resolvedMode });
-        if (
-          resolvedMode === "CATCH_UP" ||
-          resolvedMode === "ACTIVE_RECOVERY"
-        ) {
-          shouldLockForCatchUp = true;
-        }
-      }
-      shotQueueRef.current.sort(
-        (a, b) => a.message.shotId - b.message.shotId,
-      );
-      if (shouldLockForCatchUp) tm.lockForCatchUp();
-      drainAuthoritativeShotQueue();
-    };
+    const shotQueue = new AuthoritativeShotQueue({
+      getGamePhase: () => gamePhaseRef.current,
+      isInterRoundPaused: () => tm.isInterRoundPaused(),
+      lastSeenShotId: () => lastSeenShotIdRef.current,
+      markSeen: (shotId) => {
+        lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
+        dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
+      },
+      acknowledgePendingFire,
+      executeRemoteFire: (message, mode) => {
+        tm.executeRemoteFire(message.command, {
+          fromSlot: message.slot,
+          ownerId: message.ownerId,
+          identity: {
+            shotId: message.shotId,
+            isFirstShotOfRound: message.isFirstShotOfRound,
+          },
+          mode,
+        });
+      },
+      onIdle: () => idleTransitions.apply(),
+      lockForCatchUp: () => tm.lockForCatchUp(),
+      unlockAfterCatchUp: () => tm.unlockAfterCatchUp(),
+    });
+    shotQueueRef.current = shotQueue;
 
     tm.onAuthoritativeShotSettled = (shotId) => {
-      shotReplayActiveRef.current = false;
-      replayedShotIdsRef.current.add(shotId);
-      lastSeenShotIdRef.current = Math.max(lastSeenShotIdRef.current, shotId);
-      dispatch({ type: "SET_LAST_SEEN_SHOT", shotId });
-      drainAuthoritativeShotQueue();
+      shotQueue.onShotSettled(shotId);
     };
 
     tm.setFireIntentHandler((command) => {
@@ -962,6 +854,30 @@ export function useGameSession({
       tm.pauseForInterRound();
     };
 
+    idleTransitions.apply = (): void => {
+      reapplyAuthoritativeEconomyRef.current();
+      for (const item of transitionBuffer.drain()) {
+        if (item.kind === "ROUND_END") {
+          applyRoundEndMessage(item.message);
+        } else if (item.kind === "SHOP_STATE") {
+          applyShopStateMessage(item.message);
+        } else {
+          applyShopFinishRef.current(
+            item.message.players,
+            item.message.shopEpoch,
+            item.message.nextRoundNumber,
+          );
+          if (
+            gamePhaseRef.current === "COMBAT" &&
+            shotQueue.pendingCount > 0
+          ) {
+            shotQueue.drain();
+            return;
+          }
+        }
+      }
+    };
+
     const retryPendingActions = (): void => {
       const pendingFire = pendingFireRef.current;
       if (pendingFire) {
@@ -1035,7 +951,7 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === 'SHOT') {
-            enqueueAuthoritativeShots(
+            shotQueue.enqueue(
               [strictMessage],
               strictMessage.slot === localSlotNum
                 ? "LIVE_LOCAL"
@@ -1044,18 +960,16 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === "SHOT_CATCH_UP") {
-            catchUpActiveShotIdRef.current = strictMessage.activeShotId;
-            const catchUpMode = (
-              message: ShotMessage,
-            ): AuthoritativeReplayMode =>
+            shotQueue.setCatchUpActiveShotId(strictMessage.activeShotId);
+            const catchUpMode = (message: ShotMessage) =>
               message.shotId === strictMessage.activeShotId
-                ? "ACTIVE_RECOVERY"
-                : "CATCH_UP";
-            enqueueAuthoritativeShots(strictMessage.shots, catchUpMode);
+                ? ("ACTIVE_RECOVERY" as const)
+                : ("CATCH_UP" as const);
+            shotQueue.enqueue(strictMessage.shots, catchUpMode);
             if (strictMessage.lastFireResult?.type === "FIRE_REJECTED") {
               applyFireRejection(strictMessage.lastFireResult);
             } else if (strictMessage.lastFireResult?.type === "SHOT") {
-              enqueueAuthoritativeShots(
+              shotQueue.enqueue(
                 [strictMessage.lastFireResult],
                 catchUpMode,
               );
@@ -1075,8 +989,8 @@ export function useGameSession({
           if (strictMessage?.type === 'AUTHORITY_CHANGED') {
             authoritySlotRef.current = strictMessage.authoritySlot;
             authorityEpochRef.current = strictMessage.authorityEpoch;
-            if (strictMessage.authoritySlot === localSlotNum && activeServerShotIdRef.current !== null) {
-              const preview = pendingShotPreviewsRef.current.get(activeServerShotIdRef.current);
+            if (strictMessage.authoritySlot === localSlotNum && shotQueue.activeServerShotId !== null) {
+              const preview = pendingShotPreviewsRef.current.get(shotQueue.activeServerShotId);
               if (preview) submitShotEarnings(preview);
             }
           }
@@ -1087,15 +1001,10 @@ export function useGameSession({
           ) {
             engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
             lastAppliedShotIdRef.current = strictMessage.shotId;
-            if (activeServerShotIdRef.current === strictMessage.shotId) {
-              activeServerShotIdRef.current = null;
+            if (shotQueue.activeServerShotId === strictMessage.shotId) {
+              shotQueue.clearActiveServerShotId();
             }
-            if (catchUpActiveShotIdRef.current === strictMessage.shotId) {
-              catchUpActiveShotIdRef.current = null;
-              if (!shotReplayActiveRef.current && shotQueueRef.current.length === 0) {
-                tm.unlockAfterCatchUp();
-              }
-            }
+            shotQueue.noteCatchUpShotApplied(strictMessage.shotId);
             pendingShotPreviewsRef.current.delete(strictMessage.shotId);
             const roster = [...engine.getTankManager().getPlayers()];
             dispatch({ type: "SET_UI_PLAYERS", players: roster });
@@ -1151,7 +1060,7 @@ export function useGameSession({
             engine.syncRemoteZeusState(strictMessage.activeZeusId);
             const roster = engine.getTankManager().getPlayers();
             const isReplayingShots =
-              shotReplayActiveRef.current || shotQueueRef.current.length > 0;
+              shotQueue.replayActiveNow || shotQueue.pendingCount > 0;
             if (!isReplayingShots) {
               for (let index = 0; index < strictMessage.deadSlots.length; index++) {
                 if (!strictMessage.deadSlots[index]) continue;
@@ -1193,8 +1102,8 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === "SHOP_STATE") {
-            purgeCompletedRoundShots(strictMessage.roundNumber);
-            if (shotReplayActiveRef.current) {
+            shotQueue.purgeCompletedRound(strictMessage.roundNumber);
+            if (shotQueue.replayActiveNow) {
               transitionBuffer.enqueue({
                 kind: "SHOP_STATE",
                 message: strictMessage,
@@ -1225,7 +1134,7 @@ export function useGameSession({
           }
 
           if (strictMessage?.type === "SHOP_FINISH") {
-            purgeCompletedRoundShots(strictMessage.completedRoundNumber);
+            shotQueue.purgeCompletedRound(strictMessage.completedRoundNumber);
             const applyFinish = (): void => {
               applyShopFinishRef.current(
                 strictMessage.players,
@@ -1234,12 +1143,12 @@ export function useGameSession({
               );
               if (
                 gamePhaseRef.current === "COMBAT" &&
-                shotQueueRef.current.length > 0
+                shotQueue.pendingCount > 0
               ) {
-                drainAuthoritativeShotQueue();
+                shotQueue.drain();
               }
             };
-            if (shotReplayActiveRef.current) {
+            if (shotQueue.replayActiveNow) {
               transitionBuffer.enqueue({
                 kind: "SHOP_FINISH",
                 message: strictMessage,
@@ -1251,8 +1160,8 @@ export function useGameSession({
 
           if (strictMessage?.type === 'ROUND_END') {
             if (
-              shotReplayActiveRef.current ||
-              shotQueueRef.current.length > 0
+              shotQueue.replayActiveNow ||
+              shotQueue.pendingCount > 0
             ) {
               transitionBuffer.enqueue({
                 kind: "ROUND_END",
@@ -1414,7 +1323,7 @@ export function useGameSession({
         if (shouldNotify) {
           console.log('[Game] Sending SHOT_SETTLED to server');
           const deadSlots = engine.getTankManager().getPlayers().map((p) => Boolean(p.tank.isDead));
-          const shotId = activeServerShotIdRef.current;
+          const shotId = shotQueueRef.current?.activeServerShotId ?? null;
           if (shotId !== null) {
             sendCombatMessage({ type: 'SHOT_SETTLED', shotId, slot, deadSlots });
           }
@@ -1642,7 +1551,9 @@ export function useGameSession({
       tm.onAuthoritativeShotSettled = undefined;
       tm.removeInputListeners();
       reapplyAuthoritativeEconomyRef.current = () => {};
-      transitionBufferRef.current.drain();
+      transitionBufferRef.current?.drain();
+      transitionBufferRef.current = null;
+      shotQueueRef.current = null;
       if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
