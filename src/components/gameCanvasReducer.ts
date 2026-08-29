@@ -41,9 +41,6 @@ export type PendingShopIntent =
       readonly shopEpoch: number;
       readonly weaponId: WeaponId;
       readonly delta: 1 | -1;
-      readonly expectedMoney: number;
-      readonly expectedStock: number;
-      readonly expectedPurchaseCount: number;
     }
   | {
       readonly kind: "READY";

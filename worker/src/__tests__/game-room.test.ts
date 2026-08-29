@@ -335,7 +335,7 @@ describe('GameRoom Durable Object', () => {
       expect(shotMsg0?.command.angle).toBe(45);
     });
 
-    it('closes a main-era REQUEST_GAME_START with PROTOCOL_MISMATCH', async () => {
+    it('accepts a main-era REQUEST_GAME_START and sends catch-up', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -345,22 +345,14 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({ type: 'REQUEST_GAME_START' }),
       );
-      const mismatch = ws0
-        .getAllMessages<{
-          type: string;
-          requiredVersion?: number;
-          receivedVersion?: number | null;
-        }>()
-        .find((m) => m.type === 'PROTOCOL_MISMATCH');
-      expect(mismatch).toMatchObject({
-        type: 'PROTOCOL_MISMATCH',
-        requiredVersion: 1,
-        receivedVersion: null,
-      });
-      expect(ws0.closeCode).toBe(4402);
+      const types = ws0.getAllMessages<{ type: string }>().map((message) => message.type);
+      expect(types).toContain('GAME_START');
+      expect(types).toContain('SHOT_CATCH_UP');
+      expect(types).not.toContain('PROTOCOL_MISMATCH');
+      expect(ws0.closeCode).toBeUndefined();
     });
 
-    it('closes a main-era FIRE without actionId as protocol mismatch', async () => {
+    it('accepts a main-era FIRE without actionId', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -373,6 +365,22 @@ describe('GameRoom Durable Object', () => {
           command: { angle: 45, power: 50, weaponId: 'MISSILE' },
         }),
       );
+      const shot = ws0
+        .getAllMessages<{ type: string; actionId?: string }>()
+        .find((message) => message.type === 'SHOT');
+      expect(shot?.actionId).toMatch(/^v0-fire-/);
+      expect(ws0.closeCode).toBeUndefined();
+    });
+
+    it('closes only an unsupported numeric protocol version with 4402', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string
+      ) => Promise<void>;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'REQUEST_GAME_START',
+        protocolVersion: 99,
+      }));
       expect(
         ws0.getAllMessages<{ type: string }>().some((m) => m.type === 'PROTOCOL_MISMATCH'),
       ).toBe(true);
@@ -1071,12 +1079,88 @@ describe('GameRoom Durable Object', () => {
         })
       );
 
-      const buyMsg = ws1.getAllMessages<{ type: string; players: Array<{ id: string; money: number }> }>().find(
+      const buyMsg = ws1.getAllMessages<{
+        type: string;
+        players: Array<{ id: string; money: number }>;
+        acknowledgedAction?: { slot: number; actionId: string };
+      }>().find(
         (m) => m.type === 'SHOP_STATE' && m.players.some((player) => player.money === 175)
       );
 
       expect(buyMsg).toBeDefined();
       expect(buyMsg?.players.find((p) => p.id === 'player-1')?.money).toBe(175);
+      expect(buyMsg?.acknowledgedAction).toEqual({
+        slot: 0,
+        actionId: 'shop-buy-1',
+      });
+    });
+
+    it('normalizes legacy shop actions and ignores forged non-economic snapshot fields', async () => {
+      const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
+        slot: number,
+        raw: string,
+      ) => Promise<void>;
+      const state = Reflect.get(room, 'state') as {
+        players: Player[];
+        shopSession: { readySlots: number[] } | null;
+      };
+      const authoritative = state.players[0];
+      const legacySnapshot = {
+        ...authoritative,
+        name: 'Nom falsifié ignoré',
+        money: authoritative.money - 75,
+        inventory: {
+          ...authoritative.inventory,
+          GRENADE: (authoritative.inventory.GRENADE ?? 0) + 1,
+        },
+        tank: {
+          ...authoritative.tank,
+          health: 9_999,
+        },
+      };
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL',
+        slot: 0,
+        player: legacySnapshot,
+      }));
+
+      expect(state.players[0].money).toBe(authoritative.money - 75);
+      expect(state.players[0].inventory.GRENADE).toBe(
+        (authoritative.inventory.GRENADE ?? 0) + 1,
+      );
+      expect(state.players[0].name).toBe(authoritative.name);
+      expect(state.players[0].tank.health).toBe(authoritative.tank.health);
+
+      const moneyAfterValidTransaction = state.players[0].money;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL',
+        slot: 0,
+        player: {
+          ...state.players[0],
+          money: 999_999,
+        },
+      }));
+      expect(state.players[0].money).toBe(moneyAfterValidTransaction);
+      expect(
+        ws0.getAllMessages<{ type: string; reason?: string }>().find(
+          (message) =>
+            message.type === 'SHOP_REJECTED' && message.reason === 'MALFORMED',
+        ),
+      ).toBeDefined();
+
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_READY',
+        players: state.players,
+      }));
+      expect(state.shopSession?.readySlots).toContain(0);
+
+      await handleClientMessage.call(room, 1, JSON.stringify({
+        type: 'SHOP_ADVANCE',
+        nextIndex: 0,
+      }));
+      expect(state.shopSession).toBeNull();
+      expect(ws0.closeCode).toBeUndefined();
     });
 
     it('does not persist malformed BUY_SELL while keeping READY idempotent', async () => {
@@ -1377,6 +1461,13 @@ describe('GameRoom Durable Object', () => {
 
       shopFinish = ws0.getAllMessages<{ type: string }>().find((m) => m.type === 'SHOP_FINISH');
       expect(shopFinish).toBeDefined();
+      const persistedAfterFinish = Reflect.get(room, 'state') as {
+        roundEnded: boolean;
+        processedShopActions: Record<string, unknown>;
+      };
+      expect(Object.keys(persistedAfterFinish.processedShopActions)).toEqual([
+        'READY:1:ready-1',
+      ]);
 
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
@@ -1422,6 +1513,13 @@ describe('GameRoom Durable Object', () => {
             message.type === 'SHOP_REJECTED' && message.reason === 'SHOP_CLOSED',
         ),
       ).toBeDefined();
+
+      persistedAfterFinish.roundEnded = true;
+      await handleClientMessage.call(room, 0, JSON.stringify({
+        type: 'SHOP_ENTER',
+        roundNumber: 2,
+      }));
+      expect(persistedAfterFinish.processedShopActions).toEqual({});
     });
 
     it('advances turn to slot 1 in round 2 when slot 1 died in round 1 and respawned', async () => {

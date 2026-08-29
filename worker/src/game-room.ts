@@ -26,7 +26,11 @@ import type { Player } from '../../src/types/player'; // share types from root (
 import type { Color } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import type { TerrainMaterial } from '../../src/types/terrain';
-import { DEFAULT_INVENTORY } from '../../src/types/weapon';
+import {
+  ALL_WEAPON_IDS,
+  DEFAULT_INVENTORY,
+  SHOP_WEAPON_IDS,
+} from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 import {
   decodeFireMessage,
@@ -37,13 +41,13 @@ import {
   isStrictOnlineMessage,
   ONLINE_PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CLOSE_CODE,
-  readProtocolVersion,
   type AuthorityChangedMessage,
   type FireRejectedMessage,
   type ProtocolMismatchMessage,
   type RequestGameStartMessage,
   type RoundEndMessage,
   type ShopFinishMessage,
+  type ShopActionAcknowledgement,
   type ShopBuySellMessage,
   type ShopRejectedMessage,
   type ShopReadyMessage,
@@ -106,6 +110,36 @@ interface PersistedShopSession {
 interface PersistedShopAction {
   slot: number;
   result: PersistedShopActionResult;
+}
+
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+  );
+}
+
+function legacyEconomyMatchesPlayer(
+  snapshot: Record<string, unknown>,
+  player: Player,
+): boolean {
+  if (!isSafeNonNegativeInteger(snapshot.money)) return false;
+  const inventory = snapshot.inventory;
+  if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) {
+    return false;
+  }
+  const stock = inventory as Record<string, unknown>;
+  return (
+    snapshot.money === player.money &&
+    ALL_WEAPON_IDS.every((weaponId) => {
+      const proposed = stock[weaponId] ?? 0;
+      return (
+        isSafeNonNegativeInteger(proposed) &&
+        proposed === (player.inventory[weaponId] ?? 0)
+      );
+    })
+  );
 }
 
 type PersistedFireResult = ShotMessage | FireRejectedMessage;
@@ -749,20 +783,32 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const strictMessage = isStrictOnlineMessage(msg) ? msg : null;
 
-    if (msg?.type === 'REQUEST_GAME_START') {
-      if (strictMessage?.type !== 'REQUEST_GAME_START') {
-        this.rejectProtocolMismatch(slot, readProtocolVersion(msg));
-        return;
-      }
-      if (this.state.started) {
-        const wsConn = this.sockets.get(slot);
-        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
-      }
+    if (
+      typeof msg.protocolVersion === 'number' &&
+      msg.protocolVersion !== ONLINE_PROTOCOL_VERSION
+    ) {
+      this.rejectProtocolMismatch(slot, msg.protocolVersion);
       return;
     }
 
-    if (isLegacyFirePayload(msg) || isLegacyShopPayload(msg)) {
-      this.rejectProtocolMismatch(slot, readProtocolVersion(msg));
+    if (msg?.type === 'REQUEST_GAME_START') {
+      const request: RequestGameStartMessage =
+        strictMessage?.type === 'REQUEST_GAME_START'
+          ? strictMessage
+          : {
+              type: 'REQUEST_GAME_START',
+              protocolVersion: ONLINE_PROTOCOL_VERSION,
+              roundNumber: this.state.roundNumber,
+              lastSeenShotId: 0,
+              lastAppliedShopEpoch: 0,
+            };
+      if (strictMessage?.type !== 'REQUEST_GAME_START') {
+        this.logLegacyProtocolUse(slot, 'REQUEST_GAME_START');
+      }
+      if (this.state.started) {
+        const wsConn = this.sockets.get(slot);
+        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, request);
+      }
       return;
     }
 
@@ -777,6 +823,49 @@ export class GameRoom extends DurableObject {
     }
 
     if (!this.state.started) return;
+
+    if (isLegacyFirePayload(msg)) {
+      this.logLegacyProtocolUse(slot, 'FIRE');
+      await this.handleFireIntent(slot, {
+        ...msg,
+        actionId: `v0-fire-${crypto.randomUUID()}`,
+      });
+      return;
+    }
+
+    if (msg.type === 'SHOP_ENTER' && strictMessage?.type !== 'SHOP_ENTER') {
+      this.logLegacyProtocolUse(slot, 'SHOP_ENTER');
+      await this.handleShopEnter(slot, this.state.roundNumber);
+      return;
+    }
+
+    if (msg.type === 'SHOP_BUY_SELL' && isLegacyShopPayload(msg)) {
+      this.logLegacyProtocolUse(slot, 'SHOP_BUY_SELL');
+      await this.handleLegacyShopBuySell(slot, msg);
+      return;
+    }
+
+    if (
+      msg.type === 'SHOP_ADVANCE' ||
+      (msg.type === 'SHOP_READY' && isLegacyShopPayload(msg))
+    ) {
+      this.logLegacyProtocolUse(slot, msg.type);
+      const session = this.state.shopSession;
+      if (!session) {
+        this.sendToSlot(slot, {
+          type: 'SHOP_REJECTED',
+          shopEpoch: null,
+          reason: 'SHOP_CLOSED',
+        } satisfies ShopRejectedMessage);
+        return;
+      }
+      await this.handleShopReady(slot, {
+        type: 'SHOP_READY',
+        shopEpoch: session.shopEpoch,
+        actionId: `v0-ready-${crypto.randomUUID()}`,
+      });
+      return;
+    }
 
     if (strictMessage?.type === 'SHOT_SETTLED') {
       console.log(
@@ -841,6 +930,74 @@ export class GameRoom extends DurableObject {
       await this.handleFireIntent(slot, msg);
       return;
     }
+  }
+
+  private logLegacyProtocolUse(slot: number, messageType: string): void {
+    console.log(JSON.stringify({
+      event: 'legacy_online_protocol_message',
+      protocolVersion: 0,
+      roomId: this.state?.roomId ?? null,
+      slot,
+      messageType,
+    }));
+  }
+
+  private async handleLegacyShopBuySell(
+    slot: number,
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.state) return;
+    const session = this.state.shopSession;
+    const authoritativePlayer = this.state.players[slot];
+    const snapshot = message.player;
+    if (
+      !session ||
+      !authoritativePlayer ||
+      !snapshot ||
+      typeof snapshot !== 'object' ||
+      Array.isArray(snapshot)
+    ) {
+      this.sendToSlot(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session?.shopEpoch ?? null,
+        reason: 'MALFORMED',
+      } satisfies ShopRejectedMessage);
+      return;
+    }
+
+    const snapshotRecord = snapshot as Record<string, unknown>;
+    const candidates: Array<{ weaponId: WeaponId; delta: 1 | -1 }> = [];
+    for (const weaponId of SHOP_WEAPON_IDS) {
+      for (const delta of [1, -1] as const) {
+        const result = applyShopTransaction({
+          player: authoritativePlayer,
+          counters: session.purchasesByPlayerId,
+          weaponId,
+          delta,
+        });
+        if (result.ok && legacyEconomyMatchesPlayer(snapshotRecord, result.player)) {
+          candidates.push({ weaponId, delta });
+        }
+      }
+    }
+
+    if (candidates.length !== 1) {
+      this.sendToSlot(slot, {
+        type: 'SHOP_REJECTED',
+        shopEpoch: session.shopEpoch,
+        reason: 'MALFORMED',
+      } satisfies ShopRejectedMessage);
+      return;
+    }
+
+    const transaction = candidates[0];
+    await this.handleShopBuySell(slot, {
+      type: 'SHOP_BUY_SELL',
+      shopEpoch: session.shopEpoch,
+      actionId: `v0-shop-${crypto.randomUUID()}`,
+      weaponId: transaction.weaponId,
+      delta: transaction.delta,
+    });
   }
 
   // Broadcast helper (only to connected human sockets)
@@ -1738,7 +1895,9 @@ export class GameRoom extends DurableObject {
     return slots;
   }
 
-  private buildShopStateMessage(): ShopStateMessage {
+  private buildShopStateMessage(
+    acknowledgedAction?: ShopActionAcknowledgement,
+  ): ShopStateMessage {
     if (!this.state?.shopSession) {
       throw new Error('Aucune session boutique active.');
     }
@@ -1750,6 +1909,7 @@ export class GameRoom extends DurableObject {
       players: this.state.players,
       purchasesByPlayerId: this.state.shopSession.purchasesByPlayerId,
       aiShopApplied: this.state.shopSession.aiShopApplied,
+      ...(acknowledgedAction ? { acknowledgedAction } : {}),
     };
   }
 
@@ -1843,7 +2003,7 @@ export class GameRoom extends DurableObject {
           this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
             ? this.state.lastCompletedShop
             : previous.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage()
+              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
               : previous.result;
         this.sendToSlot(slot, result);
       }
@@ -1917,7 +2077,8 @@ export class GameRoom extends DurableObject {
       index === slot ? result.player : candidate,
     );
     session.purchasesByPlayerId = result.counters;
-    const stateMessage = this.buildShopStateMessage();
+    const acknowledgedAction = { slot, actionId: message.actionId };
+    const stateMessage = this.buildShopStateMessage(acknowledgedAction);
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
@@ -1940,7 +2101,7 @@ export class GameRoom extends DurableObject {
           this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
             ? this.state.lastCompletedShop
             : previous.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage()
+              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
               : previous.result;
         this.sendToSlot(slot, result);
       }
@@ -1980,7 +2141,8 @@ export class GameRoom extends DurableObject {
       await this.completeShopPhase(slot, message.actionId);
       return;
     }
-    const stateMessage = this.buildShopStateMessage();
+    const acknowledgedAction = { slot, actionId: message.actionId };
+    const stateMessage = this.buildShopStateMessage(acknowledgedAction);
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
@@ -2013,14 +2175,17 @@ export class GameRoom extends DurableObject {
       completedRoundNumber,
       nextRoundNumber,
       players: nextPlayers,
+      acknowledgedAction: { slot: fromSlot, actionId },
     };
 
     // Le résultat terminal existe dans l'état avant le nettoyage de session.
     this.state.lastCompletedShop = finish;
     const finishKey = makeShopActionKey('READY', fromSlot, actionId);
-    this.state.processedShopActions[finishKey] = {
-      slot: fromSlot,
-      result: finish,
+    this.state.processedShopActions = {
+      [finishKey]: {
+        slot: fromSlot,
+        result: finish,
+      },
     };
     this.state.players = nextPlayers;
     this.state.shopSession = null;

@@ -4,6 +4,19 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
 
+const sessionStorageData = new Map<string, string>();
+const deploymentMode = vi.hoisted(() => ({ hotseatOnly: false }));
+const sessionStorageMock: Storage = {
+  get length() {
+    return sessionStorageData.size;
+  },
+  clear: () => sessionStorageData.clear(),
+  getItem: (key) => sessionStorageData.get(key) ?? null,
+  key: (index) => [...sessionStorageData.keys()][index] ?? null,
+  removeItem: (key) => sessionStorageData.delete(key),
+  setItem: (key, value) => sessionStorageData.set(key, value),
+};
+
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -39,15 +52,26 @@ vi.mock('../components/GameCanvas', () => ({
   ),
 }));
 
+vi.mock('../utils/deploymentMode', () => ({
+  isHotseatOnlyBuild: () => deploymentMode.hotseatOnly,
+}));
+
 describe('App component (State and Lifecycle integration)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    deploymentMode.hotseatOnly = false;
     cleanup();
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      value: sessionStorageMock,
+    });
+    window.sessionStorage.clear();
     window.history.replaceState({}, '', '/');
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllEnvs();
   });
 
   it('renders MainMenu, SEO, and LanguageSwitcher on initial load', () => {
@@ -120,5 +144,23 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByRole('button', { name: 'join_room_btn' })).toBeDefined();
 
     window.history.replaceState({}, '', '/');
+  });
+
+  it('keeps staging hotseat-only even with an invitation URL and a saved online session', () => {
+    deploymentMode.hotseatOnly = true;
+    window.sessionStorage.setItem('tankwars-online-session-v1', '{"saved":true}');
+    window.history.replaceState({}, '', '/?room=ROOM77&slot=1&token=TOK77');
+
+    render(<App />);
+
+    expect(screen.getByText('main_title')).toBeDefined();
+    expect(
+      screen.queryByRole('button', { name: 'online_multiplayer_button' }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'join_room_btn' })).toBeNull();
+    expect(window.sessionStorage.getItem('tankwars-online-session-v1')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    expect(screen.getByText('Mode: local')).toBeDefined();
   });
 });

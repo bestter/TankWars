@@ -528,9 +528,6 @@ describe("useGameSession FIRE reconnect", () => {
       shopEpoch: 1,
       weaponId: "GRENADE" as const,
       delta: 1 as const,
-      expectedMoney: players[0].money - 75,
-      expectedStock: 2,
-      expectedPurchaseCount: 1,
     };
     const resumeCanvas = createResumeCanvas(players, {
       gamePhase: "SHOP",
@@ -593,6 +590,102 @@ describe("useGameSession FIRE reconnect", () => {
 
     expect(sessionRef.current?.state.shopSession.pendingIntent).toBeNull();
     expect(sessionRef.current?.state.shopSession.denial).toBe("MALFORMED");
+  });
+
+  it("applies concurrent shop state, retries the same actionId, and unlocks only on its ack", () => {
+    const players = createPlayers();
+    const pendingIntent = {
+      kind: "BUY_SELL" as const,
+      actionId: "shop-action-awaiting-ack",
+      shopEpoch: 1,
+      weaponId: "GRENADE" as const,
+      delta: 1 as const,
+    };
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: "SHOP",
+      currentManche: 2,
+      shopPlayers: players,
+      lastCompletedRoundNumber: 1,
+      shopSession: {
+        ...createEmptyShopSession(),
+        epoch: 1,
+        roundNumber: 1,
+        authoritativeReceived: true,
+        pendingIntent,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(
+      <Harness
+        players={players}
+        resumeCanvas={resumeCanvas}
+        ws={ws as unknown as WebSocket}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    const shopRetries = (): Record<string, unknown>[] =>
+      getSentMessages(ws).filter(
+        (message) => message.type === "SHOP_BUY_SELL",
+      );
+    expect(shopRetries()).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(shopRetries()).toHaveLength(2);
+    expect(shopRetries()[1]).toEqual(shopRetries()[0]);
+
+    const concurrentPlayers = players.map((player, index) =>
+      index === 1 ? { ...player, money: player.money + 25 } : player,
+    );
+    act(() => {
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [],
+        players: concurrentPlayers,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+        acknowledgedAction: { slot: 1, actionId: "remote-action" },
+      });
+    });
+
+    expect(sessionRef.current?.state.shopPlayers[1].money).toBe(
+      players[1].money + 25,
+    );
+    expect(sessionRef.current?.state.shopSession.pendingIntent).toEqual(
+      pendingIntent,
+    );
+
+    const acknowledgedPlayers = concurrentPlayers.map((player, index) =>
+      index === 0 ? { ...player, money: player.money - 25 } : player,
+    );
+    act(() => {
+      ws.receive({
+        type: "SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [],
+        players: acknowledgedPlayers,
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+        acknowledgedAction: {
+          slot: 0,
+          actionId: pendingIntent.actionId,
+        },
+      });
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(sessionRef.current?.state.shopSession.pendingIntent).toBeNull();
+    expect(sessionRef.current?.state.shopPlayers[0].money).toBe(
+      players[0].money - 25,
+    );
+    expect(shopRetries()).toHaveLength(2);
   });
 
   it("recovers the local active shot and emits settlement plus earnings", () => {

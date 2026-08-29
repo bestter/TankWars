@@ -156,10 +156,7 @@ function isPendingShopIntent(value: unknown): value is PendingShopIntent {
   if (value.kind === 'BUY_SELL') {
     return (
       isWeaponId(value.weaponId) &&
-      (value.delta === 1 || value.delta === -1) &&
-      isSafeNonNegativeInteger(value.expectedMoney) &&
-      isSafeNonNegativeInteger(value.expectedStock) &&
-      isSafeNonNegativeInteger(value.expectedPurchaseCount)
+      (value.delta === 1 || value.delta === -1)
     );
   }
   return false;

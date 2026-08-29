@@ -10,6 +10,7 @@ import { isValidActionId } from "./actionId";
 import type { TerrainMaterial } from "../../types/terrain";
 
 export const ONLINE_PROTOCOL_VERSION = 1 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 0 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
@@ -87,6 +88,12 @@ export interface ShopStateMessage {
   players: Player[];
   purchasesByPlayerId: ShopVisitCounters;
   aiShopApplied: boolean;
+  acknowledgedAction?: ShopActionAcknowledgement;
+}
+
+export interface ShopActionAcknowledgement {
+  slot: number;
+  actionId: string;
 }
 
 export interface ShopRejectedMessage {
@@ -104,6 +111,7 @@ export interface ShopFinishMessage {
   completedRoundNumber: number;
   nextRoundNumber: number;
   players: Player[];
+  acknowledgedAction?: ShopActionAcknowledgement;
 }
 
 export type FireRejectedReason =
@@ -374,6 +382,16 @@ function isSlotArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(isSafeNonNegativeInteger);
 }
 
+function isShopActionAcknowledgement(
+  value: unknown,
+): value is ShopActionAcknowledgement {
+  return (
+    isRecord(value) &&
+    isSafeNonNegativeInteger(value.slot) &&
+    isValidActionId(value.actionId)
+  );
+}
+
 function isZeusStrike(value: unknown): value is ZeusStrikeMessage {
   return (
     isRecord(value) &&
@@ -531,7 +549,9 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isSlotArray(value.readySlots) &&
         isPlayers(value.players) &&
         isShopVisitCounters(value.purchasesByPlayerId) &&
-        typeof value.aiShopApplied === "boolean"
+        typeof value.aiShopApplied === "boolean" &&
+        (value.acknowledgedAction === undefined ||
+          isShopActionAcknowledgement(value.acknowledgedAction))
       );
     case "SHOP_REJECTED":
       return (
@@ -547,7 +567,9 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isSafeNonNegativeInteger(value.shopEpoch) &&
         isSafeNonNegativeInteger(value.completedRoundNumber) &&
         isSafeNonNegativeInteger(value.nextRoundNumber) &&
-        isPlayers(value.players)
+        isPlayers(value.players) &&
+        (value.acknowledgedAction === undefined ||
+          isShopActionAcknowledgement(value.acknowledgedAction))
       );
     case "FIRE_REJECTED":
       return (
@@ -751,7 +773,7 @@ export function isLegacyShopPayload(value: unknown): boolean {
     return isRecord(value.player) || value.actionId === undefined;
   }
   if (value.type === "SHOP_READY") {
-    return value.actionId === undefined && Array.isArray(value.players);
+    return value.actionId === undefined;
   }
   return false;
 }

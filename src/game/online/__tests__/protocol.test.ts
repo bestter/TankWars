@@ -171,6 +171,12 @@ describe("strict online protocol", () => {
       decodeFireMessage({ type: "FIRE", actionId: overlongId, command }),
     ).toEqual({ ok: false });
     expect(
+      decodeFireMessage({ type: "FIRE", actionId: ` ${"a".repeat(62)}`, command }),
+    ).toEqual({ ok: false });
+    expect(
+      decodeFireMessage({ type: "FIRE", actionId: `\u00a0${"a".repeat(62)}`, command }),
+    ).toEqual({ ok: false });
+    expect(
       decodeShopBuySellMessage({
         type: "SHOP_BUY_SELL",
         shopEpoch: 1,
@@ -201,6 +207,33 @@ describe("strict online protocol", () => {
         command,
       }),
     ).toBe(true);
+  });
+
+  it("valide l'ack boutique optionnel par slot et actionId", () => {
+    expect(
+      isStrictOnlineMessage({
+        type: "SHOP_STATE",
+        shopEpoch: 3,
+        roundNumber: 2,
+        readySlots: [],
+        players: [],
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+        acknowledgedAction: { slot: 0, actionId: "shop-action-1" },
+      }),
+    ).toBe(true);
+    expect(
+      isStrictOnlineMessage({
+        type: "SHOP_STATE",
+        shopEpoch: 3,
+        roundNumber: 2,
+        readySlots: [],
+        players: [],
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+        acknowledgedAction: { slot: 0, actionId: " shop-action-1" },
+      }),
+    ).toBe(false);
   });
 
   it("exige protocolVersion sur REQUEST_GAME_START et accepte PROTOCOL_MISMATCH", () => {
@@ -277,5 +310,6 @@ describe("strict online protocol", () => {
     expect(isLegacyShopPayload({ type: "SHOP_ADVANCE", nextIndex: 1 })).toBe(
       true,
     );
+    expect(isLegacyShopPayload({ type: "SHOP_READY" })).toBe(true);
   });
 });

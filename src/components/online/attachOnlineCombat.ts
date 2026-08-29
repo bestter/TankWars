@@ -37,6 +37,7 @@ import type {
 import { dispatchCombatMessage } from "./combatMessageDispatch";
 
 let combatWsEffectGen = 0;
+export const SHOP_ACTION_ACK_RETRY_MS = 5_000;
 
 interface AuthoritativeEconomyPlayer {
   readonly id: string;
@@ -113,6 +114,7 @@ export function attachOnlineCombat(
   let isMounted = true;
   let combatReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let combatStartTimer: ReturnType<typeof setTimeout> | null = null;
+  let shopActionRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let gameWs: WebSocket | null = null;
   const shotQueueRef: { current: AuthoritativeShotQueue | null } = {
     current: null,
@@ -140,6 +142,12 @@ export function attachOnlineCombat(
 
   const send = (obj: object): void => {
     if (protocolMismatchRef.current) return;
+    if (
+      "type" in obj &&
+      (obj.type === "SHOP_BUY_SELL" || obj.type === "SHOP_READY")
+    ) {
+      schedulePendingShopRetry();
+    }
     const payload = JSON.stringify(obj);
     const ws = gameWsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -200,6 +208,13 @@ export function attachOnlineCombat(
     if (combatReconnectTimer !== null) {
       clearTimeout(combatReconnectTimer);
       combatReconnectTimer = null;
+    }
+  };
+
+  const clearShopActionRetry = (): void => {
+    if (shopActionRetryTimer !== null) {
+      clearTimeout(shopActionRetryTimer);
+      shopActionRetryTimer = null;
     }
   };
 
@@ -346,20 +361,10 @@ export function attachOnlineCombat(
   const applyShopStateMessage = (message: ShopStateMessage): void => {
     if (message.shopEpoch <= opts.lastAppliedShopEpochRef.current) return;
     const pending = opts.shopSessionRef.current.pendingIntent;
-    const localPlayer = message.players[localSlotNum];
-    let acknowledged = false;
-    if (pending?.shopEpoch === message.shopEpoch) {
-      if (pending.kind === "READY") {
-        acknowledged = message.readySlots.includes(localSlotNum);
-      } else if (localPlayer) {
-        acknowledged =
-          localPlayer.money === pending.expectedMoney &&
-          (localPlayer.inventory[pending.weaponId] ?? 0) ===
-            pending.expectedStock &&
-          (message.purchasesByPlayerId[localPlayer.id]?.[pending.weaponId] ??
-            0) === pending.expectedPurchaseCount;
-      }
-    }
+    const acknowledged =
+      pending?.shopEpoch === message.shopEpoch &&
+      message.acknowledgedAction?.slot === localSlotNum &&
+      message.acknowledgedAction.actionId === pending.actionId;
     const relevantPending =
       pending?.shopEpoch === message.shopEpoch ? pending : null;
     const nextShopSession: ShopClientSessionState = {
@@ -422,6 +427,7 @@ export function attachOnlineCombat(
     );
     opts.gamePhaseRef.current = "SHOP";
     tm.pauseForInterRound();
+    schedulePendingShopRetry();
   };
 
   function applyDeferredItem(item: DeferredAuthoritativeTransition): void {
@@ -438,6 +444,7 @@ export function attachOnlineCombat(
       item.message.shopEpoch,
       item.message.nextRoundNumber,
     );
+    schedulePendingShopRetry();
     const queue = shotQueueRef.current;
     if (
       opts.gamePhaseRef.current === "COMBAT" &&
@@ -495,6 +502,48 @@ export function attachOnlineCombat(
     );
   };
 
+  const retryPendingShopAction = (): void => {
+    const pendingShop = opts.shopSessionRef.current.pendingIntent;
+    if (pendingShop?.kind === "BUY_SELL") {
+      const retry: ShopBuySellMessage = {
+        type: "SHOP_BUY_SELL",
+        shopEpoch: pendingShop.shopEpoch,
+        actionId: pendingShop.actionId,
+        weaponId: pendingShop.weaponId,
+        delta: pendingShop.delta,
+      };
+      send(retry);
+    } else if (pendingShop?.kind === "READY") {
+      const retry: ShopReadyMessage = {
+        type: "SHOP_READY",
+        shopEpoch: pendingShop.shopEpoch,
+        actionId: pendingShop.actionId,
+      };
+      send(retry);
+    }
+  };
+
+  function schedulePendingShopRetry(): void {
+    clearShopActionRetry();
+    if (
+      !isMounted ||
+      protocolMismatchRef.current ||
+      opts.gamePhaseRef.current !== "SHOP" ||
+      !opts.shopSessionRef.current.pendingIntent
+    ) {
+      return;
+    }
+    shopActionRetryTimer = setTimeout(() => {
+      shopActionRetryTimer = null;
+      const ws = gameWsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        retryPendingShopAction();
+      } else {
+        schedulePendingShopRetry();
+      }
+    }, SHOP_ACTION_ACK_RETRY_MS);
+  }
+
   const retryPendingActions = (): void => {
     const pendingFire = opts.pendingFireRef.current;
     if (pendingFire) {
@@ -517,24 +566,7 @@ export function attachOnlineCombat(
       };
       send(retry);
     }
-    const pendingShop = shopSession.pendingIntent;
-    if (pendingShop?.kind === "BUY_SELL") {
-      const retry: ShopBuySellMessage = {
-        type: "SHOP_BUY_SELL",
-        shopEpoch: pendingShop.shopEpoch,
-        actionId: pendingShop.actionId,
-        weaponId: pendingShop.weaponId,
-        delta: pendingShop.delta,
-      };
-      send(retry);
-    } else if (pendingShop?.kind === "READY") {
-      const retry: ShopReadyMessage = {
-        type: "SHOP_READY",
-        shopEpoch: pendingShop.shopEpoch,
-        actionId: pendingShop.actionId,
-      };
-      send(retry);
-    }
+    retryPendingShopAction();
   };
 
   function bindCombatWsHandlers(ws: WebSocket): void {
@@ -575,6 +607,7 @@ export function attachOnlineCombat(
       } catch (e) {
         console.warn("[Game] invalid WS message", e);
       }
+      schedulePendingShopRetry();
     };
 
     ws.onclose = (ev: CloseEvent) => {
@@ -648,6 +681,7 @@ export function attachOnlineCombat(
         combatStartTimer = null;
       }
       clearCombatReconnect();
+      clearShopActionRetry();
       tm.setFireIntentHandler(null);
       tm.onAuthoritativeShotSettled = undefined;
       transitionBufferRef.current?.drain();

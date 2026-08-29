@@ -363,9 +363,6 @@ describe('onlineSession', () => {
         shopEpoch: 2,
         weaponId: 'GRENADE' as const,
         delta: 1 as const,
-        expectedMoney: 175,
-        expectedStock: 3,
-        expectedPurchaseCount: 3,
       },
       denial: null,
     };

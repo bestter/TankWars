@@ -73,17 +73,12 @@ export function shopBuySell(
       return;
     }
     const actionId = crypto.randomUUID();
-    const expectedPurchaseCount =
-      transaction.counters[currentPlayer.id]?.[weaponId] ?? 0;
     const intent: PendingShopIntent = {
       kind: "BUY_SELL",
       actionId,
       shopEpoch,
       weaponId,
       delta,
-      expectedMoney: transaction.player.money,
-      expectedStock: transaction.player.inventory[weaponId] ?? 0,
-      expectedPurchaseCount,
     };
     host.shopSessionRef.current = {
       ...host.shopSessionRef.current,
