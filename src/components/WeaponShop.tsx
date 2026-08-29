@@ -6,6 +6,26 @@ import {
   SHOP_WEAPON_IDS,
 } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+import { getShopPolicy } from "../game/shop/shopPolicy";
+import {
+  applyShopTransaction,
+  type ShopDenial,
+} from "../game/shop/shopTransaction";
+
+const SHOP_DENIAL_KEYS = {
+  STOCK_CAP: "shop_reason_stock_cap",
+  PURCHASE_LIMIT: "shop_reason_purchase_limit",
+  INSUFFICIENT_FUNDS: "shop_reason_insufficient_funds",
+  NO_STOCK: "shop_reason_no_stock",
+  NOT_SOLD: "shop_reason_not_sold",
+  ILLEGAL_INVENTORY: "shop_reason_illegal_inventory",
+  MALFORMED: "shop_reason_malformed",
+  NOT_YOUR_SLOT: "shop_reason_not_your_slot",
+  ALREADY_READY: "shop_reason_already_ready",
+  SHOP_CLOSED: "shop_reason_closed",
+  SHOP_NOT_AVAILABLE: "shop_reason_not_available",
+  STALE_SHOP_EPOCH: "shop_reason_stale_epoch",
+} as const satisfies Record<ShopDenial, string>;
 
 const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET" | "weapons.BULLDOZER"> = {
   MISSILE: "weapons.MISSILE",
@@ -40,6 +60,12 @@ export interface WeaponShopProps {
   onBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
   /** Le joueur a fini ses achats → passer au suivant (humain ou IA) */
   onReady: () => void;
+  /** Compteurs autoritaires de cette visite pour le joueur affiché. */
+  purchaseCounters?: Readonly<Partial<Record<WeaponId, number>>>;
+  /** Désactive toute intention pendant une requête en vol. */
+  controlsDisabled?: boolean;
+  /** Dernier refus métier ou de session à afficher. */
+  denial?: ShopDenial | null;
 }
 
 export function WeaponShop({
@@ -48,6 +74,9 @@ export function WeaponShop({
   totalShoppers,
   onBuySell,
   onReady,
+  purchaseCounters = {},
+  controlsDisabled = false,
+  denial = null,
 }: WeaponShopProps) {
   const { t } = useTranslation();
   const money = player.money ?? 0;
@@ -125,6 +154,19 @@ export function WeaponShop({
         {t("shop_instructions")}
       </div>
 
+      {denial && (
+        <div
+          role="alert"
+          style={{
+            color: VGA_PALETTE.RED,
+            fontSize: "12px",
+            marginBottom: 8,
+          }}
+        >
+          {t(SHOP_DENIAL_KEYS[denial])}
+        </div>
+      )}
+
       {/* Weapon list */}
       <div
         style={{
@@ -139,8 +181,29 @@ export function WeaponShop({
         {SHOP_WEAPON_IDS.map((wid) => {
           const def = WEAPON_REGISTRY[wid];
           const currentStock = inventory[wid] ?? 0;
-          const canAfford = money >= def.price;
-          const canSell = currentStock > 0;
+          const purchaseCount = purchaseCounters[wid] ?? 0;
+          const policy = getShopPolicy(wid);
+          const scopedCounters = {
+            [player.id]: purchaseCounters,
+          };
+          const buyPreview = applyShopTransaction({
+            player,
+            counters: scopedCounters,
+            weaponId: wid,
+            delta: 1,
+          });
+          const sellPreview = applyShopTransaction({
+            player,
+            counters: scopedCounters,
+            weaponId: wid,
+            delta: -1,
+          });
+          const buyReason = buyPreview.ok ? null : buyPreview.reason;
+          const sellReason = sellPreview.ok ? null : sellPreview.reason;
+          const canBuy = !controlsDisabled && buyPreview.ok;
+          const canSell = !controlsDisabled && sellPreview.ok;
+          const buyReasonId = `shop-buy-reason-${wid}`;
+          const sellReasonId = `shop-sell-reason-${wid}`;
 
           return (
             <div
@@ -176,6 +239,42 @@ export function WeaponShop({
                 >
                   {t(WEAPON_DESC_KEYS[wid])}
                 </div>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: VGA_PALETTE.CYAN,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {t("shop_bought", {
+                    count: purchaseCount,
+                    max: policy.maxPurchasesPerVisit,
+                  })}
+                </div>
+                {buyReason && (
+                  <div
+                    id={buyReasonId}
+                    style={{
+                      fontSize: "11px",
+                      color: VGA_PALETTE.RED,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {t(SHOP_DENIAL_KEYS[buyReason])}
+                  </div>
+                )}
+                {sellReason && sellReason !== buyReason && (
+                  <div
+                    id={sellReasonId}
+                    style={{
+                      fontSize: "11px",
+                      color: VGA_PALETTE.RED,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {t(SHOP_DENIAL_KEYS[sellReason])}
+                  </div>
+                )}
               </div>
 
               {/* Stock */}
@@ -196,15 +295,16 @@ export function WeaponShop({
                 <button
                   type="button"
                   onClick={() => onBuySell(wid, 1)}
-                  disabled={!canAfford}
+                  disabled={!canBuy}
+                  aria-describedby={buyReason ? buyReasonId : undefined}
                   className="retro-inc-btn"
                   style={{
-                    background: canAfford ? "#003300" : "#222",
-                    color: canAfford ? VGA_PALETTE.GREEN : "#555",
-                    borderColor: canAfford
+                    background: canBuy ? "#003300" : "#222",
+                    color: canBuy ? VGA_PALETTE.GREEN : "#555",
+                    borderColor: canBuy
                       ? VGA_PALETTE.GREEN
                       : VGA_PALETTE.DARK_GRAY,
-                    cursor: canAfford ? "pointer" : "not-allowed",
+                    cursor: canBuy ? "pointer" : "not-allowed",
                   }}
                   title={t("title_buy")}
                 >
@@ -214,6 +314,13 @@ export function WeaponShop({
                   type="button"
                   onClick={() => onBuySell(wid, -1)}
                   disabled={!canSell}
+                  aria-describedby={
+                    sellReason
+                      ? sellReason === buyReason
+                        ? buyReasonId
+                        : sellReasonId
+                      : undefined
+                  }
                   className="retro-inc-btn"
                   style={{
                     background: canSell ? "#330000" : "#222",
@@ -238,6 +345,7 @@ export function WeaponShop({
         <button
           type="button"
           onClick={onReady}
+          disabled={controlsDisabled}
           className="retro-btn"
           style={{ padding: "8px 32px" }}
         >

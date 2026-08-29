@@ -8,6 +8,7 @@ import type { Color, GamePhase, RoundResult } from "../../types/game";
 import type { Player } from "../../types/player";
 import type { WeaponId } from "../../types/weapon";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
+import { createEmptyShopSession } from "../gameCanvasReducer";
 
 // Mock react-i18next
 vi.mock("react-i18next", () => ({
@@ -73,6 +74,13 @@ describe("GameCanvas component", () => {
     uiPlayers: [p1, p2],
     earningsOverlay: null,
     zeusAnnouncement: null,
+    shopSession: createEmptyShopSession(),
+    lastAppliedShopEpoch: 0,
+    lastCompletedRoundNumber: 0,
+    lastSeenShotId: 0,
+    pendingFireIntent: null,
+    fireRejection: null,
+    protocolMismatch: null,
   };
 
   let mockHandlers: {
@@ -352,5 +360,52 @@ describe("GameCanvas component", () => {
   it("handles unmount gracefully without throwing errors", () => {
     const { unmount } = render(<GameCanvas />);
     expect(() => unmount()).not.toThrow();
+  });
+
+  it("renders fireRejection alert toast during COMBAT phase", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "COMBAT",
+        fireRejection: "NO_AMMO",
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toBeDefined();
+    expect(alert.className).toBe("fire-rejection-toast");
+    expect(alert.textContent).toBe("fire_rejected_no_ammo");
+  });
+
+  it("renders a blocking protocol mismatch overlay", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        protocolMismatch: { requiredVersion: 1, receivedVersion: null },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas />);
+    const alert = screen.getByRole("alert");
+    expect(alert.className).toBe("protocol-mismatch-overlay");
+    expect(alert.textContent).toContain("protocol_mismatch_title");
+    expect(
+      screen.getByRole("button", { name: "protocol_mismatch_refresh" }),
+    ).toBeDefined();
   });
 });

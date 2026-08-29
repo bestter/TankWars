@@ -33,12 +33,6 @@ class MockCombatWebSocket {
   }
 }
 
-class MockBroadcastChannel {
-  public onmessage: ((event: MessageEvent) => void) | null = null;
-  public postMessage(): void {}
-  public close(): void {}
-}
-
 function Harness({
   players,
   resumeCanvas,
@@ -74,7 +68,6 @@ describe("useGameSession Zeus reconnect", () => {
       configurable: true,
       value: () => stubCanvas2d(),
     });
-    vi.stubGlobal("BroadcastChannel", MockBroadcastChannel);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
 
@@ -124,6 +117,21 @@ describe("useGameSession Zeus reconnect", () => {
       lastAppliedZeusStrikeId: 0,
       roundEarningsByPlayer: {},
       earningsOverlay: null,
+      shopSession: {
+        epoch: null,
+        roundNumber: null,
+        counters: {},
+        readySlots: [],
+        aiShopApplied: false,
+        authoritativeReceived: false,
+        pendingIntent: null,
+        denial: null,
+      },
+      lastAppliedShopEpoch: 0,
+      lastCompletedRoundNumber: 0,
+      lastSeenShotId: 0,
+      pendingFireIntent: null,
+      fireRejection: null,
     };
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };

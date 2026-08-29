@@ -280,6 +280,148 @@ describe('TurnManager', () => {
       expect(mockFireCallback).toHaveBeenCalledTimes(1);
     });
 
+    it('locks and emits only an intention before the authoritative SHOT echo', () => {
+      const intent = vi.fn();
+      player1.inventory = { GRENADE: 2 };
+      player1.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.setFireIntentHandler(intent);
+      turnManager.startFirstTurn();
+
+      expect(turnManager.tryFire()).toBe(true);
+      expect(intent).toHaveBeenCalledWith({
+        angle: player1.tank.angle,
+        power: player1.tank.power,
+        weaponId: 'GRENADE',
+      });
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(player1.inventory.GRENADE).toBe(2);
+      expect(turnManager.tryFire()).toBe(false);
+
+      turnManager.rejectPendingFireIntent();
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      player1.tank.currentWeapon = 'MISSILE';
+      player1.inventory = {};
+    });
+
+    it('consumes ammunition only when replaying the authoritative live SHOT', () => {
+      player1.inventory = { GRENADE: 2 };
+      player1.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.setFireIntentHandler(vi.fn());
+      turnManager.startFirstTurn();
+      expect(turnManager.tryFire()).toBe(true);
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'GRENADE' },
+        {
+          fromSlot: 0,
+          identity: { shotId: 11, isFirstShotOfRound: true },
+          mode: 'LIVE_LOCAL',
+        },
+      );
+
+      expect(mockFireCallback).toHaveBeenCalledOnce();
+      expect(player1.inventory.GRENADE).toBe(1);
+      expect(mockFireCallback.mock.calls[0][3]).toMatchObject({
+        shotId: 11,
+        suppressEconomyReport: false,
+      });
+      player1.tank.currentWeapon = 'MISSILE';
+      player1.inventory = {};
+    });
+
+    it('replays catch-up physics without consuming ammo or reporting economy', () => {
+      player2.inventory = { NUKE: 1 };
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      turnManager.executeRemoteFire(
+        { angle: 30, power: 75, weaponId: 'NUKE' },
+        {
+          fromSlot: 1,
+          identity: { shotId: 12, isFirstShotOfRound: false },
+          mode: 'CATCH_UP',
+        },
+      );
+
+      expect(player2.inventory.NUKE).toBe(1);
+      expect(mockFireCallback.mock.calls[0][3]).toMatchObject({
+        shotId: 12,
+        suppressEconomyReport: true,
+      });
+      player2.inventory = {};
+    });
+
+    it('recovers an active local shot without consuming ammo and emits settlement', () => {
+      const onShotSettled = vi.fn();
+      const onAuthoritativeShotSettled = vi.fn();
+      player1.inventory = { GRENADE: 1 };
+      player1.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+      turnManager.onAuthoritativeShotSettled = onAuthoritativeShotSettled;
+
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 60, weaponId: 'GRENADE' },
+        {
+          fromSlot: 0,
+          identity: { shotId: 13, isFirstShotOfRound: true },
+          mode: 'ACTIVE_RECOVERY',
+        },
+      );
+
+      expect(player1.inventory.GRENADE).toBe(1);
+      expect(mockFireCallback.mock.calls[0][3]).toMatchObject({
+        shotId: 13,
+        suppressEconomyReport: false,
+      });
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).toHaveBeenCalledTimes(1);
+      expect(onAuthoritativeShotSettled).toHaveBeenCalledWith(
+        13,
+        'ACTIVE_RECOVERY',
+      );
+      player1.tank.currentWeapon = 'MISSILE';
+      player1.inventory = {};
+    });
+
+    it('recovers an active authority replay without impersonating the shooter', () => {
+      const onShotSettled = vi.fn();
+      const onAuthoritativeShotSettled = vi.fn();
+      player2.inventory = { GRENADE: 1 };
+      player2.tank.currentWeapon = 'GRENADE';
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+      turnManager.onShotSettled = onShotSettled;
+      turnManager.onAuthoritativeShotSettled = onAuthoritativeShotSettled;
+
+      turnManager.executeRemoteFire(
+        { angle: 135, power: 55, weaponId: 'GRENADE' },
+        {
+          fromSlot: 1,
+          identity: { shotId: 14, isFirstShotOfRound: false },
+          mode: 'ACTIVE_RECOVERY',
+        },
+      );
+
+      expect(player2.inventory.GRENADE).toBe(1);
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+
+      expect(onShotSettled).not.toHaveBeenCalled();
+      expect(onAuthoritativeShotSettled).toHaveBeenCalledWith(
+        14,
+        'ACTIVE_RECOVERY',
+      );
+      player2.tank.currentWeapon = 'MISSILE';
+      player2.inventory = {};
+    });
+
     it('refreshes input lock when setLocalPlayerId is called after startFirstTurn', () => {
       turnManager.startFirstTurn();
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
