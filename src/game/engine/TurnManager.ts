@@ -13,6 +13,19 @@ import type { AIEngine } from "../entities/ai/AIEngine";
 import type { TerrainManager } from "./Terrain";
 import type { GameState } from "../../types/game";
 import { type WeaponId, ALL_WEAPON_IDS } from "../../types/weapon";
+import { consumeWeaponForFire } from "../shop/shopTransaction";
+
+export type AuthoritativeReplayMode =
+  | "LIVE_LOCAL"
+  | "LIVE_REMOTE"
+  | "CATCH_UP"
+  | "ACTIVE_RECOVERY";
+
+export interface AuthoritativeShotIdentity {
+  shotId: number;
+  isFirstShotOfRound: boolean;
+  suppressEconomyReport?: boolean;
+}
 
 export interface CurrentTurnInfo {
   playerName: string;
@@ -43,7 +56,7 @@ export class TurnManager {
     from: { x: number; y: number },
     command: FireCommand,
     ownerId?: string,
-    identity?: { shotId: number; isFirstShotOfRound: boolean },
+    identity?: AuthoritativeShotIdentity,
   ) => void;
   private aiEngine?: AIEngine;
 
@@ -140,18 +153,29 @@ export class TurnManager {
 
   /** Callback optionnel appelé lorsque la simulation physique d'un tir est complètement stabilisée sur le client. */
   public onShotSettled?: () => void;
+  public onAuthoritativeShotSettled?: (
+    shotId: number,
+    mode: AuthoritativeReplayMode,
+  ) => void;
   public onShotResolutionReady?: () => ShotResolutionGate;
   public onResolvedRoundEnd?: () => void;
   /** Returns true when a domain action replaces the AI projectile turn. */
   public onSpecialTurn?: (player: Player) => boolean;
 
   /**
-   * True when the shot currently resolving was fired locally (tryFire).
-   * Remote replays (executeRemoteFire) must not emit SHOT_SETTLED — otherwise a late
-   * STATE_UPDATE can advance currentPlayerIndex before the replay settles and the
-   * observer client would notify the server with the wrong slot.
+   * True when the shot currently resolving belongs to the local shooter.
+   * Ordinary remote and historical replays must not emit SHOT_SETTLED — otherwise a
+   * late STATE_UPDATE could make an observer notify the server for the wrong slot.
    */
   private settlingShotWasLocal = false;
+  private settlingAuthoritativeShot: {
+    shotId: number;
+    mode: AuthoritativeReplayMode;
+  } | null = null;
+
+  /** Online: validates and locks a local fire without launching it before the server echo. */
+  private fireIntentHandler: ((command: FireCommand) => void) | null = null;
+  private isAwaitingFireAuthority = false;
 
   /**
    * Online only: after a local shot settles we stay locked until the server moves the
@@ -187,7 +211,7 @@ export class TurnManager {
       from: { x: number; y: number },
       command: FireCommand,
       ownerId?: string,
-      identity?: { shotId: number; isFirstShotOfRound: boolean },
+      identity?: AuthoritativeShotIdentity,
     ) => void,
     aiEngine?: AIEngine,
   ) {
@@ -215,6 +239,12 @@ export class TurnManager {
     }
   }
 
+  public setFireIntentHandler(
+    handler: ((command: FireCommand) => void) | null,
+  ): void {
+    this.fireIntentHandler = handler;
+  }
+
   /**
    * Met à jour les timers de sécurité basés sur le temps de simulation physique (dt).
    * Cela évite que les watchdogs ne se déclenchent lorsque l'onglet est en veille
@@ -225,6 +255,7 @@ export class TurnManager {
     if (
       this.isTurnLockWatchdogArmed &&
       this.isInputLocked &&
+      !this.isAwaitingFireAuthority &&
       !this.awaitingTankStabilization &&
       !this.tankManager.anyTankIsFalling()
     ) {
@@ -277,9 +308,15 @@ export class TurnManager {
             power: player.tank.power,
             weaponId: player.tank.currentWeapon,
           };
-          this.hasUnresolvedShot = true;
-          this.fireCallback(player.tank.position, command, player.id);
-          this.consumeAmmo(player, player.tank.currentWeapon);
+          if (this.fireIntentHandler) {
+            this.isAwaitingFireAuthority = true;
+            this.lastLocalFireCommand = { ...command };
+            this.fireIntentHandler(command);
+          } else {
+            this.hasUnresolvedShot = true;
+            this.fireCallback(player.tank.position, command, player.id);
+            this.consumeAmmo(player, player.tank.currentWeapon);
+          }
         } else {
           console.warn(
             `[TurnManager] (player redacted) forfeits its turn (no resolution fallback).`,
@@ -390,6 +427,8 @@ export class TurnManager {
     this.isInputLocked = true;
     this.isProcessingAI = false;
     this.settlingShotWasLocal = false;
+    this.settlingAuthoritativeShot = null;
+    this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
@@ -519,7 +558,20 @@ export class TurnManager {
       this.tankManager.anyTankIsFalling()
     )
       return false;
-    this.fire();
+    if (this.fireIntentHandler) {
+      const command: FireCommand = {
+        angle: player.tank.angle,
+        power: player.tank.power,
+        weaponId: player.tank.currentWeapon,
+      };
+      this.lastLocalFireCommand = { ...command };
+      this.isAwaitingFireAuthority = true;
+      this.isInputLocked = true;
+      this.notifyHudUpdate();
+      this.fireIntentHandler(command);
+    } else {
+      this.fire();
+    }
     return true;
   }
 
@@ -529,7 +581,8 @@ export class TurnManager {
     opts?: {
       fromSlot?: number;
       ownerId?: string;
-      identity?: { shotId: number; isFirstShotOfRound: boolean };
+      identity?: AuthoritativeShotIdentity;
+      mode?: AuthoritativeReplayMode;
     },
   ): void {
     const players = this.tankManager.getPlayers();
@@ -555,6 +608,7 @@ export class TurnManager {
     }
 
     // A new authoritative shot supersedes any stale local settlement wait.
+    this.isAwaitingFireAuthority = false;
     this.clearAwaitingStabilization();
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
@@ -565,7 +619,12 @@ export class TurnManager {
     player.tank.power = command.power;
     player.tank.currentWeapon = command.weaponId;
 
-    this.fireRemote(player, command, opts?.identity);
+    this.fireRemote(
+      player,
+      command,
+      opts?.identity,
+      opts?.mode ?? "LIVE_REMOTE",
+    );
     this.notifyHudUpdate();
   }
 
@@ -573,14 +632,56 @@ export class TurnManager {
   private fireRemote(
     player: Player,
     command: FireCommand,
-    identity?: { shotId: number; isFirstShotOfRound: boolean },
+    identity: AuthoritativeShotIdentity | undefined,
+    mode: AuthoritativeReplayMode,
   ): void {
-    this.settlingShotWasLocal = false;
+    this.settlingShotWasLocal =
+      mode === "LIVE_LOCAL" ||
+      (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId);
+    this.settlingAuthoritativeShot = identity
+      ? { shotId: identity.shotId, mode }
+      : null;
     this.hasUnresolvedShot = true;
-    this.fireCallback(player.tank.position, command, player.id, identity);
-    this.consumeAmmo(player, command.weaponId);
+    this.fireCallback(
+      player.tank.position,
+      command,
+      player.id,
+      identity
+        ? {
+            ...identity,
+            suppressEconomyReport: mode === "CATCH_UP",
+          }
+        : undefined,
+    );
+    if (mode === "LIVE_LOCAL" || mode === "LIVE_REMOTE") {
+      this.consumeAmmo(player, command.weaponId);
+    }
     this.isInputLocked = true;
     this.armTurnLockSafetyWatchdog();
+  }
+
+  /** Libère une intention FIRE refusée sans toucher à la simulation ni à l'inventaire. */
+  public rejectPendingFireIntent(): void {
+    if (this.hasUnresolvedShot || this.interRoundPaused) return;
+    this.isAwaitingFireAuthority = false;
+    this.awaitingServerTurnAfterLocalShot = false;
+    this.isInputLocked = !this.isLocalHumanTurn();
+    this.notifyHudUpdate();
+  }
+
+  /** Maintient le combat verrouillé pendant le rejeu séquentiel de rattrapage. */
+  public lockForCatchUp(): void {
+    this.isInputLocked = true;
+    this.notifyHudUpdate();
+  }
+
+  /** Réévalue le verrou lorsque le rattrapage ne contient plus de tir actif. */
+  public unlockAfterCatchUp(): void {
+    if (this.hasUnresolvedShot || this.interRoundPaused) return;
+    this.isInputLocked = this.awaitingServerTurnAfterLocalShot
+      ? true
+      : !this.isLocalHumanTurn();
+    this.notifyHudUpdate();
   }
 
   /**
@@ -677,19 +778,10 @@ export class TurnManager {
    * Mutates the live player (consistent with shop mutations) and notifies HUD.
    */
   private consumeAmmo(player: Player, weaponId: WeaponId): void {
-    if (weaponId === "MISSILE") return;
-    const cur = player.inventory[weaponId] ?? 0;
-    if (cur <= 0) return;
-    const next = cur - 1;
-    player.inventory[weaponId] = next;
-    if (next === 0 && player.tank.currentWeapon === weaponId) {
-      const available = ALL_WEAPON_IDS.filter(
-        (id) => id === "MISSILE" || (player.inventory[id] ?? 0) > 0,
-      );
-      if (available.length > 0) {
-        player.tank.currentWeapon = available[0];
-      }
-    }
+    const consumed = consumeWeaponForFire(player, weaponId);
+    if (!consumed.ok) return;
+    player.inventory = consumed.player.inventory;
+    player.tank.currentWeapon = consumed.player.tank.currentWeapon;
     this.notifyHudUpdate();
   }
 
@@ -834,11 +926,22 @@ export class TurnManager {
 
     const wasLocalShot = this.settlingShotWasLocal;
     this.settlingShotWasLocal = false;
+    const authoritativeShot = this.settlingAuthoritativeShot;
+    this.settlingAuthoritativeShot = null;
 
     console.log(
       `[TurnManager] finishShotResolution: localPlayerId=${this.localPlayerId}, currentPlayerIndex=${this.currentPlayerIndex}, wasLocalShot=${wasLocalShot}`,
     );
     if (this.localPlayerId) {
+      if (authoritativeShot?.mode === "CATCH_UP") {
+        this.isInputLocked = true;
+        this.notifyHudUpdate();
+        this.onAuthoritativeShotSettled?.(
+          authoritativeShot.shotId,
+          authoritativeShot.mode,
+        );
+        return;
+      }
       if (wasLocalShot) {
         // Firer's client: stay locked until the server broadcasts the next turn.
         this.awaitingServerTurnAfterLocalShot = true;
@@ -853,6 +956,12 @@ export class TurnManager {
           : !this.isLocalHumanTurn();
       }
       this.notifyHudUpdate();
+      if (authoritativeShot) {
+        this.onAuthoritativeShotSettled?.(
+          authoritativeShot.shotId,
+          authoritativeShot.mode,
+        );
+      }
       return;
     }
     this.isAwaitingEarningsRelease = true;
@@ -969,6 +1078,8 @@ export class TurnManager {
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
     this.settlingShotWasLocal = false;
+    this.settlingAuthoritativeShot = null;
+    this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
@@ -1018,6 +1129,8 @@ export class TurnManager {
     this.currentPlayerIndex = 0;
     this.turnNumber = 1;
     this.settlingShotWasLocal = false;
+    this.settlingAuthoritativeShot = null;
+    this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
@@ -1043,6 +1156,12 @@ export class TurnManager {
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
     console.log('[TurnManager] handleAITurnIfNeeded: player=(player redacted), isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (player.isHuman || this.isProcessingAI || this.isMatchEnded()) return;
+    if (this.localPlayerId) {
+      // En ligne, l'IA est déclenchée par GameRoom; les clients attendent le SHOT.
+      this.isInputLocked = true;
+      this.notifyHudUpdate(true);
+      return;
+    }
     if (this.onSpecialTurn?.(player)) {
       this.isProcessingAI = true;
       this.isInputLocked = true;
@@ -1123,9 +1242,16 @@ export class TurnManager {
         weaponId: player.tank.currentWeapon,
       };
 
-      this.hasUnresolvedShot = true;
-      this.fireCallback(player.tank.position, command, player.id);
-      this.consumeAmmo(player, player.tank.currentWeapon);
+      const launchedLocally = this.fireIntentHandler === null;
+      if (this.fireIntentHandler) {
+        this.isAwaitingFireAuthority = true;
+        this.lastLocalFireCommand = { ...command };
+        this.fireIntentHandler(command);
+      } else {
+        this.hasUnresolvedShot = true;
+        this.fireCallback(player.tank.position, command, player.id);
+        this.consumeAmmo(player, player.tank.currentWeapon);
+      }
 
       // If everything goes well, the normal onAllProjectilesSettled → nextTurn() will happen.
       // The resolution timeout acts as a safety net.
@@ -1140,10 +1266,12 @@ export class TurnManager {
         return;
       }
 
-      this.clearSettlementSafetyTimeout();
-      this.settlementPlayerId = player.id;
-      this.settlementGeneration = this.aiTurnGeneration;
-      this.isSettlementSafetyArmed = true;
+      if (launchedLocally) {
+        this.clearSettlementSafetyTimeout();
+        this.settlementPlayerId = player.id;
+        this.settlementGeneration = this.aiTurnGeneration;
+        this.isSettlementSafetyArmed = true;
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error("[TurnManager] AI turn failed:", errorMessage);

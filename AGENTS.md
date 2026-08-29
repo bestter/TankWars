@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 631 tests, 69 fichiers) |
+| Tests | `npm run test` (vitest, 756 tests, 73 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -63,13 +63,16 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 
 ### Online multiplayer
 
-Le multi est dans `main` (plus une branche `AddMultiplayer`). MVP = physique locale + ordre des tours et gains autoritaires côté serveur. La simulation complète serveur (terrain / dégâts / PV) reste prévue.
+Le multi est dans `main` (plus une branche `AddMultiplayer`). La physique demeure locale, mais le serveur est autoritaire sur l’ordre des tours, l’acceptation et la consommation des tirs, les gains et toute la boutique. La simulation complète serveur (terrain / dégâts / PV) reste prévue.
 
-- `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tour relay, shop sync persistant et transactionnel via Durable Object storage).
+- `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tirs serveur-first, boutique autoritaire, historique de rattrapage borné à la manche et état persistant via Durable Object storage).
 - Client lobby : `OnlineLobby.tsx` (shell) + `useOnlineLobby.ts` + `OnlineLobbyCreate.tsx` / `OnlineLobbyWaiting.tsx` / `onlineLobbyTypes.ts`.
-- Client combat : `useGameSession.ts`, `onlineSession.ts` (reconnexion WS combat et résilience aux coupures).
+- Client combat : `useGameSession.ts`, `attachOnlineCombat.ts`, `onlineSession.ts` (reconnexion WS combat, validation stricte `sessionStorage` et résilience aux coupures).
 - Ordre des tours vivant : `src/game/online/turnOrder.ts` (partagé client + worker, sans DOM ni APIs Workers).
-- Protocole combat strict partagé : `src/game/online/protocol.ts` (`AUTHORITY_CHANGED`, `SHOT`, `SHOT_SETTLED`, `SHOT_EARNINGS`, `SHOT_EARNINGS_APPLIED`, `STATE_UPDATE`, `ROUND_END`).
+- Protocole combat/boutique strict partagé : `src/game/online/protocol.ts` (`FIRE`/`SHOT` corrélés par `actionId`, refus, catch-up ordonné, gains, manches et messages `SHOP_*`). `ONLINE_PROTOCOL_VERSION` reste à 1; le Worker accepte temporairement les clients v0 non versionnés et ferme en `4402` seulement une version numérique non supportée. Déploiement obligatoire Worker-first : Worker → `/api/health` exige `protocolVersion: 1` et `minimumClientProtocolVersion: 0` → build client → Pages. Désactiver l'auto-déploiement de production Pages.
+- File SHOT reconnect : `src/game/online/authoritativeShotQueue.ts`. Pendant un replay, `DeferredTransitionBuffer` applique `ROUND_END` → `SHOP_STATE` → `SHOP_FINISH` (un `SHOP_STATE` tardif n'écrase pas un `SHOP_FINISH`). Dispatch WS combat : `src/components/online/combatMessageDispatch.ts`.
+- En ligne, `FIRE` est une intention pessimiste : aucun projectile ni décrément avant l’écho `SHOT`. Tous les clients, tireur inclus, rejouent ce `SHOT`; seul le tireur humain émet `SHOT_SETTLED`. Les tirs clients émis pendant un tour IA sont rejetés (`NOT_YOUR_TURN`), l'IA serveur tirant uniquement via `maybeRunAIServerTurn`. Tout rejet de tir est affiché via un toast non bloquant (`.fire-rejection-toast`) avec auto-dismiss après 3,5 s.
+- La boutique en ligne n’accepte aucun snapshot client v1. Pour la fenêtre v0, le Worker dérive au plus une transaction valide de l'écart économique et ignore le reste du snapshot. `GameRoom` ouvre une session par époque, normalise le roster, exécute les achats IA une fois et applique chaque transaction avec clé composite d'idempotence (`kind:slot:actionId`). `SHOP_STATE`/`SHOP_FINISH` acquittent une réussite avec `{ slot, actionId }`; seul cet ack corrélé libère l'intention locale, et un délai sans réponse renvoie le même `actionId`. Les retries réussis reçoivent l'état frais. `SHOP_FINISH` vide `shotHistory` et ne conserve que le dernier `SHOP_READY` terminal jusqu'au prochain `SHOP_ENTER`.
 - Le premier humain connecté devient l’autorité des gains; `GameRoom` persiste l’ordre, l’époque, le tir actif et le dernier résultat. En cas de déconnexion, l’autorité passe au prochain humain selon l’ordre initial sans reprise automatique par l’ancien premier.
 - Le Worker valide puis applique les gains et les états morts atomiquement avant diffusion. Un doublon identique est rediffusé sans double crédit. Le tour avance dès que la physique et le rapport économique sont stabilisés, sans délai d’affichage.
 - Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
@@ -143,7 +146,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 - `tsc -b` vérifie `worker/` aussi (projet reference). Les erreurs de type dans `worker/src/` cassent le build.
 - Le worker DO utilise des types globaux (`DurableObjectNamespace`), pas d'imports de plateforme.
 - Boutique locale humain vs IA : ne pas rebloquer le shop humain en manche 2+ (`useGameSession.ts`).
-- Boutique IA locale (`useGameSession.ts`) : après `autoBuyForAI`, propager le nouveau roster immuable dans `TankManager.setPlayers`, synchroniser `shopPlayersRef.current` et dispatcher `MUTATE_SHOP_PLAYERS` afin que les achats soient conservés à la manche suivante et lors des re-renders.
+- Boutique IA locale (`src/components/shop/localHotseatShop.ts`) : après `autoBuyForAI`, propager le nouveau roster immuable dans `TankManager.setPlayers`, synchroniser `shopPlayersRef.current` et dispatcher `APPLY_LOCAL_SHOP_TRANSACTION` afin que les achats soient conservés à la manche suivante et lors des re-renders.
 - Grenade longue : le filet de sécurité du `TurnManager` ne doit pas laisser l’IA rejouer après un bounce trop long.
 - `loadHeights` sans `materials` (ou longueur mismatch) : tout retombe sur `DIRT` — pas d’état hybride.
 - Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.
@@ -161,10 +164,10 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Terrain & matériaux | `Terrain.ts`, `types/terrain.ts` (`spawnAcceptsMaterial`, `grenadeBounceParams`, constantes de blend/distribution) |
 | Phase globale | `App.tsx`, `appReducer.ts`, `types/game.ts` |
 | Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
-| Online sync combat | `useGameSession.ts`, `onlineSession.ts` |
+| Online sync combat | `useGameSession.ts`, `attachOnlineCombat.ts`, `onlineSession.ts`, `authoritativeShotQueue.ts`, `deferredTransitions.ts`, `flushDeferredTransitions.ts`, `combatMessageDispatch.ts` |
 | Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
 | Shop AI | `aiShopHelper.ts` (auto-buy lists) |
-| Shop métier (buy/sell) | `shopBuySell.ts` (`applyShopDelta`) + `useGameSession.ts` |
+| Shop métier (buy/sell) | `game/shop/shopPolicy.ts`, `shopTransaction.ts`, `shopSessionGuard.ts` + `src/components/shop/` (`completeShopRound.ts`, `localHotseatShop.ts`, `shopPlayerActions.ts`) |
 | Économie / gains par tir | `game/economy/fixedPoint.ts`, `game/economy/shotRewards.ts`, `GameEngine.ts`, `ShotEarningsOverlay.tsx`, `RoundSummary.tsx` |
 | Protocole autoritaire des gains | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
 | Anti-impasse / Éclair de Zeus | `game/zeus/zeusDomain.ts`, `game/zeus/zeusRewards.ts`, `GameEngine.ts`, `TurnManager.ts`, `TankManager.ts` |

@@ -109,15 +109,17 @@ export function MainMenuView({
               {t("start_battle_button")}
             </button>
 
-            <div style={{ marginTop: 10 }}>
-              <button
-                type="button"
-                className="retro-online-btn"
-                onClick={() => onPlayOnline?.()}
-              >
-                {t("online_multiplayer_button")}
-              </button>
-            </div>
+            {onPlayOnline && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="retro-online-btn"
+                  onClick={onPlayOnline}
+                >
+                  {t("online_multiplayer_button")}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="retro-legal">

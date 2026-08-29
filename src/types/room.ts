@@ -4,8 +4,12 @@
  */
 
 import type { Player } from './player';
-import type { WeaponId } from './weapon';
 import type { TerrainMaterial } from './terrain';
+import type {
+  ClientFireMessage,
+  ShotMessage,
+  StateUpdateMessage,
+} from '../game/online/protocol';
 
 /** Configuration chosen by the host when creating the room. */
 export interface RoomSlotConfig {
@@ -36,37 +40,12 @@ export interface CreateRoomResponse {
   slots: RoomSlotInfo[];
 }
 
-/** Message sent by client over WS when it is their turn and they fire. */
-export interface ClientFireMessage {
-  type: 'FIRE';
-  command: {
-    readonly angle: number;
-    readonly power: number;
-    readonly weaponId: WeaponId;
-  };
-}
+/** Shared strict combat protocol aliases. */
+export type { ClientFireMessage };
+export type ServerShotMessage = ShotMessage;
 
-/** Broadcast by server so every client can replay the nice projectile animation locally. */
-export interface ServerShotMessage {
-  type: 'SHOT';
-  slot: number;
-  command: ClientFireMessage['command'];
-  ownerId?: string;
-  ownerColor?: string;
-}
-
-/** Authoritative snapshot / delta from the server after a resolution (or initial state). */
-export interface ServerStateUpdate {
-  type: 'STATE_UPDATE';
-  players: Player[];
-  /** Full heightmap (server is source of truth). Small enough (~800 numbers). */
-  heights: number[];
-  /** Présent seulement quand le serveur a vraiment généré le terrain. */
-  materials?: TerrainMaterial[];
-  wind: number;
-  currentPlayerIndex: number;
-  roundEnded: boolean;
-}
+/** Shared protocol alias; protocol.ts owns the wire contract. */
+export type ServerStateUpdate = StateUpdateMessage;
 
 /** Sent once when the lobby is full and the game begins (MVP = 1 round). */
 export interface ServerGameStartMessage {

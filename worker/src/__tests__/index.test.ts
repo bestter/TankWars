@@ -31,9 +31,16 @@ describe('Worker Entrypoint', () => {
       const response = await worker.fetch(request, env);
 
       expect(response.status).toBe(200);
-      const data = (await response.json()) as { ok: boolean; service: string };
+      const data = (await response.json()) as {
+        ok: boolean;
+        service: string;
+        protocolVersion: number;
+        minimumClientProtocolVersion: number;
+      };
       expect(data.ok).toBe(true);
       expect(data.service).toBe('tankwars-api');
+      expect(data.protocolVersion).toBe(1);
+      expect(data.minimumClientProtocolVersion).toBe(0);
       expectSecurityHeaders(response);
     });
   });

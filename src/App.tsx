@@ -16,6 +16,7 @@ import {
   createInitialAppState,
   type OnlineMeta,
 } from "./appReducer";
+import { isHotseatOnlyBuild } from "./utils/deploymentMode";
 
 /**
  * Bestter's TankWars - Root App (src/App.tsx)
@@ -30,7 +31,13 @@ import {
 
 function App() {
   const { t } = useTranslation();
-  const [savedSession] = useState(() => readOnlineSession());
+  const hotseatOnly = isHotseatOnlyBuild();
+  const onlineMultiplayerEnabled = !hotseatOnly;
+  const [savedSession] = useState(() => {
+    if (onlineMultiplayerEnabled) return readOnlineSession();
+    clearOnlineSession();
+    return null;
+  });
   const [state, dispatch] = useReducer(
     appReducer,
     savedSession,
@@ -39,6 +46,9 @@ function App() {
 
   // Parse URL once on mount (supports direct join links and after create)
   const [onlineParams] = useState(() => {
+    if (!onlineMultiplayerEnabled) {
+      return { room: null, slot: null, token: null };
+    }
     if (typeof window === 'undefined') return { room: null as string | null, slot: null as number | null, token: null as string | null };
     const p = new URLSearchParams(window.location.search);
     const room = p.get('room');
@@ -50,7 +60,9 @@ function App() {
 
   const isOnlineJoin = !!onlineParams.room && onlineParams.slot !== null && !!onlineParams.token;
   const showOnlineLobby =
-    !state.onlineMatchStarted && (isOnlineJoin || state.forceShowOnlineLobby);
+    onlineMultiplayerEnabled &&
+    !state.onlineMatchStarted &&
+    (isOnlineJoin || state.forceShowOnlineLobby);
 
   const handleStartGame = (initialPlayers: Player[]): void => {
     dispatch({ type: "START_LOCAL_GAME", players: initialPlayers });
@@ -128,7 +140,12 @@ function App() {
         ) : (
           <MainMenu
             onStartGame={handleStartGame}
-            onPlayOnline={() => dispatch({ type: "SHOW_ONLINE_LOBBY" })}
+            {...(onlineMultiplayerEnabled
+              ? {
+                  onPlayOnline: () =>
+                    dispatch({ type: "SHOW_ONLINE_LOBBY" as const }),
+                }
+              : {})}
           />
         )
       ) : (

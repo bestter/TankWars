@@ -13,6 +13,11 @@
 // pointed to by "main" in wrangler.toml). Wrangler validates this at startup.
 export { GameRoom } from './game-room';
 
+import {
+  MINIMUM_CLIENT_PROTOCOL_VERSION,
+  ONLINE_PROTOCOL_VERSION,
+} from '../../src/game/online/protocol';
+
 // Env bindings injected by wrangler (see wrangler.toml)
 export interface Env {
   GAME_ROOM: DurableObjectNamespace;
@@ -63,7 +68,13 @@ export default {
 
     // Health / version for easy checks during dev
     if (pathname === '/api/health') {
-      return withResponseHeaders(new Response(JSON.stringify({ ok: true, service: 'tankwars-api', time: Date.now() }), {
+      return withResponseHeaders(new Response(JSON.stringify({
+        ok: true,
+        service: 'tankwars-api',
+        protocolVersion: ONLINE_PROTOCOL_VERSION,
+        minimumClientProtocolVersion: MINIMUM_CLIENT_PROTOCOL_VERSION,
+        time: Date.now(),
+      }), {
         headers: { 'content-type': 'application/json' },
       }));
     }

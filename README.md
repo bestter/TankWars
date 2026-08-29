@@ -45,7 +45,7 @@
 - **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A Zeus strike pays only the standard destruction reward `25X`, with no damage or last-survivor component. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) coordinates lobby WS, turn order, authoritative reward application, round end, shop sync, and every Zeus decision. The strict shared protocol also covers `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, and reconnect snapshot `ZEUS_STATE`; persisted strike IDs prevent double death or credit after reconnect. Economic-authority failover never changes Zeus state. Physics stays local; full authoritative terrain/damage simulation is still planned.
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. Unversioned v0 clients remain temporarily supported and logged; unsupported numeric protocol versions receive `PROTOCOL_MISMATCH` and close `4402`. Physics stays local; full authoritative terrain/damage simulation is still planned.
 - **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
 
 ---
@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (631 unit tests across 69 files)
+# Run tests (756 unit and integration tests across 73 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -107,7 +107,21 @@ npm run worker:deploy
 
 **Online dev:** start both `npm run dev` (frontend, port 5173) and `npm run worker:dev` (API, port 8787). Restart the worker after editing `worker/src/game-room.ts`.
 
-**Production deploy (option B — Worker on workers.dev):** run `.\deploy-cloudflare.ps1`. It deploys the Worker first, injects `VITE_API_BASE` into the Vite build, then deploys Pages. The game on `tankwars.pages.dev` calls the API on `https://tankwars-api.<account>.workers.dev`. See `.env.production.example` for manual builds.
+### Deployment
+
+Production uses a controlled Worker-first publication. First, [disable automatic production deployments in Cloudflare Pages](https://developers.cloudflare.com/pages/configuration/git-integration/#disable-automatic-deployments); otherwise a Git push can publish the client before its compatible Worker.
+
+Run `.\deploy-cloudflare.ps1` from PowerShell. The script:
+
+1. runs `npm run lint` → `npm run build` → `npm run test`;
+2. deploys the Worker with the repository's local Wrangler;
+3. polls the uncached `/api/health` for at most 60 seconds and requires protocol version `1` with minimum client version `0`;
+4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
+5. deploys `dist` to the `tankwars` Pages project on `main`.
+
+Set the `WORKER_API_URL` environment variable when workers.dev URL auto-detection is not suitable. A failed Worker deploy or health gate prevents any Pages publication. The script restores its working directory and Vite environment variables on every exit.
+
+For the private staging machine, run `.\deploy-staging.ps1`. It performs the same validations, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
 
 ---
 
@@ -117,7 +131,7 @@ This project follows a strict separation of concerns:
 
 - **React Layer** (`src/components/`, `src/App.tsx`, `src/appReducer.ts`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop) via `useReducer`. Never touches canvas properties directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
-- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server coordinates turns, atomically applies authoritative rewards and balances, owns round end, and persists authority/failover state. Each client still runs local Canvas physics.
+- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server validates and consumes FIRE/shop intentions and persists idempotent results. Shop success is correlated explicitly by `{ slot, actionId }`, while retries reuse the original ID. Protocol v1 temporarily normalizes v0 `REQUEST_GAME_START`, `FIRE` and shop messages; a legacy buy can only become one transaction derived from the authoritative economy. Each client still runs local Canvas physics.
 - **Economy** (`src/game/economy/`): Exact rational reward calculation from structured damage/destruction events. `GameEngine` owns shot ledgers and round earnings; React owns the floating reward feedback and summaries.
 - **Zeus domain** (`src/game/zeus/`): Pure deadlock evaluation, fair appointment history, revenge/fallback targeting, monotonic event IDs, and isolated `25X` reward. It has no dependency on weapons or React.
 - **Game Engine** (`src/game/engine/`): Owns the 120 Hz fixed-timestep physics loop, terrain mutations, projectile simulation, Zeus action/VFX, rendering, and combat audio. Communicates exclusively via callbacks.
@@ -154,10 +168,10 @@ In the build today:
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
-- Online lobby + strict combat protocol, authoritative reward/balance application, Durable Object authority failover, shop relay, session resume, reconnect
+- Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **631 unit tests** across **69 files** (Vitest)
+- **756 unit and integration tests** across **73 files** (Vitest)
 
 Still planned:
 

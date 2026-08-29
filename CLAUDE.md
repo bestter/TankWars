@@ -11,10 +11,10 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **631 tests** (69 files)
+- Run tests: `npm run test` (or `vitest run`) — **756 tests** (73 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
-- React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --diff` after React changes)
+- React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --scope changed` after React changes)
 
 Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must pass on every modification. If tests fail, fix them. See [AGENTS.md § Verification](./AGENTS.md#verification-checklist).
 
@@ -31,7 +31,7 @@ Before finishing work: `npm run lint`, `npm run build`, and `npm run test` must 
 - **Weapons & pricing:** `WEAPON_REGISTRY` in `src/types/weapon.ts` is the single source of truth. The Baby Nuke (`NUKE`) costs $420. BULLDOZER costs $150, deals 0 HP / 0 blast; a direct hit pushes the target (`sign(vx)`) and recoils the shooter (`min(|vx| × 0.25, 120 px)`). It does not call `applyExplosionDamage` (no `wasDirectHit`). Falls use existing gravity / lava; off-map is burial.
 - **Economy:** `src/game/economy/fixedPoint.ts` + `shotRewards.ts` calculate exact per-shot rewards from actual damage, attributed falls, destructions, and round outcome. Base $X$ is $3 / $3.50 / $4 for 2 / 3 / 4 starting players; self-damage is excluded and rounding happens once at the end. `GameEngine` owns shot ledgers and round earnings. `ShotEarningsOverlay` floats `+amount$` for 3 seconds without blocking; `RoundSummary` shows round earnings and the shop shows total balance.
 - **Éclair de Zeus / Zeus Lightning:** action spéciale anti-impasse dans `src/game/zeus/`, jamais une arme. Avec au moins deux IA et aucun humain vivant, `IA vivantes × 5` tirs sans touche payante (`hasEarnings`) nomment équitablement Zeus; gain/humain/<2 survivants/mort de Zeus/fin de manche remettent le compteur à zéro. Zeus consomme le dernier agresseur direct vivant (BULLDOZER exclu), sinon le RNG injecté, élimine seulement la cible et reçoit `25X`. Ne jamais ajouter `ZEUS_LIGHTNING` à `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, au shop ou à `AIEngine`.
-- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) for lobby, turn relay, authoritative reward/balance application, server-owned round end, and transactional shop sync. Client: `OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views; combat in `useGameSession.ts` / `onlineSession.ts`. Shared files: `src/game/online/turnOrder.ts` and strict `protocol.ts`. The first connected human is reward authority; persistent failover promotes the next original human. MVP still uses local Canvas physics; full authoritative terrain/damage simulation is planned. `GAME_START` includes `materials` only when the server array matches `heights` length; `loadHeights` resets to `DIRT` otherwise.
+- **Online:** In `main` (not a feature branch). Cloudflare Worker + `GameRoom` Durable Object (`worker/`) owns turn order, FIRE validation/ammo consumption, transactional shop sessions with composite idempotency keys, reward/balance application, round end, and round-scoped reconnect history. `ONLINE_PROTOCOL_VERSION` stays at 1 with temporary support for unversioned v0 clients; only an unsupported numeric version gets `PROTOCOL_MISMATCH` + close `4402`. Successful shop responses carry `{ slot, actionId }`; only a correlated ack clears the pending intent, whose retry reuses the same ID. Deploy Worker first, require `/api/health` protocol 1/minimum client 0, then build/deploy Pages; disable automatic production Pages deployments. `VITE_HOTSEAT_ONLY=true` removes every online entry point for staging. Shot replay is `authoritativeShotQueue.ts`; live shop transitions use `DeferredTransitionBuffer`. The first connected human is reward authority with persistent ordered failover. `GAME_START` includes `materials` only when its array matches `heights`; otherwise `loadHeights` resets to `DIRT`.
 - **Zeus en ligne:** `GameRoom` décide et persiste nomination, historique, vengeance, RNG, ordre, frappe et IDs avant diffusion. `ZEUS_APPOINTED` / `ZEUS_STRIKE` / `ZEUS_STRIKE_APPLIED` / `ZEUS_STATE` sont idempotents et restaurables; le changement d’autorité économique est sans effet. Les VFX utilisent `strikeId` + temps, jamais le RNG de salle.
 - **RNG:** `secureRandom` from `src/utils/random.ts` — never `Math.random`.
 
@@ -58,7 +58,7 @@ New profile → new file under `game/entities/ai/`, register in `AIByProfileStra
 - Do not store per-frame simulation data in React state.
 - Never remove `'unsafe-inline'` from `style-src` (`index.html`, `public/_headers`). `csp.test.ts` guards this.
 - `tsc -b` typechecks `worker/` via project references. Durable Object code uses global platform types (`DurableObjectNamespace`), not platform imports.
-- Local hotseat shop must stay usable for humans in round 2+ (`useGameSession.ts`).
+- Local hotseat shop must stay usable for humans in round 2+ (`src/components/shop/`).
 - Long GRENADE bounces: `TurnManager` must not let the AI take another turn after the settlement safety net fires.
 - `loadHeights` without `materials` (or a length mismatch) resets every column to `DIRT` — no hybrid leftover state.
 - Do not edit rule files (`AGENTS.md`, `CLAUDE.md`, etc.) unless the user asked.
