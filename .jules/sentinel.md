@@ -150,3 +150,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The client-to-server `FIRE` command payload in the GameRoom Durable Object missed strict validation for the `weaponId` enum and `power` bounds.
 **Learning:** This architectural gap exists because `FIRE` is a client-to-server intent that bypasses the strict `StrictOnlineMessage` parser. The DO manually parsed the JSON, only checking basic JS types (`typeof weaponId === 'string'`), but failed to ensure it matched the game rules. This allows a malformed intent to pass to `executeFire` and be broadcast to all clients, where the strict client-side parsers drop the invalid `SHOT` payload. This leads to the host dropping the shot while the DO advances its authoritative turn, causing a fatal state desync (DoS for that round).
 **Prevention:** When parsing raw JSON in WebSocket handlers for client-to-server messages that do not reuse the strict protocol parsers, ensure that not only the type is validated, but also that enums match allowed values (`ALL_WEAPON_IDS.includes(...)`) and numerical inputs are properly bounded (`power >= 0 && power <= 100`).
+
+## 2026-10-18 - [Overly Permissive Origin Validation for Invite Links]
+**Vulnerability:** The invite link generator in `worker/src/game-room.ts` permitted any port on `localhost` or `127.0.0.1` (`\d+`) for `body.origin`.
+**Learning:** Even if CORS headers are strict, if URL generators trust overly permissive regexes, an attacker might be able to trick users into clicking invite links pointing to malicious local services on high ports.
+**Prevention:** Apply the exact same strict port validation `(5173|4173|8787)` to all `origin` validators across the application, not just the HTTP response CORS headers.
