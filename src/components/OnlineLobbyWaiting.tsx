@@ -83,7 +83,7 @@ export function OnlineLobbyWaiting({
                   <button type="button" onClick={() => onCopyLink(s.url, s.slot)} style={{ fontSize: 12 }}>
                     {copyFeedback[s.slot] ? t('link_copied') : t('copy_link')}
                   </button>
-                  <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: VGA_PALETTE.ELECTRIC_CYAN }}>
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: VGA_PALETTE.ELECTRIC_CYAN }}>
                     {t('open_link')}
                   </a>
                 </>

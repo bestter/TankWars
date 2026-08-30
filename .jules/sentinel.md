@@ -155,3 +155,7 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** The invite link generator in `worker/src/game-room.ts` permitted any port on `localhost` or `127.0.0.1` (`\d+`) for `body.origin`.
 **Learning:** Even if CORS headers are strict, if URL generators trust overly permissive regexes, an attacker might be able to trick users into clicking invite links pointing to malicious local services on high ports.
 **Prevention:** Apply the exact same strict port validation `(5173|4173|8787)` to all `origin` validators across the application, not just the HTTP response CORS headers.
+## 2026-08-30 - [Target Blank Noopener]
+**Vulnerability:** A link in `src/components/OnlineLobbyWaiting.tsx` using `target="_blank"` was only using `rel="noreferrer"` but missing `noopener`.
+**Learning:** While `noreferrer` implies `noopener` in modern browsers, explicitly specifying `noopener noreferrer` is the best practice for robust security against reverse tabnabbing.
+**Prevention:** Ensure all `target="_blank"` links include `rel="noopener noreferrer"`.
