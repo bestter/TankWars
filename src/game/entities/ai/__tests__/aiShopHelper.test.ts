@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AiProfile, Player } from "../../../../types/player";
 import {
+  DEFAULT_INVENTORY,
   WEAPON_REGISTRY,
   type WeaponId,
 } from "../../../../types/weapon";
@@ -194,17 +195,30 @@ describe("autoBuyForAI", () => {
     expect(result.player.money).toBe(50);
   });
 
-  it("keeps a legal surplus and continues with the next preference", () => {
+  it("buys nothing when the AI has no money", () => {
+    const player = makeAiPlayer("v2-heuristic", { money: 0, inventory: {} });
+
+    const result = autoBuyForAI(player, 2, {});
+
+    expect(result.player.inventory).toEqual({});
+    expect(result.player.money).toBe(0);
+    expect(result.counters).toEqual({});
+  });
+
+  it("keeps Simple N=2 DEFAULT_INVENTORY grenade surplus and may buy CLUSTER", () => {
     const result = autoBuyForAI(
       makeAiPlayer("v1-random", {
         money: 135,
-        inventory: { GRENADE: 2 },
+        inventory: { ...DEFAULT_INVENTORY },
       }),
       2,
       {},
     );
 
     expect(result.player.inventory).toEqual({ GRENADE: 2, CLUSTER: 1 });
+    expect(result.player.inventory.GRENADE).toBe(DEFAULT_INVENTORY.GRENADE);
+    expect(result.counters[result.player.id]?.GRENADE).toBeUndefined();
+    expect(result.counters[result.player.id]?.CLUSTER).toBe(1);
     expect(result.player.money).toBe(0);
   });
 

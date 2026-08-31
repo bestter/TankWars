@@ -31,7 +31,7 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Protocol v1 keeps temporary compatibility with unversioned v0 messages; strict/v0 `FIRE` and authoritative `SHOT` share finite inclusive `FIRE_COMMAND_*` bounds (angle -360° to 360°, power 0 to 100), repeated defensively in `GameRoom.executeFire`. Only unsupported numeric versions close in `4402`. Shop success carries `{ slot, actionId }`; only the correlated ack clears pending state, and retries reuse the ID. Deploy Worker first, validate `/api/health` protocol 1/client minimum 0, then build/deploy Pages with automatic Pages production deploy disabled. `VITE_HOTSEAT_ONLY=true` removes online from staging. Shot replay: `authoritativeShotQueue.ts` + `DeferredTransitionBuffer`; the server remains authoritative for turns, FIRE/ammo, shop, rewards and reconnect state. Dev: `npm run dev` + `npm run worker:dev`.
 - Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **771** across **74** files (`npm run test`).
+- Tests: **772** across **74** files (`npm run test`).
 - Version: `0.8.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
