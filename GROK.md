@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**756 tests**, 73 files).
+- After edits: `npm run lint && npm run build && npm run test` (**760 tests**, 73 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -17,7 +17,7 @@
 - **Gitignored:** `worker/.wrangler/` (local Wrangler SQLite/cache)
 - **Role:** REST `/api/rooms` + WS to `GameRoom` DO — lobby, server-first FIRE, authoritative rewards/balances and shop, `ROUND_END`, ordered reconnect catch-up (round-scoped `shotHistory`)
 - **Shared turn math:** `src/game/online/turnOrder.ts` (no DOM, no Workers APIs)
-- **Shared strict protocol:** `src/game/online/protocol.ts`; version 1 with temporary unversioned-v0 normalization. Only an unsupported numeric version gets `PROTOCOL_MISMATCH` + close `4402`. Successful shop state/finish responses ack `{ slot, actionId }`; the client retries the same ID until that correlation arrives. Composite keys preserve idempotence.
+- **Shared strict protocol:** `src/game/online/protocol.ts`; version 1 with temporary unversioned-v0 normalization. Strict/v0 `FIRE` and authoritative `SHOT` commands share finite inclusive `FIRE_COMMAND_*` bounds (angle -360° to 360°, power 0 to 100), repeated defensively in `GameRoom.executeFire`. Only an unsupported numeric version gets `PROTOCOL_MISMATCH` + close `4402`. Successful shop state/finish responses ack `{ slot, actionId }`; the client retries the same ID until that correlation arrives. Composite keys preserve idempotence.
 - **Deploy:** Worker first, require `/api/health` protocol 1/minimum client 0, then build and deploy Pages. Disable automatic production Pages deployment; staging uses `VITE_HOTSEAT_ONLY=true` and never deploys the Worker.
 
 ## Current engine facts (not history)
