@@ -67,7 +67,11 @@ import {
   type ZeusStrikeAppliedMessage,
   type ZeusStrikeMessage,
 } from '../../src/game/online/protocol';
-import { autoBuyForAI } from '../../src/game/entities/ai/aiShopHelper';
+import {
+  autoBuyForAI,
+  isInitialPlayerCount,
+  type InitialPlayerCount,
+} from '../../src/game/entities/ai/aiShopHelper';
 import {
   applyShopTransaction,
   consumeWeaponForFire,
@@ -163,7 +167,7 @@ interface LegacyPersistedFireAction {
 // Very small serializable state for MVP (will be enriched with real engine state later)
 interface RoomState {
   roomId: string;
-  numPlayers: number;
+  numPlayers: InitialPlayerCount;
   slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
   // secrets per slot (the "token" part of the join URL)
   tokens: string[];
@@ -563,7 +567,7 @@ export class GameRoom extends DurableObject {
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
     const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
 
-    if (!roomId || !numPlayers || !Number.isInteger(numPlayers) || !slotConfigs) {
+    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
     }
 
@@ -1977,7 +1981,7 @@ export class GameRoom extends DurableObject {
     for (let index = 0; index < players.length; index++) {
       const player = players[index];
       if (player.isHuman) continue;
-      const autoBuy = autoBuyForAI(player, counters);
+      const autoBuy = autoBuyForAI(player, this.state.numPlayers, counters);
       players = players.map((candidate, playerIndex) =>
         playerIndex === index ? autoBuy.player : candidate,
       );

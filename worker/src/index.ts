@@ -94,18 +94,25 @@ export default {
       }
 
       const numPlayers = Math.floor(Math.max(2, Math.min(4, Number(body.numPlayers) || 2)));
-      const validAiProfiles = ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'];
-      const slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart' }> =
+      const validAiProfiles = ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'] as const;
+      type SlotAiProfile = (typeof validAiProfiles)[number];
+      const isSlotAiProfile = (value: unknown): value is SlotAiProfile =>
+        typeof value === 'string' && (validAiProfiles as readonly string[]).includes(value);
+      const slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: SlotAiProfile }> =
         Array.isArray(body.slots) && body.slots.length === numPlayers
           ? body.slots.map((s: unknown) => {
               const obj = typeof s === 'object' && s !== null ? (s as Record<string, unknown>) : {};
-              const type = obj.type === 'ai' ? 'ai' : 'human';
-              const aiProfile = type === 'ai' && typeof obj.aiProfile === 'string' && validAiProfiles.includes(obj.aiProfile)
-                ? (obj.aiProfile as 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart')
-                : 'v1-random';
-              return type === 'ai' ? { type, aiProfile } : { type };
+              const type = obj.type === 'ai' ? 'ai' as const : 'human' as const;
+              if (type !== 'ai') {
+                return { type };
+              }
+              return isSlotAiProfile(obj.aiProfile)
+                ? { type, aiProfile: obj.aiProfile }
+                : { type };
             })
-          : Array.from({ length: numPlayers }, (_, i) => ({ type: i === 0 ? 'human' : 'ai', aiProfile: 'v1-random' as const }));
+          : Array.from({ length: numPlayers }, (_, i) => (
+              i === 0 ? { type: 'human' as const } : { type: 'ai' as const }
+            ));
 
       // Create a room code. Real token/secret is generated inside the DO.
       const roomId = crypto.randomUUID(); // Secure id for URLs

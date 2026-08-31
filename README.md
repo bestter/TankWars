@@ -38,6 +38,7 @@
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
   - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
   v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it).
+  AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
   **Post-hit & fall learning curves (`hitReaction.ts`):** Direct projectile hit causes a 50% accuracy penalty on the next shot; falling causes a 1–25% penalty based on fall distance (0–120 px); both are cumulative on shot 1. On shot 2 (if not hit again), Sniper recovers immediately (0%), Expert has 12% penalty, OK and Simple have 25% penalty; shot 3 is fully normalized. Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
@@ -95,7 +96,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (760 unit and integration tests across 73 files)
+# Run tests (772 unit and integration tests across 74 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -156,7 +157,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.7.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.8.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
@@ -171,7 +172,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **760 unit and integration tests** across **73 files** (Vitest)
+- **772 unit and integration tests** across **74 files** (Vitest)
 
 Still planned:
 

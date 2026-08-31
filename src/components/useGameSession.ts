@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
+import {
+  isInitialPlayerCount,
+  type InitialPlayerCount,
+} from "../game/entities/ai/aiShopHelper";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
 import type { TerrainMaterial } from "../types/terrain";
@@ -39,6 +43,19 @@ function buildInitialCanvasState(
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
+
+function matchStartRoster(
+  players: readonly Player[] | undefined,
+): readonly Player[] {
+  return players && players.length >= 2 ? players : createDemoPlayers();
+}
+
+function requireInitialPlayerCount(playerCount: number): InitialPlayerCount {
+  if (!isInitialPlayerCount(playerCount)) {
+    throw new Error(`Match roster must be 2-4 players, got ${playerCount}`);
+  }
+  return playerCount;
+}
 
 export { buildOverlayAwards } from "./sessionPresentation";
 
@@ -148,6 +165,10 @@ export function useGameSession({
 
   // Snapshot des joueurs initiaux au montage (évite de mettre initialPlayers dans les deps du useEffect one-shot)
   const initialPlayersRef = useRef(initialPlayers);
+  const [initialPlayerCount, setInitialPlayerCount] = useState<InitialPlayerCount>(
+    () => requireInitialPlayerCount(matchStartRoster(initialPlayers).length),
+  );
+  const initialPlayerCountRef = useRef(initialPlayerCount);
 
   // Timer for round celebration fireworks (10s auto-advance or skip with SPACE)
   const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -391,11 +412,9 @@ export function useGameSession({
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
-    const snapshotPlayers = initialPlayersRef.current;
-    const players: Player[] =
-      snapshotPlayers && snapshotPlayers.length >= 2
-        ? snapshotPlayers.map((p) => ({ ...p }))
-        : createDemoPlayers();
+    const players: Player[] = matchStartRoster(initialPlayersRef.current).map(
+      (player) => ({ ...player }),
+    );
 
     // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
     engine.setLocalMatch(gameMode !== "online");
@@ -427,6 +446,9 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
       engine.setPlayers(players);
+      const matchPlayerCount = requireInitialPlayerCount(players.length);
+      initialPlayerCountRef.current = matchPlayerCount;
+      setInitialPlayerCount(matchPlayerCount);
       engine.setRoundNumber(1);
       if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
@@ -580,6 +602,9 @@ export function useGameSession({
 
   const shopRoundHost: CompleteShopRoundHost = {
     gameMode,
+    get initialPlayerCount() {
+      return initialPlayerCountRef.current;
+    },
     roomId,
     localPlayerId,
     engineRef,
@@ -649,6 +674,9 @@ export function useGameSession({
     engine.resetGame();
 
     const newPlayers = createDemoPlayers();
+    const nextPlayerCount = requireInitialPlayerCount(newPlayers.length);
+    initialPlayerCountRef.current = nextPlayerCount;
+    setInitialPlayerCount(nextPlayerCount);
     engine.setAIEngine(new AIByProfileStrategy());
     engine.setPlayers(newPlayers);
     engine.setRoundNumber(1);

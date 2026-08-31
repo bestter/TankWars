@@ -1,6 +1,9 @@
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine } from "../../game/engine/GameEngine";
-import { autoBuyForAI } from "../../game/entities/ai/aiShopHelper";
+import {
+  autoBuyForAI,
+  type InitialPlayerCount,
+} from "../../game/entities/ai/aiShopHelper";
 import type { GamePhase } from "../../types/game";
 import type { Player } from "../../types/player";
 import type {
@@ -10,6 +13,7 @@ import type {
 
 export interface LocalHotseatShopHost {
   readonly gameMode: "local" | "online";
+  readonly initialPlayerCount: InitialPlayerCount;
   readonly engineRef: MutableRefObject<GameEngine | null>;
   readonly shopPlayersRef: MutableRefObject<Player[]>;
   readonly currentShopIndexRef: MutableRefObject<number>;
@@ -76,6 +80,7 @@ export function processNextShopperIfAI(host: LocalHotseatShopHost): void {
 
   const autoBuy = autoBuyForAI(
     copySafeInventory(current),
+    host.initialPlayerCount,
     host.shopSessionRef.current.counters,
   );
   const engine = host.engineRef.current;

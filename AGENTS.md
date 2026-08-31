@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 760 tests, 73 fichiers) |
+| Tests | `npm run test` (vitest, 772 tests, 74 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -117,7 +117,18 @@ Profils (mixables dans une même partie) :
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT |
 
-Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE) et `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). Shop : v1 n’achète pas BULLDOZER ; v2 stock max 1 ; v3 jamais ; v4 stock max 2. **v1-random n’y touche pas.**
+Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE) et `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). **v1-random n’utilise pas ces tactiques.**
+
+Boutique IA (#207) : `N` est le nombre initial de joueurs (2–4), capturé une seule fois et jamais recalculé depuis les survivants ou un roster transitoire. Pour chaque arme de sa liste, l’IA vise `min(3 × N, plafond stratégique, getShopPolicy(weaponId).maxStock)` et achète uniquement par transactions unitaires `delta: 1`, selon l’argent, le quota restant et la place sous le plafond. Il n’existe ni budget en pourcentage, ni réserve minimale, ni vente automatique. Un profil absent ou inconnu utilise la stratégie boutique OK (`v2-heuristic`); cela ne change pas le profil Simple explicitement choisi dans le menu ni le repli du routeur de combat.
+
+| Profil | Ordre d’achat | Plafonds stratégiques |
+|--------|---------------|------------------------|
+| Simple (`v1-random`) | GRENADE → CLUSTER | chaque arme : `N - 1` |
+| OK (`v2-heuristic`) | GRENADE → CLUSTER → DRILLER → BULLDOZER → NUKE | GRENADE/CLUSTER `3N`, DRILLER/BULLDOZER `N`, NUKE `1` |
+| Sniper (`v3-sniper`) | BULLET → DRILLER → BULLDOZER | BULLET `3N`, DRILLER/BULLDOZER `2N` |
+| Expert (`v4-smart`) | THERMONUCLEAR → NUKE → GRENADE → CLUSTER → DRILLER → BULLDOZER | THERMONUCLEAR `1`, NUKE `2`, autres `3N` |
+
+En local, `localHotseatShop.ts` applique immédiatement le domaine partagé et propage le roster immuable. En ligne, seul le Worker exécute `autoBuyForAI`, une fois au premier `SHOP_ENTER` admissible de l’époque après normalisation; reconnexion, retry et second `SHOP_ENTER` ne relancent jamais les achats. #207 possède la stratégie IA; #215 demeure la source de la politique globale, des quotas et de l’autorité en ligne.
 
 Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
 | Profile | Courbe d’offset (px, par tentative sur la cible) |

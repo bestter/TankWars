@@ -4,6 +4,7 @@ import { seedFromRoomRound, setRNG, createSeededRNG } from "../../utils/random";
 import { trackEvent } from "../../utils/analytics";
 import type { GamePhase } from "../../types/game";
 import type { Player } from "../../types/player";
+import type { InitialPlayerCount } from "../../game/entities/ai/aiShopHelper";
 import type { ShopEnterMessage } from "../../game/online/protocol";
 import { normalizeRosterAtShopOpen } from "../../game/shop/shopTransaction";
 import {
@@ -18,6 +19,7 @@ import {
 
 export interface CompleteShopRoundHost {
   readonly gameMode: "local" | "online";
+  readonly initialPlayerCount: InitialPlayerCount;
   readonly roomId?: string;
   readonly localPlayerId?: string;
   readonly engineRef: MutableRefObject<GameEngine | null>;
@@ -48,6 +50,7 @@ export function hotseatHostFrom(
 ): LocalHotseatShopHost {
   return {
     gameMode: host.gameMode,
+    initialPlayerCount: host.initialPlayerCount,
     engineRef: host.engineRef,
     shopPlayersRef: host.shopPlayersRef,
     currentShopIndexRef: host.currentShopIndexRef,

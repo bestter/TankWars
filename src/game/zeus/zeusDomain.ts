@@ -1,6 +1,5 @@
 import type { Player, PlayerId } from "../../types/player";
 
-export const ZEUS_LIGHTNING = "ZEUS_LIGHTNING" as const;
 export const ZEUS_ROTATIONS_WITHOUT_EARNINGS = 5;
 
 export interface ZeusState {

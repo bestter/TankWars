@@ -31,8 +31,8 @@
 - Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
 - Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Protocol v1 keeps temporary compatibility with unversioned v0 messages; strict/v0 `FIRE` and authoritative `SHOT` share finite inclusive `FIRE_COMMAND_*` bounds (angle -360° to 360°, power 0 to 100), repeated defensively in `GameRoom.executeFire`. Only unsupported numeric versions close in `4402`. Shop success carries `{ slot, actionId }`; only the correlated ack clears pending state, and retries reuse the ID. Deploy Worker first, validate `/api/health` protocol 1/client minimum 0, then build/deploy Pages with automatic Pages production deploy disabled. `VITE_HOTSEAT_ONLY=true` removes online from staging. Shot replay: `authoritativeShotQueue.ts` + `DeferredTransitionBuffer`; the server remains authoritative for turns, FIRE/ammo, shop, rewards and reconnect state. Dev: `npm run dev` + `npm run worker:dev`.
 - Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **760** across **73** files (`npm run test`).
-- Version: `0.7.0` (footer on the main menu).
+- Tests: **772** across **74** files (`npm run test`).
+- Version: `0.8.0` (footer on the main menu).
 
 ## AI (Cursor must respect)
 
@@ -46,6 +46,8 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 | `v4-smart` | `AISmartStrategy` | IA EXPERT — first shot ≥ 36 px, lock at shot 3 |
 
 v2–v4 share `fallibleAim.ts` + `roundSkill.ts`, `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
+
+AI shop (#207): capture initial `N` once; target `min(3N, profile cap, #215 policy)` through unit `delta: 1` transactions, with no budget ratio/reserve. Orders are Simple G→C; OK G→C→D→B→N; Sniper BULLET→D→B; Expert THERMO→N→G→C→D→B. Missing/unknown shop profiles use OK. Local applies immediately; online Worker applies once per shop epoch after normalization.
 
 ## Edit strategy
 

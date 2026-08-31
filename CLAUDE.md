@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **760 tests** (73 files)
+- Run tests: `npm run test` (or `vitest run`) — **772 tests** (74 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --scope changed` after React changes)
@@ -48,7 +48,18 @@ In the local menu, selecting an AI assigns its short localized profile name (`Si
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. First shot ≥ 36 px, lock at shot 4, 14 % slip after. |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. First shot ≥ 36 px, lock at shot 3. |
 
-v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit), `terrainMaterialTactics.ts` (skip DRILLER on ROCK; prefer DRILLER on SOFT when the default pick is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; shop: v1 none, v2 cap 1, v3 none, v4 cap 2). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim`, off material tactics, and off `bulldozerTactics`.
+v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit), `terrainMaterialTactics.ts` (skip DRILLER on ROCK; prefer DRILLER on SOFT when the default pick is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim`, off material tactics, and off `bulldozerTactics`.
+
+AI shop strategy (#207) uses the initial player count `N` (2–4), captured once and never recomputed from survivors or a transient roster. Each preferred weapon targets `min(3 × N, strategic cap, getShopPolicy(weaponId).maxStock)` and every unit goes through `applyShopTransaction` with `delta: 1`; there is no percentage budget, minimum cash reserve, or automatic selling. Missing or unknown profiles use the OK shop strategy (`v2-heuristic`), without changing an explicitly selected Simple profile or the combat router fallback.
+
+| Profile | Purchase order | Strategic caps |
+|---------|----------------|----------------|
+| Simple (`v1-random`) | GRENADE → CLUSTER | each `N - 1` |
+| OK (`v2-heuristic`) | GRENADE → CLUSTER → DRILLER → BULLDOZER → NUKE | GRENADE/CLUSTER `3N`, DRILLER/BULLDOZER `N`, NUKE `1` |
+| Sniper (`v3-sniper`) | BULLET → DRILLER → BULLDOZER | BULLET `3N`, DRILLER/BULLDOZER `2N` |
+| Expert (`v4-smart`) | THERMONUCLEAR → NUKE → GRENADE → CLUSTER → DRILLER → BULLDOZER | THERMONUCLEAR `1`, NUKE `2`, others `3N` |
+
+Local hotseat applies the shared domain immediately. Online, only the Worker runs `autoBuyForAI`, once after normalization on the first admissible `SHOP_ENTER` of an epoch; reconnects and repeated enters never rerun it. #207 owns AI strategy while #215 remains authoritative for global policy, visit quotas, transactions, and Worker orchestration.
 
 New profile → new file under `game/entities/ai/`, register in `AIByProfileStrategy.ts` + `GameCanvas.tsx`.
 
