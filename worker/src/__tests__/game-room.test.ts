@@ -3,6 +3,8 @@ import { GameRoom } from '../game-room';
 import type { WeaponId } from '../../../src/types/weapon';
 import type { Player } from '../../../src/types/player';
 import type { ShotMessage } from '../../../src/game/online/protocol';
+import { autoBuyForAI } from '../../../src/game/entities/ai/aiShopHelper';
+import { normalizeInventoryAtShopOpen } from '../../../src/game/shop/shopTransaction';
 
 class MockWebSocket {
   public sent: string[] = [];
@@ -1397,6 +1399,11 @@ describe('GameRoom Durable Object', () => {
       state.roundEnded = true;
       state.players[1].money = 1_000;
       state.players[1].inventory = { NUKE: 9 };
+      const expectedAutoBuy = autoBuyForAI(
+        normalizeInventoryAtShopOpen(state.players[1]),
+        2,
+        {},
+      );
       const handle = Reflect.get(aiRoom, 'handleClientMessage') as (
         slot: number,
         raw: string,
@@ -1406,6 +1413,10 @@ describe('GameRoom Durable Object', () => {
         type: 'SHOP_ENTER',
         roundNumber: 1,
       }));
+      expect(state.players[1]).toEqual(expectedAutoBuy.player);
+      expect(state.shopSession?.purchasesByPlayerId).toEqual(
+        expectedAutoBuy.counters,
+      );
       const afterFirst = {
         shopEpoch: state.shopEpoch,
         sessionEpoch: state.shopSession?.shopEpoch,
@@ -1426,6 +1437,31 @@ describe('GameRoom Durable Object', () => {
         afterFirst.counters,
       );
       expect(state.players[1].inventory.NUKE).toBeLessThanOrEqual(2);
+
+      const restoredRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(restoredRoom, 'ctx', {
+        value: setup.ctx,
+        writable: true,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      const restoredState = Reflect.get(restoredRoom, 'state') as typeof state;
+      const restoredHandle = Reflect.get(
+        restoredRoom,
+        'handleClientMessage',
+      ) as (slot: number, raw: string) => Promise<void>;
+
+      await restoredHandle.call(restoredRoom, 0, JSON.stringify({
+        type: 'SHOP_ENTER',
+        roundNumber: 1,
+      }));
+
+      expect(restoredState.shopEpoch).toBe(afterFirst.shopEpoch);
+      expect(restoredState.players[1].money).toBe(afterFirst.money);
+      expect(restoredState.players[1].inventory).toEqual(afterFirst.inventory);
+      expect(
+        JSON.stringify(restoredState.shopSession?.purchasesByPlayerId ?? {}),
+      ).toBe(afterFirst.counters);
     });
 
     it('broadcasts SHOP_FINISH only when all human slots have sent SHOP_READY', async () => {

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
+import {
+  isInitialPlayerCount,
+  type InitialPlayerCount,
+} from "../game/entities/ai/aiShopHelper";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
 import type { TerrainMaterial } from "../types/terrain";
@@ -39,6 +43,13 @@ function buildInitialCanvasState(
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 480;
+
+function resolveInitialPlayerCount(
+  players: readonly Player[] | undefined,
+): InitialPlayerCount {
+  const count = players?.length ?? 0;
+  return isInitialPlayerCount(count) ? count : 2;
+}
 
 export { buildOverlayAwards } from "./sessionPresentation";
 
@@ -148,6 +159,9 @@ export function useGameSession({
 
   // Snapshot des joueurs initiaux au montage (évite de mettre initialPlayers dans les deps du useEffect one-shot)
   const initialPlayersRef = useRef(initialPlayers);
+  const [initialPlayerCount] = useState<InitialPlayerCount>(() =>
+    resolveInitialPlayerCount(initialPlayers),
+  );
 
   // Timer for round celebration fireworks (10s auto-advance or skip with SPACE)
   const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -580,6 +594,7 @@ export function useGameSession({
 
   const shopRoundHost: CompleteShopRoundHost = {
     gameMode,
+    initialPlayerCount,
     roomId,
     localPlayerId,
     engineRef,

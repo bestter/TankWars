@@ -61,6 +61,40 @@ describe('Worker Entrypoint', () => {
     });
   });
 
+  describe('/api/rooms', () => {
+    it('normalizes missing or unknown AI profiles to v2-heuristic', async () => {
+      const { env, mockStub } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://tankwars.pages.dev',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          numPlayers: 3,
+          slots: [
+            { type: 'human' },
+            { type: 'ai' },
+            { type: 'ai', aiProfile: 'future-profile' },
+          ],
+        }),
+      });
+
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(200);
+      const forwardedInit = mockStub.fetch.mock.calls[0]?.[1] as RequestInit;
+      const forwardedBody = JSON.parse(String(forwardedInit.body)) as {
+        slotConfigs: Array<{ type: string; aiProfile?: string }>;
+      };
+      expect(forwardedBody.slotConfigs).toEqual([
+        { type: 'human' },
+        { type: 'ai', aiProfile: 'v2-heuristic' },
+        { type: 'ai', aiProfile: 'v2-heuristic' },
+      ]);
+    });
+  });
+
   describe('/api/rooms/:roomId/join', () => {
     it('rejects roomId longer than 256 characters', async () => {
       const { env, mockNamespace } = createMockEnv();

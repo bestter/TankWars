@@ -42,6 +42,8 @@ All tank AI implements `AIEngine`. Router: `AIByProfileStrategy` in `GameCanvas.
 
 v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (BULLDOZER on map edge / drop ≥ 12 px; v1 never buys or fires it). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). New profile → new file under `game/entities/ai/`, register in the dispatcher. Never put AI in `TankManager` or `GameEngine`.
 
+AI shop (#207): initial `N` is captured once; each target is `min(3N, profile cap, #215 policy)` and every buy is unit `delta: 1`, without budget ratio/reserve. Orders: Simple G→C; OK G→C→D→B→N; Sniper BULLET→D→B; Expert THERMO→N→G→C→D→B. Missing/unknown shop profiles use OK. Local applies immediately; only the online Worker applies once per shop epoch after normalization.
+
 ## Response
 
 - Dry, production-ready. Paths, types, architecture — no fluff.

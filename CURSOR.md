@@ -47,6 +47,8 @@ All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single r
 
 v2–v4 share `fallibleAim.ts` + `roundSkill.ts`, `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
 
+AI shop (#207): capture initial `N` once; target `min(3N, profile cap, #215 policy)` through unit `delta: 1` transactions, with no budget ratio/reserve. Orders are Simple G→C; OK G→C→D→B→N; Sniper BULLET→D→B; Expert THERMO→N→G→C→D→B. Missing/unknown shop profiles use OK. Local applies immediately; online Worker applies once per shop epoch after normalization.
+
 ## Edit strategy
 
 - Concise, production-ready. Lead with paths and diffs.

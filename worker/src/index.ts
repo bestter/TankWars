@@ -102,10 +102,10 @@ export default {
               const type = obj.type === 'ai' ? 'ai' : 'human';
               const aiProfile = type === 'ai' && typeof obj.aiProfile === 'string' && validAiProfiles.includes(obj.aiProfile)
                 ? (obj.aiProfile as 'v1-random' | 'v2-heuristic' | 'v3-sniper' | 'v4-smart')
-                : 'v1-random';
+                : 'v2-heuristic';
               return type === 'ai' ? { type, aiProfile } : { type };
             })
-          : Array.from({ length: numPlayers }, (_, i) => ({ type: i === 0 ? 'human' : 'ai', aiProfile: 'v1-random' as const }));
+          : Array.from({ length: numPlayers }, (_, i) => ({ type: i === 0 ? 'human' : 'ai', aiProfile: 'v2-heuristic' as const }));
 
       // Create a room code. Real token/secret is generated inside the DO.
       const roomId = crypto.randomUUID(); // Secure id for URLs

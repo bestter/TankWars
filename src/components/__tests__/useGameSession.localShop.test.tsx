@@ -101,8 +101,12 @@ describe("useGameSession local shop AI advance", () => {
     const uiPlayers = sessionRef.current?.state.uiPlayers;
     expect(uiPlayers).toBeDefined();
     expect(uiPlayers?.[0].money).toBe(1000);
-    expect(uiPlayers?.[1].money).toBeLessThan(1000);
-    expect(uiPlayers?.[1].inventory?.CLUSTER).toBeGreaterThan(0);
+    expect(uiPlayers?.[1].money).toBe(40);
+    expect(uiPlayers?.[1].inventory).toEqual({
+      NUKE: 1,
+      GRENADE: 6,
+      DRILLER: 1,
+    });
 
     // Verify TankManager.setPlayers was called during AI shopping with the updated AI player
     const lastSetPlayersCall = setPlayersSpy.mock.calls.at(-1)?.[0];
@@ -228,8 +232,12 @@ describe("useGameSession local shop AI advance", () => {
 
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
     const uiPlayers = sessionRef.current?.state.uiPlayers;
-    expect(uiPlayers?.[1].money).toBeLessThan(1000);
-    expect(uiPlayers?.[1].inventory?.CLUSTER).toBeGreaterThan(0);
+    expect(uiPlayers?.[1].money).toBe(40);
+    expect(uiPlayers?.[1].inventory).toEqual({
+      NUKE: 1,
+      GRENADE: 6,
+      DRILLER: 1,
+    });
   });
 
   it("safely handles AI player inventories containing forbidden prototype keys", () => {

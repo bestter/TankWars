@@ -1,281 +1,272 @@
-import { describe, it, expect } from "vitest";
-import { autoBuyForAI } from "../aiShopHelper";
+import { describe, expect, it } from "vitest";
+import type { AiProfile, Player } from "../../../../types/player";
+import {
+  WEAPON_REGISTRY,
+  type WeaponId,
+} from "../../../../types/weapon";
 import { makePlayer } from "../../../__tests__/helpers";
-import type { Player } from "../../../../types/player";
-import { normalizeInventoryAtShopOpen } from "../../../shop/shopTransaction";
+import type { ShopVisitCounters } from "../../../shop/shopTransaction";
+import {
+  autoBuyForAI,
+  type InitialPlayerCount,
+} from "../aiShopHelper";
+
+interface RichProfileCase {
+  readonly profile: AiProfile;
+  readonly initialPlayerCount: InitialPlayerCount;
+  readonly expectedInventory: Partial<Record<WeaponId, number>>;
+}
+
+const RICH_PROFILE_CASES: readonly RichProfileCase[] = [
+  ...([2, 3, 4] as const).map((initialPlayerCount) => ({
+    profile: "v1-random" as const,
+    initialPlayerCount,
+    expectedInventory: {
+      GRENADE: initialPlayerCount - 1,
+      CLUSTER: initialPlayerCount - 1,
+    },
+  })),
+  ...([2, 3, 4] as const).map((initialPlayerCount) => ({
+    profile: "v2-heuristic" as const,
+    initialPlayerCount,
+    expectedInventory: {
+      GRENADE: initialPlayerCount * 3,
+      CLUSTER: initialPlayerCount * 3,
+      DRILLER: initialPlayerCount,
+      BULLDOZER: initialPlayerCount,
+      NUKE: 1,
+    },
+  })),
+  ...([2, 3, 4] as const).map((initialPlayerCount) => ({
+    profile: "v3-sniper" as const,
+    initialPlayerCount,
+    expectedInventory: {
+      BULLET: initialPlayerCount * 3,
+      DRILLER: initialPlayerCount * 2,
+      BULLDOZER: initialPlayerCount * 2,
+    },
+  })),
+  ...([2, 3, 4] as const).map((initialPlayerCount) => ({
+    profile: "v4-smart" as const,
+    initialPlayerCount,
+    expectedInventory: {
+      THERMONUCLEAR: 1,
+      NUKE: 1,
+      GRENADE: initialPlayerCount * 3,
+      CLUSTER: initialPlayerCount * 3,
+      DRILLER: initialPlayerCount * 3,
+      BULLDOZER: initialPlayerCount * 3,
+    },
+  })),
+];
+
+function expectedCost(
+  inventory: Partial<Record<WeaponId, number>>,
+): number {
+  return Object.entries(inventory).reduce((total, [weaponId, quantity]) => {
+    return total + WEAPON_REGISTRY[weaponId as WeaponId].price * quantity;
+  }, 0);
+}
+
+function makeAiPlayer(
+  aiProfile: Player["aiProfile"],
+  overrides: Partial<Player> = {},
+): Player {
+  return makePlayer({
+    isHuman: false,
+    aiProfile,
+    money: 20_000,
+    inventory: {},
+    ...overrides,
+  });
+}
 
 describe("autoBuyForAI", () => {
-  it("does nothing if player is human", () => {
-    const player = makePlayer({ isHuman: true, money: 1000, inventory: {} });
-    const updated = autoBuyForAI(player).player;
-    expect(updated.money).toBe(1000);
-    expect(updated.inventory).toEqual({});
-    expect(updated).toBe(player);
+  it("does nothing for a human player", () => {
+    const player = makePlayer({ isHuman: true, money: 1_000, inventory: {} });
+    const counters: ShopVisitCounters = {};
+
+    const result = autoBuyForAI(player, 2, counters);
+
+    expect(result.player).toBe(player);
+    expect(result.counters).toBe(counters);
   });
 
-  it("does nothing if player object is invalid", () => {
-    // Should handle null or undefined safely based on the function signature
-    // even though TS types it as Player. Let's just check standard pass works.
-    expect(() => autoBuyForAI(null as unknown as Player)).not.toThrow();
+  it("does nothing for an invalid player object", () => {
+    expect(() =>
+      autoBuyForAI(null as unknown as Player, 2, {}),
+    ).not.toThrow();
   });
 
-  it("does nothing if player lacks money", () => {
-    const player = makePlayer({ isHuman: false, money: 0, inventory: {} });
-    const updated = autoBuyForAI(player).player;
-    expect(updated.money).toBe(0);
-    expect(updated.inventory).toEqual({});
-  });
+  it.each(RICH_PROFILE_CASES)(
+    "atteint les cibles de $profile avec N=$initialPlayerCount",
+    ({ profile, initialPlayerCount, expectedInventory }) => {
+      const player = makeAiPlayer(profile);
 
-  it("buys items for v1-random (default) AI profile", () => {
-    // CLUSTER (135), DRILLER (90), GRENADE (75), NUKE (420), THERMONUCLEAR (2500)
-    // Budget 70% of 1000 = 700.
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v1-random",
-      money: 1000,
-      inventory: {},
-    });
+      const result = autoBuyForAI(player, initialPlayerCount, {});
 
-    const updated = autoBuyForAI(player).player;
-
-    // It should buy CLUSTER first (price 135)
-    // max buys per weapon = 12.
-    // 700 / 135 = 5 CLUSTERs. 5 * 135 = 675 spent.
-    // Remaining budget = 25.
-    // Next is DRILLER (90) - budget too low.
-
-    expect(updated.inventory["CLUSTER"]).toBe(5);
-    expect(updated.inventory["DRILLER"]).toBeUndefined();
-    expect(updated.money).toBe(1000 - 675);
-    expect(player.inventory).toEqual({});
-  });
-
-  it("buys the v1 list for v2-heuristic and never auto-buys BULLET", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v2-heuristic",
-      money: 1000,
-      inventory: {},
-    });
-    const updated = autoBuyForAI(player).player;
-    expect(updated.inventory["CLUSTER"]).toBe(5);
-    expect(updated.inventory["BULLET"]).toBeUndefined();
-  });
-
-  it("buys items for missing aiProfile (defaults to v1-random)", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: undefined,
-      money: 1000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    expect(updated.inventory["CLUSTER"]).toBe(5);
-    expect(updated.money).toBe(1000 - 675);
-  });
-
-  it("caps v3-sniper at 2 BULLET then spends leftover on DRILLER", () => {
-    // BULLET (150), DRILLER (90)
-    // Budget 70% of 1000 = 700.
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v3-sniper",
-      money: 1000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    // Cap 2 BULLET = 300. Remaining budget 400 → 4 DRILLER = 360.
-    expect(updated.inventory["BULLET"]).toBe(2);
-    expect(updated.inventory["DRILLER"]).toBe(4);
-    expect(updated.money).toBe(1000 - 660);
-  });
-
-  it("buys items for v4-smart profile at 78% budget", () => {
-    // Budget 78% of 1000 = 780.
-    // 5 CLUSTER * 135 = 675, then 1 DRILLER * 90 = 765.
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v4-smart",
-      money: 1000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    expect(updated.inventory["CLUSTER"]).toBe(5);
-    expect(updated.inventory["DRILLER"]).toBe(1);
-    expect(updated.money).toBe(1000 - 765);
-  });
-
-  it("respects the money reserve constraint (> 80)", () => {
-    // DRILLER (90).
-    // 85% budget of 200 = 170.
-    // It should buy 1 DRILLER.
-    // Money left = 110. (Next driller would cost 90, money left 20 <= 80, so shouldn't buy).
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v4-smart",
-      money: 200,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-    // Actually preferred order for v4-smart: CLUSTER (135), DRILLER (90)
-    // 170 budget. First tries CLUSTER.
-    // 1 CLUSTER costs 135. Money becomes 65.
-    // Wait, check says (money > 80).
-    // Loop checks money > 80 BEFORE buying.
-    // If it buys 1 CLUSTER, money left would be 65. But it will still buy because BEFORE buying it had 200 > 80.
-    // Let's manually trace:
-    // budget = 170.
-    // wid = CLUSTER, def = 135.
-    // buysThisWeapon = 0.
-    // money = 200 > def.price (135).
-    // spent + price (0 + 135) <= 170 (true).
-    // money > 80 (200 > 80) (true).
-    // => Buys 1 CLUSTER. money = 65. spent = 135.
-    // Next loop: buysThisWeapon = 1.
-    // money = 65 < 135. (false).
-    // Next wid = DRILLER, def = 90.
-    // buysThisWeapon = 0.
-    // money = 65 < 90. (false).
-
-    expect(updated.inventory["CLUSTER"]).toBe(1);
-    expect(updated.money).toBe(65);
-  });
-
-  it("limits max purchases per weapon to 12 except sniper BULLET", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v3-sniper",
-      money: 10000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    // 2 BULLET * 150 = 300. 12 DRILLER * 90 = 1080. Spent = 1380.
-    expect(updated.inventory["BULLET"]).toBe(2);
-    expect(updated.inventory["DRILLER"]).toBe(12);
-    expect(updated.money).toBe(10000 - 1380);
-  });
-
-  it("does not buy more BULLET when sniper already holds the cap", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v3-sniper",
-      money: 1000,
-      inventory: { BULLET: 3, MISSILE: 10 },
-    });
-
-    const updated = autoBuyForAI(normalizeInventoryAtShopOpen(player)).player;
-
-    expect(updated.inventory["BULLET"]).toBe(3);
-    expect(updated.inventory["MISSILE"]).toBeUndefined();
-    expect(updated.inventory["DRILLER"]).toBe(7);
-  });
-
-  it("does not buy BULLDOZER for v1-random", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v1-random",
-      money: 20000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    expect(updated.inventory["BULLDOZER"]).toBeUndefined();
-  });
-
-  it("applique exactement les quotas v1 et repart avec de nouveaux compteurs à la visite suivante", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v1-random",
-      money: 20_000,
-      inventory: {},
-    });
-
-    const firstVisit = autoBuyForAI(player);
-    expect(firstVisit.player.inventory).toMatchObject({
-      CLUSTER: 12,
-      DRILLER: 12,
-      GRENADE: 12,
-      NUKE: 1,
-      THERMONUCLEAR: 1,
-    });
-    expect(firstVisit.counters[firstVisit.player.id]).toMatchObject({
-      CLUSTER: 12,
-      DRILLER: 12,
-      GRENADE: 12,
-      NUKE: 1,
-      THERMONUCLEAR: 1,
-    });
-
-    const secondVisit = autoBuyForAI(firstVisit.player, {});
-    expect(secondVisit.player.inventory).toMatchObject({
-      CLUSTER: 24,
-      DRILLER: 24,
-      GRENADE: 24,
-      NUKE: 2,
-      THERMONUCLEAR: 1,
-    });
-  });
-
-  it("caps BULLDOZER at 1 for v2-heuristic", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v2-heuristic",
-      money: 20000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    expect(updated.inventory["BULLDOZER"]).toBe(1);
-  });
-
-  it("caps BULLDOZER at 2 for displacement-focused v4-smart", () => {
-    const player = makePlayer({
-      isHuman: false,
-      aiProfile: "v4-smart",
-      money: 20000,
-      inventory: {},
-    });
-
-    const updated = autoBuyForAI(player).player;
-
-    expect(updated.inventory["BULLDOZER"]).toBe(2);
-  });
-
-  it.each(["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"] as const)(
-    "respecte la politique lourde pour %s",
-    (aiProfile) => {
-      const firstVisit = autoBuyForAI(
-        makePlayer({
-          isHuman: false,
-          aiProfile,
-          money: 20_000,
-          inventory: { NUKE: 1 },
-        }),
+      expect(result.player.inventory).toEqual(expectedInventory);
+      expect(result.player.money).toBe(
+        player.money - expectedCost(expectedInventory),
       );
-      expect(firstVisit.player.inventory.NUKE ?? 0).toBeLessThanOrEqual(2);
-      expect(
-        firstVisit.counters[firstVisit.player.id]?.NUKE ?? 0,
-      ).toBeLessThanOrEqual(1);
-      expect(
-        firstVisit.player.inventory.THERMONUCLEAR ?? 0,
-      ).toBeLessThanOrEqual(1);
-
-      const secondVisit = autoBuyForAI(firstVisit.player, {});
-      expect(secondVisit.player.inventory.NUKE ?? 0).toBeLessThanOrEqual(2);
-      expect(
-        secondVisit.player.inventory.THERMONUCLEAR ?? 0,
-      ).toBeLessThanOrEqual(1);
+      expect(result.counters[result.player.id]).toEqual(expectedInventory);
+      expect(player.inventory).toEqual({});
     },
   );
+
+  it.each([
+    {
+      profile: "v1-random" as const,
+      money: 135,
+      expectedWeapon: "GRENADE" as const,
+    },
+    {
+      profile: "v2-heuristic" as const,
+      money: 135,
+      expectedWeapon: "GRENADE" as const,
+    },
+    {
+      profile: "v3-sniper" as const,
+      money: 150,
+      expectedWeapon: "BULLET" as const,
+    },
+    {
+      profile: "v4-smart" as const,
+      money: 2_500,
+      expectedWeapon: "THERMONUCLEAR" as const,
+    },
+  ])(
+    "commence par $expectedWeapon pour $profile",
+    ({ profile, money, expectedWeapon }) => {
+      const result = autoBuyForAI(
+        makeAiPlayer(profile, { money }),
+        2,
+        {},
+      );
+
+      expect(result.player.inventory[expectedWeapon]).toBe(1);
+      const boughtWeapons = Object.keys(result.counters[result.player.id] ?? {});
+      expect(boughtWeapons[0]).toBe(expectedWeapon);
+    },
+  );
+
+  it("uses the OK profile for a missing or unknown aiProfile", () => {
+    const okResult = autoBuyForAI(makeAiPlayer("v2-heuristic"), 2, {});
+    const missingResult = autoBuyForAI(makeAiPlayer(undefined), 2, {});
+    const unknownResult = autoBuyForAI(
+      makeAiPlayer("future-profile" as Player["aiProfile"]),
+      2,
+      {},
+    );
+
+    expect(missingResult.player.inventory).toEqual(okResult.player.inventory);
+    expect(missingResult.player.money).toBe(okResult.player.money);
+    expect(unknownResult.player.inventory).toEqual(okResult.player.inventory);
+    expect(unknownResult.player.money).toBe(okResult.player.money);
+  });
+
+  it("buys only the affordable quantity and keeps no implicit reserve", () => {
+    const partial = autoBuyForAI(
+      makeAiPlayer("v2-heuristic", { money: 200 }),
+      2,
+      {},
+    );
+    const exact = autoBuyForAI(
+      makeAiPlayer("v1-random", { money: 75 }),
+      2,
+      {},
+    );
+
+    expect(partial.player.inventory).toEqual({ GRENADE: 2 });
+    expect(partial.player.money).toBe(50);
+    expect(exact.player.inventory).toEqual({ GRENADE: 1 });
+    expect(exact.player.money).toBe(0);
+  });
+
+  it("tries cheaper later weapons instead of saving for an unaffordable weapon", () => {
+    const result = autoBuyForAI(
+      makeAiPlayer("v4-smart", { money: 200 }),
+      2,
+      {},
+    );
+
+    expect(result.player.inventory).toEqual({ GRENADE: 2 });
+    expect(result.player.money).toBe(50);
+  });
+
+  it("keeps a legal surplus and continues with the next preference", () => {
+    const result = autoBuyForAI(
+      makeAiPlayer("v1-random", {
+        money: 135,
+        inventory: { GRENADE: 2 },
+      }),
+      2,
+      {},
+    );
+
+    expect(result.player.inventory).toEqual({ GRENADE: 2, CLUSTER: 1 });
+    expect(result.player.money).toBe(0);
+  });
+
+  it("respects counters already consumed during the visit", () => {
+    const player = makeAiPlayer("v2-heuristic", { money: 2_000 });
+    const counters: ShopVisitCounters = {
+      [player.id]: { GRENADE: 12 },
+    };
+
+    const result = autoBuyForAI(player, 2, counters);
+
+    expect(result.player.inventory.GRENADE).toBeUndefined();
+    expect(result.player.inventory.CLUSTER).toBe(6);
+    expect(result.counters[player.id]?.GRENADE).toBe(12);
+  });
+
+  it("continues with the next weapon after a transaction refusal", () => {
+    const result = autoBuyForAI(
+      makeAiPlayer("v1-random", {
+        money: 200,
+        inventory: { GRENADE: -1 },
+      }),
+      2,
+      {},
+    );
+
+    expect(result.player.inventory.GRENADE).toBe(-1);
+    expect(result.player.inventory.CLUSTER).toBe(1);
+    expect(result.player.money).toBe(65);
+  });
+
+  it("lets Expert reach two NUKE only across two visits", () => {
+    const player = makeAiPlayer("v4-smart", {
+      money: 10_000,
+      inventory: {
+        THERMONUCLEAR: 1,
+        GRENADE: 6,
+        CLUSTER: 6,
+        DRILLER: 6,
+        BULLDOZER: 6,
+      },
+    });
+
+    const firstVisit = autoBuyForAI(player, 2, {});
+    const secondVisit = autoBuyForAI(firstVisit.player, 2, {});
+
+    expect(firstVisit.player.inventory.NUKE).toBe(1);
+    expect(firstVisit.counters[player.id]?.NUKE).toBe(1);
+    expect(secondVisit.player.inventory.NUKE).toBe(2);
+    expect(secondVisit.counters[player.id]?.NUKE).toBe(1);
+  });
+
+  it("never changes the original player or counters", () => {
+    const player = makeAiPlayer("v2-heuristic", { money: 500 });
+    const counters: ShopVisitCounters = {};
+
+    const result = autoBuyForAI(player, 2, counters);
+
+    expect(result.player).not.toBe(player);
+    expect(result.counters).not.toBe(counters);
+    expect(player.money).toBe(500);
+    expect(player.inventory).toEqual({});
+    expect(counters).toEqual({});
+  });
 });
