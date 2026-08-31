@@ -3,7 +3,15 @@
  * accidental return to the menu can resume instead of dropping back into the lobby.
  */
 
-import { VGA_PALETTE, type GamePhase, type RoundResult } from '../types/game';
+import {
+  FIRE_COMMAND_MAX_ANGLE,
+  FIRE_COMMAND_MAX_POWER,
+  FIRE_COMMAND_MIN_ANGLE,
+  FIRE_COMMAND_MIN_POWER,
+  VGA_PALETTE,
+  type GamePhase,
+  type RoundResult,
+} from '../types/game';
 import type { AiProfile, Player, TankHitReaction } from '../types/player';
 import { TERRAIN_MATERIAL, type TerrainMaterial } from '../types/terrain';
 import { ALL_WEAPON_IDS, type WeaponId } from '../types/weapon';
@@ -137,11 +145,11 @@ function isPendingFireIntent(value: unknown): value is PendingFireIntent {
   }
   return (
     isFiniteNumber(value.command.angle) &&
-    value.command.angle >= -360 &&
-    value.command.angle <= 360 &&
+    value.command.angle >= FIRE_COMMAND_MIN_ANGLE &&
+    value.command.angle <= FIRE_COMMAND_MAX_ANGLE &&
     isFiniteNumber(value.command.power) &&
-    value.command.power >= 0 &&
-    value.command.power <= 100 &&
+    value.command.power >= FIRE_COMMAND_MIN_POWER &&
+    value.command.power <= FIRE_COMMAND_MAX_POWER &&
     isWeaponId(value.command.weaponId)
   );
 }
@@ -395,8 +403,8 @@ function isPlayer(value: unknown): value is Player {
     isFiniteNumber(tank.position.y) &&
     isFiniteNumber(tank.angle) &&
     isFiniteNumber(tank.power) &&
-    tank.power >= 0 &&
-    tank.power <= 100 &&
+    tank.power >= FIRE_COMMAND_MIN_POWER &&
+    tank.power <= FIRE_COMMAND_MAX_POWER &&
     isFiniteNumber(tank.health) &&
     isFiniteNumber(tank.maxHealth) &&
     tank.maxHealth >= 0 &&

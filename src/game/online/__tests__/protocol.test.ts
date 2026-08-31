@@ -159,6 +159,105 @@ describe("strict online protocol", () => {
     ).toBe(true);
   });
 
+  it("borne la puissance des FIRE stricts et accepte les limites inclusives", () => {
+    for (const [index, power] of [-1, 101, Infinity, NaN].entries()) {
+      const actionId = `strict-power-invalid-${index}`;
+      expect(
+        decodeFireMessage({
+          type: "FIRE",
+          actionId,
+          command: { angle: 45, power, weaponId: "MISSILE" },
+        }),
+      ).toEqual({ ok: false, actionId });
+    }
+
+    for (const power of [0, 100]) {
+      expect(
+        decodeFireMessage({
+          type: "FIRE",
+          actionId: `strict-power-${power}`,
+          command: { angle: 45, power, weaponId: "MISSILE" },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("borne l'angle des FIRE stricts et accepte les limites inclusives", () => {
+    for (const [index, angle] of [-361, 361, Infinity, NaN].entries()) {
+      const actionId = `strict-angle-invalid-${index}`;
+      expect(
+        decodeFireMessage({
+          type: "FIRE",
+          actionId,
+          command: { angle, power: 50, weaponId: "MISSILE" },
+        }),
+      ).toEqual({ ok: false, actionId });
+    }
+
+    for (const angle of [-360, 360]) {
+      expect(
+        decodeFireMessage({
+          type: "FIRE",
+          actionId: `strict-angle-${angle}`,
+          command: { angle, power: 50, weaponId: "MISSILE" },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("applique les mêmes bornes aux FIRE legacy", () => {
+    for (const power of [-1, 101, Infinity, NaN]) {
+      expect(
+        isLegacyFirePayload({
+          type: "FIRE",
+          command: { angle: 45, power, weaponId: "MISSILE" },
+        }),
+      ).toBe(false);
+    }
+    for (const angle of [-361, 361, Infinity, NaN]) {
+      expect(
+        isLegacyFirePayload({
+          type: "FIRE",
+          command: { angle, power: 50, weaponId: "MISSILE" },
+        }),
+      ).toBe(false);
+    }
+
+    expect(
+      isLegacyFirePayload({
+        type: "FIRE",
+        command: { angle: -360, power: 0, weaponId: "MISSILE" },
+      }),
+    ).toBe(true);
+    expect(
+      isLegacyFirePayload({
+        type: "FIRE",
+        command: { angle: 360, power: 100, weaponId: "MISSILE" },
+      }),
+    ).toBe(true);
+  });
+
+  it("applique les bornes partagées aux SHOT autoritaires", () => {
+    const makeShot = (angle: number, power: number) => ({
+      type: "SHOT",
+      actionId: "fire-bounds",
+      shotId: 9,
+      roundNumber: 2,
+      shotNumberInRound: 1,
+      isFirstShotOfRound: true,
+      slot: 0,
+      ownerId: "p1",
+      command: { angle, power, weaponId: "MISSILE" },
+    });
+
+    expect(isStrictOnlineMessage(makeShot(-360, 0))).toBe(true);
+    expect(isStrictOnlineMessage(makeShot(360, 100))).toBe(true);
+    expect(isStrictOnlineMessage(makeShot(-361, 50))).toBe(false);
+    expect(isStrictOnlineMessage(makeShot(361, 50))).toBe(false);
+    expect(isStrictOnlineMessage(makeShot(45, -1))).toBe(false);
+    expect(isStrictOnlineMessage(makeShot(45, 101))).toBe(false);
+  });
+
   it("borne les actionId réseau à 64 caractères", () => {
     const maxLengthId = "a".repeat(MAX_ACTION_ID_LENGTH);
     const overlongId = "b".repeat(MAX_ACTION_ID_LENGTH + 1);

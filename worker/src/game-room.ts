@@ -23,7 +23,13 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { Player } from '../../src/types/player'; // share types from root (works in monorepo-style dev)
-import type { Color } from '../../src/types/game';
+import {
+  FIRE_COMMAND_MAX_ANGLE,
+  FIRE_COMMAND_MAX_POWER,
+  FIRE_COMMAND_MIN_ANGLE,
+  FIRE_COMMAND_MIN_POWER,
+  type Color,
+} from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import type { TerrainMaterial } from '../../src/types/terrain';
 import {
@@ -1332,11 +1338,11 @@ export class GameRoom extends DurableObject {
 
     if (
       !Number.isFinite(command.power) ||
-      command.power < 0 ||
-      command.power > 100 ||
+      command.power < FIRE_COMMAND_MIN_POWER ||
+      command.power > FIRE_COMMAND_MAX_POWER ||
       !Number.isFinite(command.angle) ||
-      command.angle < -360 ||
-      command.angle > 360
+      command.angle < FIRE_COMMAND_MIN_ANGLE ||
+      command.angle > FIRE_COMMAND_MAX_ANGLE
     ) {
       await rejectRequester('MALFORMED');
       return;
