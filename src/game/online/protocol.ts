@@ -1,4 +1,10 @@
-import type { FireCommand } from "../../types/game";
+import {
+  FIRE_COMMAND_MAX_ANGLE,
+  FIRE_COMMAND_MAX_POWER,
+  FIRE_COMMAND_MIN_ANGLE,
+  FIRE_COMMAND_MIN_POWER,
+  type FireCommand,
+} from "../../types/game";
 import type { Player } from "../../types/player";
 import { ALL_WEAPON_IDS, type WeaponId } from "../../types/weapon";
 import type {
@@ -272,10 +278,12 @@ function isFireCommand(value: unknown): value is FireCommand {
   return (
     typeof value.angle === "number" &&
     Number.isFinite(value.angle) &&
+    value.angle >= FIRE_COMMAND_MIN_ANGLE &&
+    value.angle <= FIRE_COMMAND_MAX_ANGLE &&
     typeof value.power === "number" &&
     Number.isFinite(value.power) &&
-    value.power >= 0 &&
-    value.power <= 100 &&
+    value.power >= FIRE_COMMAND_MIN_POWER &&
+    value.power <= FIRE_COMMAND_MAX_POWER &&
     isWeaponId(value.weaponId)
   );
 }

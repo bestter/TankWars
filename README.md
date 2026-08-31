@@ -45,7 +45,7 @@
 - **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A Zeus strike pays only the standard destruction reward `25X`, with no damage or last-survivor component. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. Unversioned v0 clients remain temporarily supported and logged; unsupported numeric protocol versions receive `PROTOCOL_MISMATCH` and close `4402`. Physics stays local; full authoritative terrain/damage simulation is still planned.
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Strict v1 and unversioned legacy `FIRE` commands share finite inclusive bounds: angle -360° to 360° and power 0 to 100. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. Unversioned v0 clients remain temporarily supported and logged; unsupported numeric protocol versions receive `PROTOCOL_MISMATCH` and close `4402`. Physics stays local; full authoritative terrain/damage simulation is still planned.
 - **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
 
 ---
@@ -95,7 +95,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (756 unit and integration tests across 73 files)
+# Run tests (760 unit and integration tests across 73 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -171,7 +171,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **756 unit and integration tests** across **73 files** (Vitest)
+- **760 unit and integration tests** across **73 files** (Vitest)
 
 Still planned:
 
