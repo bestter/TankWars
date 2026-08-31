@@ -50,24 +50,14 @@ export interface Vector2 {
   y: number;
 }
 
-/**
- * Broad validation envelope for serialized FireCommand payloads.
- * Gameplay turret input remains constrained to 0-180 degrees.
- */
-export const FIRE_COMMAND_MIN_POWER = 0;
-export const FIRE_COMMAND_MAX_POWER = 100;
-export const FIRE_COMMAND_MIN_ANGLE = -360;
-export const FIRE_COMMAND_MAX_ANGLE = 360;
-
 /** Barrel orientation in degrees.
- *  Convention: 0° = horizontal right, positive = counterclockwise (up).
- *  Serialized commands accept the broad FIRE_COMMAND_MIN_ANGLE to
- *  FIRE_COMMAND_MAX_ANGLE envelope; gameplay normally produces 0-180 degrees.
+ *  Convention: 0° = horizontal right, positive = counterclockwise (up),
+ *  range typically [-90, 90] or [0, 180] depending on facing. Engine converts to radians for physics.
  */
 export type AngleDegrees = number;
 
-/** Firing power level (percentage). Engine maps the inclusive shared bounds to initial velocity. */
-export type Power = number;
+/** Firing power level (percentage). Engine maps to initial velocity. */
+export type Power = number; // 0-100 inclusive
 
 /** Main game state machine phases (React-driven). */
 export type GamePhase =
