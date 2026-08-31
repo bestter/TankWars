@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { render, act, cleanup } from "@testing-library/react";
 import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
+import * as aiShopHelper from "../../game/entities/ai/aiShopHelper";
 import type { Player } from "../../types/player";
 import { TurnManager } from "../../game/engine/TurnManager";
 import { TankManager } from "../../game/entities/TankManager";
@@ -305,5 +306,49 @@ describe("useGameSession local shop AI advance", () => {
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
     expect(sessionRef.current?.state.shopPlayers).toEqual([]);
     expect(syncTurn).not.toHaveBeenCalled();
+  });
+
+  it("uses 2-player shop targets after handleNewGame from a 4-player match", () => {
+    const autoBuySpy = vi.spyOn(aiShopHelper, "autoBuyForAI");
+    const players = Array.from({ length: 4 }, (_, index) =>
+      makePlayer({
+        id: `ai-${index + 1}`,
+        name: `CPU-${index + 1}`,
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+        tank: makeTank(`tank-ai-${index + 1}`, 100 + index * 160, 300),
+      }),
+    );
+
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    render(<ShopHarness players={players} sessionRef={sessionRef} />);
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(autoBuySpy.mock.calls.map(([, playerCount]) => playerCount)).toEqual([
+      4, 4, 4, 4,
+    ]);
+
+    act(() => {
+      sessionRef.current?.handleNewGame();
+    });
+    autoBuySpy.mockClear();
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+    });
+    act(() => {
+      sessionRef.current?.handleShopReady();
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(autoBuySpy.mock.calls.map(([, playerCount]) => playerCount)).toEqual([
+      2,
+    ]);
   });
 });

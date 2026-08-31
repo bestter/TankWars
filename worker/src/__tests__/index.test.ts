@@ -62,7 +62,7 @@ describe('Worker Entrypoint', () => {
   });
 
   describe('/api/rooms', () => {
-    it('normalizes missing or unknown AI profiles to v2-heuristic', async () => {
+    it('does not rewrite missing or unknown AI profiles onto the combat slot', async () => {
       const { env, mockStub } = createMockEnv();
       const request = new Request('https://tankwars.pages.dev/api/rooms', {
         method: 'POST',
@@ -89,8 +89,54 @@ describe('Worker Entrypoint', () => {
       };
       expect(forwardedBody.slotConfigs).toEqual([
         { type: 'human' },
-        { type: 'ai', aiProfile: 'v2-heuristic' },
-        { type: 'ai', aiProfile: 'v2-heuristic' },
+        { type: 'ai' },
+        { type: 'ai' },
+      ]);
+    });
+
+    it('preserves explicit AI profiles and omits profile on default AI slots', async () => {
+      const explicitCase = createMockEnv();
+      const defaultCase = createMockEnv();
+      const explicit = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://tankwars.pages.dev',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          numPlayers: 2,
+          slots: [
+            { type: 'human' },
+            { type: 'ai', aiProfile: 'v4-smart' },
+          ],
+        }),
+      });
+      const defaulted = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://tankwars.pages.dev',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ numPlayers: 2 }),
+      });
+
+      expect((await worker.fetch(explicit, explicitCase.env)).status).toBe(200);
+      expect((await worker.fetch(defaulted, defaultCase.env)).status).toBe(200);
+
+      const explicitBody = JSON.parse(
+        String((explicitCase.mockStub.fetch.mock.calls[0]?.[1] as RequestInit).body),
+      ) as { slotConfigs: Array<{ type: string; aiProfile?: string }> };
+      const defaultBody = JSON.parse(
+        String((defaultCase.mockStub.fetch.mock.calls[0]?.[1] as RequestInit).body),
+      ) as { slotConfigs: Array<{ type: string; aiProfile?: string }> };
+
+      expect(explicitBody.slotConfigs).toEqual([
+        { type: 'human' },
+        { type: 'ai', aiProfile: 'v4-smart' },
+      ]);
+      expect(defaultBody.slotConfigs).toEqual([
+        { type: 'human' },
+        { type: 'ai' },
       ]);
     });
   });
