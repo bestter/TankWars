@@ -29,7 +29,7 @@
 - Zeus Lightning: `src/game/zeus/` is a special anti-deadlock action, never a weapon. With ≥2 living AIs/no living human, `living AI × 5` shots without a paid hit (`hasEarnings`) appoint Zeus fairly. Reset on earnings/human/<2 survivors/Zeus death/round end; keep history across rounds. Consume the last living direct attacker except BULLDOZER, else injected RNG; kill only the target and pay `25X`. Never add `ZEUS_LIGHTNING` to weapon types/registry, `FireCommand`, shop, or `AIEngine`.
 - Online (in `main`): protocol v1 temporarily normalizes/logs unversioned v0. Strict/v0 `FIRE` and authoritative `SHOT` share finite inclusive `FIRE_COMMAND_*` bounds (angle -360° to 360°, power 0 to 100), repeated defensively in `GameRoom.executeFire`; only unsupported numeric versions close in `4402`. Shop success acks `{ slot, actionId }`, and pending retries reuse the same ID until correlation. Deploy Worker first, require `/api/health` protocol 1/client minimum 0, then Pages; automatic production Pages deployment must be disabled. `VITE_HOTSEAT_ONLY=true` removes online from staging. Server owns turns, FIRE/ammo, shop, rewards and reconnect state; replay uses `authoritativeShotQueue.ts` + `DeferredTransitionBuffer`. Dev: `npm run dev` + `npm run worker:dev`.
 - Zeus online is Durable Object-authoritative and persisted before broadcast through `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, and reconnect `ZEUS_STATE`. IDs are idempotent; economic failover has no effect; cosmetic geometry never consumes room RNG.
-- Tests: **760** across **73** files. Version `0.7.0`.
+- Tests: **769** across **74** files. Version `0.8.0`.
 
 ## AI
 

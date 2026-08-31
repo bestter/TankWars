@@ -96,7 +96,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (760 unit and integration tests across 73 files)
+# Run tests (769 unit and integration tests across 74 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -157,7 +157,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.7.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.8.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
@@ -172,7 +172,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **760 unit and integration tests** across **73 files** (Vitest)
+- **769 unit and integration tests** across **74 files** (Vitest)
 
 Still planned:
 
