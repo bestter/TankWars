@@ -274,6 +274,8 @@ function isFireCommand(value: unknown): value is FireCommand {
     Number.isFinite(value.angle) &&
     typeof value.power === "number" &&
     Number.isFinite(value.power) &&
+    value.power >= 0 &&
+    value.power <= 100 &&
     isWeaponId(value.weaponId)
   );
 }
