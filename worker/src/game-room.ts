@@ -642,7 +642,7 @@ export class GameRoom extends DurableObject {
       aiProfile: cfg.aiProfile,
       // Full join URL for humans (host also gets one)
       url: cfg.type === 'human'
-        ? `${origin}/?room=${roomId}&slot=${idx}&token=${tokens[idx]}`
+        ? `${origin}/?room=${encodeURIComponent(roomId)}&slot=${encodeURIComponent(idx)}&token=${encodeURIComponent(tokens[idx])}`
         : null,
     }));
 
