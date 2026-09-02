@@ -160,7 +160,7 @@ No security impact, strictly an internal performance cache.
 **Learning:** While `noreferrer` implies `noopener` in modern browsers, explicitly specifying `noopener noreferrer` is the best practice for robust security against reverse tabnabbing.
 **Prevention:** Ensure all `target="_blank"` links include `rel="noopener noreferrer"`.
 
-## $(date +%Y-%m-%d) - Missing URL Encoding in Invite Links
+## 2026-09-01 - Missing URL Encoding in Invite Links
 **Vulnerability:** URL invite links in `worker/src/game-room.ts` interpolated variables (roomId, idx, tokens) directly without encoding, which could potentially allow XSS or injection payloads if input validation was weak or bypassed.
 **Learning:** Raw string interpolation for URLs is dangerous; parameters must always be sanitized to prevent malicious content injection.
 **Prevention:** Always use `encodeURIComponent` when dynamically generating URLs based on variables.
