@@ -99,6 +99,34 @@ describe('GameRoom Durable Object', () => {
       expect(json.slots[1].url).toContain('room=room-123&slot=1&token=');
     });
 
+    it('URL-encodes room IDs in invitation links', async () => {
+      const roomId = 'room&admin=true#fragment';
+      const req = new Request('http://localhost/api/room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      });
+
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(200);
+
+      const json = (await res.json()) as {
+        slots: Array<{ url: string }>;
+      };
+      const invitationUrl = new URL(json.slots[0].url);
+
+      expect(invitationUrl.searchParams.get('room')).toBe(roomId);
+      expect(invitationUrl.searchParams.get('slot')).toBe('0');
+      expect(invitationUrl.searchParams.has('token')).toBe(true);
+      expect(invitationUrl.searchParams.has('admin')).toBe(false);
+      expect(invitationUrl.hash).toBe('');
+    });
+
     it('rejects invalid creation payload with 400', async () => {
       const req = new Request('http://localhost/api/room', {
         method: 'POST',
