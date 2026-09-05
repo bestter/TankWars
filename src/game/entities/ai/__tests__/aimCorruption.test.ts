@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ADVANCED_GAFFES,
   applySignedCorruption,
   finalizeAdvancedAim,
   finalizeSimpleAim,
@@ -20,6 +21,26 @@ describe("aimCorruption", () => {
     expect(applySignedCorruption({ angle: 40, power: 50 }, 10, 5)).toEqual({
       angle: 30,
       power: 55,
+    });
+  });
+
+  it("centralise les probabilités et amplitudes uniques des gaffes v2-v4", () => {
+    expect(ADVANCED_GAFFES).toEqual({
+      "v2-heuristic": {
+        chance: 0.1,
+        angleAmplitude: 50,
+        powerAmplitude: 25,
+      },
+      "v3-sniper": {
+        chance: 0.05,
+        angleAmplitude: 25,
+        powerAmplitude: 15,
+      },
+      "v4-smart": {
+        chance: 0.02,
+        angleAmplitude: 10,
+        powerAmplitude: 5,
+      },
     });
   });
 

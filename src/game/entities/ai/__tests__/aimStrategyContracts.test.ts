@@ -3,6 +3,12 @@ import { AIHeuristicStrategy } from "../AIHeuristicStrategy";
 import { AISimpleStrategy } from "../AISimpleStrategy";
 import { AISmartStrategy } from "../AISmartStrategy";
 import { AISniperStrategy } from "../AISniperStrategy";
+import {
+  ADVANCED_GAFFES,
+  finalizeAdvancedAim,
+  finalizeSimpleAim,
+  interpolateAimCommands,
+} from "../aimCorruption";
 import type { AimMemory } from "../aimMemory";
 import {
   flatTerrain,
@@ -12,6 +18,7 @@ import {
 } from "../../../__tests__/helpers";
 import * as random from "../../../../utils/random";
 import type { AiProfile, Player } from "../../../../types/player";
+import type { TerrainManager } from "../../../engine/Terrain";
 
 type AimStrategy =
   | AISimpleStrategy
@@ -23,6 +30,17 @@ interface InspectableStrategy {
   memories: Map<string, AimMemory>;
 }
 
+interface SniperTestDouble {
+  computePrecisionShot: (
+    self: Player,
+    targetX: number,
+    targetY: number,
+    wind: number,
+    gravity: number,
+    terrain: TerrainManager,
+  ) => { angle: number; power: number };
+}
+
 const strategyFactories: ReadonlyArray<{
   profile: AiProfile;
   create: () => AimStrategy;
@@ -31,6 +49,28 @@ const strategyFactories: ReadonlyArray<{
   { profile: "v2-heuristic", create: () => new AIHeuristicStrategy() },
   { profile: "v3-sniper", create: () => new AISniperStrategy() },
   { profile: "v4-smart", create: () => new AISmartStrategy() },
+];
+
+const advancedStrategyFactories: ReadonlyArray<{
+  profile: Exclude<AiProfile, "v1-random">;
+  create: () => Exclude<AimStrategy, AISimpleStrategy>;
+  firstAimRandomCalls: number;
+}> = [
+  {
+    profile: "v2-heuristic",
+    create: () => new AIHeuristicStrategy(),
+    firstAimRandomCalls: 2,
+  },
+  {
+    profile: "v3-sniper",
+    create: () => new AISniperStrategy(),
+    firstAimRandomCalls: 1,
+  },
+  {
+    profile: "v4-smart",
+    create: () => new AISmartStrategy(),
+    firstAimRandomCalls: 2,
+  },
 ];
 
 function inspectMemory(strategy: AimStrategy, playerId: string): AimMemory {
@@ -281,6 +321,236 @@ describe("contrats de séquence des stratégies IA", () => {
       terrain,
     );
     expect(reactionSpy).toHaveBeenCalledTimes(8);
+    expect(self.tank.hitReaction).toEqual({
+      wasDirectHit: false,
+      fallDistance: 0,
+    });
+  });
+
+  it("SNIPER inverse seulement le côté de la tentative 2 et garde celui de la tentative 3+", async () => {
+    const terrain = flatTerrain(800, 480);
+    const strategy = new AISniperStrategy();
+    const precisionSpy = vi
+      .spyOn(
+        strategy as unknown as SniperTestDouble,
+        "computePrecisionShot",
+      )
+      .mockReturnValue({ angle: 45, power: 50 });
+    const self = makeShooter("v3-sniper");
+    const target = makeTarget("target", 500);
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+
+    for (let turn = 1; turn <= 4; turn += 1) {
+      await strategy.executeTurn(
+        "self-tank",
+        {
+          ...makeGameState(self, target, "v3-sniper"),
+          roundNumber: 1,
+          turn,
+        },
+        terrain,
+      );
+    }
+
+    expect(precisionSpy.mock.calls.map((call) => call[1])).toEqual([
+      438.05,
+      539.975,
+      482,
+      482,
+    ]);
+  });
+
+  it.each(advancedStrategyFactories)(
+    "applique une seule grosse gaffe $profile après la réaction",
+    async ({ profile, create, firstAimRandomCalls }) => {
+      const terrain = flatTerrain(800, 480);
+      const baselineSelf = makeShooter(profile);
+      const baselineTarget = makeTarget("target", 500);
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+      const baseline = await create().executeTurn(
+        "self-tank",
+        makeGameState(baselineSelf, baselineTarget, profile),
+        terrain,
+      );
+
+      vi.restoreAllMocks();
+      const self = makeShooter(profile);
+      self.tank.hitReaction = { wasDirectHit: true, fallDistance: 0 };
+      const target = makeTarget("target", 500);
+      const remainingValues = [
+        ...Array.from({ length: firstAimRandomCalls }, () => 0.99),
+        0.99,
+        0.99,
+        0,
+        0,
+        0,
+      ];
+      const randomSpy = vi
+        .spyOn(random, "secureRandom")
+        .mockImplementation(() => remainingValues.shift() ?? 0.99);
+      const shot = await create().executeTurn(
+        "self-tank",
+        makeGameState(self, target, profile),
+        terrain,
+      );
+
+      const gaffe = ADVANCED_GAFFES[profile];
+      const directIntensity =
+        profile === "v2-heuristic"
+          ? 0.22
+          : profile === "v3-sniper"
+            ? 0.15
+            : 0.1;
+      const expected = finalizeAdvancedAim({
+        angle:
+          baseline.angle +
+          directIntensity * gaffe.angleAmplitude -
+          gaffe.angleAmplitude,
+        power:
+          baseline.power +
+          directIntensity * gaffe.powerAmplitude -
+          gaffe.powerAmplitude,
+      });
+      expect(shot.angle).toBeCloseTo(expected.angle, 1);
+      expect(Math.abs(shot.power - expected.power)).toBeLessThanOrEqual(1);
+      expect(shot.power).toBeLessThan(baseline.power);
+      expect(randomSpy).toHaveBeenCalledTimes(firstAimRandomCalls + 5);
+      expect(self.tank.hitReaction).toEqual({
+        wasDirectHit: false,
+        fallDistance: 0,
+      });
+    },
+  );
+
+  it("SIMPLE vise l'adversaire lors d'un tir normal sans corruption", async () => {
+    const terrain = flatTerrain(800, 480);
+    const rightStrategy = new AISimpleStrategy();
+    const rightSelf = makeShooter("v1-random");
+    const rightTarget = makeTarget("right", 500);
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const rightShot = await rightStrategy.executeTurn(
+      "self-tank",
+      {
+        ...makeGameState(rightSelf, rightTarget, "v1-random"),
+        roundNumber: 11,
+      },
+      terrain,
+    );
+
+    vi.restoreAllMocks();
+    const leftStrategy = new AISimpleStrategy();
+    const leftSelf = makeShooter("v1-random");
+    leftSelf.tank.position.x = 720;
+    const leftTarget = makeTarget("left", 300);
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const leftShot = await leftStrategy.executeTurn(
+      "self-tank",
+      {
+        ...makeGameState(leftSelf, leftTarget, "v1-random"),
+        roundNumber: 11,
+      },
+      terrain,
+    );
+
+    expect(rightShot.angle).toBeLessThan(90);
+    expect(leftShot.angle).toBeGreaterThan(90);
+  });
+
+  it.each([
+    {
+      name: "sans remplacement",
+      randomValues: [0.99, 0.99, 0.99, 0.99, 0.99, 0.5, 0.99, 0.99],
+      beforeReaction: (baseline: { angle: number; power: number }) => baseline,
+    },
+    {
+      name: "avec direction seule",
+      randomValues: [0.99, 0.99, 0.99, 0, 0.5, 0.99, 0.5, 0.99, 0.99],
+      beforeReaction: (baseline: { angle: number; power: number }) => ({
+        angle: 90,
+        power: baseline.power,
+      }),
+    },
+    {
+      name: "avec puissance seule",
+      randomValues: [0.99, 0.99, 0.99, 0.99, 0, 0.5, 0.5, 0.99, 0.99],
+      beforeReaction: (baseline: { angle: number; power: number }) => ({
+        angle: baseline.angle,
+        power: 50,
+      }),
+    },
+    {
+      name: "avec direction et puissance",
+      randomValues: [0.99, 0.99, 0.99, 0, 0.5, 0, 0.5, 0.5, 0.99, 0.99],
+      beforeReaction: () => ({ angle: 90, power: 50 }),
+    },
+  ])(
+    "SIMPLE interpole $name avant de consommer sa réaction",
+    async ({ randomValues, beforeReaction }) => {
+      const terrain = flatTerrain(800, 480);
+      const baselineTarget = makeTarget("target", 500);
+      const baselineSelf = makeShooter("v1-random");
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+      const baseline = await new AISimpleStrategy().executeTurn(
+        "self-tank",
+        {
+          ...makeGameState(baselineSelf, baselineTarget, "v1-random"),
+          roundNumber: 5,
+        },
+        terrain,
+      );
+
+      vi.restoreAllMocks();
+      const self = makeShooter("v1-random");
+      self.tank.hitReaction = { wasDirectHit: true, fallDistance: 0 };
+      const target = makeTarget("target", 500);
+      const remainingValues = [...randomValues];
+      vi.spyOn(random, "secureRandom").mockImplementation(
+        () => remainingValues.shift() ?? 0.99,
+      );
+      const shot = await new AISimpleStrategy().executeTurn(
+        "self-tank",
+        {
+          ...makeGameState(self, target, "v1-random"),
+          roundNumber: 5,
+        },
+        terrain,
+      );
+
+      expect(shot).toMatchObject(
+        finalizeSimpleAim(
+          interpolateAimCommands(
+            beforeReaction(baseline),
+            { angle: 90, power: 99 },
+            0.28,
+          ),
+        ),
+      );
+      expect(self.tank.hitReaction).toEqual({
+        wasDirectHit: false,
+        fallDistance: 0,
+      });
+    },
+  );
+
+  it("SIMPLE consomme sa réaction même lorsqu'une grosse gaffe court-circuite le solveur", async () => {
+    const terrain = flatTerrain(800, 480);
+    const self = makeShooter("v1-random");
+    self.tank.hitReaction = { wasDirectHit: true, fallDistance: 120 };
+    const remainingValues = [0, 0.5, 0.99, 0.99];
+    vi.spyOn(random, "secureRandom").mockImplementation(
+      () => remainingValues.shift() ?? 0.99,
+    );
+
+    const shot = await new AISimpleStrategy().executeTurn(
+      "self-tank",
+      {
+        ...makeGameState(self, makeTarget("target", 500), "v1-random"),
+        roundNumber: 5,
+      },
+      terrain,
+    );
+
+    expect(shot).toMatchObject({ angle: 90, power: 99 });
     expect(self.tank.hitReaction).toEqual({
       wasDirectHit: false,
       fallDistance: 0,
