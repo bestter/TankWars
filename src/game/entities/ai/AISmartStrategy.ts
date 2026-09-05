@@ -1,59 +1,38 @@
 import { secureRandom } from "../../../utils/random";
-/**
- * TankWars - AISmartStrategy (v4 "Expert/Smart" AI)
- *
- * A highly capable AI strategy:
- * - Uses fine-grained angle search (1.5° steps) and 10 binary search power iterations.
- * - Simulates weapon-specific physics: bounces for GRENADE, apex-splits for CLUSTER.
- * - Self-preservation: Discards any shot parameters that would result in landing
- *   within the weapon's blast radius + 20px of its own tank.
- * - Adaptive precision: first shot always ≥ FIRST_SHOT_FLOOR_PX; lock from
- *   SHOTS_TO_HIT["v4-smart"] (3).
- * - Tactical weapon selection: Uses nukes for long distance, grenades/clusters for hills or close range.
- */
-
-import type { AIEngine } from "./AIEngine";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
-import type { TerrainManager } from "../../engine/Terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
-import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
-import { shouldPickBulldozer } from "./bulldozerTactics";
+import type { TerrainManager } from "../../engine/Terrain";
+import type { AIEngine } from "./AIEngine";
+import {
+  ADVANCED_GAFFES,
+  applySignedCorruption,
+  finalizeAdvancedAim,
+  type AimCommand,
+} from "./aimCorruption";
+import {
+  type AimMemory,
+  recordAimAttempt,
+  resetAimMemoryForRound,
+} from "./aimMemory";
 import { searchBallisticSolution } from "./BallisticsSimulator";
-import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
-import { roundSkill } from "./roundSkill";
-import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
+import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
+import { shouldPickBulldozer } from "./bulldozerTactics";
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
-interface SmartMemory {
-  currentTargetId?: string;
-  targetAttempts: Record<string, number>;
-  lastKnownHealth: Record<string, number>;
-  lastSelfHealth?: number;
-  lastPowerBias: number;
-}
+type SmartMemory = AimMemory;
 
 export class AISmartStrategy implements AIEngine {
   private memories = new Map<string, SmartMemory>();
 
   private getMem(playerId: string): SmartMemory {
-    if (!this.memories.has(playerId)) {
-      this.memories.set(playerId, {
-        targetAttempts: {},
-        lastKnownHealth: {},
-        lastPowerBias: 0,
-      });
-    }
-    return this.memories.get(playerId)!;
-  }
+    const existing = this.memories.get(playerId);
+    if (existing) return existing;
 
-  private resetForNewRound(mem: SmartMemory): void {
-    mem.currentTargetId = undefined;
-    mem.targetAttempts = {};
-    // clear without reallocation to avoid GC overhead
-    for (const key in mem.lastKnownHealth) {
-      mem.lastKnownHealth[key] = 0;
-    }
-    mem.lastPowerBias = 0;
+    const memory: SmartMemory = { currentTargetAttempts: 0 };
+    this.memories.set(playerId, memory);
+    return memory;
   }
 
   async executeTurn(
@@ -61,273 +40,193 @@ export class AISmartStrategy implements AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
-    const self = gameState.players.find((p) => p.tank.id === tankId);
+    const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const skill = roundSkill(gameState.roundNumber);
+    const memory = this.getMem(self.id);
+    resetAimMemoryForRound(memory, gameState.roundNumber);
 
-    const mem = this.getMem(self.id);
-
-    // Detect round respawn (health reset to full) and clear per-round memory
-    if (
-      mem.lastSelfHealth != null &&
-      self.tank.health > mem.lastSelfHealth + 5
-    ) {
-      this.resetForNewRound(mem);
-    }
-    mem.lastSelfHealth = self.tank.health;
-
-    // Target selection:
-    let target: Player | undefined;
-    let hasEnemies = false;
-
-    // Single pass tracking for different priorities
     let finishOffAi: Player | undefined;
     let finishOffHuman: Player | undefined;
     let currentTarget: Player | undefined;
-
     let bestFallbackTarget: Player | undefined;
     let bestFallbackIsAi = false;
 
-    for (let i = 0; i < gameState.players.length; i++) {
-      const p = gameState.players[i];
-      if (p.id !== self.id && !p.tank.isDead) {
-        hasEnemies = true;
-        const pIsAi = !p.isHuman;
-        const healthTotal = p.tank.health + p.tank.shield;
+    for (const player of gameState.players) {
+      if (player.id === self.id || player.tank.isDead) continue;
 
-        // 1. Close to death targets
-        if (healthTotal <= 30) {
-          if (pIsAi && !finishOffAi) finishOffAi = p;
-          else if (!pIsAi && !finishOffHuman) finishOffHuman = p;
-        }
-
-        // 2. Current target tracking
-        if (mem.currentTargetId === p.id) {
-          currentTarget = p;
-        }
-
-        // 3. General fallback (weakest AI, then weakest human)
-        if (!bestFallbackTarget) {
-          bestFallbackTarget = p;
-          bestFallbackIsAi = pIsAi;
-        } else {
-          if (pIsAi && !bestFallbackIsAi) {
-            bestFallbackTarget = p;
-            bestFallbackIsAi = pIsAi;
-          } else if (pIsAi === bestFallbackIsAi) {
-            if (p.tank.health < bestFallbackTarget.tank.health) {
-              bestFallbackTarget = p;
-            }
-          }
-        }
+      const isAi = !player.isHuman;
+      const healthTotal = player.tank.health + player.tank.shield;
+      if (healthTotal <= 30) {
+        if (isAi && !finishOffAi) finishOffAi = player;
+        if (!isAi && !finishOffHuman) finishOffHuman = player;
       }
-    }
+      if (memory.currentTargetId === player.id) {
+        currentTarget = player;
+      }
 
-    if (!hasEnemies) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      if (!bestFallbackTarget) {
+        bestFallbackTarget = player;
+        bestFallbackIsAi = isAi;
+      } else if (isAi && !bestFallbackIsAi) {
+        bestFallbackTarget = player;
+        bestFallbackIsAi = true;
+      } else if (
+        isAi === bestFallbackIsAi &&
+        player.tank.health < bestFallbackTarget.tank.health
+      ) {
+        bestFallbackTarget = player;
+      }
     }
 
     const livingAiEnemies = gameState.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead && !p.isHuman,
+      (player) => player.id !== self.id && !player.tank.isDead && !player.isHuman,
     );
-
-    if (mem.currentTargetId) {
-      const prev = gameState.players.find((p) => p.id === mem.currentTargetId);
-      if (prev && !prev.tank.isDead) {
-        const prevHealth = mem.lastKnownHealth[prev.id];
-        if (prevHealth != null && prev.tank.health >= prevHealth - 0.1) {
-          const sign = secureRandom() < 0.5 ? -1 : 1;
-          mem.lastPowerBias += sign * (2 + secureRandom() * 2);
-        }
-      }
-    }
-
-    // Finish a wounded AI first. A wounded human is only finished when no AI remains.
+    let target: Player | undefined;
     if (finishOffAi) {
       target = finishOffAi;
-    } else if (currentTarget && !(currentTarget.isHuman && livingAiEnemies.length > 0)) {
+    } else if (
+      currentTarget &&
+      !(currentTarget.isHuman && livingAiEnemies.length > 0)
+    ) {
       target = currentTarget;
     } else if (finishOffHuman && livingAiEnemies.length === 0) {
       target = finishOffHuman;
     } else {
       target = bestFallbackTarget;
     }
-
-    const otherAi = livingAiEnemies.filter((e) => e.id !== target!.id);
-    if (otherAi.length > 0 && scaledGaffe(0.06, skill)) {
-      const tx = target!.tank.position.x;
-      target = otherAi.toSorted(
-        (a, b) =>
-          Math.abs(a.tank.position.x - tx) - Math.abs(b.tank.position.x - tx),
-      )[0];
+    if (!target) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const isNewTarget = target!.id !== mem.currentTargetId;
-    mem.currentTargetId = target!.id;
-    if (isNewTarget && import.meta.env.DEV) {
-      console.log(
-        `[AI TARGET] ${self.name} (Smart V4) selected NEW target: ${target!.name}`,
-      );
-    }
-
-    const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
-    mem.targetAttempts[target!.id] = attempts;
-
-    // we can just overwrite keys for current players, no need to delete or clear old keys
-    // since we only lookup by current enemy IDs anyway.
-    for (const p of gameState.players) {
-      if (p.id !== self.id && !p.tank.isDead) {
-        mem.lastKnownHealth[p.id] = p.tank.health;
-      }
-    }
-
-    // Weapon selection
-    let chosenWeapon = this.chooseTacticalWeapon(
+    const attempts = recordAimAttempt(memory, target.id);
+    let weaponId = this.chooseTacticalWeapon(
       self,
-      target!,
+      target,
       terrainManager,
       gameState,
     );
-    chosenWeapon = adjustWeaponForMaterial(
-      chosenWeapon,
-      terrainManager.getMaterialAt(target!.tank.position.x),
-      (id) => (self.inventory?.[id] ?? 0) > 0,
+    weaponId = adjustWeaponForMaterial(
+      weaponId,
+      terrainManager.getMaterialAt(target.tank.position.x),
+      (id) => (self.inventory[id] ?? 0) > 0,
     );
-    const inv = self.inventory || {};
-    const hasGrenade = (inv.GRENADE ?? 0) > 0;
-    const hasCluster = (inv.CLUSTER ?? 0) > 0;
-    if (
-      chosenWeapon !== "GRENADE" &&
-      chosenWeapon !== "CLUSTER" &&
-      (hasGrenade || hasCluster) &&
-      scaledGaffe(0.07, skill)
-    ) {
-      chosenWeapon = hasGrenade ? "GRENADE" : "CLUSTER";
-    }
-    self.tank.currentWeapon = chosenWeapon; // Sync live snap for HUD display
-    const penalty = getHitReactionPenalty(
-      self.aiProfile ?? "v4-smart",
-      self.tank.hitReaction,
-    );
+    self.tank.currentWeapon = weaponId;
 
-    // Compute the shot
-    const { angle, power } = this.computeSmartShot(
+    const aimX =
+      target.tank.position.x +
+      signedImpactOffset(attempts, "v4-smart", gameState.roundNumber);
+    let command = this.computeSmartShot(
       self,
-      target!,
+      aimX,
+      target.tank.position.y - 6,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
-      attempts,
-      chosenWeapon,
-      mem,
-      skill,
-      penalty,
+      weaponId,
     );
 
-    advanceHitReaction(self.tank.hitReaction);
+    const gaffe = ADVANCED_GAFFES["v4-smart"];
+    const reactionIntensity = getHitReactionIntensity(
+      self.aiProfile ?? "v4-smart",
+      self.tank.hitReaction,
+    );
+    if (reactionIntensity > 0) {
+      command = applySignedCorruption(
+        command,
+        reactionIntensity * gaffe.angleAmplitude,
+        reactionIntensity * gaffe.powerAmplitude,
+      );
+    }
+    if (maybeGaffe(gaffe.chance)) {
+      command = applySignedCorruption(
+        command,
+        gaffe.angleAmplitude,
+        gaffe.powerAmplitude,
+      );
+    }
 
-    return {
-      angle: Math.round(angle * 10) / 10,
-      power: Math.round(power),
-      weaponId: chosenWeapon,
-    };
+    consumeHitReaction(self.tank.hitReaction);
+    return { ...finalizeAdvancedAim(command), weaponId };
   }
 
   private chooseTacticalWeapon(
     self: Player,
     target: Player,
     terrain: TerrainManager,
-    gs: GameState,
+    gameState: GameState,
   ): WeaponId {
-    const inv = self.inventory || {};
-    const has = (id: WeaponId) => (inv[id] ?? 0) > 0;
-
+    const has = (id: WeaponId) => (self.inventory[id] ?? 0) > 0;
     const sx = self.tank.position.x;
     const tx = target.tank.position.x;
-    const dist = Math.abs(tx - sx);
-
-    // Check if there is a massive hill block between us
-    let maxTerrainHeight = 0;
+    const distance = Math.abs(tx - sx);
     const startX = Math.min(sx, tx);
     const endX = Math.max(sx, tx);
     const step = (endX - startX) / 10;
-    for (let i = 1; i < 10; i++) {
-      const h = terrain.getHeightAt(startX + i * step);
-      maxTerrainHeight = Math.max(maxTerrainHeight, terrain.height - h);
+    let maximumTerrainHeight = 0;
+    for (let index = 1; index < 10; index += 1) {
+      const height = terrain.getHeightAt(startX + index * step);
+      maximumTerrainHeight = Math.max(maximumTerrainHeight, terrain.height - height);
     }
     const selfHeight = terrain.height - self.tank.position.y;
     const targetHeight = terrain.height - target.tank.position.y;
-    const isHidden = maxTerrainHeight > Math.max(selfHeight, targetHeight) + 35;
-
+    const isHidden =
+      maximumTerrainHeight > Math.max(selfHeight, targetHeight) + 35;
     const targetHealthTotal = target.tank.health + target.tank.shield;
 
-    // 1. Thermonuclear - only if target is far enough away to not kill ourselves,
-    // target has significant health, and passes a probability check (30%)
-    if (dist > 220 && has("THERMONUCLEAR") && targetHealthTotal >= 50 && secureRandom() < 0.22) {
+    if (
+      distance > 220 &&
+      has("THERMONUCLEAR") &&
+      targetHealthTotal >= 50 &&
+      secureRandom() < 0.22
+    ) {
       return "THERMONUCLEAR";
     }
-
-    // 2. Baby Nuke for long range - only if target has enough health and passes a probability check
-    if (dist > 180 && has("NUKE") && targetHealthTotal >= 40 && secureRandom() < 0.28) {
+    if (
+      distance > 180 &&
+      has("NUKE") &&
+      targetHealthTotal >= 40 &&
+      secureRandom() < 0.28
+    ) {
       return "NUKE";
     }
-
-    // 3. Grenade if target is hidden behind a hill (to bounce over/down the hill)
     if (isHidden && has("GRENADE")) return "GRENADE";
 
-    // 4. Cluster if target has neighbors nearby (clustered targets)
-    const neighbors = gs.players.filter(
-      (p) =>
-        p.id !== self.id &&
-        !p.tank.isDead &&
-        Math.abs(p.tank.position.x - tx) < 80,
+    const neighbors = gameState.players.filter(
+      (player) =>
+        player.id !== self.id &&
+        !player.tank.isDead &&
+        Math.abs(player.tank.position.x - tx) < 80,
     ).length;
     if (neighbors >= 2 && has("CLUSTER")) return "CLUSTER";
-
-    // 5. Driller for hidden targets under high slopes
     if (isHidden && has("DRILLER")) return "DRILLER";
-
     if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
-
-    // Default
     return "MISSILE";
   }
 
   private computeSmartShot(
     self: Player,
-    target: Player,
+    targetX: number,
+    targetY: number,
     wind: number,
     gravity: number,
     terrain: TerrainManager,
-    attempts: number,
     weaponId: WeaponId,
-    mem: SmartMemory,
-    skill: number,
-    penalty = 0,
-  ): { angle: number; power: number } {
+  ): AimCommand {
     const sx = self.tank.position.x;
     const sy = self.tank.position.y;
-    const tx =
-      target.tank.position.x +
-      signedImpactOffset(attempts, "v4-smart", undefined, skill, penalty);
-    const ty = target.tank.position.y - 6;
-    const dx = tx - sx;
-    const isRight = dx > 0;
-
+    const isRight = targetX - sx > 0;
     const aMin = isRight ? 15 : 95;
     const aMax = isRight ? 85 : 165;
-
-    const weapon = WEAPON_REGISTRY[weaponId];
-    const blastRadius = weapon?.blastRadius ?? 28;
+    const blastRadius = WEAPON_REGISTRY[weaponId]?.blastRadius ?? 28;
 
     const best = searchBallisticSolution({
       sx,
       sy,
-      tx,
-      ty,
+      tx: targetX,
+      ty: targetY,
       wind,
       gravity,
       terrain,
@@ -344,28 +243,20 @@ export class AISmartStrategy implements AIEngine {
       obstaclePenaltyLow: 20,
       weaponId,
       earlyExitError: 4,
-      selfHarmPenalty: (landX, landY) => {
-        const selfDist = Math.hypot(landX - sx, landY - sy);
-        return selfDist < blastRadius + 25 ? 50000 : 0;
-      },
+      selfHarmPenalty: (landX, landY) =>
+        Math.hypot(landX - sx, landY - sy) < blastRadius + 25 ? 50000 : 0,
     });
 
-    let angle = best.angle;
-    let power = best.power + mem.lastPowerBias;
-
-    // Safe bounds
-    angle = Math.max(6, Math.min(174, angle));
-    power = Math.max(25, Math.min(95, power));
-
-    return { angle, power };
+    return {
+      angle: Math.max(6, Math.min(174, best.angle)),
+      power: Math.max(25, Math.min(95, best.power)),
+    };
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 45 + secureRandom() * 90;
-    const power = 60 + secureRandom() * 20;
     return {
-      angle: Math.round(angle),
-      power: Math.round(power),
+      angle: Math.round(45 + secureRandom() * 90),
+      power: Math.round(60 + secureRandom() * 20),
     };
   }
 }

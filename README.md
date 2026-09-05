@@ -33,13 +33,13 @@
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Zeus Lightning Anti-Deadlock** — If only two or more AIs remain and five full rotations produce no paid hit (`hasEarnings`), one eligible AI is appointed Zeus and immediately takes the next turn. Zeus then vaporizes one opponent per turn, preferring its last living direct attacker, until the round ends or Zeus dies. `ZEUS_LIGHTNING` is an internal special action: players cannot select, buy, fire, or teach it to an AI strategy.
 - **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
-  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — deliberately naive, no `fallibleAim`. Early rounds: alcoholic shots (random 0°–180°, including self); sobers via `roundSkill`.
-  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
-  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
-  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it).
+  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — curve by round/target, sticks to a live target, prioritizes the weakest AI, and does not use revenge or weapon tactics. Locks on shot 7.
+  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. Locks on shot 5.
+  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. Locks on shot 3; its only deliberate overcorrection is shot 2.
+  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. Locks on shot 2.
+  All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Only OK and EXPERT use `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
   AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
-  **Post-hit & fall learning curves (`hitReaction.ts`):** Direct projectile hit causes a 50% accuracy penalty on the next shot; falling causes a 1–25% penalty based on fall distance (0–120 px); both are cumulative on shot 1. On shot 2 (if not hit again), Sniper recovers immediately (0%), Expert has 12% penalty, OK and Simple have 25% penalty; shot 3 is fully normalized. Wired in MainMenu + GameCanvas.
+  **Post-hit & fall reaction (`hitReaction.ts`):** Direct hits and cumulative fall distance are retained for one next riposte, then consumed. Reaction intensity varies by profile and never introduces RNG when it is zero. Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (absorbs via `Math.ceil(shield / 2)`; normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: dark cyan shield bar (`VGA_PALETTE.DARK_CYAN`) above tank while shield > 0; if health is also reduced, a green health bar appears below the dark cyan shield bar; when shield is depleted, only the health bar (green, red if $\le 40\%$) is shown.
@@ -96,7 +96,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (773 unit and integration tests across 74 files)
+# Run tests (802 unit and integration tests across 77 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -142,7 +142,7 @@ This project follows a strict separation of concerns:
   - `v2-heuristic` → `AIHeuristicStrategy` ("IA OK")
   - `v3-sniper` → `AISniperStrategy` ("IA SNIPER")
   - `v4-smart` → `AISmartStrategy` ("IA EXPERT")
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (per-attempt lock + per-round warmup) and `terrainMaterialTactics.ts`. Swap implementations without touching the core engine.
+  All four profiles share `fallibleAim.ts`, target/round memory, corruption helpers, and the shared ballistic solver. Weapon tactics remain specific to OK, SNIPER, and EXPERT. Swap implementations without touching the core engine.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -165,14 +165,14 @@ In the build today:
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
 - Destructible heightmap, DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
-- Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` + `terrainMaterialTactics` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
+- Four AI profiles use `fallibleAim` plus target/round memory (first shot remains outside direct aim; locks Simple/OK/Sniper/Expert at 7/5/3/2); SIMPLE avoids revenge/material/BULLDOZER tactics and SNIPER has no post-lock slip; shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **773 unit and integration tests** across **74 files** (Vitest)
+- **802 unit and integration tests** across **77 files** (Vitest)
 
 Still planned:
 
@@ -214,7 +214,7 @@ To explore the codebase:
 - Main game view + engine integration: `src/components/GameCanvas.tsx` + `useGameSession.ts`
 - Core simulation: `src/game/engine/GameEngine.ts` (indicator, recoil trigger, celebration, audio)
 - Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`) + `src/types/terrain.ts` (materials, spawn, grenade bounce)
-- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `roundSkill.ts` + `terrainMaterialTactics.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
+- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `aimMemory.ts` + `aimCorruption.ts` + `heuristicShot.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tanks: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectiles: `src/game/engine/PhysicsEngine.ts`
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
@@ -226,3 +226,9 @@ To explore the codebase:
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!
+
+### Chargement et couverture IA (#212)
+
+Le solveur partagé synchrone `heuristicShot` et `BallisticsSimulator` restent chargés à la demande : SIMPLE importe le solveur au premier tir normal, après le court-circuit de grosse gaffe; OK, SNIPER et EXPERT demeurent des stratégies chargées à la demande. Tous les achats IA passent exclusivement par `autoBuyForAI` (#207), sans méthode boutique dans les stratégies de combat.
+
+Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, aucun appel au solveur ni aux décisions de remplacement pour SIMPLE), ainsi que le vrai solveur sur terrain plat à gauche/droite, ses bornes et la conservation des fractions avant l’arrondi final.

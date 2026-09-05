@@ -1,158 +1,162 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  impactOffsetMagnitude,
-  signedImpactOffset,
-  maybeGaffe,
-  scaledGaffe,
-  sniperImpactMagnitude,
   FIRST_SHOT_FLOOR_PX,
-  EARLY_LOCK_LEFTOVER_PX,
+  SHOTS_TO_HIT,
+  getAimParameters,
+  impactOffsetMagnitude,
+  maybeGaffe,
+  signedImpactOffset,
 } from "../fallibleAim";
 import * as random from "../../../../utils/random";
+
+const profiles = [
+  "v1-random",
+  "v2-heuristic",
+  "v3-sniper",
+  "v4-smart",
+] as const;
+
+const anchors = {
+  "v1-random": [
+    [1, 74, 84, 48],
+    [5, 69, 74, 30],
+    [12, 59, 69, 21],
+  ],
+  "v2-heuristic": [
+    [1, 62, 72, 36],
+    [5, 57, 62, 18],
+    [12, 47, 57, 9],
+  ],
+  "v3-sniper": [
+    [1, 57, 62, 18],
+    [5, 47, 57, 10],
+    [12, 39, 47, 4],
+  ],
+  "v4-smart": [
+    [1, 45, 57, 12],
+    [5, 38, 45, 6],
+    [12, 36, 38, 0],
+  ],
+} as const;
 
 describe("fallibleAim", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("maybeGaffe is true only when RNG is below the chance", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.09);
+  it("expose les seuils de lock de #212", () => {
+    expect(SHOTS_TO_HIT).toEqual({
+      "v1-random": 7,
+      "v2-heuristic": 5,
+      "v3-sniper": 3,
+      "v4-smart": 2,
+    });
+  });
+
+  it.each(profiles)("retourne les trois ancrages de %s", (profile) => {
+    for (const [round, min, max, residual] of anchors[profile]) {
+      expect(getAimParameters(profile, round)).toEqual({
+        firstBand: { min, max },
+        residual,
+      });
+    }
+  });
+
+  it("interpole séparément les bornes et le résidu à M3 et M8", () => {
+    expect(getAimParameters("v2-heuristic", 3)).toEqual({
+      firstBand: { min: 59.5, max: 67 },
+      residual: 27,
+    });
+    expect(getAimParameters("v3-sniper", 8)).toEqual({
+      firstBand: {
+        min: 43.57142857142857,
+        max: 52.714285714285715,
+      },
+      residual: 7.428571428571429,
+    });
+  });
+
+  it("plafonne M12+ et normalise les manches invalides vers M1", () => {
+    expect(getAimParameters("v4-smart", 12)).toEqual(
+      getAimParameters("v4-smart", 13),
+    );
+    expect(getAimParameters("v4-smart", 99)).toEqual(
+      getAimParameters("v4-smart", 12),
+    );
+    for (const round of [undefined, Number.NaN, 0, -2]) {
+      expect(getAimParameters("v2-heuristic", round)).toEqual(
+        getAimParameters("v2-heuristic", 1),
+      );
+    }
+  });
+
+  it("utilise exactement la bande au premier tir et le résidu au seuil", () => {
+    const randomSpy = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    expect(impactOffsetMagnitude(1, "v2-heuristic", 1)).toBe(62);
+    expect(impactOffsetMagnitude(1, "v4-smart", 12)).toBe(
+      FIRST_SHOT_FLOOR_PX,
+    );
+
+    randomSpy.mockClear();
+    expect(impactOffsetMagnitude(5, "v2-heuristic", 1)).toBe(36);
+    expect(randomSpy).not.toHaveBeenCalled();
+    expect(impactOffsetMagnitude(8, "v2-heuristic", 12)).toBe(9);
+    expect(randomSpy).not.toHaveBeenCalled();
+  });
+
+  it("interpole les tentatives pré-lock et la fraction EXPERT", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    expect(impactOffsetMagnitude(1.5, "v4-smart", 1)).toBe(28.5);
+    expect(impactOffsetMagnitude(2, "v3-sniper", 1)).toBe(37.5);
+    expect(impactOffsetMagnitude(3, "v2-heuristic", 1)).toBe(49);
+    expect(impactOffsetMagnitude(4, "v1-random", 1)).toBe(61);
+  });
+
+  it("conserve la hiérarchie d'offset à quantile identique", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    for (const round of [1, 3, 5, 8, 12, 13]) {
+      const firstShots = [
+        impactOffsetMagnitude(1, "v4-smart", round),
+        impactOffsetMagnitude(1, "v3-sniper", round),
+        impactOffsetMagnitude(1, "v2-heuristic", round),
+        impactOffsetMagnitude(1, "v1-random", round),
+      ];
+      expect(firstShots[0]).toBeLessThan(firstShots[1]);
+      expect(firstShots[1]).toBeLessThan(firstShots[2]);
+      expect(firstShots[2]).toBeLessThan(firstShots[3]);
+
+      const locks = [
+        impactOffsetMagnitude(SHOTS_TO_HIT["v4-smart"], "v4-smart", round),
+        impactOffsetMagnitude(SHOTS_TO_HIT["v3-sniper"], "v3-sniper", round),
+        impactOffsetMagnitude(
+          SHOTS_TO_HIT["v2-heuristic"],
+          "v2-heuristic",
+          round,
+        ),
+        impactOffsetMagnitude(SHOTS_TO_HIT["v1-random"], "v1-random", round),
+      ];
+      expect(locks[0]).toBeLessThan(locks[1]);
+      expect(locks[1]).toBeLessThan(locks[2]);
+      expect(locks[2]).toBeLessThan(locks[3]);
+    }
+  });
+
+  it("ne tire pas le côté quand un signe explicite est fourni", () => {
+    const randomSpy = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    expect(signedImpactOffset(1, "v3-sniper", 1, -1)).toBe(-57);
+    expect(randomSpy).toHaveBeenCalledTimes(1);
+
+    randomSpy.mockClear();
+    randomSpy.mockReturnValueOnce(0).mockReturnValueOnce(0.5);
+    expect(signedImpactOffset(1, "v3-sniper", 1)).toBe(57);
+    expect(randomSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("garde le jet de grosse gaffe strictement sous son seuil", () => {
+    const randomSpy = vi.spyOn(random, "secureRandom");
+    randomSpy.mockReturnValueOnce(0.09);
     expect(maybeGaffe(0.1)).toBe(true);
-    spy.mockReturnValueOnce(0.1);
+    randomSpy.mockReturnValueOnce(0.1);
     expect(maybeGaffe(0.1)).toBe(false);
-  });
-
-  it("scaledGaffe multiplies chance by miss scale", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.3);
-    expect(scaledGaffe(0.25, 0.15)).toBe(true);
-    spy.mockReturnValueOnce(0.3);
-    expect(scaledGaffe(0.25, 1)).toBe(false);
-  });
-
-  it("first shot never drops below the splash-safe floor", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(1, "v4-smart", 1.35)).toBeGreaterThanOrEqual(
-      FIRST_SHOT_FLOOR_PX,
-    );
-    expect(impactOffsetMagnitude(1, "v2-heuristic", 1)).toBeGreaterThanOrEqual(
-      FIRST_SHOT_FLOOR_PX,
-    );
-  });
-
-  it("OK locks on shot 5 at spec and can miss that shot while warming up", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(5, "v2-heuristic", 1)).toBe(0);
-    expect(impactOffsetMagnitude(5, "v2-heuristic", 0.15)).toBeCloseTo(
-      0.85 * EARLY_LOCK_LEFTOVER_PX,
-    );
-  });
-
-  it("Sniper locks on shot 4 and Expert on shot 3 at spec", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(4, "v3-sniper", 1)).toBe(0);
-    expect(impactOffsetMagnitude(3, "v4-smart", 1)).toBe(0);
-    expect(impactOffsetMagnitude(2, "v4-smart", 1)).toBeGreaterThan(0);
-    expect(impactOffsetMagnitude(4, "v2-heuristic", 1)).toBeGreaterThan(0);
-  });
-
-  it("each miss shot is tighter than the previous at spec", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    const a = impactOffsetMagnitude(1, "v2-heuristic", 1);
-    const b = impactOffsetMagnitude(2, "v2-heuristic", 1);
-    const c = impactOffsetMagnitude(3, "v2-heuristic", 1);
-    const d = impactOffsetMagnitude(4, "v2-heuristic", 1);
-    expect(a).toBeGreaterThan(b);
-    expect(b).toBeGreaterThan(c);
-    expect(c).toBeGreaterThan(d);
-  });
-
-  it("heuristic first-shot magnitude stays in the wide miss band", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(1, "v2-heuristic")).toBe(52);
-    vi.spyOn(random, "secureRandom").mockReturnValue(0.999);
-    expect(impactOffsetMagnitude(1, "v2-heuristic")).toBeCloseTo(78, 0);
-  });
-
-  it("sniper first-shot magnitude is a safe miss, later shots tighten", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(1, "v3-sniper")).toBe(48);
-    expect(impactOffsetMagnitude(2, "v3-sniper")).toBeGreaterThan(
-      impactOffsetMagnitude(3, "v3-sniper"),
-    );
-    expect(impactOffsetMagnitude(4, "v3-sniper")).toBe(0);
-    expect(impactOffsetMagnitude(9, "v3-sniper")).toBe(0);
-  });
-
-  it("expert first shot is fallible and locks from shot 3", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(impactOffsetMagnitude(1, "v4-smart")).toBe(42);
-    expect(impactOffsetMagnitude(2, "v4-smart")).toBe(8);
-    expect(impactOffsetMagnitude(3, "v4-smart")).toBe(0);
-    expect(impactOffsetMagnitude(6, "v4-smart")).toBe(0);
-  });
-
-  it("sniper locked shots stay precise unless a mid-round slip fires", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.99);
-    expect(sniperImpactMagnitude(4)).toBe(0);
-    spy.mockReturnValueOnce(0.99);
-    expect(sniperImpactMagnitude(8)).toBe(0);
-  });
-
-  it("sniper mid-round slip on a locked shot misses by 14–28px at spec", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.05);
-    spy.mockReturnValueOnce(0);
-    expect(sniperImpactMagnitude(5)).toBe(14);
-    spy.mockReturnValueOnce(0.05);
-    spy.mockReturnValueOnce(0.999);
-    expect(sniperImpactMagnitude(6)).toBeCloseTo(28, 0);
-  });
-
-  it("sniper early shots do not roll a mid-round slip", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(sniperImpactMagnitude(1)).toBe(48);
-    expect(sniperImpactMagnitude(3)).toBeGreaterThan(0);
-  });
-
-  it("signedImpactOffset uses the provided sign without consuming RNG for direction", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    expect(signedImpactOffset(1, "v3-sniper", -1)).toBe(-48);
-    expect(signedImpactOffset(1, "v3-sniper", 1)).toBe(48);
-  });
-
-  it("signedImpactOffset picks a random sign when none is given", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0);
-    spy.mockReturnValueOnce(0.1);
-    expect(signedImpactOffset(1, "v4-smart")).toBe(-42);
-    spy.mockReturnValueOnce(0);
-    spy.mockReturnValueOnce(0.5);
-    expect(signedImpactOffset(1, "v4-smart")).toBe(42);
-  });
-
-  it("increases miss magnitude when penalty is applied", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    const normal = impactOffsetMagnitude(1, "v4-smart", 1, 0);
-    const penalized = impactOffsetMagnitude(1, "v4-smart", 1, 0.5);
-    expect(penalized).toBeCloseTo(normal * 1.5, 2);
-  });
-
-  it("adds disturbance offset on locked shots when penalty is applied", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0);
-    const lockedNoPenalty = impactOffsetMagnitude(4, "v3-sniper", 1, 0);
-    expect(lockedNoPenalty).toBe(0);
-
-    const lockedWithPenalty = impactOffsetMagnitude(4, "v3-sniper", 1, 0.5);
-    expect(lockedWithPenalty).toBeGreaterThan(0);
-  });
-
-  it("adds disturbance offset to locked sniper when penalty is applied", () => {
-    const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValue(0.99); // no slip
-    expect(sniperImpactMagnitude(4, 1, 0)).toBe(0);
-    expect(sniperImpactMagnitude(4, 1, 0.5)).toBeGreaterThan(0);
   });
 });

@@ -41,22 +41,18 @@ export interface Tank {
   color: Color;
   /** Weapon that will be used on next FireCommand. */
   currentWeapon: WeaponId;
-  /** Reaction to being hit by a projectile and/or falling down (Issue 174). */
+  /** Direct-hit/fall reaction accumulated until the next AI riposte (#212). */
   hitReaction?: TankHitReaction;
 }
+
+/** Maximum useful accumulated fall distance for the next reaction. */
+export const FALL_DISTANCE_MAX_PX = 120;
 
 export interface TankHitReaction {
   /** True when the tank was directly hit by a projectile collision since its last shot. */
   wasDirectHit: boolean;
-  /** Accumulated downward fall distance (in pixels) since its last shot. */
+  /** Accumulated downward fall distance since its last shot, capped at 120 px. */
   fallDistance: number;
-  /**
-   * Recovery shot step after an event:
-   * 0 = normal / fully recovered (no penalty pending)
-   * 1 = next shot is Shot #1 after hit/fall (50% direct hit + 1-25% fall penalty)
-   * 2 = next shot is Shot #2 after hit/fall (profile-specific second-shot penalty)
-   */
-  shotStep: number;
 }
 
 /** Strategy identifier used by AIEngine when !isHuman. */

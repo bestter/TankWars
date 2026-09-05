@@ -6,7 +6,7 @@ import { secureRandom } from "../../utils/random";
  * Gère le spawn, la physique de chute après explosions, les dégâts et le rendu rétro.
  */
 
-import type { Player } from "../../types/player";
+import { FALL_DISTANCE_MAX_PX, type Player } from "../../types/player";
 import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import { BULLDOZER_MAX_CLIMB_SLOPE, type WeaponId } from "../../types/weapon";
@@ -507,10 +507,11 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
-          tank.hitReaction.fallDistance += deltaFall;
-          tank.hitReaction.shotStep = 0;
+          tank.hitReaction.fallDistance = Math.min(
+            FALL_DISTANCE_MAX_PX,
+            tank.hitReaction.fallDistance + deltaFall,
+          );
 
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
@@ -788,10 +789,8 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
           tank.hitReaction.wasDirectHit = true;
-          tank.hitReaction.shotStep = 0;
           if (shooterId && shooterId !== player.id && weaponId !== "BULLDOZER") {
             tank.lastDirectAttackerId = shooterId;
           }
