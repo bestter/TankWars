@@ -20,32 +20,18 @@ import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
-interface HeuristicMemory extends AimMemory {
-  lastKnownHealth: Record<string, number>;
-  roundSuccesses: number;
-  roundFails: number;
-}
-
 export class AIHeuristicStrategy implements AIEngine {
-  private memories = new Map<string, HeuristicMemory>();
+  private memories = new Map<string, AimMemory>();
 
-  private getMem(playerId: string): HeuristicMemory {
+  private getMem(playerId: string): AimMemory {
     const existing = this.memories.get(playerId);
     if (existing) return existing;
 
-    const memory: HeuristicMemory = {
+    const memory: AimMemory = {
       currentTargetAttempts: 0,
-      lastKnownHealth: {},
-      roundSuccesses: 0,
-      roundFails: 0,
     };
     this.memories.set(playerId, memory);
     return memory;
-  }
-
-  private resetRoundDiagnostics(memory: HeuristicMemory): void {
-    memory.roundSuccesses = 0;
-    memory.roundFails = 0;
   }
 
   async executeTurn(
@@ -64,36 +50,13 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     const memory = this.getMem(self.id);
-    if (resetAimMemoryForRound(memory, gameState.roundNumber)) {
-      this.resetRoundDiagnostics(memory);
-    }
+    resetAimMemoryForRound(memory, gameState.roundNumber);
 
     const enemies = gameState.players.filter(
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
-    }
-
-    if (memory.currentTargetId) {
-      const previousTarget = playerById.get(memory.currentTargetId);
-      if (previousTarget) {
-        const wasAlive = (memory.lastKnownHealth[previousTarget.id] ?? 0) > 0;
-        const isDeadNow =
-          previousTarget.tank.isDead || previousTarget.tank.health <= 0;
-        if (wasAlive && isDeadNow) {
-          memory.roundSuccesses += 1;
-        } else if (!isDeadNow) {
-          const previousHealth =
-            memory.lastKnownHealth[previousTarget.id] ??
-            previousTarget.tank.health + 20;
-          if (previousTarget.tank.health < previousHealth - 0.1) {
-            memory.roundSuccesses += 1;
-          } else {
-            memory.roundFails += 1;
-          }
-        }
-      }
     }
 
     let target: Player | undefined;
@@ -134,14 +97,6 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     const attempts = recordAimAttempt(memory, target.id);
-    for (const player of gameState.players) {
-      if (player.id !== self.id) {
-        memory.lastKnownHealth[player.id] = player.tank.isDead
-          ? 0
-          : player.tank.health;
-      }
-    }
-
     let weaponId = this.chooseWeapon(self, target, terrainManager, gameState);
     weaponId = adjustWeaponForMaterial(
       weaponId,

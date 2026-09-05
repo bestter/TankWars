@@ -10,6 +10,9 @@ import {
   interpolateAimCommands,
 } from "../aimCorruption";
 import type { AimMemory } from "../aimMemory";
+import * as fallibleAim from "../fallibleAim";
+import * as aimCorruption from "../aimCorruption";
+import * as heuristicShot from "../heuristicShot";
 import {
   flatTerrain,
   makeGameState,
@@ -157,24 +160,57 @@ describe("contrats de séquence des stratégies IA", () => {
     },
   );
 
-  it.each(strategyFactories)(
-    "compte une grosse gaffe comme la première tentative",
+  it("SIMPLE compte deux gaffes sans solveur ni décisions de remplacement", async () => {
+    const strategy = new AISimpleStrategy();
+    const self = makeShooter("v1-random");
+    const target = makeTarget("target", 500);
+    const decision = vi.spyOn(fallibleAim, "maybeGaffe").mockReturnValue(true);
+    const sample = vi.spyOn(aimCorruption, "sampleSimpleGaffe")
+      .mockReturnValue({ angle: 90, power: 5 });
+    const solver = vi.spyOn(heuristicShot, "computeHeuristicShot");
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      decision.mockClear();
+      sample.mockClear();
+      const shot = await strategy.executeTurn(
+        "self-tank",
+        { ...makeGameState(self, target, "v1-random"), roundNumber: 1 },
+        flatTerrain(800, 480),
+      );
+      expect(decision).toHaveBeenCalledExactlyOnceWith(0.5);
+      expect(sample).toHaveBeenCalledTimes(1);
+      expect(solver).not.toHaveBeenCalled();
+      expect(shot).toEqual({ angle: 90, power: 5, weaponId: "MISSILE" });
+      expect(inspectMemory(strategy, self.id)).toMatchObject({
+        currentTargetId: "target",
+        currentTargetAttempts: attempt,
+      });
+    }
+  });
+
+  it.each(advancedStrategyFactories)(
+    "$profile compte deux gaffes avec une seule décision par tour",
     async ({ profile, create }) => {
       const terrain = flatTerrain(800, 480);
       const strategy = create();
       const self = makeShooter(profile);
       const target = makeTarget("target", 500);
-      vi.spyOn(random, "secureRandom").mockReturnValue(0);
-
-      await strategy.executeTurn(
-        "self-tank",
-        { ...makeGameState(self, target, profile), roundNumber: 1 },
-        terrain,
-      );
-      expect(inspectMemory(strategy, self.id)).toMatchObject({
-        currentTargetId: "target",
-        currentTargetAttempts: 1,
-      });
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+      const decision = vi.spyOn(fallibleAim, "maybeGaffe").mockReturnValue(true);
+      const chance = { "v2-heuristic": 0.10, "v3-sniper": 0.05, "v4-smart": 0.02 }[profile];
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        decision.mockClear();
+        await strategy.executeTurn(
+          "self-tank",
+          { ...makeGameState(self, target, profile), roundNumber: 1 },
+          terrain,
+        );
+        expect(decision).toHaveBeenCalledExactlyOnceWith(chance);
+        expect(inspectMemory(strategy, self.id)).toMatchObject({
+          currentTargetId: "target",
+          currentTargetAttempts: attempt,
+        });
+      }
     },
   );
 

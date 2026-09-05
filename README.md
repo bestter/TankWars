@@ -96,7 +96,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (791 unit and integration tests across 76 files)
+# Run tests (798 unit and integration tests across 77 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -172,7 +172,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **791 unit and integration tests** across **76 files** (Vitest)
+- **798 unit and integration tests** across **77 files** (Vitest)
 
 Still planned:
 
@@ -226,3 +226,9 @@ To explore the codebase:
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!
+
+### Chargement et couverture IA (#212)
+
+Le solveur partagé synchrone `heuristicShot` et `BallisticsSimulator` restent chargés à la demande : SIMPLE importe le solveur au premier tir normal, après le court-circuit de grosse gaffe; OK, SNIPER et EXPERT demeurent des stratégies chargées à la demande. Tous les achats IA passent exclusivement par `autoBuyForAI` (#207), sans méthode boutique dans les stratégies de combat.
+
+Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, aucun appel au solveur ni aux décisions de remplacement pour SIMPLE), ainsi que le vrai solveur sur terrain plat à gauche/droite, ses bornes et la conservation des fractions avant l’arrondi final.

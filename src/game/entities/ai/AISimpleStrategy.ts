@@ -19,7 +19,6 @@ import {
   normalizeAimRound,
   signedImpactOffset,
 } from "./fallibleAim";
-import { computeHeuristicShot } from "./heuristicShot";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 
 type SimpleMemory = AimMemory;
@@ -109,6 +108,7 @@ export class AISimpleStrategy implements AIEngine {
     const aimX =
       target.tank.position.x +
       signedImpactOffset(attempts, "v1-random", gameState.roundNumber);
+    const { computeHeuristicShot } = await import("./heuristicShot");
     let command = computeHeuristicShot(
       self,
       aimX,

@@ -34,22 +34,6 @@ export class AISniperStrategy implements AIEngine {
     return memory;
   }
 
-  public shopDecision(player: Player): WeaponId[] {
-    const purchases: WeaponId[] = [];
-    let currentMoney = player.money;
-    const bulletCost = 150;
-    const alreadyOwned = player.inventory.BULLET ?? 0;
-
-    while (
-      currentMoney >= bulletCost &&
-      alreadyOwned + purchases.length < 2
-    ) {
-      purchases.push("BULLET");
-      currentMoney -= bulletCost;
-    }
-    return purchases;
-  }
-
   async executeTurn(
     tankId: string,
     gameState: GameState,
