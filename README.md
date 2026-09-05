@@ -37,7 +37,7 @@
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. Locks on shot 5.
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. Locks on shot 3; its only deliberate overcorrection is shot 2.
   - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. Locks on shot 2.
-  All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE) and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
+  All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Only OK and EXPERT use `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
   AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
   **Post-hit & fall reaction (`hitReaction.ts`):** Direct hits and cumulative fall distance are retained for one next riposte, then consumed. Reaction intensity varies by profile and never introduces RNG when it is zero. Wired in MainMenu + GameCanvas.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
@@ -96,7 +96,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (798 unit and integration tests across 77 files)
+# Run tests (802 unit and integration tests across 77 files)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -172,7 +172,7 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **798 unit and integration tests** across **77 files** (Vitest)
+- **802 unit and integration tests** across **77 files** (Vitest)
 
 Still planned:
 

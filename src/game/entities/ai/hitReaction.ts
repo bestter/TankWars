@@ -1,6 +1,4 @@
-import type { Player, TankHitReaction } from "../../../types/player";
-
-export const FALL_DISTANCE_MAX_PX = 120;
+import { FALL_DISTANCE_MAX_PX, type Player, type TankHitReaction } from "../../../types/player";
 
 interface ReactionProfile {
   directHit: number;

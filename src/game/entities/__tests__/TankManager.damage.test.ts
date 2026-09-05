@@ -529,6 +529,25 @@ describe("TankManager.applyGravity and burial", () => {
     expect(fallingTank.hitReaction).toBeUndefined();
   });
 
+  it("caps reaction distance at 120 without capping fall damage", () => {
+    const terrain = new TerrainManager(200, 500);
+    terrain.loadHeights(Array.from({ length: 200 }, () => 400));
+    const tank = makeTank("t-cap", 100, 100, {
+      health: 1000,
+      maxHealth: 1000,
+      shield: 40,
+      hitReaction: { wasDirectHit: true, fallDistance: 119.9 },
+    });
+    const tm = managerWith(makePlayer({ id: "falling", tank }));
+    tm.updateTankPositions(terrain);
+    tm.applyGravity(1 / 60, terrain);
+    expect(tank.hitReaction).toEqual({ wasDirectHit: true, fallDistance: 120 });
+    for (let step = 0; step < 60; step += 1) tm.applyGravity(1 / 60, terrain);
+    expect(tank.hitReaction?.fallDistance).toBe(120);
+    expect(tank.health).toBeLessThan(1000);
+    expect(tank.shield).toBe(40);
+  });
+
   it("retains several direct hits and accumulates several falls until the AI riposte", () => {
     const terrain = new TerrainManager(200, 200);
     terrain.loadHeights(Array.from({ length: 200 }, () => 150));

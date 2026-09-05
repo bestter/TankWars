@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **798 tests** (77 files)
+- Run tests: `npm run test` (or `vitest run`) — **802 tests** (77 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --scope changed` after React changes)
@@ -48,7 +48,7 @@ In the local menu, selecting an AI assigns its short localized profile name (`Si
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER | Recherche balistique. Lock au 3e tir; surcorrection au deuxième seulement. |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptative. Lock au 2e tir. |
 
-All profiles share `fallibleAim.ts`, with bands and residuals interpolated M1→M5→M12+, plus memory of the current target and its consecutive attempts. A missing, invalid or ≤1 `roundNumber` is M1. At the SIMPLE/OK/SNIPER/EXPERT thresholds 7/5/3/2, the residual is exact and no magnitude RNG is consumed. `FIRST_SHOT_FLOOR_PX = 36` blocks intentional direct aim, not splash damage. `heuristicShot.ts` is the shared ballistic solver for OK and SIMPLE. SIMPLE stays on its target, otherwise picks the weakest living AI before a human, and uses neither revenge nor material/BULLDOZER tactics. OK/SNIPER/EXPERT retain their terrain/BULLDOZER tactics. `hitReaction.ts` accumulates direct hits and falls for one next riposte, then consumes them; SNIPER has no post-lock slip. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime.
+All profiles share `fallibleAim.ts`, with bands and residuals interpolated M1→M5→M12+, plus memory of the current target and its consecutive attempts. A missing, invalid or ≤1 `roundNumber` is M1. At the SIMPLE/OK/SNIPER/EXPERT thresholds 7/5/3/2, the residual is exact and no magnitude RNG is consumed. `FIRST_SHOT_FLOOR_PX = 36` blocks intentional direct aim, not splash damage. `heuristicShot.ts` is the shared ballistic solver for OK and SIMPLE. SIMPLE stays on its target, otherwise picks the weakest living AI before a human, and uses neither revenge nor material/BULLDOZER tactics. OK/SNIPER/EXPERT retain material tactics; only OK and EXPERT use BULLDOZER tactics. `hitReaction.ts` accumulates direct hits and falls for one next riposte, then consumes them; SNIPER has no post-lock slip. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime.
 
 AI shop strategy (#207) uses the initial player count `N` (2–4), captured once and never recomputed from survivors or a transient roster. Each preferred weapon targets `min(3 × N, strategic cap, getShopPolicy(weaponId).maxStock)` and every unit goes through `applyShopTransaction` with `delta: 1`; there is no percentage budget, minimum cash reserve, or automatic selling. Missing or unknown profiles use the OK shop strategy (`v2-heuristic`), without changing an explicitly selected Simple profile or the combat router fallback.
 

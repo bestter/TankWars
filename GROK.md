@@ -6,7 +6,7 @@
 
 - Read AGENTS.md, then this file.
 - Before visual or engine edits: `GameEngine.ts` (render, `fireProjectile`, audio), `TankManager.ts` (draw, recoil, shields, damage), `PhysicsEngine.ts` (draw, `Projectile`).
-- After edits: `npm run lint && npm run build && npm run test` (**798 tests**, 77 files).
+- After edits: `npm run lint && npm run build && npm run test` (**802 tests**, 77 files).
 - Online work: `npm run dev` + `npm run worker:dev`; restart the worker after `worker/src/game-room.ts` changes.
 - Imperative commits. Sign with the exact model from the system prompt, e.g. `Add fallible sniper slip — Grok 4.6 (xAI)`.
 - Reply in French (Québécois preferred), even if the user writes in English.
@@ -37,7 +37,7 @@
 - Economy: exact per-shot calculator in `src/game/economy/` with base $X = $3 / $3.50 / $4 for 2 / 3 / 4 players. Actual damage, attributed falls, destructions, survivor/draw outcomes feed one final ceiling; self-damage pays nothing. `ShotEarningsOverlay` floats for 3 seconds without blocking. Summary = round earnings; shop = total balance.
 - Zeus deadlock action: `src/game/zeus/` is separate from weapons. With ≥2 living AIs and no living human, appoint fairly after `living AI × 5` shots without a paid hit (`hasEarnings`); reset on earnings, living human, <2 survivors, Zeus death, or round end. Zeus consumes the last living direct attacker (never BULLDOZER), otherwise injected RNG, kills only that target, and earns `25X`. Never add `ZEUS_LIGHTNING` to `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, shop, or `AIEngine`.
 - `baseSpeed` = 6.0 (synced in v2–v4 AI). Projectile pool is on for launches and clusters.
-- All AI aim through `fallibleAim.ts` using interpolated M1/M5/M12+ curves and target/round memory; their SIMPLE/OK/SNIPER/EXPERT locks are 7/5/3/2. The first aim is never intentionally direct (< 36 px), while splash remains possible. `heuristicShot.ts` is shared by OK and SIMPLE. SIMPLE sticks to a living target, otherwise prioritizes the weakest living AI and then humans; it never uses revenge, material tactics, or BULLDOZER tactics. OK/SNIPER/EXPERT retain the weapon tactics from `terrainMaterialTactics.ts` and `bulldozerTactics.ts`. SNIPER retains only its second-shot overcorrection, with no post-lock slip. `hitReaction.ts` accumulates a direct hit and fall distance for the next single riposte, then consumes both.
+- All AI aim through `fallibleAim.ts` using interpolated M1/M5/M12+ curves and target/round memory; their SIMPLE/OK/SNIPER/EXPERT locks are 7/5/3/2. The first aim is never intentionally direct (< 36 px), while splash remains possible. `heuristicShot.ts` is shared by OK and SIMPLE. SIMPLE sticks to a living target, otherwise prioritizes the weakest living AI and then humans; it never uses revenge, material tactics, or BULLDOZER tactics. OK/SNIPER/EXPERT retain `terrainMaterialTactics.ts`; only OK and EXPERT use `bulldozerTactics.ts`. SNIPER retains only its second-shot overcorrection, with no post-lock slip. `hitReaction.ts` accumulates a direct hit and fall distance for the next single riposte, then consumes both.
 - AI shop (#207): capture initial `N` once; target `min(3N, profile cap, #215 policy)` through unit `delta: 1` transactions, with no budget ratio/reserve. Orders are Simple G→C; OK G→C→D→B→N; Sniper BULLET→D→B; Expert THERMO→N→G→C→D→B. Missing/unknown shop profiles use OK. Local applies immediately; online Worker applies once per shop epoch after normalization.
 - Online MVP: local physics launches from authoritative `SHOT` echoes; the server owns turn order, ammo, shop transactions and rewards. `GameRoom` persists active state and idempotent results. Unversioned v0 messages are temporarily normalized and logged; unknown numeric versions close in `4402`. Shop success is correlated by `{ slot, actionId }`, and retries reuse the same ID. Shot replay lives in `authoritativeShotQueue.ts`; `DeferredTransitionBuffer` orders shop transitions. Full authoritative terrain/damage simulation is still planned. `GAME_START` sends `materials` only when lengths match; otherwise `loadHeights` resets to `DIRT`.
 - Online Zeus is Durable Object-authoritative and persisted before broadcast (`ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, reconnect `ZEUS_STATE`). Strike IDs prevent double death/credit; authority failover changes nothing; cosmetic geometry uses only strike ID + time, not room RNG.
@@ -59,7 +59,7 @@ Keep hot paths cheap: no per-frame allocations, reuse existing Maps, native Math
 
 1. `npm run lint`
 2. `npm run build`
-3. `npm run test` (798 / 77)
+3. `npm run test` (802 / 77)
 4. Manual when UI/engine changed: menu → mixed players (incl. v3/v4) → play a round → indicator bob, shell colors, recoil, craters, shop.
 
 Full checklist: [AGENTS.md § Verification](./AGENTS.md#verification-checklist).

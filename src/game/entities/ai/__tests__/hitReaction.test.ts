@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  FALL_DISTANCE_MAX_PX,
   consumeHitReaction,
   getHitReactionIntensity,
 } from "../hitReaction";
+import { FALL_DISTANCE_MAX_PX } from "../../../../types/player";
 
 describe("hitReaction", () => {
   it("applique les réactions de coup direct propres à chaque profil", () => {

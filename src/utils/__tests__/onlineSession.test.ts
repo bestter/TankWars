@@ -128,6 +128,30 @@ describe('onlineSession', () => {
     expect(readOnlineSession()).not.toBeNull();
   });
 
+  it.each([42, 120, Number.MAX_VALUE])('normalizes persisted reaction distance %s without mutating live state', (distance) => {
+    const session = makeSession();
+    session.players[0].tank.hitReaction = { wasDirectHit: true, fallDistance: distance };
+    persistOnlineSession(session);
+    const serialized = store.get('tankwars-online-session-v1') ?? '';
+    expect(serialized).toContain('"fallDistance":' + Math.min(120, distance));
+    expect(session.players[0].tank.hitReaction.fallDistance).toBe(distance);
+
+    // Bypass the writer to exercise snapshots produced before the cap existed.
+    store.set('tankwars-online-session-v1', JSON.stringify(session));
+    const restored = readOnlineSession();
+    for (const player of [
+      ...(restored?.players ?? []),
+      ...(restored?.canvas.uiPlayers ?? []),
+      ...(restored?.canvas.shopPlayers ?? []),
+    ]) {
+      expect(player.tank.hitReaction).toEqual({
+        wasDirectHit: true,
+        fallDistance: Math.min(120, distance),
+      });
+    }
+    expect(restored).not.toBeNull();
+  });
+
   it('persists a pending FIRE intent with its original actionId and command', () => {
     const session = makeSession();
     session.canvas.pendingFireIntent = {

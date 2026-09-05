@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 798 tests, 77 fichiers) |
+| Tests | `npm run test` (vitest, 802 tests, 77 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -117,7 +117,7 @@ Profils (mixables dans une même partie) :
 | `v3-sniper` | `AISniperStrategy` | IA SNIPER |
 | `v4-smart` | `AISmartStrategy` | IA EXPERT |
 
-Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE) et `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). **v1-random n’utilise pas ces tactiques.**
+Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE). Seuls OK et EXPERT utilisent `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). **v1-random n’utilise pas ces tactiques.**
 
 Boutique IA (#207) : `N` est le nombre initial de joueurs (2–4), capturé une seule fois et jamais recalculé depuis les survivants ou un roster transitoire. Pour chaque arme de sa liste, l’IA vise `min(3 × N, plafond stratégique, getShopPolicy(weaponId).maxStock)` et achète uniquement par transactions unitaires `delta: 1`, selon l’argent, le quota restant et la place sous le plafond. Il n’existe ni budget en pourcentage, ni réserve minimale, ni vente automatique. Un profil absent ou inconnu utilise la stratégie boutique OK (`v2-heuristic`); cela ne change pas le profil Simple explicitement choisi dans le menu ni le repli du routeur de combat.
 
@@ -143,11 +143,11 @@ La progression suit `(tentative - 1) / (seuil - 1)`; au seuil et après, elle re
 
 SIMPLE utilise le solveur balistique partagé d’OK avec sa propre cible décalée. Il conserve une cible vivante, sinon choisit l’IA vivante la plus faible (ordre du roster en égalité), puis un humain seulement s’il ne reste aucune IA; il ignore toute vengeance. Il tire uniquement avec `currentWeapon` ou `MISSILE`, sans tactique de matériau ni BULLDOZER. Ses gaffes sont d’abord absolues, sinon ses remplacements direction/puissance sont indépendants avant sa réaction. Les profils OK/SNIPER/EXPERT conservent leurs tactiques d’armes, appliquent une réaction puis une seule grosse gaffe et bornent ensuite leur commande. SNIPER conserve sa surcorrection au deuxième tir seulement; il n’a aucune glissade après le lock.
 
-Réaction après coup/chute (`hitReaction.ts`) : `TankHitReaction` ne contient que `wasDirectHit` et `fallDistance`. Les chutes s’accumulent et un coup direct est retenu jusqu’à la prochaine riposte, qui consomme les deux valeurs. L’intensité est `direct + fallDistance / 120`, bornée à 100 %, avec direct/chute maximale EXPERT `10/20 %`, SNIPER `15/30 %`, OK `22/40 %` et SIMPLE `28/60 %`. Une intensité nulle ne consomme aucun RNG de réaction.
+Réaction après coup/chute (`hitReaction.ts`) : `TankHitReaction` ne contient que `wasDirectHit` et `fallDistance`. Les chutes s’accumulent jusqu’à 120 px (également normalisés à la lecture/écriture des snapshots) et un coup direct est retenu jusqu’à la prochaine riposte, qui consomme les deux valeurs. L’intensité est `direct + chuteMax × min(fallDistance / 120, 1)`, bornée à 100 %, avec direct/chute maximale EXPERT `10/20 %`, SNIPER `15/30 %`, OK `22/40 %` et SIMPLE `28/60 %`. Une intensité nulle ne consomme aucun RNG de réaction.
 
 `AIStrategy` est un contrat legacy, non branché au runtime.
 
-Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
+Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` comme les quatre profils actuels, y compris SIMPLE.
 
 ## Pièges fréquents
 
