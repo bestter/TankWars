@@ -365,9 +365,7 @@ function isTankHitReaction(value: unknown): value is TankHitReaction {
     isRecord(value) &&
     typeof value.wasDirectHit === 'boolean' &&
     isFiniteNumber(value.fallDistance) &&
-    value.fallDistance >= 0 &&
-    isSafeNonNegativeInteger(value.shotStep) &&
-    value.shotStep <= 2
+    value.fallDistance >= 0
   );
 }
 

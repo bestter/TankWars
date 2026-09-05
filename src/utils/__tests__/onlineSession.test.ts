@@ -87,6 +87,47 @@ describe('onlineSession', () => {
     expect(store.has('tankwars-online-session-v1')).toBe(true);
   });
 
+  it('accepts the two-field hitReaction contract', () => {
+    const session = makeSession();
+    const player = {
+      ...session.players[0],
+      tank: {
+        ...session.players[0].tank,
+        hitReaction: { wasDirectHit: true, fallDistance: 42 },
+      },
+    };
+    session.players = [player];
+    session.canvas.uiPlayers = [player];
+    session.canvas.shopPlayers = [player];
+
+    persistOnlineSession(session);
+    expect(readOnlineSession()?.players[0].tank.hitReaction).toEqual({
+      wasDirectHit: true,
+      fallDistance: 42,
+    });
+  });
+
+  it('keeps accepting a legacy snapshot with an ignored shotStep field', () => {
+    const session = makeSession();
+    const player = {
+      ...session.players[0],
+      tank: {
+        ...session.players[0].tank,
+        hitReaction: {
+          wasDirectHit: true,
+          fallDistance: 42,
+          shotStep: 2,
+        },
+      },
+    };
+    session.players = [player];
+    session.canvas.uiPlayers = [player];
+    session.canvas.shopPlayers = [player];
+
+    persistOnlineSession(session);
+    expect(readOnlineSession()).not.toBeNull();
+  });
+
   it('persists a pending FIRE intent with its original actionId and command', () => {
     const session = makeSession();
     session.canvas.pendingFireIntent = {

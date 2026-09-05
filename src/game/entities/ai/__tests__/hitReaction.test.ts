@@ -1,113 +1,70 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  computeFallPenalty,
-  getHitReactionPenalty,
-  advanceHitReaction,
-  DIRECT_HIT_PENALTY,
-  FALL_PENALTY_MIN,
-  FALL_PENALTY_MAX,
+  FALL_DISTANCE_MAX_PX,
+  consumeHitReaction,
+  getHitReactionIntensity,
 } from "../hitReaction";
-import type { TankHitReaction } from "../../../../types/player";
 
 describe("hitReaction", () => {
-  describe("computeFallPenalty", () => {
-    it("returns 0 for no fall or negative distance", () => {
-      expect(computeFallPenalty(0)).toBe(0);
-      expect(computeFallPenalty(-10)).toBe(0);
-    });
-
-    it("returns ~1% for minimal fall (1px)", () => {
-      const penalty = computeFallPenalty(1);
-      expect(penalty).toBeCloseTo(FALL_PENALTY_MIN, 2);
-      expect(penalty).toBeGreaterThanOrEqual(FALL_PENALTY_MIN);
-    });
-
-    it("interpolates linearly up to 120px", () => {
-      const halfPenalty = computeFallPenalty(60);
-      // 0.01 + 0.5 * 0.24 = 0.13 (13%)
-      expect(halfPenalty).toBeCloseTo(0.13, 2);
-    });
-
-    it("caps at 25% for falls of 120px or more", () => {
-      expect(computeFallPenalty(120)).toBeCloseTo(FALL_PENALTY_MAX, 2);
-      expect(computeFallPenalty(200)).toBeCloseTo(FALL_PENALTY_MAX, 2);
-    });
+  it("applique les réactions de coup direct propres à chaque profil", () => {
+    const reaction = { wasDirectHit: true, fallDistance: 0 };
+    expect(getHitReactionIntensity("v4-smart", reaction)).toBe(0.1);
+    expect(getHitReactionIntensity("v3-sniper", reaction)).toBe(0.15);
+    expect(getHitReactionIntensity("v2-heuristic", reaction)).toBe(0.22);
+    expect(getHitReactionIntensity("v1-random", reaction)).toBe(0.28);
   });
 
-  describe("getHitReactionPenalty and advanceHitReaction state machine", () => {
-    it("returns 0 when hitReaction is undefined", () => {
-      expect(getHitReactionPenalty("v3-sniper", undefined)).toBe(0);
-    });
+  it("interpole les chutes à 0, 60, 120 et au-delà", () => {
+    const profiles = [
+      ["v4-smart", 0.2],
+      ["v3-sniper", 0.3],
+      ["v2-heuristic", 0.4],
+      ["v1-random", 0.6],
+    ] as const;
 
-    it("handles direct hit only (50% penalty on shot 1)", () => {
-      const reaction: TankHitReaction = {
-        wasDirectHit: true,
-        fallDistance: 0,
-        shotStep: 0,
-      };
+    for (const [profile, maximum] of profiles) {
+      expect(
+        getHitReactionIntensity(profile, {
+          wasDirectHit: false,
+          fallDistance: 0,
+        }),
+      ).toBe(0);
+      expect(
+        getHitReactionIntensity(profile, {
+          wasDirectHit: false,
+          fallDistance: FALL_DISTANCE_MAX_PX / 2,
+        }),
+      ).toBeCloseTo(maximum / 2);
+      expect(
+        getHitReactionIntensity(profile, {
+          wasDirectHit: false,
+          fallDistance: FALL_DISTANCE_MAX_PX,
+        }),
+      ).toBe(maximum);
+      expect(
+        getHitReactionIntensity(profile, {
+          wasDirectHit: false,
+          fallDistance: FALL_DISTANCE_MAX_PX * 2,
+        }),
+      ).toBe(maximum);
+    }
+  });
 
-      // Shot 1
-      expect(getHitReactionPenalty("v3-sniper", reaction)).toBe(DIRECT_HIT_PENALTY);
-      advanceHitReaction(reaction);
+  it("cumule un coup direct et une chute, puis consomme la réaction", () => {
+    const reaction = { wasDirectHit: true, fallDistance: 120 };
+    expect(getHitReactionIntensity("v4-smart", reaction)).toBeCloseTo(0.3);
 
-      // Shot 2 (Sniper reacts normally -> 0%)
-      expect(getHitReactionPenalty("v3-sniper", reaction)).toBe(0);
-      advanceHitReaction(reaction);
+    consumeHitReaction(reaction);
+    expect(reaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+    expect(getHitReactionIntensity("v4-smart", reaction)).toBe(0);
+  });
 
-      // Shot 3 (Fully recovered -> 0%)
-      expect(getHitReactionPenalty("v3-sniper", reaction)).toBe(0);
-    });
-
-    it("handles cumulative direct hit + fall on shot 1", () => {
-      const reaction: TankHitReaction = {
-        wasDirectHit: true,
-        fallDistance: 120, // 25%
-        shotStep: 0,
-      };
-
-      // Shot 1: 50% + 25% = 75% (0.75)
-      expect(getHitReactionPenalty("v4-smart", reaction)).toBeCloseTo(0.75, 2);
-      advanceHitReaction(reaction);
-
-      // Shot 2: Expert is 12% less accurate on shot 2
-      expect(getHitReactionPenalty("v4-smart", reaction)).toBeCloseTo(0.12, 2);
-      advanceHitReaction(reaction);
-
-      // Shot 3: Fully recovered (0%)
-      expect(getHitReactionPenalty("v4-smart", reaction)).toBe(0);
-    });
-
-    it("applies second-shot penalties correctly across all profiles", () => {
-      const createShot2Reaction = (): TankHitReaction => ({
+  it("ignore une distance invalide plutôt que de produire une intensité invalide", () => {
+    expect(
+      getHitReactionIntensity("v1-random", {
         wasDirectHit: false,
-        fallDistance: 0,
-        shotStep: 1,
-      });
-
-      expect(getHitReactionPenalty("v3-sniper", createShot2Reaction())).toBe(0.0);
-      expect(getHitReactionPenalty("v4-smart", createShot2Reaction())).toBe(0.12);
-      expect(getHitReactionPenalty("v2-heuristic", createShot2Reaction())).toBe(0.25);
-      expect(getHitReactionPenalty("v1-random", createShot2Reaction())).toBe(0.25);
-      expect(getHitReactionPenalty(undefined, createShot2Reaction())).toBe(0.25);
-    });
-
-    it("resets to Shot 1 if hit again before Shot 2", () => {
-      const reaction: TankHitReaction = {
-        wasDirectHit: true,
-        fallDistance: 0,
-        shotStep: 0,
-      };
-
-      // Fired Shot 1
-      advanceHitReaction(reaction);
-      expect(reaction.shotStep).toBe(1);
-
-      // Hit again before Shot 2!
-      reaction.wasDirectHit = true;
-      reaction.shotStep = 0;
-
-      // Should be Shot 1 again with 50% penalty
-      expect(getHitReactionPenalty("v4-smart", reaction)).toBe(0.5);
-    });
+        fallDistance: Number.NaN,
+      }),
+    ).toBe(0);
   });
 });

@@ -522,7 +522,7 @@ describe("TankManager.applyGravity and burial", () => {
     tm.applyGravity(1 / 60, terrain);
 
     expect(fallingTank.hitReaction?.fallDistance).toBeGreaterThan(0);
-    expect(fallingTank.hitReaction?.shotStep).toBe(0);
+    expect(fallingTank.hitReaction?.wasDirectHit).toBe(false);
 
     // spawnTanks clears hitReaction
     tm.spawnTanks([fallingPlayer], terrain);

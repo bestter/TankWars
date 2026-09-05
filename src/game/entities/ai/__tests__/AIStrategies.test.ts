@@ -2,7 +2,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { AISniperStrategy } from "../AISniperStrategy";
 import { AIHeuristicStrategy } from "../AIHeuristicStrategy";
 import { AISmartStrategy } from "../AISmartStrategy";
-import { AISimpleStrategy } from "../AISimpleStrategy";
+import {
+  AISimpleStrategy,
+  getSimpleErrorChances,
+} from "../AISimpleStrategy";
 import { TerrainManager } from "../../../engine/Terrain";
 import { simulateShot } from "../BallisticsSimulator";
 import { makeGameState, makePlayer, makeTank, flatTerrain } from "../../../__tests__/helpers";
@@ -86,42 +89,64 @@ describe("AI strategy executeTurn smoke", () => {
     expect(shot.weaponId).toBeDefined();
   });
 
-  it("AISimpleStrategy returns a naive FireCommand", async () => {
+  it("AISimpleStrategy retourne un FireCommand dans son enveloppe", async () => {
     const strategy = new AISimpleStrategy();
     const gameState = makeGameState(
       { ...aiShooter, aiProfile: "v1-random" },
       enemy,
       "v1-random",
     );
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shot.angle).toBeGreaterThan(0);
-    expect(shot.power).toBeGreaterThan(50);
+    expect(shot.angle).toBeGreaterThanOrEqual(0);
+    expect(shot.angle).toBeLessThan(180);
+    expect(shot.power).toBeGreaterThanOrEqual(1);
+    expect(shot.power).toBeLessThanOrEqual(99);
     expect(shot.weaponId).toBeDefined();
   });
 
-  it("AISimpleStrategy is alcoholic on manche 1 (full random, can aim at self)", async () => {
+  it("AISimpleStrategy court-circuite le solveur pour une grosse gaffe", async () => {
     const strategy = new AISimpleStrategy();
     const gameState = {
       ...makeGameState({ ...aiShooter, aiProfile: "v1-random" }, enemy, "v1-random"),
       roundNumber: 1,
     };
     const spy = vi.spyOn(random, "secureRandom");
-    spy.mockReturnValueOnce(0.15).mockReturnValue(0);
+    spy
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.5);
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shot.angle).toBe(0);
+    expect(shot.angle).toBe(90);
     expect(shot.power).toBe(5);
     spy.mockRestore();
   });
 
-  it("AISimpleStrategy uses current spec from manche 5", async () => {
-    const strategy = new AISimpleStrategy();
-    const gameState = {
-      ...makeGameState({ ...aiShooter, aiProfile: "v1-random" }, enemy, "v1-random"),
-      roundNumber: 5,
-    };
-    const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shot.angle).toBeGreaterThanOrEqual(45);
-    expect(shot.power).toBeGreaterThanOrEqual(60);
+  it("AISimpleStrategy applique les frontières de probabilités par manche", () => {
+    expect(getSimpleErrorChances(1)).toEqual({
+      gaffe: 0.5,
+      direction: 0.4,
+      power: 0.5,
+    });
+    expect(getSimpleErrorChances(4)).toEqual({
+      gaffe: 0.25,
+      direction: 0.25,
+      power: 0.35,
+    });
+    expect(getSimpleErrorChances(5)).toEqual({
+      gaffe: 0.22,
+      direction: 0.22,
+      power: 0.3,
+    });
+    expect(getSimpleErrorChances(10)).toEqual(
+      getSimpleErrorChances(5),
+    );
+    expect(getSimpleErrorChances(11)).toEqual({
+      gaffe: 0.2,
+      direction: 0.2,
+      power: 0.25,
+    });
   });
 });
 
@@ -477,14 +502,14 @@ describe("AI fallibility contracts", () => {
     expect(Math.abs(impact.landX - 560)).toBeGreaterThan(150);
   });
 
-  it("advances hitReaction state after executeTurn across strategies", async () => {
+  it("consomme la réaction après une seule riposte", async () => {
     const terrain = flatTerrain(800, 480);
     const shooter = makePlayer({
       id: "ai-shooter",
       isHuman: false,
       aiProfile: "v3-sniper",
       tank: makeTank("shooter-tank", 100, 336, {
-        hitReaction: { wasDirectHit: true, fallDistance: 60, shotStep: 0 },
+        hitReaction: { wasDirectHit: true, fallDistance: 60 },
       }),
     });
     const target = makePlayer({
@@ -495,18 +520,8 @@ describe("AI fallibility contracts", () => {
     const strategy = new AISniperStrategy();
     const gameState = makeGameState(shooter, target, "v3-sniper");
 
-    // Turn 1 (Shot 1 after hit/fall)
     await strategy.executeTurn("shooter-tank", gameState, terrain);
     expect(shooter.tank.hitReaction?.wasDirectHit).toBe(false);
     expect(shooter.tank.hitReaction?.fallDistance).toBe(0);
-    expect(shooter.tank.hitReaction?.shotStep).toBe(1);
-
-    // Turn 2 (Shot 2 after hit/fall)
-    await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shooter.tank.hitReaction?.shotStep).toBe(2);
-
-    // Turn 3 (Fully recovered)
-    await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shooter.tank.hitReaction?.shotStep).toBe(0);
   });
 });

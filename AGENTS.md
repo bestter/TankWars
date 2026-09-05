@@ -18,7 +18,7 @@ Tous les contributeurs — agents IA comme humains 😁 — doivent respecter le
 | Dev frontend | `npm run dev` → http://localhost:5173 |
 | Production build | `npm run build` (tsc -b + vite) |
 | Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 773 tests, 74 fichiers) |
+| Tests | `npm run test` (vitest, 779 tests, 76 fichiers) |
 | Worker dev | `npm run worker:dev` → http://localhost:8787 |
 | Worker deploy | `npm run worker:deploy` |
 | Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
@@ -130,21 +130,22 @@ Boutique IA (#207) : `N` est le nombre initial de joueurs (2–4), capturé une 
 
 En local, `localHotseatShop.ts` applique immédiatement le domaine partagé et propage le roster immuable. En ligne, seul le Worker exécute `autoBuyForAI`, une fois au premier `SHOP_ENTER` admissible de l’époque après normalisation; reconnexion, retry et second `SHOP_ENTER` ne relancent jamais les achats. #207 possède la stratégie IA; #215 demeure la source de la politique globale, des quotas et de l’autorité en ligne.
 
-Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
-| Profile | Courbe d’offset (px, par tentative sur la cible) |
-|---------|--------------------------------------------------|
-| `v2-heuristic` | 1er tir ≥ 36 px, lock au **5e** (`SHOTS_TO_HIT`) |
-| `v3-sniper` | 1er tir ≥ 36 px, lock au **4e**, 14 % de glissade après lock |
-| `v4-smart` | 1er tir ≥ 36 px, lock au **3e** |
+Visée faillible (`fallibleAim.ts`) — les quatre profils utilisent une courbe par manche et par tentative consécutive sur la même cible. `roundNumber` absent, invalide ou ≤ 1 vaut M1; les valeurs sont interpolées linéairement M1→M5 puis M5→M12 et plafonnées à M12.
 
-Les gaffes de personnalité restent dans chaque stratégie. `AIStrategy` est un contrat legacy, non branché au runtime.
+| Profil | Seuil de lock | Bande du 1er tir M1 / M5 / M12+ (px) | Résidu M1 / M5 / M12+ (px) |
+|--------|---------------|-----------------------------------------|------------------------------|
+| SIMPLE | 7 | 74–84 / 69–74 / 59–69 | 48 / 30 / 21 |
+| OK | 5 | 62–72 / 57–62 / 47–57 | 36 / 18 / 9 |
+| SNIPER | 3 | 57–62 / 47–57 / 39–47 | 18 / 10 / 4 |
+| EXPERT | 2 | 45–57 / 38–45 / 36–38 | 12 / 6 / 0 |
 
-Warmup ease-out : manche 1 = 15 % (`AI_WARMUP_START_SKILL`), gros saut aux manches 2–3, palier du tableau à la manche 5. Après 5, `roundSkill` monte jusqu’à 1.35 (cap) et `aimMissScale` descend jusqu’à 0.55. Le 1er tir reste hors splash (`FIRST_SHOT_FLOOR_PX` = 36). Avant la manche 5, même le tir de lock peut rater (`EARLY_LOCK_LEFTOVER_PX`). Simple : P(alcoolique) = `1 − min(1, skill)`. `v1-random` reste hors `fallibleAim`.
+La progression suit `(tentative - 1) / (seuil - 1)`; au seuil et après, elle retourne exactement le résidu sans tirage de magnitude. `FIRST_SHOT_FLOOR_PX = 36` empêche une visée directe intentionnelle, sans interdire les dégâts de zone. Chaque stratégie garde `currentTargetId`, `currentTargetAttempts` et `lastRoundNumber`: un changement de cible ou de manche remet la tentative à 1. Une grosse gaffe compte comme une tentative.
 
-Courbe de réaction après coup/chute (`hitReaction.ts`, Issue 174) :
-- **1er tir après l'événement :** Coup direct de projectile sur la hitbox (`wasDirectHit`) = +50% d'imprécision ; chute de terrain (`fallDistance`) = +1% à +25% d'imprécision (échelle 0 à 120 px). Les deux sont **cumulables**.
-- **2e tir après l'événement (sans nouveau coup) :** SNIPER = 0% (précision normale/chirurgicale) ; EXPERT = 12% d'imprécision ; OK et SIMPLE = 25% d'imprécision.
-- **3e tir :** Retour complet à 0% d'imprécision.
+SIMPLE utilise le solveur balistique partagé d’OK avec sa propre cible décalée. Il conserve une cible vivante, sinon choisit l’IA vivante la plus faible (ordre du roster en égalité), puis un humain seulement s’il ne reste aucune IA; il ignore toute vengeance. Il tire uniquement avec `currentWeapon` ou `MISSILE`, sans tactique de matériau ni BULLDOZER. Ses gaffes sont d’abord absolues, sinon ses remplacements direction/puissance sont indépendants avant sa réaction. Les profils OK/SNIPER/EXPERT conservent leurs tactiques d’armes, appliquent une réaction puis une seule grosse gaffe et bornent ensuite leur commande. SNIPER conserve sa surcorrection au deuxième tir seulement; il n’a aucune glissade après le lock.
+
+Réaction après coup/chute (`hitReaction.ts`) : `TankHitReaction` ne contient que `wasDirectHit` et `fallDistance`. Les chutes s’accumulent et un coup direct est retenu jusqu’à la prochaine riposte, qui consomme les deux valeurs. L’intensité est `direct + fallDistance / 120`, bornée à 100 %, avec direct/chute maximale EXPERT `10/20 %`, SNIPER `15/30 %`, OK `22/40 %` et SIMPLE `28/60 %`. Une intensité nulle ne consomme aucun RNG de réaction.
+
+`AIStrategy` est un contrat legacy, non branché au runtime.
 
 Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
 
@@ -183,7 +184,7 @@ Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `
 | Protocole autoritaire des gains | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
 | Anti-impasse / Éclair de Zeus | `game/zeus/zeusDomain.ts`, `game/zeus/zeusRewards.ts`, `GameEngine.ts`, `TurnManager.ts`, `TankManager.ts` |
 | Autorité Zeus / reconnexion | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
+| Visée IA | `fallibleAim.ts` + `aimMemory.ts` + `aimCorruption.ts` + `heuristicShot.ts` + `hitReaction.ts` + tactiques + la stratégie concernée |
 | Noms joueurs du menu local | `MainMenu.tsx`, `MainMenuView.tsx`, `PlayerConfigList.tsx`, `PlayerConfigRow.tsx`, `playerControllerUi.ts`, `playerNameUi.ts`, `usePlayerNameValidation.ts` |
 | Audio combat / victoire | `GameEngine.ts` |
 

@@ -11,7 +11,7 @@ Do not turn this file into a changelog. Current facts only.
 - Build project: `npm run build`
 - Preview production build: `npm run preview`
 - Run linter: `npm run lint`
-- Run tests: `npm run test` (or `vitest run`) — **773 tests** (74 files)
+- Run tests: `npm run test` (or `vitest run`) — **779 tests** (76 files)
 - Worker dev (online): `npm run worker:dev` (http://localhost:8787; run alongside `npm run dev`)
 - Worker deploy: `npm run worker:deploy`
 - React health scan: `npm run doctor` (or `npx react-doctor@latest --verbose --scope changed` after React changes)
@@ -43,12 +43,12 @@ In the local menu, selecting an AI assigns its short localized profile name (`Si
 
 | Profile | Class | Label | Notes |
 |---------|--------|-------|-------|
-| `v1-random` | `AISimpleStrategy` | IA SIMPLE | Deliberately naive. **No** `fallibleAim`. |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK | Heuristic + revenge + memory. First shot ≥ 36 px, lock at shot 5. |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER | Ballistic search. First shot ≥ 36 px, lock at shot 4, 14 % slip after. |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptive. First shot ≥ 36 px, lock at shot 3. |
+| `v1-random` | `AISimpleStrategy` | IA SIMPLE | Courbe propre, cible persistante et aucune vengeance/tactique de matériau. Lock au 7e tir. |
+| `v2-heuristic` | `AIHeuristicStrategy` | IA OK | Heuristique + vengeance + mémoire. Lock au 5e tir. |
+| `v3-sniper` | `AISniperStrategy` | IA SNIPER | Recherche balistique. Lock au 3e tir; surcorrection au deuxième seulement. |
+| `v4-smart` | `AISmartStrategy` | IA EXPERT | Adaptative. Lock au 2e tir. |
 
-v2–v4 share `fallibleAim.ts` (impact offset so splash cannot convert a near-miss into a hit), `terrainMaterialTactics.ts` (skip DRILLER on ROCK; prefer DRILLER on SOFT when the default pick is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Personality gaffes stay in each strategy. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime. Warmup ease-out: 15% on round 1, table spec at round 5; after that `roundSkill` climbs to 1.35 and `aimMissScale` falls to 0.55. First shot stays splash-safe (`FIRST_SHOT_FLOOR_PX` = 36). Before round 5 the lock shot can still miss. Simple P(alcoholic) = `1 − min(1, skill)`. `v1-random` stays off `fallibleAim`, off material tactics, and off `bulldozerTactics`.
+All profiles share `fallibleAim.ts`, with bands and residuals interpolated M1→M5→M12+, plus memory of the current target and its consecutive attempts. A missing, invalid or ≤1 `roundNumber` is M1. At the SIMPLE/OK/SNIPER/EXPERT thresholds 7/5/3/2, the residual is exact and no magnitude RNG is consumed. `FIRST_SHOT_FLOOR_PX = 36` blocks intentional direct aim, not splash damage. `heuristicShot.ts` is the shared ballistic solver for OK and SIMPLE. SIMPLE stays on its target, otherwise picks the weakest living AI before a human, and uses neither revenge nor material/BULLDOZER tactics. OK/SNIPER/EXPERT retain their terrain/BULLDOZER tactics. `hitReaction.ts` accumulates direct hits and falls for one next riposte, then consumes them; SNIPER has no post-lock slip. Mixed profiles in one match are supported. Do not put AI logic in `TankManager` or `GameEngine`. `AIStrategy` is a legacy contract and is not wired at runtime.
 
 AI shop strategy (#207) uses the initial player count `N` (2–4), captured once and never recomputed from survivors or a transient roster. Each preferred weapon targets `min(3 × N, strategic cap, getShopPolicy(weaponId).maxStock)` and every unit goes through `applyShopTransaction` with `delta: 1`; there is no percentage budget, minimum cash reserve, or automatic selling. Missing or unknown profiles use the OK shop strategy (`v2-heuristic`), without changing an explicitly selected Simple profile or the combat router fallback.
 

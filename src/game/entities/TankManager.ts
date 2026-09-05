@@ -507,10 +507,8 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
           tank.hitReaction.fallDistance += deltaFall;
-          tank.hitReaction.shotStep = 0;
 
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
@@ -788,10 +786,8 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
           tank.hitReaction.wasDirectHit = true;
-          tank.hitReaction.shotStep = 0;
           if (shooterId && shooterId !== player.id && weaponId !== "BULLDOZER") {
             tank.lastDirectAttackerId = shooterId;
           }

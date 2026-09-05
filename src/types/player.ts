@@ -50,13 +50,6 @@ export interface TankHitReaction {
   wasDirectHit: boolean;
   /** Accumulated downward fall distance (in pixels) since its last shot. */
   fallDistance: number;
-  /**
-   * Recovery shot step after an event:
-   * 0 = normal / fully recovered (no penalty pending)
-   * 1 = next shot is Shot #1 after hit/fall (50% direct hit + 1-25% fall penalty)
-   * 2 = next shot is Shot #2 after hit/fall (profile-specific second-shot penalty)
-   */
-  shotStep: number;
 }
 
 /** Strategy identifier used by AIEngine when !isHuman. */
