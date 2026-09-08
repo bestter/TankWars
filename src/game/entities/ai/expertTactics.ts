@@ -41,8 +41,12 @@ export function evaluateExpertTactics(
   players: readonly Player[],
   memory: Readonly<AimMemory>,
 ): ExpertTacticalEvaluation {
-  const enemies = players.map((player, index) => ({ player, index }))
-    .filter(({ player }) => player.id !== self.id && !player.tank.isDead);
+  const enemies: { player: Player; index: number }[] = [];
+  players.forEach((player, index) => {
+    if (player.id !== self.id && !player.tank.isDead) {
+      enemies.push({ player, index });
+    }
+  });
   const ordinaryTarget = enemies.find(({ player }) => player.id === memory.currentTargetId)?.player ??
     [...enemies].sort((a, b) => Number(a.player.isHuman) - Number(b.player.isHuman) ||
       a.player.tank.health - b.player.tank.health || a.index - b.index)[0]?.player;
