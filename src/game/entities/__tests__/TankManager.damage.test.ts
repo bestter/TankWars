@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { TankManager, type ExplosionDamageOptions } from "../TankManager";
 import { TerrainManager } from "../../engine/Terrain";
 import { makePlayer, makeTank, flatTerrain } from "../../__tests__/helpers";
+import { THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../../combatConstants";
 
 function managerWith(...players: ReturnType<typeof makePlayer>[]): TankManager {
   const tm = new TankManager();
@@ -23,6 +24,21 @@ function explosion(overrides: Partial<ExplosionDamageOptions> = {}): ExplosionDa
 }
 
 describe("TankManager.applyExplosionDamage", () => {
+  it.each([-0.001, 0, 0.001])("preserves the inclusive THERMO kill boundary at 75 + %s px", (delta) => {
+    const distance = THERMONUCLEAR_INSTANT_KILL_RADIUS + delta;
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100 + distance, 200,
+      { health: 100, shield: 40 }) });
+    const tm = managerWith(target);
+    const killed = tm.applyExplosionDamage(explosion({
+      weaponId: "THERMONUCLEAR", radius: 160, maxDamage: 120,
+    }));
+    expect(target.tank.isDead).toBe(delta <= 0);
+    expect(killed).toBe(delta <= 0 ? 1 : 0);
+    expect(target.tank.shield).toBe(0);
+    if (delta <= 0) expect(target.tank.health).toBe(0);
+    else expect(target.tank.health).toBeCloseTo(140 - 120 * (1 - distance / 160));
+  });
+
   it("reports 5 incoming points absorbed when a direct hit consumes 10 shield points", () => {
     const target = makePlayer({
       id: "victim",
