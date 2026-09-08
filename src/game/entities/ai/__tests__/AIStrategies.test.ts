@@ -193,7 +193,7 @@ describe("AI weapon gates", () => {
     expect(missShot.weaponId).not.toBe("NUKE");
   });
 
-  it("smart skips THERMONUCLEAR when the target is below the health gate", async () => {
+  it("smart never uses a heavy weapon against a single target", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISmartStrategy();
     const shooter = makePlayer({
@@ -214,6 +214,7 @@ describe("AI weapon gates", () => {
       terrain,
     );
     expect(shot.weaponId).not.toBe("THERMONUCLEAR");
+    expect(shot.weaponId).not.toBe("NUKE");
   });
 
   it("heuristic does not pick CLUSTER against an isolated target", async () => {

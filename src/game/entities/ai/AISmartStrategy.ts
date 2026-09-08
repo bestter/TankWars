@@ -1,3 +1,5 @@
+import { TANK_HITBOX_WIDTH } from "../../combatConstants";
+import { evaluateExpertTactics } from "./expertTactics";
 import { secureRandom } from "../../../utils/random";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
@@ -48,80 +50,37 @@ export class AISmartStrategy implements AIEngine {
     const memory = this.getMem(self.id);
     resetAimMemoryForRound(memory, gameState.roundNumber);
 
-    let finishOffAi: Player | undefined;
-    let finishOffHuman: Player | undefined;
-    let currentTarget: Player | undefined;
-    let bestFallbackTarget: Player | undefined;
-    let bestFallbackIsAi = false;
-
-    for (const player of gameState.players) {
-      if (player.id === self.id || player.tank.isDead) continue;
-
-      const isAi = !player.isHuman;
-      const healthTotal = player.tank.health + player.tank.shield;
-      if (healthTotal <= 30) {
-        if (isAi && !finishOffAi) finishOffAi = player;
-        if (!isAi && !finishOffHuman) finishOffHuman = player;
-      }
-      if (memory.currentTargetId === player.id) {
-        currentTarget = player;
-      }
-
-      if (!bestFallbackTarget) {
-        bestFallbackTarget = player;
-        bestFallbackIsAi = isAi;
-      } else if (isAi && !bestFallbackIsAi) {
-        bestFallbackTarget = player;
-        bestFallbackIsAi = true;
-      } else if (
-        isAi === bestFallbackIsAi &&
-        player.tank.health < bestFallbackTarget.tank.health
-      ) {
-        bestFallbackTarget = player;
-      }
+    const tactics = evaluateExpertTactics(self, gameState.players, memory);
+    let target = tactics.ordinaryTarget;
+    let heavy: typeof tactics.nuke = undefined;
+    if (tactics.nuke || tactics.thermonuclear) {
+      const roll = secureRandom();
+      heavy = roll < 0.22 ? tactics.thermonuclear : roll < 0.50 ? tactics.nuke : undefined;
+    } else if (tactics.preparation) {
+      const primaryTargetId = tactics.preparation.primaryTargetId;
+      target = gameState.players.find((player) => player.id === primaryTargetId);
     }
-
-    const livingAiEnemies = gameState.players.filter(
-      (player) => player.id !== self.id && !player.tank.isDead && !player.isHuman,
-    );
-    let target: Player | undefined;
-    if (finishOffAi) {
-      target = finishOffAi;
-    } else if (
-      currentTarget &&
-      !(currentTarget.isHuman && livingAiEnemies.length > 0)
-    ) {
-      target = currentTarget;
-    } else if (finishOffHuman && livingAiEnemies.length === 0) {
-      target = finishOffHuman;
-    } else {
-      target = bestFallbackTarget;
+    if (heavy) {
+      target = gameState.players.find((player) => player.id === heavy.primaryTargetId);
     }
-    if (!target) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
-    }
+    if (!target) return { angle: 45, power: 50, weaponId: "MISSILE" };
 
-    const attempts = recordAimAttempt(memory, target.id);
-    let weaponId = this.chooseTacticalWeapon(
-      self,
-      target,
-      terrainManager,
-      gameState,
-    );
-    weaponId = adjustWeaponForMaterial(
-      weaponId,
+    const weaponId = heavy?.weaponId ?? adjustWeaponForMaterial(
+      this.chooseTacticalWeapon(self, target, terrainManager, gameState),
       terrainManager.getMaterialAt(target.tank.position.x),
       (id) => (self.inventory[id] ?? 0) > 0,
     );
+    const point = heavy?.point ?? { x: target.tank.position.x, y: target.tank.position.y - 6 };
+    const attempts = recordAimAttempt(memory, target.id);
     self.tank.currentWeapon = weaponId;
 
     const aimX =
-      target.tank.position.x +
+      point.x +
       signedImpactOffset(attempts, "v4-smart", gameState.roundNumber);
     let command = this.computeSmartShot(
       self,
       aimX,
-      target.tank.position.y - 6,
+      point.y,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
@@ -161,7 +120,6 @@ export class AISmartStrategy implements AIEngine {
     const has = (id: WeaponId) => (self.inventory[id] ?? 0) > 0;
     const sx = self.tank.position.x;
     const tx = target.tank.position.x;
-    const distance = Math.abs(tx - sx);
     const startX = Math.min(sx, tx);
     const endX = Math.max(sx, tx);
     const step = (endX - startX) / 10;
@@ -174,24 +132,6 @@ export class AISmartStrategy implements AIEngine {
     const targetHeight = terrain.height - target.tank.position.y;
     const isHidden =
       maximumTerrainHeight > Math.max(selfHeight, targetHeight) + 35;
-    const targetHealthTotal = target.tank.health + target.tank.shield;
-
-    if (
-      distance > 220 &&
-      has("THERMONUCLEAR") &&
-      targetHealthTotal >= 50 &&
-      secureRandom() < 0.22
-    ) {
-      return "THERMONUCLEAR";
-    }
-    if (
-      distance > 180 &&
-      has("NUKE") &&
-      targetHealthTotal >= 40 &&
-      secureRandom() < 0.28
-    ) {
-      return "NUKE";
-    }
     if (isHidden && has("GRENADE")) return "GRENADE";
 
     const neighbors = gameState.players.filter(
@@ -244,7 +184,7 @@ export class AISmartStrategy implements AIEngine {
       weaponId,
       earlyExitError: 4,
       selfHarmPenalty: (landX, landY) =>
-        Math.hypot(landX - sx, landY - sy) < blastRadius + 25 ? 50000 : 0,
+        Math.hypot(landX - sx, landY - sy) <= blastRadius + TANK_HITBOX_WIDTH ? 50000 : 0,
     });
 
     return {
