@@ -32,7 +32,7 @@
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, editable names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Local AI names default to the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). Suffixes preserve profile ordering while skipping every name already used by a human or an AI (`Simple`, `Simple-1`, `Simple-2`). Name comparisons are trimmed, case-insensitive, and locale-independent (`trim()` + `toLowerCase()`), so browser locale cannot change collision results. Manual duplicate names are highlighted after leaving the field or pressing a button and block local match start until corrected. Names are assigned in the active language, remain frozen after language changes, and are never retroactively renumbered. Unique VGA colors include live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Zeus Lightning Anti-Deadlock** — If only two or more AIs remain and five full rotations produce no paid hit (`hasEarnings`), one eligible AI is appointed Zeus and immediately takes the next turn. Zeus then vaporizes one opponent per turn, preferring its last living direct attacker, until the round ends or Zeus dies. `ZEUS_LIGHTNING` is an internal special action: players cannot select, buy, fire, or teach it to an AI strategy.
-- **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
+- **Pluggable Local AI System** — `AIEngine` interface. In local matches, `AIByProfileStrategy` selects per player (mixed Human + AI supported):
   - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — curve by round/target, sticks to a live target, prioritizes the weakest AI, and does not use revenge or weapon tactics. Locks on shot 7.
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. Locks on shot 5.
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. Locks on shot 3; its only deliberate overcorrection is shot 2.
@@ -40,6 +40,7 @@
   All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Only OK and EXPERT use `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
   AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
   **Post-hit & fall reaction (`hitReaction.ts`):** Direct hits and cumulative fall distance are retained for one next riposte, then consumed. Reaction intensity varies by profile and never introduces RNG when it is zero. Wired in MainMenu + GameCanvas.
+  **Online combat limitation:** The Worker currently uses `maybeRunAIServerTurn` and a generated `fakeCommand`, not these local strategies. Local aiming, material and heavy-weapon tactics therefore do not describe online AI combat. Online AI purchases still use the shared authoritative shop policy.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (absorbs via `Math.ceil(shield / 2)`; normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: dark cyan shield bar (`VGA_PALETTE.DARK_CYAN`) above tank while shield > 0; if health is also reduced, a green health bar appears below the dark cyan shield bar; when shield is depleted, only the health bar (green, red if $\le 40\%$) is shown.
@@ -72,8 +73,8 @@ When combat stalls with only AIs alive, a three-second bilingual banner announce
 
 ### Prerequisites
 
-- Node.js 18+
-- npm (or pnpm/yarn)
+- Node.js 24 (the version used by CI)
+- npm (the repository includes `package-lock.json`)
 
 ### Install & Run
 
@@ -96,7 +97,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (854 unit and integration tests across 79 files)
+# Run unit and integration tests (Vitest, without watch mode)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -108,11 +109,24 @@ npm run worker:deploy
 
 **Online dev:** start both `npm run dev` (frontend, port 5173) and `npm run worker:dev` (API, port 8787). Restart the worker after editing `worker/src/game-room.ts`.
 
+### Validation
+
+To reproduce the CI dependency installation, run `npm ci --ignore-scripts`. Before finishing a change, run these checks in order:
+
+```bash
+npm run lint
+npm run build
+npm run test
+git diff --check
+```
+
+The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. For React changes, also follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
+
 ### Deployment
 
 Production uses a controlled Worker-first publication. First, [disable automatic production deployments in Cloudflare Pages](https://developers.cloudflare.com/pages/configuration/git-integration/#disable-automatic-deployments); otherwise a Git push can publish the client before its compatible Worker.
 
-Run `.\deploy-cloudflare.ps1` from PowerShell. The script:
+On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
 1. runs `npm run lint` → `npm run build` → `npm run test`;
 2. deploys the Worker with the repository's local Wrangler;
@@ -123,6 +137,8 @@ Run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 Set the `WORKER_API_URL` environment variable when workers.dev URL auto-detection is not suitable. A failed Worker deploy or health gate prevents any Pages publication. The script restores its working directory and Vite environment variables on every exit.
 
 For the private staging machine, run `.\deploy-staging.ps1`. It performs the same validations, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
+
+The repository also contains a separate [GitHub Pages workflow](./.github/workflows/deploy.yml), triggered by pushes to `main`. It builds and publishes the client to GitHub Pages; it does not deploy the Worker or perform the Cloudflare Worker-first health gate. Disabling automatic Cloudflare Pages deployments does not disable this GitHub Actions workflow.
 
 ---
 
@@ -173,11 +189,12 @@ In the build today:
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **854 unit and integration tests** across **79 files** (Vitest)
+- Unit and integration coverage with Vitest; run `npm run test` for the current totals
 
 Still planned:
 
 - Authoritative server simulation (terrain / damage / HP shot-by-shot)
+- Migration of local AI combat strategies to the authoritative Worker
 - More weapons and power-ups
 - Persistent high scores / match history
 - Further audio and particle polish
