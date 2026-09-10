@@ -8,6 +8,7 @@ import {
 import type { Player } from "../../../types/player";
 import { VGA_PALETTE } from "../../../types/game";
 import { TerrainManager } from "../../engine/Terrain";
+import { createSeededRNG, resetRNG, setRNG } from "../../../utils/random";
 
 function createDummyPlayer(id: string, isDead: boolean): Player {
   return {
@@ -242,6 +243,7 @@ describe("TankManager", () => {
     });
 
     it("prefers tactical hollows while keeping minDist and margins", () => {
+      setRNG(createSeededRNG(0x5eed));
       const tankManager = new TankManager();
       const terrain = new TerrainManager(800, 600);
       const heights = (terrain as unknown as { heights: number[] }).heights;
@@ -251,14 +253,20 @@ describe("TankManager", () => {
 
       const p1 = createDummyPlayer("1", false);
       const p2 = createDummyPlayer("2", false);
-      tankManager.spawnTanks([p1, p2], terrain);
+      try {
+        tankManager.spawnTanks([p1, p2], terrain);
 
-      const xs = [p1.tank.position.x, p2.tank.position.x].sort((a, b) => a - b);
-      const inLeft = (x: number) => x >= 180 && x <= 220;
-      const inRight = (x: number) => x >= 580 && x <= 620;
-      expect(inLeft(xs[0])).toBe(true);
-      expect(inRight(xs[1])).toBe(true);
-      expect(xs[1] - xs[0]).toBeGreaterThanOrEqual(100);
+        const xs = [p1.tank.position.x, p2.tank.position.x].sort(
+          (a, b) => a - b,
+        );
+        const inLeft = (x: number) => x >= 180 && x <= 220;
+        const inRight = (x: number) => x >= 580 && x <= 620;
+        expect(inLeft(xs[0])).toBe(true);
+        expect(inRight(xs[1])).toBe(true);
+        expect(xs[1] - xs[0]).toBeGreaterThanOrEqual(100);
+      } finally {
+        resetRNG();
+      }
     });
   });
 
