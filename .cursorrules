@@ -2,6 +2,8 @@
 
 **Lire et appliquer [AGENTS.md](./AGENTS.md) avant toute modification.** Les règles communes, commandes, validations, contrats du jeu et chemins utiles y sont centralisés.
 
+La [batterie de validation obligatoire](./AGENTS.md#validation) inclut React Doctor à chaque modification, même sans changement React.
+
 Pour les indications de travail propres à Cursor, consulter [CURSOR.md](./CURSOR.md).
 
 Ce fichier sert uniquement de point d’entrée : ne pas y recopier les règles, les spécifications, les versions ou les totaux de tests, et ne pas le maintenir comme miroir d’un autre compagnon.

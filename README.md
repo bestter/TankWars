@@ -117,10 +117,11 @@ To reproduce the CI dependency installation, run `npm ci --ignore-scripts`. Befo
 npm run lint
 npm run build
 npm run test
+npm run doctor -- --verbose --scope changed --blocking warning
 git diff --check
 ```
 
-The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. For React changes, also follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
+The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
 
 ### Deployment
 
