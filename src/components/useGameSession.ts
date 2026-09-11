@@ -76,6 +76,7 @@ interface UseGameSessionProps {
   token?: string;
   ws?: WebSocket;
 }
+// eslint-disable-next-line react-doctor/no-high-complexity-react-function
 
 export function useGameSession({
   initialPlayers,
