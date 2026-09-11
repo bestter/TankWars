@@ -1052,8 +1052,9 @@ export class GameRoom extends DurableObject {
       type: 'human' as const,
     }));
     // Add AI slots for UI display
+    const humanSlots = new Set(roster.map((r) => r.slot));
     this.state.slotConfigs.forEach((c, i) => {
-      if (c.type === 'ai' && !roster.find((r) => r.slot === i)) {
+      if (c.type === 'ai' && !humanSlots.has(i)) {
         roster.push({ slot: i, name: `IA ${c.aiProfile || ''}`.trim(), type: 'ai' as const });
       }
     });
