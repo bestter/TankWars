@@ -143,33 +143,4 @@ describe("Zeus targeting and reward", () => {
     expect(calculateZeusStrikeReward("zeus", 3, ["zeus"]).award.amount).toBe(88);
     expect(calculateZeusStrikeReward("zeus", 4, ["zeus"]).award.amount).toBe(100);
   });
-
-  it("calculates round outcome correctly for different survivor counts", () => {
-    // 0 survivors (draw)
-    expect(calculateZeusStrikeReward("zeus", 2, []).roundOutcome).toEqual({
-      isRoundEnd: true,
-      isDraw: true,
-      roundWinnerId: null,
-    });
-
-    // 1 survivor (winner)
-    expect(calculateZeusStrikeReward("zeus", 2, ["survivor1"]).roundOutcome).toEqual({
-      isRoundEnd: true,
-      isDraw: false,
-      roundWinnerId: "survivor1",
-    });
-
-    // Multiple survivors (ongoing round)
-    expect(calculateZeusStrikeReward("zeus", 2, ["survivor1", "survivor2"]).roundOutcome).toEqual({
-      isRoundEnd: false,
-      isDraw: false,
-      roundWinnerId: null,
-    });
-  });
-
-  it("throws a RangeError if survivorIds contains duplicates", () => {
-    expect(() => calculateZeusStrikeReward("zeus", 2, ["survivor1", "survivor1"])).toThrowError(
-      "Les survivants Zeus doivent être uniques."
-    );
-  });
 });

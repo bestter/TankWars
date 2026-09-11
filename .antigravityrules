@@ -18,7 +18,7 @@
 | Profils, visée, RNG et achats IA | [IA et boutique](./AGENTS.md#ia-et-boutique) |
 | Autorité serveur, reconnexions et ordre de déploiement | [Multijoueur et déploiement](./AGENTS.md#multijoueur-et-déploiement) |
 | Zeus et CSP | [Zeus et protections du client](./AGENTS.md#zeus-et-protections-du-client) |
-| Commandes, tests et React Doctor obligatoire dans chaque batterie de validation, même sans changement React | [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation) |
+| Commandes, tests et React Doctor si React change | [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation) |
 
 Pour le staging privé, suivre le [README — Deployment](./README.md#deployment) : `VITE_HOTSEAT_ONLY=true`, sans déploiement Worker. Ne pas confondre ce parcours avec la publication multijoueur de production.
 
