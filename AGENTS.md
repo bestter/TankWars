@@ -1,196 +1,140 @@
 # AGENTS.md — TankWars
 
-Lecture obligatoire avant toute modification. Companion docs: [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules).
+Lire ce fichier avant toute modification. Il centralise les consignes opérationnelles du dépôt; les règles de jeu détaillées vivent dans le code, ses tests et le [README](./README.md).
 
-Ce fichier est la source opérationnelle (commandes, architecture, pièges, fichiers clés). Les compagnons reprennent les règles — pas le journal de commits.
+Compagnons selon l’outil utilisé : [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules). Garder ici les consignes communes, sans journal de changements ni copie des tableaux d’équilibrage.
 
-## Règle d'or
+## Règles de travail
 
-Répondre en français (FR, de préférence québécois). Même si l'utilisateur écrit en anglais. **Jamais de `any`.** Douter → demander.
-
-Tous les contributeurs — agents IA comme humains 😁 — doivent respecter les conventions définies dans [`.editorconfig`](./.editorconfig) pour chaque fichier créé ou modifié.
+- Répondre en français québécois, même si la demande est en anglais.
+- TypeScript strict : jamais de `any`; valider les données externes avant de les utiliser, en partant de `unknown` au besoin.
+- Respecter [`.editorconfig`](./.editorconfig) : UTF-8, fins de ligne LF, saut final, indentation et exceptions propres aux fichiers.
+- Avant d’éditer, vérifier `git status` et le diff existant. Préserver les changements de l’utilisateur et limiter les modifications au mandat.
+- Demander lorsqu’une ambiguïté change le comportement attendu ou la portée. Ne pas transformer une idée ou un ticket non approuvé en règle de jeu.
+- Accompagner toute fonctionnalité de tests pertinents; pour une correction de bogue, ajouter un test de régression lorsque possible. Mettre à jour la documentation touchée.
+- Ne modifier les fichiers de règles que sur demande explicite. Une demande visant `AGENTS.md` ne s’étend pas automatiquement aux compagnons.
+- Utiliser `secureRandom` de `src/utils/random.ts`, jamais `Math.random`. Préserver les RNG injectés et l’ordre des tirages lorsqu’ils font partie du contrat testé.
 
 ## Commandes
 
+Les scripts de [package.json](./package.json) font référence. Node.js 24 est utilisé par la CI.
+
 | Tâche | Commande |
-|-------|----------|
-| Install | `npm install` |
-| Dev frontend | `npm run dev` → http://localhost:5173 |
-| Production build | `npm run build` (tsc -b + vite) |
-| Lint | `npm run lint` |
-| Tests | `npm run test` (vitest, 773 tests, 74 fichiers) |
-| Worker dev | `npm run worker:dev` → http://localhost:8787 |
-| Worker deploy | `npm run worker:deploy` |
-| Doctor React | `npm run doctor` (entries dead-code : `knip.json`) |
+| --- | --- |
+| Installer les dépendances localement | `npm install` |
+| Reproduire l’installation CI avec le verrou existant | `npm ci --ignore-scripts` |
+| Démarrer le client | `npm run dev` → http://localhost:5173 |
+| Démarrer le Worker | `npm run worker:dev` → http://localhost:8787 |
+| Vérifier le code | `npm run lint` |
+| Construire et vérifier les types client + Worker | `npm run build` (`tsc -b` puis Vite) |
+| Exécuter les tests | `npm run test` (Vitest, sans mode watch) |
+| Prévisualiser le build | `npm run preview` |
+| Diagnostic React | `npm run doctor` |
+| Déployer le Worker | `npm run worker:deploy` |
 
-## Verification checklist
+Pour le multijoueur local, lancer le client **et** le Worker. Après une modification de `worker/src/game-room.ts`, redémarrer le Worker avant le test manuel. `worker/.wrangler/` contient l’état local ignoré par Git.
 
-**Ordre obligatoire:** `npm run lint` → `npm run build` → `npm run test`. Tous les tests doivent passer. Corriger les échecs immédiatement.
+<a id="verification-checklist"></a>
 
-## Architecture
+## Validation
 
-### React vs Canvas (incompressible)
+Avant de terminer, exécuter dans cet ordre :
 
-| Couche | Possède | Ne fait PAS |
-|--------|---------|-------------|
-| **React** (`App`, `GameCanvas`, composants) | `GamePhase`, joueurs, argent, shop, HUD, overlays | Toucher au canvas context ou à `getContext` dans un render |
-| **GameEngine** (boucle rAF 120 Hz) | Physique, projectiles, vent, terrain, dessin, audio de combat | Tenir du state React ou appeler `setState` |
+1. `npm run lint`
+2. `npm run build`
+3. `npm run test`
+4. `npm run doctor -- --verbose --scope changed --blocking warning`
+5. `git diff --check`
 
-- `<canvas>` monté uniquement hors de `MENU` (App.tsx démonte le canvas en menu).
-- Input et config injectés dans l'engine via **refs** et méthodes enregistrées dans `useEffect`.
-- Physique à **pas fixe** découplé du rafraîchissement écran.
+Tous les contrôles doivent passer. Ne pas omettre React Doctor ni considérer un hook automatique comme un remplacement de cette étape; si le diagnostic ne trouve aucun fichier pertinent à analyser, rapporter ce résultat explicitement. Corriger les échecs liés au travail; signaler explicitement tout échec préexistant ou blocage sans élargir discrètement la portée. Rapporter les commandes réellement exécutées et leurs résultats; ne pas maintenir de nombre de tests figé ici.
 
-### Phases (`src/types/game.ts`)
+React Doctor est obligatoire dans chaque batterie de validation, même si les changements ne touchent pas React. Appliquer le [skill react-doctor](./.agents/skills/react-doctor/SKILL.md). Consulter `.github/workflows/react-doctor.yml` : le diagnostic porte sur les changements et `blocking: warning` rend aussi les avertissements bloquants. `knip.json` définit les points d’entrée de l’analyse de code inutilisé.
 
-`MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → ... → `GAME_OVER`
+Si l’interface ou le moteur change, vérifier manuellement le parcours concerné : menu, partie, fin de manche, boutique et manche suivante. Pour le réseau, couvrir aussi les reconnexions et les reprises pertinentes. Si un contrôle manuel n’a pas été fait, le dire.
 
-- `App.tsx` + `appReducer.ts` : `MENU` vs le reste (session React via `useReducer`).
-- `GameCanvas.tsx` : phases intra-match (COMBAT → GAME_OVER).
+## Journaux et erreurs
 
-### Rendu, Terrain & Boucliers
+- « Décisions IA » désigne les décisions des tanks contrôlés par le jeu. Les journaliser dans la console du navigateur uniquement en mode DEBUG/développement, avec assez de contexte pour comprendre le choix. Aucun journal de décision superflu en production.
+- Côté Vite, utiliser `import.meta.env.DEV` pour protéger les traces de développement et leur calcul. Ne pas supposer qu’un drapeau global `DEBUG` existe.
+- Journaliser les erreurs et exceptions avec le contexte utile et le niveau approprié : `console.error` pour les erreurs, `console.warn` pour les avertissements. Ne pas avaler silencieusement une exception ni exposer de secrets dans les journaux.
+- Une erreur client va dans la console du navigateur; une erreur Worker va dans les journaux serveur. Afficher aussi un message compréhensible à l’utilisateur lorsqu’une action échoue.
+- Attention à l’existant : `src/main.tsx` neutralise les méthodes de console autres que `console.error` en production, y compris `console.warn`. Ne pas compter sur un avertissement navigateur pour signaler une erreur de production.
 
-- **Palette:** `VGA_PALETTE` dans `src/types/game.ts` (16 couleurs VGA + néon). Seule palette autorisée.
-- **Terrain & Relief:** heightmap custom dans `Terrain.ts` (génération procédurale riche multi-octaves avec bosses et creux tactiques, sans tunnels). Matériaux de terrain (`src/types/terrain.ts`) : `DIRT` (standard, herbe verte + terre brune), `ROCK` (roche indestructible en gris, mur pour le souffle latéral via `isBlastOccludedByRock` ; explosion par-dessus : +50% de dégâts via `ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5`, portée inchangée), `SOFT` (terrain meuble sable/jaune, `SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5` fois plus destructible). DRILLER : puits orienté (`destroyTerrainShaft`, profondeur `DRILLER_SHAFT_DEPTH` dans `types/weapon.ts`) — le splash reste inchangé. GRENADE : rebond ~2× plus haut sur ROCK ; premier contact sur SOFT : colle, creuse, explose (`grenadeBounceParams`). Aucun moteur physique externe.
-- **Boucliers & Dégâts (`TankManager.ts`):** 40 PV de bouclier inné par manche. Tir direct (`isDirectHitOnThisTank`) : le bouclier subit $2\times$ plus de dégâts (consomme 2 pts de bouclier par pt de dégât absorbé, calculé via `Math.ceil(shield / 2)`) ; le surplus de dégâts est appliqué sans amplification ($1\times$) sur `health`. Souffle indirect : absorption $1\times$. Dégâts de chute : réduisent directement `health` sans toucher à `shield` ; élimination immédiate si `health <= 0`.
-- **Jauges au-dessus du tank (`TankManager.ts`):** Constantes exportées `TANK_GAUGE_*`.
-  - `shield > 0 && health === maxHealth` : barre unique cyan foncé (`VGA_PALETTE.DARK_CYAN`) à $y - 24$ (`TANK_GAUGE_SINGLE_Y_OFFSET`).
-  - `shield > 0 && health < maxHealth` : double jauge superposée — bouclier cyan foncé en haut ($y - 28$, `TANK_GAUGE_DOUBLE_SHIELD_Y_OFFSET`) et santé verte en bas ($y - 23$, `TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET`), avec nom du joueur rehaussé à $y - 36$ (`TANK_NAME_DOUBLE_GAUGE_Y_OFFSET`).
-  - `shield <= 0` : barre unique verte à $y - 24$ (santé, rouge si $\le 40\%$).
-- **Spawns:** `spawnTanks` mélange les X, favorise les creux (max Y canvas parmi les candidats `minDist` 100 px), marges 13 %, `Y = groundY`. Humains locaux : skip 25 % des samples SOFT. IA (tous modes) : skip 25 % des samples ROCK (`spawnAcceptsMaterial`).
-- **Tank sprite:** `drawTankSprite()` dans `src/game/rendering/tankSprite.ts`. Procédural pur Canvas2D.
-- **Armes:** `WEAPON_REGISTRY` dans `src/types/weapon.ts` est la source unique des caractéristiques et des prix. La Mini-Nuke (`NUKE`) coûte 420 $. BULLDOZER : 150 $, 0 HP, 0 rayon ; hit direct = poussée `sign(vx)` + recul (`min(|vx| × 0.25, 120 px)`), pas de cratère, pas d’`applyExplosionDamage` (donc pas de `wasDirectHit`) ; chute / lave via la gravité existante ; hors-carte → burial.
-- **Style:** rétro monospace, `App.css`/`index.css`. Aucune librairie UI (ni Tailwind, ni MUI, etc.).
+## Architecture à préserver
 
-### Online multiplayer
+| Couche | Responsabilités | Limites |
+| --- | --- | --- |
+| React (`src/App.tsx`, `src/components/`) | Phases, joueurs, argent, boutique, HUD et overlays | Aucun accès au contexte Canvas pendant le rendu; aucune donnée de simulation par frame dans `useState` |
+| Moteur (`src/game/engine/`) | Physique, terrain, projectiles, dessin et audio de combat | Aucun state React ni appel à `setState`; les décisions tactiques restent dans les stratégies IA |
+| Domaines partagés (`src/game/online/`, `shop/`, `economy/`, `zeus/`) | Règles et contrats utilisés par le client et le serveur | Garder les calculs partagés indépendants du DOM et des API de plateforme |
+| Worker (`worker/src/`) | Autorité réseau et persistance de `GameRoom` | Ne pas faire confiance aux snapshots et commandes clients sans validation |
 
-Le multi est dans `main` (plus une branche `AddMultiplayer`). La physique demeure locale, mais le serveur est autoritaire sur l’ordre des tours, l’acceptation et la consommation des tirs, les gains et toute la boutique. La simulation complète serveur (terrain / dégâts / PV) reste prévue.
+- `GameEngine` utilise un pas physique fixe de `1/120 s`; `requestAnimationFrame` cadence le rendu selon l’écran. Injecter entrées et configuration par refs et méthodes reliées dans `useEffect`.
+- Le Canvas est démonté en `MENU`. `App.tsx` et `appReducer.ts` possèdent l’entrée/sortie de session; `GameCanvas.tsx` orchestre les phases internes définies dans `src/types/game.ts`.
+- Rendu Canvas2D, terrain heightmap sans tunnels ni moteur physique externe. Employer `VGA_PALETTE` et `src/game/rendering/tankSprite.ts`.
+- Conserver le style rétro monospace dans `src/App.css` et `src/index.css`; aucune bibliothèque UI, Tailwind ou MUI.
+- `worker/tsconfig.json` est référencé par le projet racine : une erreur de type Worker fait échouer le build. Les types de plateforme existants, dont `DurableObjectNamespace`, sont globaux.
 
-- `worker/` : Cloudflare Worker + Durable Object `GameRoom` (lobby, tirs serveur-first, boutique autoritaire, historique de rattrapage borné à la manche et état persistant via Durable Object storage).
-- Client lobby : `OnlineLobby.tsx` (shell) + `useOnlineLobby.ts` + `OnlineLobbyCreate.tsx` / `OnlineLobbyWaiting.tsx` / `onlineLobbyTypes.ts`.
-- Client combat : `useGameSession.ts`, `attachOnlineCombat.ts`, `onlineSession.ts` (reconnexion WS combat, validation stricte `sessionStorage` et résilience aux coupures).
-- Ordre des tours vivant : `src/game/online/turnOrder.ts` (partagé client + worker, sans DOM ni APIs Workers).
-- Protocole combat/boutique strict partagé : `src/game/online/protocol.ts` (`FIRE`/`SHOT` corrélés par `actionId`, refus, catch-up ordonné, gains, manches et messages `SHOP_*`). Les `FIRE` stricts et v0 ainsi que les `SHOT` partagent une garde finie inclusive : angle -360° à 360° et puissance 0 à 100, définie par les constantes `FIRE_COMMAND_*`; `GameRoom.executeFire` conserve la même validation en profondeur. `ONLINE_PROTOCOL_VERSION` reste à 1; le Worker accepte temporairement les clients v0 non versionnés et ferme en `4402` seulement une version numérique non supportée. Déploiement obligatoire Worker-first : Worker → `/api/health` exige `protocolVersion: 1` et `minimumClientProtocolVersion: 0` → build client → Pages. Désactiver l'auto-déploiement de production Pages.
-- File SHOT reconnect : `src/game/online/authoritativeShotQueue.ts`. Pendant un replay, `DeferredTransitionBuffer` applique `ROUND_END` → `SHOP_STATE` → `SHOP_FINISH` (un `SHOP_STATE` tardif n'écrase pas un `SHOP_FINISH`). Dispatch WS combat : `src/components/online/combatMessageDispatch.ts`.
-- En ligne, `FIRE` est une intention pessimiste : aucun projectile ni décrément avant l’écho `SHOT`. Tous les clients, tireur inclus, rejouent ce `SHOT`; seul le tireur humain émet `SHOT_SETTLED`. Les tirs clients émis pendant un tour IA sont rejetés (`NOT_YOUR_TURN`), l'IA serveur tirant uniquement via `maybeRunAIServerTurn`. Tout rejet de tir est affiché via un toast non bloquant (`.fire-rejection-toast`) avec auto-dismiss après 3,5 s.
-- La boutique en ligne n’accepte aucun snapshot client v1. Pour la fenêtre v0, le Worker dérive au plus une transaction valide de l'écart économique et ignore le reste du snapshot. `GameRoom` ouvre une session par époque, normalise le roster, exécute les achats IA une fois et applique chaque transaction avec clé composite d'idempotence (`kind:slot:actionId`). `SHOP_STATE`/`SHOP_FINISH` acquittent une réussite avec `{ slot, actionId }`; seul cet ack corrélé libère l'intention locale, et un délai sans réponse renvoie le même `actionId`. Les retries réussis reçoivent l'état frais. `SHOP_FINISH` vide `shotHistory` et ne conserve que le dernier `SHOP_READY` terminal jusqu'au prochain `SHOP_ENTER`.
-- Le premier humain connecté devient l’autorité des gains; `GameRoom` persiste l’ordre, l’époque, le tir actif et le dernier résultat. En cas de déconnexion, l’autorité passe au prochain humain selon l’ordre initial sans reprise automatique par l’ancien premier.
-- Le Worker valide puis applique les gains et les états morts atomiquement avant diffusion. Un doublon identique est rediffusé sans double crédit. Le tour avance dès que la physique et le rapport économique sont stabilisés, sans délai d’affichage.
-- Dev : lancer **les deux** `npm run dev` + `npm run worker:dev`. Redémarrer le worker après chaque changement de `game-room.ts`.
-- `GAME_START` n'envoie `materials` que si le tableau serveur a la même longueur que `heights` (generate headless pas encore branché). `Terrain.loadHeights` remet tout à `DIRT` si le tableau est absent ou mismatch (pas d'état hybride).
-- `worker/.wrangler/` est gitignoré (état local SQLite).
-- Worker a son propre `worker/tsconfig.json`, référencé dans le `tsconfig.json` racine pour la validation statique stricte des types.
+## Contrats sensibles
 
-### Économie par tir
+### Combat, terrain et économie
 
-- Domaine pur : `src/game/economy/fixedPoint.ts` + `shotRewards.ts`; calcul exact rationnel, dégâts normalisés au millième et un seul `ceil` final. `Player.money` demeure un entier sûr.
-- Base $X$ selon le nombre initial de joueurs : 3 $ (2 joueurs), 3,5 $ (3), 4 $ (4).
-- Dégâts de projectile : direct = $X \times dégâts$, indirect = moitié; NUKE/THERMONUCLEAR divisent encore par 2. Chute attribuée : quart en direct, huitième en indirect. Aucun gain pour l'auto-dégât.
-- Destruction : $25X$, ou $50X$ au premier tir de la manche; NUKE/THERMONUCLEAR = $2X$. Dernier survivant = $50X$; les nulles suivent le partage défini dans `shotRewards.ts`.
-- `GameEngine` tient un registre de tir (`shotId` / `munitionId`), applique les gains une seule fois et cumule `roundEarningsByPlayer`. Le résumé montre le gain de manche; la boutique montre le solde total.
-- `ShotEarningsOverlay.tsx` affiche `+montant$` au-dessus du tank pendant 3 secondes, avec montée/fondu et sans bloquer les entrées ni le prochain tour.
+- Caractéristiques et prix : `src/types/weapon.ts` (`WEAPON_REGISTRY`). Matériaux et constantes : `src/types/terrain.ts` et `src/game/combatConstants.ts`. Consulter ces sources et leurs tests avant de modifier l’équilibrage.
+- Distinguer dégâts directs, souffle et chute : l’amplification du bouclier sur un tir direct ne s’applique pas au surplus sur la santé; la chute contourne le bouclier. Voir `TankManager.ts` et ses tests de dégâts.
+- BULLDOZER déplace les tanks sans explosion ni cratère et ne marque pas `wasDirectHit`. DRILLER creuse un puits orienté; GRENADE réagit au matériau. Préserver leurs chemins physiques propres.
+- `Terrain.loadHeights` remet tous les matériaux à `DIRT` si `materials` manque ou si sa longueur diffère de `heights`.
+- Une longue trajectoire de GRENADE ne doit pas provoquer un second tour IA après le déclenchement du filet de sécurité de `TurnManager`.
+- Les gains passent par `src/game/economy/fixedPoint.ts` et `shotRewards.ts` : calcul rationnel, un seul arrondi final, argent entier sûr, aucun gain d’auto-dégât. Préserver l’application unique par tir et la distinction gain de manche / solde total.
 
-### Anti-impasse / Éclair de Zeus
+### IA et boutique
 
-- Domaine pur : `src/game/zeus/zeusDomain.ts` + `zeusRewards.ts`. `ZEUS_LIGHTNING` est une **action spéciale**, jamais une arme : ne jamais l’ajouter à `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, la boutique ou une stratégie `AIEngine`.
-- Activation : seulement lorsqu’au moins deux IA sont vivantes et qu’aucun humain vivant ne reste. Après `IA vivantes × 5` tirs consécutifs sans **touche payante** (`hasEarnings === false`), une IA admissible devient Zeus et prend immédiatement le prochain tour.
-- Compteur : un gain, un humain vivant, moins de deux survivants, la mort de Zeus ou la fin de manche le remet à zéro. Une mort sans gain conserve le cycle et recalcule le seuil avec les survivants; la résolution qui tue Zeus ne compte jamais dans le cycle suivant.
-- Roulement équitable : `appointedPlayerIds` survit aux manches et est vidé seulement quand toutes les IA admissibles ont été Zeus; `resetGame`/nouvelle salle vide tout. L’ordre est réancré sur Zeus, puis reste circulaire (`Zeus → suivants → Zeus`).
-- Vengeance : `Tank.lastDirectAttackerId` est distinct de `lastHitBy`/`hitReaction`; toute touche directe adverse, même absorbée entièrement par le bouclier, l’actualise sauf BULLDOZER. Zeus consomme le dernier agresseur direct encore vivant, sinon utilise le RNG injecté.
-- Frappe : animation d’environ 700 ms, puis la cible seule passe à 0 santé/0 bouclier/morte. Aucun projectile, souffle, cratère ou dommage collatéral. Prime unique = destruction standard `25X`, sans dégâts, premier tir ni bonus de dernier survivant.
-- En ligne, `GameRoom` est l’unique autorité Zeus. Il persiste compteur, historique, agresseurs, RNG, ordre, identifiants et frappe avant diffusion. `strikeId`/dernier résultat garantissent l’idempotence; `ZEUS_STATE` restaure aura, morts, tour et frappe à la reconnexion. Un changement d’autorité économique ne modifie jamais Zeus.
+- Toute stratégie locale implémente `src/game/entities/ai/AIEngine.ts` et passe par `AIByProfileStrategy`, branché dans `GameCanvas.tsx`. `AIStrategy` est un contrat legacy non utilisé au runtime. Ne pas placer de stratégie dans `TankManager` ou `GameEngine`.
+- Profils : `v1-random` → `AISimpleStrategy`; `v2-heuristic` → `AIHeuristicStrategy`; `v3-sniper` → `AISniperStrategy`; `v4-smart` → `AISmartStrategy`.
+- Conserver le chargement à la demande de v2–v4 et du solveur SIMPLE, après le court-circuit de grosse gaffe. Une nouvelle IA doit être intégrée au routeur et à la configuration des profils concernés.
+- Les quatre profils utilisent `fallibleAim.ts`, la mémoire de cible et `hitReaction.ts`. Préserver les resets de cible/manche, la consommation unique de réaction, le plafonnement de `fallDistance` jusque dans les snapshots et les contrats de RNG/gaffes. Les courbes et seuils sont dans le code et les tests associés.
+- SIMPLE conserve sa cible vivante, sinon privilégie l’IA vivante la plus faible avant les humains. Il ignore vengeance, tactiques de matériau et BULLDOZER; il utilise `currentWeapon` ou `MISSILE`. SNIPER conserve sa surcorrection au deuxième tir seulement, sans glissade après verrouillage.
+- `terrainMaterialTactics.ts` concerne v2–v4; `bulldozerTactics.ts`, OK et EXPERT. Pour les lourdes EXPERT, lire `expertTactics.ts`, `AISmartStrategy.ts` et leurs tests : l’admissibilité géométrique ne garantit pas la survie réelle et le jet tactique est distinct de la gaffe.
+- Tous les achats IA passent par `autoBuyForAI` dans `aiShopHelper.ts`, sans méthode boutique dans les stratégies de combat. Le nombre initial de joueurs reste fixe; respecter les plafonds de profil, les quotas de `shopPolicy.ts` et les transactions unitaires. Aucun budget proportionnel, réserve minimale ou vente automatique.
+- Attention aux replis : un profil absent/inconnu utilise OK pour les achats, SIMPLE pour le routeur de combat.
+- En local, propager le roster immuable après achat vers `TankManager.setPlayers`, `shopPlayersRef.current` et `APPLY_LOCAL_SHOP_TRANSACTION`. La boutique humaine doit rester accessible aux manches suivantes.
+- Les noms locaux sont uniques après `trim().toLowerCase()` indépendamment de la locale. Préserver les noms édités, l’absence de renommage rétroactif et leur stabilité après changement de langue. Voir `playerNameUi.ts` et ses tests.
 
-### Système d'IA
+### Multijoueur et déploiement
 
-Toute IA doit implémenter `AIEngine` (`src/game/entities/ai/AIEngine.ts`) :
+- La physique demeure locale. `GameRoom` possède l’ordre des tours, l’acceptation et la consommation des tirs, l’application des gains, la boutique et Zeus. L’autorité cliente des rapports de gains peut changer après déconnexion; préserver son ordre de relève.
+- Le combat IA serveur passe actuellement par `maybeRunAIServerTurn` et une `fakeCommand`; il n’exécute pas les stratégies locales. Ne pas présenter une amélioration locale comme une amélioration de l’IA en ligne.
+- `src/game/online/protocol.ts` centralise versions, gardes et bornes `FIRE_COMMAND_*`. Préserver la validation en profondeur du Worker et la compatibilité v0 tant qu’une migration explicite ne la retire pas.
+- `FIRE` est une intention : aucun projectile ni décrément avant `SHOT`, rejoué par tous les clients. Seul le tireur humain émet `SHOT_SETTLED`; un client ne tire pas à la place d’une IA. Un refus reste visible sans bloquer l’interface.
+- Boutique : le Worker décide des transactions et exécute les achats IA une seule fois par époque. Un snapshot client v1 n’est pas une source d’autorité. Préserver la conversion v0 bornée, les clés `kind:slot:actionId`, l’ack `{ slot, actionId }` et le même identifiant au retry.
+- Préserver la persistance avant diffusion, les gains/morts appliqués atomiquement, l’idempotence et l’historique de tirs borné à la manche. La file de reprise et les transitions différées maintiennent l’ordre `ROUND_END` → `SHOP_STATE` → `SHOP_FINISH`; un état boutique tardif ne rouvre pas une boutique terminée.
+- Lors d’un déploiement multijoueur, publier le Worker avant le client, vérifier `/api/health` contre les versions attendues du protocole, puis construire/publier le client. Garder l’auto-déploiement de production Cloudflare Pages désactivé pour préserver cet ordre.
+- Distinguer Cloudflare Pages du workflow GitHub Pages `.github/workflows/deploy.yml`, déclenché par un push sur `main`. Vérifier les workflows concernés avant toute publication; une commande de déploiement listée ici n’est pas une demande de déployer.
 
-```ts
-executeTurn(tankId, gameState, terrainManager): Promise<FireCommand>
-```
+### Zeus et protections du client
 
-Noms IA du menu local (`MainMenu.tsx`) : le champ reçoit le nom court localisé du profil (`Simple`, `OK`, `Sniper`, `Expert`) au moment de la création ou de la sélection. Le suffixe correspond au nombre des **autres** joueurs qui utilisent déjà ce profil, peu importe leur position (`Simple`, `Simple-1`, `Simple-2`), puis avance si ce nom est déjà utilisé par un humain ou une autre IA. Seul le joueur sélectionné est renommé : aucun renommage rétroactif. Le nom demeure éditable et reste figé si la langue change ensuite. Tous les noms doivent être uniques après `trim()` + `toLowerCase()`; cette normalisation doit rester indépendante de la locale du navigateur (jamais de `toLocaleLowerCase()` sans locale explicite). Les doublons manuels sont signalés après blur/clic et bloquent le démarrage local.
+- `ZEUS_LIGHTNING` est une action spéciale dans `src/game/zeus/`, jamais une arme : ne pas l’ajouter à `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, la boutique ou `AIEngine`.
+- Préserver les conditions d’activation/reset, l’équité intermanches et la séparation entre `lastDirectAttackerId`, `lastHitBy` et `hitReaction`. BULLDOZER ne compte pas comme agresseur direct pour Zeus.
+- En ligne, `GameRoom` décide et persiste Zeus avant diffusion. `strikeId` empêche les doubles frappes/crédits; `ZEUS_STATE` restaure l’état après reconnexion. Les effets visuels utilisent l’identifiant et le temps, jamais le RNG de salle; la relève de l’autorité économique ne change pas Zeus.
+- Conserver `'unsafe-inline'` dans `style-src` de `index.html` et `public/_headers`, comme l’exige `src/utils/__tests__/csp.test.ts` pour les styles du client actuel.
 
-Profils (mixables dans une même partie) :
-| Profile | Classe | Label |
-|---------|--------|-------|
-| `v1-random` | `AISimpleStrategy` | IA SIMPLE |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT |
+## Où intervenir
 
-Le routeur `AIByProfileStrategy` est instancié dans `GameCanvas.tsx`. Les v2–v4 sont lazy-loadés (`dynamic import`). **Jamais de logique IA dans `TankManager` ou `GameEngine`.** v2–v4 ajustent l’arme via `terrainMaterialTactics.ts` (pas de DRILLER sur `ROCK` ; DRILLER préféré sur `SOFT` si le pick par défaut est MISSILE) et `bulldozerTactics.ts` (BULLDOZER si stock, dist ≥ 80, bord de carte ou drop ≥ 12 px). **v1-random n’utilise pas ces tactiques.**
+Les chemins ci-dessous sont relatifs à la racine du dépôt. Chercher les tests voisins dans `__tests__/`.
 
-Boutique IA (#207) : `N` est le nombre initial de joueurs (2–4), capturé une seule fois et jamais recalculé depuis les survivants ou un roster transitoire. Pour chaque arme de sa liste, l’IA vise `min(3 × N, plafond stratégique, getShopPolicy(weaponId).maxStock)` et achète uniquement par transactions unitaires `delta: 1`, selon l’argent, le quota restant et la place sous le plafond. Il n’existe ni budget en pourcentage, ni réserve minimale, ni vente automatique. Un profil absent ou inconnu utilise la stratégie boutique OK (`v2-heuristic`); cela ne change pas le profil Simple explicitement choisi dans le menu ni le repli du routeur de combat.
+| Besoin | Points d’entrée |
+| --- | --- |
+| Phases et session React | `src/App.tsx`, `src/appReducer.ts`, `src/components/GameCanvas.tsx`, `src/components/useGameSession.ts` |
+| Physique, tours, terrain, audio | `src/game/engine/` (`GameEngine.ts`, `PhysicsEngine.ts`, `TurnManager.ts`, `Terrain.ts`), `src/game/entities/TankManager.ts` |
+| Armes, matériaux, rendu | `src/types/weapon.ts`, `src/types/terrain.ts`, `src/game/combatConstants.ts`, `src/game/rendering/tankSprite.ts` |
+| IA, visée et achats IA | `src/game/entities/ai/` (stratégies, tactiques, `aiShopHelper.ts` et tests) |
+| Boutique et gains | `src/game/shop/`, `src/components/shop/`, `src/game/economy/`, `src/components/ShotEarningsOverlay.tsx`, `src/components/RoundSummary.tsx` |
+| Menu, noms, traduction | `src/components/MainMenu.tsx`, `src/components/playerNameUi.ts`, `src/components/playerControllerUi.ts`, `src/components/usePlayerNameValidation.ts`, `src/locales/` |
+| Lobby | `src/components/OnlineLobby.tsx`, `src/components/useOnlineLobby.ts`, `worker/src/index.ts` |
+| Combat réseau et reconnexion | `src/components/online/`, `src/utils/onlineSession.ts`, `src/game/online/`, `worker/src/game-room.ts` |
+| Zeus | `src/game/zeus/`, `src/game/engine/GameEngine.ts`, `src/game/engine/TurnManager.ts`, `src/game/entities/TankManager.ts`, `worker/src/game-room.ts` |
+| Build, CI et déploiements | `package.json`, `tsconfig.json`, `worker/tsconfig.json`, `worker/wrangler.toml`, `.github/workflows/` |
 
-| Profil | Ordre d’achat | Plafonds stratégiques |
-|--------|---------------|------------------------|
-| Simple (`v1-random`) | GRENADE → CLUSTER | chaque arme : `N - 1` |
-| OK (`v2-heuristic`) | GRENADE → CLUSTER → DRILLER → BULLDOZER → NUKE | GRENADE/CLUSTER `3N`, DRILLER/BULLDOZER `N`, NUKE `1` |
-| Sniper (`v3-sniper`) | BULLET → DRILLER → BULLDOZER | BULLET `3N`, DRILLER/BULLDOZER `2N` |
-| Expert (`v4-smart`) | THERMONUCLEAR → NUKE → GRENADE → CLUSTER → DRILLER → BULLDOZER | THERMONUCLEAR `1`, NUKE `2`, autres `3N` |
+## Commits et compte rendu
 
-En local, `localHotseatShop.ts` applique immédiatement le domaine partagé et propage le roster immuable. En ligne, seul le Worker exécute `autoBuyForAI`, une fois au premier `SHOP_ENTER` admissible de l’époque après normalisation; reconnexion, retry et second `SHOP_ENTER` ne relancent jamais les achats. #207 possède la stratégie IA; #215 demeure la source de la politique globale, des quotas et de l’autorité en ligne.
-
-Visée faillible (`fallibleAim.ts`) — v2–v4 seulement ; **v1-random n’y touche pas** :
-| Profile | Courbe d’offset (px, par tentative sur la cible) |
-|---------|--------------------------------------------------|
-| `v2-heuristic` | 1er tir ≥ 36 px, lock au **5e** (`SHOTS_TO_HIT`) |
-| `v3-sniper` | 1er tir ≥ 36 px, lock au **4e**, 14 % de glissade après lock |
-| `v4-smart` | 1er tir ≥ 36 px, lock au **3e** |
-
-Les gaffes de personnalité restent dans chaque stratégie. `AIStrategy` est un contrat legacy, non branché au runtime.
-
-Warmup ease-out : manche 1 = 15 % (`AI_WARMUP_START_SKILL`), gros saut aux manches 2–3, palier du tableau à la manche 5. Après 5, `roundSkill` monte jusqu’à 1.35 (cap) et `aimMissScale` descend jusqu’à 0.55. Le 1er tir reste hors splash (`FIRST_SHOT_FLOOR_PX` = 36). Avant la manche 5, même le tir de lock peut rater (`EARLY_LOCK_LEFTOVER_PX`). Simple : P(alcoolique) = `1 − min(1, skill)`. `v1-random` reste hors `fallibleAim`.
-
-Courbe de réaction après coup/chute (`hitReaction.ts`, Issue 174) :
-- **1er tir après l'événement :** Coup direct de projectile sur la hitbox (`wasDirectHit`) = +50% d'imprécision ; chute de terrain (`fallDistance`) = +1% à +25% d'imprécision (échelle 0 à 120 px). Les deux sont **cumulables**.
-- **2e tir après l'événement (sans nouveau coup) :** SNIPER = 0% (précision normale/chirurgicale) ; EXPERT = 12% d'imprécision ; OK et SIMPLE = 25% d'imprécision.
-- **3e tir :** Retour complet à 0% d'imprécision.
-
-Nouvelles IA → nouveau fichier dans `game/entities/ai/`, enregistrement dans `AIByProfileStrategy.ts` + `GameCanvas.tsx`. Si le profil vise, brancher `fallibleAim` (sauf si on veut un profil volontairement naïf comme v1).
-
-## Pièges fréquents
-
-- Utiliser `secureRandom` de `src/utils/random.ts` au lieu de `Math.random` pour tout le RNG.
-- Ne pas stocker de tableaux de projectiles/particules/ImageData dans `useState` mis à jour à chaque frame.
-- Ne pas muter le canvas context dans un render React.
-- **CSP style-src** : Ne JAMAIS enlever `'unsafe-inline'` de la directive `style-src` dans `index.html` ou `public/_headers`. Vite et React en ont absolument besoin pour injecter les styles de dev et gérer les attributs `style` dynamiques (un test unitaire `csp.test.ts` veille au grain).
-- `tsc -b` vérifie `worker/` aussi (projet reference). Les erreurs de type dans `worker/src/` cassent le build.
-- Le worker DO utilise des types globaux (`DurableObjectNamespace`), pas d'imports de plateforme.
-- Boutique locale humain vs IA : ne pas rebloquer le shop humain en manche 2+ (`useGameSession.ts`).
-- Boutique IA locale (`src/components/shop/localHotseatShop.ts`) : après `autoBuyForAI`, propager le nouveau roster immuable dans `TankManager.setPlayers`, synchroniser `shopPlayersRef.current` et dispatcher `APPLY_LOCAL_SHOP_TRANSACTION` afin que les achats soient conservés à la manche suivante et lors des re-renders.
-- Grenade longue : le filet de sécurité du `TurnManager` ne doit pas laisser l’IA rejouer après un bounce trop long.
-- `loadHeights` sans `materials` (ou longueur mismatch) : tout retombe sur `DIRT` — pas d’état hybride.
-- Ne pas modifier les fichiers de règles (`AGENTS.md`, `CLAUDE.md`, etc.) sans instruction explicite.
-- Zeus : persister toute nomination/frappe avant de la diffuser; ne jamais double-créditer un `strikeId`, consommer le RNG de salle pour des effets visuels, ni accepter `ZEUS_LIGHTNING` dans `FIRE`. La géométrie cosmétique dépend seulement de `strikeId` et du temps.
-
-## Fichiers clés par tâche
-
-| Besoin | Fichiers |
-|--------|----------|
-| Nouvelle arme | `types/weapon.ts`, `GameEngine.ts`, `PhysicsEngine.ts`, shop + HUD |
-| BULLDOZER / poussée | `types/weapon.ts`, `PhysicsEngine.ts` (`applyBulldozerHit`), `TankManager.ts` (`applyBulldozerDisplacement`), `bulldozerTactics.ts` |
-| DRILLER / puits | `types/weapon.ts` (`DRILLER_SHAFT_DEPTH`), `Terrain.ts` (`destroyTerrainShaft`), `PhysicsEngine.ts` |
-| Nouveau cycle/manche | `TurnManager.ts`, `GameCanvas.tsx` |
-| Physique/explosions | `PhysicsEngine.ts`, `GameEngine.ts` |
-| Terrain & matériaux | `Terrain.ts`, `types/terrain.ts` (`spawnAcceptsMaterial`, `grenadeBounceParams`, constantes de blend/distribution) |
-| Phase globale | `App.tsx`, `appReducer.ts`, `types/game.ts` |
-| Online lobby | `OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `onlineLobbyTypes.ts`, `worker/src/index.ts`, `worker/src/game-room.ts` |
-| Online sync combat | `useGameSession.ts`, `attachOnlineCombat.ts`, `onlineSession.ts`, `authoritativeShotQueue.ts`, `deferredTransitions.ts`, `flushDeferredTransitions.ts`, `combatMessageDispatch.ts` |
-| Ordre des tours (online) | `src/game/online/turnOrder.ts` + `worker/src/game-room.ts` |
-| Shop AI | `aiShopHelper.ts` (auto-buy lists) |
-| Shop métier (buy/sell) | `game/shop/shopPolicy.ts`, `shopTransaction.ts`, `shopSessionGuard.ts` + `src/components/shop/` (`completeShopRound.ts`, `localHotseatShop.ts`, `shopPlayerActions.ts`) |
-| Économie / gains par tir | `game/economy/fixedPoint.ts`, `game/economy/shotRewards.ts`, `GameEngine.ts`, `ShotEarningsOverlay.tsx`, `RoundSummary.tsx` |
-| Protocole autoritaire des gains | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
-| Anti-impasse / Éclair de Zeus | `game/zeus/zeusDomain.ts`, `game/zeus/zeusRewards.ts`, `GameEngine.ts`, `TurnManager.ts`, `TankManager.ts` |
-| Autorité Zeus / reconnexion | `game/online/protocol.ts`, `useGameSession.ts`, `onlineSession.ts`, `worker/src/game-room.ts` |
-| Visée IA (v2–v4) | `fallibleAim.ts` + `roundSkill.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` + `bulldozerTactics.ts` + la stratégie concernée |
-| Noms joueurs du menu local | `MainMenu.tsx`, `MainMenuView.tsx`, `PlayerConfigList.tsx`, `PlayerConfigRow.tsx`, `playerControllerUi.ts`, `playerNameUi.ts`, `usePlayerNameValidation.ts` |
-| Audio combat / victoire | `GameEngine.ts` |
-
-## Compétences disponibles
-
-- `.agents/skills/react-doctor/` : avant/après changements React (`/doctor`).
-
-## Style de commit
-
-Impératif. Signer avec nom + modèle exact (`— Grok 4.6 (xAI)`).
+- Message de commit à l’impératif, signé avec le nom de l’application utilisée, l’identité de l’agent et son modèle exact fourni par l’environnement. Ne pas copier la signature d’un autre agent ni inventer une version.
+- Le compte rendu indique ce qui a changé, pourquoi, les validations effectuées et les limites restantes. Distinguer modifications locales, commit, push, PR et déploiement; ne déclarer une publication qu’après vérification.

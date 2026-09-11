@@ -1,72 +1,37 @@
 import { secureRandom } from "../../../utils/random";
-/**
- * TankWars - AIHeuristicStrategy (v2 "OK" / heuristic AI)
- *
- * Phase 2 "smarter but not sniper" AI per project guidelines + user spec.
- * - Implements AIEngine (new strategy class, no entanglement in core engine/tank).
- * - Can kill tanks (locks on shot SHOTS_TO_HIT["v2-heuristic"] = 5 at spec).
- * - Revenge: if self.lastHitBy (set on damage), switch target to the attacker.
- * - Otherwise stick to last target for the round.
- * - New target selection: prefer weakest (lowest health), with slight human bias.
- * - Per-turn: increases precision (reduces noise) on the current target.
- * - Per-round memory: tracks attempts/success (health drop after my shot)/fails; used for adjustments + logged.
- * - Uses wind + gravity (from GameState) + terrain sampling for LOS/roughness.
- * - Chooses weapons opportunistically (GRENADE for hills, CLUSTER for groups, etc).
- * - Additional behaviors: self-damage avoidance in search, basic terrain arc bias, tunable non-sniper noise.
- *
- * Registered via AIByProfileStrategy (based on player.aiProfile) in GameCanvas.
- * Memory lives in the strategy instance (one per match; fresh on new game).
- */
-
-import type { AIEngine } from "./AIEngine";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
-import type { TerrainManager } from "../../engine/Terrain";
 import { type WeaponId } from "../../../types/weapon";
-import { searchBallisticSolution } from "./BallisticsSimulator";
-import { scaledGaffe, signedImpactOffset } from "./fallibleAim";
-import { roundSkill } from "./roundSkill";
-import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import type { TerrainManager } from "../../engine/Terrain";
+import type { AIEngine } from "./AIEngine";
+import {
+  ADVANCED_GAFFES,
+  applySignedCorruption,
+  finalizeAdvancedAim,
+} from "./aimCorruption";
+import {
+  type AimMemory,
+  recordAimAttempt,
+  resetAimMemoryForRound,
+} from "./aimMemory";
+import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { computeHeuristicShot } from "./heuristicShot";
+import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
-import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
-
-interface AIMemory {
-  currentTargetId?: string;
-  /** attempts per target id this round */
-  targetAttempts: Record<string, number>;
-  /** last known healths (to detect post-shot success) */
-  lastKnownHealth: Record<string, number>;
-  lastSelfHealth?: number;
-  roundSuccesses: number;
-  roundFails: number;
-  /** small persistent power bias learned from recent misses */
-  lastPowerBias: number;
-}
+import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
 export class AIHeuristicStrategy implements AIEngine {
-  /** Per-AI-tank memory (keyed by player.id). Survives across the AI's turns in a match. */
-  private memories = new Map<string, AIMemory>();
+  private memories = new Map<string, AimMemory>();
 
-  private getMem(playerId: string): AIMemory {
-    if (!this.memories.has(playerId)) {
-      this.memories.set(playerId, {
-        targetAttempts: {},
-        lastKnownHealth: {},
-        roundSuccesses: 0,
-        roundFails: 0,
-        lastPowerBias: 0,
-      });
-    }
-    return this.memories.get(playerId)!;
-  }
+  private getMem(playerId: string): AimMemory {
+    const existing = this.memories.get(playerId);
+    if (existing) return existing;
 
-  private resetForNewRound(mem: AIMemory): void {
-    mem.currentTargetId = undefined;
-    mem.targetAttempts = {};
-    mem.roundSuccesses = 0;
-    mem.roundFails = 0;
-    mem.lastPowerBias = 0;
-    // lastKnownHealth will be refreshed from current state
+    const memory: AimMemory = {
+      currentTargetAttempts: 0,
+    };
+    this.memories.set(playerId, memory);
+    return memory;
   }
 
   async executeTurn(
@@ -76,211 +41,137 @@ export class AIHeuristicStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const playerById = new Map<string, Player>();
     let self: Player | undefined;
-    for (const p of gameState.players) {
-      playerById.set(p.id, p);
-      if (p.tank.id === tankId) {
-        self = p;
-      }
+    for (const player of gameState.players) {
+      playerById.set(player.id, player);
+      if (player.tank.id === tankId) self = player;
     }
     if (!self || self.tank.isDead) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const skill = roundSkill(gameState.roundNumber);
-    const mem = this.getMem(self.id);
-
-    // Detect round respawn (health reset to full) and clear per-round memory
-    if (
-      mem.lastSelfHealth != null &&
-      self.tank.health > mem.lastSelfHealth + 5
-    ) {
-      this.resetForNewRound(mem);
-    }
-    mem.lastSelfHealth = self.tank.health;
+    const memory = this.getMem(self.id);
+    resetAimMemoryForRound(memory, gameState.roundNumber);
 
     const enemies = gameState.players.filter(
-      (p) => p.id !== self.id && !p.tank.isDead,
+      (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    // === Update memory from previous shot on the PREVIOUS target ===
-    if (mem.currentTargetId) {
-      const prevTarget = playerById.get(mem.currentTargetId);
-      if (prevTarget) {
-        const wasAlive = (mem.lastKnownHealth[prevTarget.id] ?? 0) > 0;
-        const isDeadNow = prevTarget.tank.isDead || prevTarget.tank.health <= 0;
-
-        if (wasAlive && isDeadNow) {
-          // Success! Target was killed (by us or someone else, we successfully resolved this threat)
-          mem.roundSuccesses += 1;
-          if (import.meta.env.DEV) {
-            console.log(
-              `[AI MEMORY] ${self.name} detects target ${prevTarget.name} has been KILLED.`,
-            );
-          }
-        } else if (!isDeadNow) {
-          // Still alive: compare health to check for a hit
-          const prevHealth =
-            mem.lastKnownHealth[prevTarget.id] ?? prevTarget.tank.health + 20;
-          if (prevTarget.tank.health < prevHealth - 0.1) {
-            mem.roundSuccesses += 1;
-            if (import.meta.env.DEV) {
-              console.log(
-                `[AI MEMORY] ${self.name} detects HIT on ${prevTarget.name} (health: ${prevHealth.toFixed(1)} -> ${prevTarget.tank.health.toFixed(1)}).`,
-              );
-            }
-          } else {
-            // Miss!
-            mem.roundFails += 1;
-            mem.lastPowerBias += (secureRandom() - 0.5) * 3.6;
-            if (import.meta.env.DEV) {
-              console.log(
-                `[AI MEMORY] ${self.name} detects MISS on ${prevTarget.name}. Adjusting power bias.`,
-              );
-            }
-          }
-        }
-      }
-    }
-
-    // === Target selection per spec ===
     let target: Player | undefined;
-    let revengeLocked = false;
-
-    // 1. Revenge: if someone just tried to kill us, prioritize them
     const revengeId = self.tank.lastHitBy;
     if (revengeId) {
-      const e = playerById.get(revengeId);
-      if (e && e.id !== self.id && !e.tank.isDead) {
-        target = e;
-        revengeLocked = true;
+      const revengeTarget = playerById.get(revengeId);
+      if (
+        revengeTarget &&
+        revengeTarget.id !== self.id &&
+        !revengeTarget.tank.isDead
+      ) {
+        target = revengeTarget;
       }
     }
 
-    // 2. Stick to previous target if still alive
-    if (!target && mem.currentTargetId) {
-      const e = playerById.get(mem.currentTargetId);
-      if (e && e.id !== self.id && !e.tank.isDead) {
-        target = e;
+    if (!target && memory.currentTargetId) {
+      const currentTarget = playerById.get(memory.currentTargetId);
+      if (
+        currentTarget &&
+        currentTarget.id !== self.id &&
+        !currentTarget.tank.isDead
+      ) {
+        target = currentTarget;
       }
     }
 
-    // 3. New target: weakest (lowest health) among AIs first, fallback to human only if no AIs left
     if (!target) {
-      const aiEnemies = enemies.filter((e) => !e.isHuman);
+      const aiEnemies = enemies.filter((enemy) => !enemy.isHuman);
       const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
-
-      const sorted = candidates.toSorted((a, b) => {
-        const h = a.tank.health - b.tank.health;
-        if (h !== 0) return h;
-        // tie-breaker: prefer AI over human (Human Privilege)
-        const ha = a.isHuman ? 1 : 0;
-        const hb = b.isHuman ? 1 : 0;
-        return ha - hb; // AI (0) comes before human (1)
-      });
-      target = sorted[0];
+      target = candidates.toSorted((left, right) => {
+        const healthDifference = left.tank.health - right.tank.health;
+        if (healthDifference !== 0) return healthDifference;
+        return Number(left.isHuman) - Number(right.isHuman);
+      })[0];
+    }
+    if (!target) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const otherAi = enemies.filter((e) => !e.isHuman && e.id !== target!.id);
-    if (!revengeLocked && otherAi.length > 0 && scaledGaffe(0.25, skill)) {
-      target = otherAi[Math.floor(secureRandom() * otherAi.length)];
-    }
+    const attempts = recordAimAttempt(memory, target.id);
+    let weaponId = this.chooseWeapon(self, target, terrainManager, gameState);
+    weaponId = adjustWeaponForMaterial(
+      weaponId,
+      terrainManager.getMaterialAt(target.tank.position.x),
+      (id) => (self.inventory[id] ?? 0) > 0,
+    );
+    self.tank.currentWeapon = weaponId;
 
-    const isNewTarget = target!.id !== mem.currentTargetId;
-    mem.currentTargetId = target!.id;
-    if (isNewTarget && import.meta.env.DEV) {
-      console.log(
-        `[AI TARGET] ${self.name} (Heuristic V2) selected NEW target: ${target!.name}`,
+    const aimX =
+      target.tank.position.x +
+      signedImpactOffset(
+        attempts,
+        "v2-heuristic",
+        gameState.roundNumber,
       );
-    }
-
-    // Record current known healths of all alive enemies for next comparison
-    // we can just overwrite keys for current players, no need to delete or clear old keys
-    // since we only lookup by current enemy IDs anyway.
-    for (const p of gameState.players) {
-      if (p.id !== self.id) {
-        mem.lastKnownHealth[p.id] = p.tank.isDead ? 0 : p.tank.health;
-      }
-    }
-
-    const attempts = (mem.targetAttempts[target!.id] || 0) + 1;
-    mem.targetAttempts[target!.id] = attempts;
-
-    // === Choose weapon (OK AI opportunism) + compute improved shot ===
-    let chosenWeapon = this.chooseWeapon(
+    let command = computeHeuristicShot(
       self,
-      target!,
-      terrainManager,
-      gameState,
-    );
-    chosenWeapon = adjustWeaponForMaterial(
-      chosenWeapon,
-      terrainManager.getMaterialAt(target!.tank.position.x),
-      (id) => (self.inventory?.[id] ?? 0) > 0,
-    );
-    if (chosenWeapon !== "MISSILE" && scaledGaffe(0.2, skill)) {
-      chosenWeapon = "MISSILE";
-    }
-    // set on live tank so HUD reflects during AI turn (and for fire if no return weapon)
-    self.tank.currentWeapon = chosenWeapon;
-    const penalty = getHitReactionPenalty(
-      self.aiProfile ?? "v2-heuristic",
-      self.tank.hitReaction,
-    );
-
-    const { angle, power } = this.computeImprovedShot(
-      self,
-      target!,
+      aimX,
+      target.tank.position.y - 6,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
-      attempts,
-      mem,
-      skill,
-      penalty,
     );
 
-    advanceHitReaction(self.tank.hitReaction);
+    const gaffe = ADVANCED_GAFFES["v2-heuristic"];
+    const reactionIntensity = getHitReactionIntensity(
+      self.aiProfile ?? "v2-heuristic",
+      self.tank.hitReaction,
+    );
+    if (reactionIntensity > 0) {
+      command = applySignedCorruption(
+        command,
+        reactionIntensity * gaffe.angleAmplitude,
+        reactionIntensity * gaffe.powerAmplitude,
+      );
+    }
+    if (maybeGaffe(gaffe.chance)) {
+      command = applySignedCorruption(
+        command,
+        gaffe.angleAmplitude,
+        gaffe.powerAmplitude,
+      );
+    }
 
-    return {
-      angle: Math.round(angle * 10) / 10,
-      power: Math.round(power),
-      weaponId: chosenWeapon,
-    };
+    consumeHitReaction(self.tank.hitReaction);
+    const finalized = finalizeAdvancedAim(command);
+    return { ...finalized, weaponId };
   }
 
-  /**
-   * Pick weapon based on situation. Keeps it "OK" not god-mode (saves big guns, uses bounce on rough).
-   */
   private chooseWeapon(
     self: Player,
     target: Player,
     terrain: TerrainManager,
-    gs: GameState,
+    gameState: GameState,
   ): WeaponId {
-    const inv = self.inventory || {};
-    const has = (id: WeaponId) => (inv[id] ?? 0) > 0;
-
-    // Rough/hilly terrain between? -> grenade bounces useful
+    const has = (id: WeaponId) => (self.inventory[id] ?? 0) > 0;
     let terrainVariance = 0;
     const steps = 6;
     const stepX = (target.tank.position.x - self.tank.position.x) / steps;
-    let prev = terrain.getHeightAt(self.tank.position.x);
-    for (let i = 1; i <= steps; i++) {
-      const h = terrain.getHeightAt(self.tank.position.x + stepX * i);
-      terrainVariance = Math.max(terrainVariance, Math.abs(h - prev));
-      prev = h;
+    let previousHeight = terrain.getHeightAt(self.tank.position.x);
+    for (let step = 1; step <= steps; step += 1) {
+      const height = terrain.getHeightAt(self.tank.position.x + stepX * step);
+      terrainVariance = Math.max(
+        terrainVariance,
+        Math.abs(height - previousHeight),
+      );
+      previousHeight = height;
     }
     if (terrainVariance > 28 && has("GRENADE")) return "GRENADE";
 
-    // Enemies clustered? cluster value
-    const nearby = gs.players.filter(
-      (p) =>
-        p.id !== self.id &&
-        !p.tank.isDead &&
-        Math.abs(p.tank.position.x - target.tank.position.x) < 70,
+    const nearby = gameState.players.filter(
+      (player) =>
+        player.id !== self.id &&
+        !player.tank.isDead &&
+        Math.abs(player.tank.position.x - target.tank.position.x) < 70,
     ).length;
     if (nearby >= 2 && has("CLUSTER")) return "CLUSTER";
 
@@ -295,89 +186,13 @@ export class AIHeuristicStrategy implements AIEngine {
     }
 
     if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
-
-    // default unlimited
     return "MISSILE";
   }
 
-  /**
-   * Core aiming: search angles + power to find "good enough" ballistic solution.
-   * Adds decreasing noise (more precise each turn on target) + memory bias.
-   * Not a closed-form sniper.
-   */
-  private computeImprovedShot(
-    self: Player,
-    target: Player,
-    wind: number,
-    gravity: number,
-    terrain: TerrainManager,
-    attempts: number,
-    mem: AIMemory,
-    skill: number,
-    penalty = 0,
-  ): { angle: number; power: number } {
-    const sx = self.tank.position.x;
-    const sy = self.tank.position.y;
-    const tx =
-      target.tank.position.x +
-      signedImpactOffset(attempts, "v2-heuristic", undefined, skill, penalty);
-    const ty = target.tank.position.y - 6; // aim slightly high on tank body
-    const dx = tx - sx;
-    const isRight = dx > 0;
-
-    // Safe angle cones (higher arcs for safety on varying terrain)
-    const aMin = isRight ? 22 : 98;
-    const aMax = isRight ? 82 : 158;
-
-    const best = searchBallisticSolution({
-      sx,
-      sy,
-      tx,
-      ty,
-      wind,
-      gravity,
-      terrain,
-      isRight,
-      aMin,
-      aMax,
-      coarseStep: 3.5,
-      fineStep: 1.5,
-      fineWindow: 3,
-      powerLo: 26,
-      powerHi: 90,
-      powerIterations: 7,
-      obstaclePenaltyHigh: 10000,
-      obstaclePenaltyLow: 30,
-      earlyExitError: 6,
-    });
-
-    let angle = best.angle;
-    let power = best.power + (mem.lastPowerBias || 0);
-
-    // "Always more precise": noise shrinks with attempts on this target
-    const precision = Math.min(0.88, attempts * 0.13);
-    const noise =
-      (1 - precision) * (7.5 + secureRandom() * 5.5) * (1 + penalty);
-
-    angle += (secureRandom() - 0.5) * noise;
-    power += (secureRandom() - 0.5) * (noise * 0.65);
-
-    // clamps (never suicidal extremes)
-    angle = Math.max(8, Math.min(172, angle));
-    power = Math.max(30, Math.min(90, power));
-
-    return { angle, power };
-  }
-
-  /**
-   * Sync bailout. Uses simple safe random (could be enhanced with last target from mem).
-   */
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 30 + secureRandom() * 120;
-    const power = 48 + secureRandom() * 28;
     return {
-      angle: Math.round(angle),
-      power: Math.round(power),
+      angle: Math.round(30 + secureRandom() * 120),
+      power: Math.round(48 + secureRandom() * 28),
     };
   }
 }

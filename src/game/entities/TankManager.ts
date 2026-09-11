@@ -1,3 +1,4 @@
+import { TANK_HITBOX_WIDTH, THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../combatConstants";
 import { secureRandom } from "../../utils/random";
 /**
  * TankWars - TankManager
@@ -6,7 +7,7 @@ import { secureRandom } from "../../utils/random";
  * Gère le spawn, la physique de chute après explosions, les dégâts et le rendu rétro.
  */
 
-import type { Player } from "../../types/player";
+import { FALL_DISTANCE_MAX_PX, type Player } from "../../types/player";
 import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
 import { BULLDOZER_MAX_CLIMB_SLOPE, type WeaponId } from "../../types/weapon";
@@ -507,10 +508,11 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
-          tank.hitReaction.fallDistance += deltaFall;
-          tank.hitReaction.shotStep = 0;
+          tank.hitReaction.fallDistance = Math.min(
+            FALL_DISTANCE_MAX_PX,
+            tank.hitReaction.fallDistance + deltaFall,
+          );
 
           let fallen = (this.fallenDistances.get(id) ?? 0) + deltaFall;
           this.fallenDistances.set(id, fallen);
@@ -640,7 +642,7 @@ export class TankManager {
     y: number,
     ignoreOwnerId?: string,
   ): Player | null {
-    const tankWidth = 24;
+    const tankWidth = TANK_HITBOX_WIDTH;
     const tankHeight = 15;
 
     for (const player of this.players) {
@@ -680,7 +682,7 @@ export class TankManager {
     if (!player || player.tank.isDead) return 0;
 
     const tank = player.tank;
-    const tankWidth = 24;
+    const tankWidth = TANK_HITBOX_WIDTH;
     const startX = tank.position.x;
     let currentX = startX;
     let currentY = tank.position.y;
@@ -776,7 +778,7 @@ export class TankManager {
       let isDirectHitOnThisTank = false;
 
       if (isDirectHit) {
-        const tankWidth = 24;
+        const tankWidth = TANK_HITBOX_WIDTH;
         const tankHeight = 15;
         isDirectHitOnThisTank =
           explosionX >= pos.x - tankWidth / 2 &&
@@ -788,10 +790,8 @@ export class TankManager {
           tank.hitReaction = tank.hitReaction ?? {
             wasDirectHit: false,
             fallDistance: 0,
-            shotStep: 0,
           };
           tank.hitReaction.wasDirectHit = true;
-          tank.hitReaction.shotStep = 0;
           if (shooterId && shooterId !== player.id && weaponId !== "BULLDOZER") {
             tank.lastDirectAttackerId = shooterId;
           }
@@ -825,7 +825,7 @@ export class TankManager {
       // Thermonuclear inner kill zone (user request): all tanks within this distance are instantly destroyed
       // (the huge crater + outer splash + fall mechanics will handle "others might fall like actually").
       // 75px chosen as ~blastRadius * 0.47 for 160px thermo blast (tuneable; produces 1/4-map scale wipe + pit).
-      if (weaponId === "THERMONUCLEAR" && distance <= 75) {
+      if (weaponId === "THERMONUCLEAR" && distance <= THERMONUCLEAR_INSTANT_KILL_RADIUS) {
         damage = 0;
         instantKill = true;
       }
@@ -939,7 +939,7 @@ export class TankManager {
     showPlayerNames: boolean = true,
     terrain?: TerrainManager,
   ): void {
-    const tankWidth = 24;
+    const tankWidth = TANK_HITBOX_WIDTH;
     const tankHeight = 15;
 
     for (const player of this.players) {

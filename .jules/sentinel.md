@@ -164,3 +164,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** URL invite links in `worker/src/game-room.ts` interpolated variables (roomId, idx, tokens) directly without encoding, which could potentially allow XSS or injection payloads if input validation was weak or bypassed.
 **Learning:** Raw string interpolation for URLs is dangerous; parameters must always be sanitized to prevent malicious content injection.
 **Prevention:** Always use `encodeURIComponent` when dynamically generating URLs based on variables.
+
+## 2026-09-11 - Weak Token Generation in Game Room Invite Links
+**Vulnerability:** Weak token generation for game invite links in `worker/src/game-room.ts`. The custom `makeToken()` function used a 32-character alphabet and 6 bytes of entropy, resulting in a predictable sequence.
+**Learning:** This function was used as the secret for users to join a game room slot, effectively providing authorization for a participant. Short, weak tokens are susceptible to brute force attacks where a malicious actor could intercept or guess an active game room's invitation token.
+**Prevention:** Ensure functions acting as secrets, invite links, and authorization tokens use secure standard methods for generating identifiers, such as standard UUIDv4 by utilizing `crypto.randomUUID()`. Do not reinvent custom cryptographically-weak generators for authorization.
