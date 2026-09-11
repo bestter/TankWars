@@ -77,6 +77,37 @@ interface UseGameSessionProps {
   ws?: WebSocket;
 }
 
+function useOnlineSessionRefs(resumeCanvas?: OnlineCanvasSnapshot) {
+  const authoritySlotRef = useRef<number | null>(resumeCanvas?.authoritySlot ?? null);
+  const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
+  const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
+  const lastSeenShotIdRef = useRef(resumeCanvas?.lastSeenShotId ?? 0);
+  const lastAppliedShopEpochRef = useRef(resumeCanvas?.lastAppliedShopEpoch ?? 0);
+  const lastCompletedRoundNumberRef = useRef(
+    resumeCanvas?.lastCompletedRoundNumber ?? 0,
+  );
+  const shopSessionRef = useRef<ShopClientSessionState>(
+    resumeCanvas?.shopSession ?? INITIAL_STATE.shopSession,
+  );
+  const pendingFireRef = useRef<PendingFireIntent | null>(
+    resumeCanvas?.pendingFireIntent ?? null,
+  );
+  const lastAppliedZeusStrikeIdRef = useRef(
+    resumeCanvas?.lastAppliedZeusStrikeId ?? 0,
+  );
+
+  return {
+    authoritySlotRef,
+    authorityEpochRef,
+    lastAppliedShotIdRef,
+    lastSeenShotIdRef,
+    lastAppliedShopEpochRef,
+    lastCompletedRoundNumberRef,
+    shopSessionRef,
+    pendingFireRef,
+    lastAppliedZeusStrikeIdRef,
+  };
+}
 
 export function useGameSession({
   initialPlayers,
@@ -99,22 +130,17 @@ export function useGameSession({
   const gameWsRef = useRef<WebSocket | null>(null);
   const initialWsRef = useRef(ws);
   const roundEndFromNetworkRef = useRef(false);
-  const authoritySlotRef = useRef<number | null>(resumeCanvas?.authoritySlot ?? null);
-  const authorityEpochRef = useRef(resumeCanvas?.authorityEpoch ?? 0);
-  const lastAppliedShotIdRef = useRef(resumeCanvas?.lastAppliedShotId ?? 0);
-  const lastSeenShotIdRef = useRef(resumeCanvas?.lastSeenShotId ?? 0);
-  const lastAppliedShopEpochRef = useRef(
-    resumeCanvas?.lastAppliedShopEpoch ?? 0,
-  );
-  const lastCompletedRoundNumberRef = useRef(
-    resumeCanvas?.lastCompletedRoundNumber ?? 0,
-  );
-  const shopSessionRef = useRef<ShopClientSessionState>(
-    resumeCanvas?.shopSession ?? INITIAL_STATE.shopSession,
-  );
-  const pendingFireRef = useRef<PendingFireIntent | null>(
-    resumeCanvas?.pendingFireIntent ?? null,
-  );
+  const {
+    authoritySlotRef,
+    authorityEpochRef,
+    lastAppliedShotIdRef,
+    lastSeenShotIdRef,
+    lastAppliedShopEpochRef,
+    lastCompletedRoundNumberRef,
+    shopSessionRef,
+    pendingFireRef,
+    lastAppliedZeusStrikeIdRef,
+  } = useOnlineSessionRefs(resumeCanvas);
   const fireRejectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const protocolMismatchRef = useRef(false);
   const combatSendRef = useRef<(message: object) => void>(() => {});
@@ -122,7 +148,6 @@ export function useGameSession({
   // Appointment IDs only deduplicate broadcasts during this mounted session.
   // Reconnects restore the active Zeus from ZEUS_STATE without replaying the appointment.
   const lastZeusAppointmentIdRef = useRef(0);
-  const lastAppliedZeusStrikeIdRef = useRef(resumeCanvas?.lastAppliedZeusStrikeId ?? 0);
   const pendingShotPreviewsRef = useRef<Map<number, ResolvedShotPreview>>(new Map());
   const submitShotEarningsRef = useRef<(preview: ResolvedShotPreview) => void>(() => {});
   /** Shop WS messages received before this client entered SHOP (SUMMARY/CELEBRATION lag). */
@@ -154,7 +179,6 @@ export function useGameSession({
     lastCompletedRoundNumber,
     lastSeenShotId,
   } = state;
-
   // Ref to avoid stale closure in engine callbacks registered in mount effect (gamePhase updates)
   const gamePhaseRef = useRef<GamePhase>(gamePhase);
 
@@ -198,19 +222,19 @@ export function useGameSession({
 
   useEffect(() => {
     shopSessionRef.current = shopSession;
-  }, [shopSession]);
+  }, [shopSession, shopSessionRef]);
 
   useEffect(() => {
     lastAppliedShopEpochRef.current = lastAppliedShopEpoch;
-  }, [lastAppliedShopEpoch]);
+  }, [lastAppliedShopEpoch, lastAppliedShopEpochRef]);
 
   useEffect(() => {
     lastCompletedRoundNumberRef.current = lastCompletedRoundNumber;
-  }, [lastCompletedRoundNumber]);
+  }, [lastCompletedRoundNumber, lastCompletedRoundNumberRef]);
 
   useEffect(() => {
     lastSeenShotIdRef.current = lastSeenShotId;
-  }, [lastSeenShotId]);
+  }, [lastSeenShotId, lastSeenShotIdRef]);
 
   useEffect(() => {
     if (state.fireRejection === null) return;
