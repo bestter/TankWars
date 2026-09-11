@@ -53,8 +53,10 @@ describe("AIByProfileStrategy", () => {
 
     const result = await strategy.executeTurn("ai-tank", gameState, terrain);
 
-    expect(result.power).toBeGreaterThan(0);
-    expect(result.angle).toBeGreaterThan(0);
+    expect(result.power).toBeGreaterThanOrEqual(1);
+    expect(result.power).toBeLessThanOrEqual(99);
+    expect(result.angle).toBeGreaterThanOrEqual(0);
+    expect(result.angle).toBeLessThan(180);
   });
 
   it("lazy-loads advanced strategies on first use (distinct instances)", async () => {
