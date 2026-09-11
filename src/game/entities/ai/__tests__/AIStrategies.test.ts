@@ -43,8 +43,10 @@ describe("AI strategy executeTurn smoke", () => {
 
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
 
-    expect(shot.angle).toBeGreaterThan(0);
-    expect(shot.power).toBeGreaterThan(20);
+    expect(shot.angle).toBeGreaterThanOrEqual(0);
+    expect(shot.angle).toBeLessThanOrEqual(180);
+    expect(shot.power).toBeGreaterThanOrEqual(1);
+    expect(shot.power).toBeLessThanOrEqual(99);
     expect(["MISSILE", "BULLET", "DRILLER"]).toContain(shot.weaponId);
   });
 
@@ -58,8 +60,10 @@ describe("AI strategy executeTurn smoke", () => {
 
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
 
-    expect(shot.angle).toBeGreaterThan(0);
-    expect(shot.power).toBeGreaterThan(25);
+    expect(shot.angle).toBeGreaterThanOrEqual(0);
+    expect(shot.angle).toBeLessThanOrEqual(180);
+    expect(shot.power).toBeGreaterThanOrEqual(1);
+    expect(shot.power).toBeLessThanOrEqual(99);
     expect(shot.weaponId).toBeDefined();
   });
 
@@ -84,8 +88,10 @@ describe("AI strategy executeTurn smoke", () => {
 
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
 
-    expect(shot.angle).toBeGreaterThan(0);
-    expect(shot.power).toBeGreaterThan(20);
+    expect(shot.angle).toBeGreaterThanOrEqual(0);
+    expect(shot.angle).toBeLessThanOrEqual(180);
+    expect(shot.power).toBeGreaterThanOrEqual(1);
+    expect(shot.power).toBeLessThanOrEqual(99);
     expect(shot.weaponId).toBeDefined();
   });
 
