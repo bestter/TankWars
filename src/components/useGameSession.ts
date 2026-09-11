@@ -12,6 +12,7 @@ import type { GamePhase } from "../types/game";
 import {
   gameCanvasReducer,
   INITIAL_STATE,
+  FIRE_REJECTION_DURATION_MS,
   type PendingFireIntent,
   type ShopClientSessionState,
 } from "./gameCanvasReducer";
@@ -217,7 +218,7 @@ export function useGameSession({
         fireRejectionTimerRef.current = null;
       }
       dispatch({ type: "SET_FIRE_REJECTION", reason: null });
-    }, 3500);
+    }, FIRE_REJECTION_DURATION_MS);
     fireRejectionTimerRef.current = timeoutId;
     return () => {
       clearTimeout(timeoutId);
