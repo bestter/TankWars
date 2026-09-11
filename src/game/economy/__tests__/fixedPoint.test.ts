@@ -3,9 +3,7 @@ import {
   ExactAccumulator,
   normalizeDamageToMilli,
   calculateBaseRewardMilli,
-  BASE_REWARD_AMOUNT,
-  DAMAGE_PRECISION,
-  MAX_REWARD_PLAYERS
+  DAMAGE_PRECISION
 } from '../fixedPoint';
 
 describe('ExactAccumulator', () => {
