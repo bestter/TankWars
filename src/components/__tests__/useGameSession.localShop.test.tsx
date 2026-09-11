@@ -45,6 +45,7 @@ describe("useGameSession local shop AI advance", () => {
   });
 
   afterEach(() => {
+    vi.runOnlyPendingTimers();
     cleanup();
     vi.useRealTimers();
     vi.restoreAllMocks();
