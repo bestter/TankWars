@@ -13,7 +13,7 @@
 - [Journaux et erreurs](./AGENTS.md#journaux-et-erreurs).
 - [Architecture à préserver](./AGENTS.md#architecture-à-préserver).
 - [Contrats sensibles](./AGENTS.md#contrats-sensibles).
-- [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation), dont React Doctor si React change.
+- [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation), dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React.
 - [Déploiement et staging privé](./README.md#deployment).
 
 ## Livraison
