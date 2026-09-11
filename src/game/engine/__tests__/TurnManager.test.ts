@@ -48,6 +48,59 @@ describe('TurnManager', () => {
     });
   });
 
+
+  describe('AI error handling', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it('advances turn safely if AI engine throws an error', async () => {
+      const p1 = makePlayer({ id: 'human', isHuman: true });
+      const ai = makePlayer({ id: 'ai-error', isHuman: false });
+
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([p1, ai]);
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const turnManagerAsAny = (turnManager as unknown) as Record<string, unknown>;
+      const clearResolutionTimeoutSpy = vi.spyOn(turnManagerAsAny, 'clearResolutionTimeout' as never);
+      const clearSettlementSafetyTimeoutSpy = vi.spyOn(turnManagerAsAny, 'clearSettlementSafetyTimeout' as never);
+
+      turnManager.setAIEngine({
+        executeTurn: vi.fn().mockRejectedValue(new Error('AI crash simulation'))
+      });
+
+      turnManager.startFirstTurn();
+
+      // Advance to AI turn
+      turnManager.nextTurn();
+
+      // Allow promises to resolve
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        '[TurnManager] AI turn failed:',
+        'AI crash simulation'
+      );
+
+      expect(clearResolutionTimeoutSpy).toHaveBeenCalled();
+      expect(clearSettlementSafetyTimeoutSpy).toHaveBeenCalled();
+      expect(turnManagerAsAny.isProcessingAI).toBe(false);
+
+      // Should schedule a turn advance after 1000ms
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // Turn advances to human
+      expect(turnManager.getCurrentPlayer()?.id).toBe('human');
+    });
+  });
+
   describe('reset', () => {
     it('restores turn 1 and lets a local human fire again', () => {
       const human = makePlayer({
