@@ -209,16 +209,9 @@ interface RoomState {
   lastAppliedZeusStrike: ZeusStrikeAppliedMessage | null;
 }
 
-// Helper: simple short token (not crypto secure for prod but fine for game invite links)
+// Helper: generate a secure token for game invite links
 function makeToken(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 for readability
-  let t = '';
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  for (let i = 0; i < bytes.length; i++) {
-    t += alphabet[bytes[i] % alphabet.length];
-  }
-  return t;
+  return crypto.randomUUID();
 }
 
 // Very lightweight seeded RNG (for future injection of real server sim determinism)
