@@ -267,12 +267,3 @@ export function consumeWeaponForFire(
     },
   };
 }
-
-export function calculateTransactionCost(
-  weaponId: WeaponId,
-  quantity: number,
-  basePrices: Record<WeaponId, number>
-): number {
-  const price = basePrices[weaponId] || 0;
-  return price * quantity;
-}
