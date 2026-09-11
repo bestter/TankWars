@@ -575,11 +575,13 @@ export class GameEngine {
         (this.roundDamageDealt[playerId] ?? 0) + damageMilli / 1_000;
     }
 
+    const awardMap = new Map<string, number>();
+    for (const award of reward.awards) {
+      awardMap.set(award.playerId, award.amount);
+    }
     const balances = this.tankManager.getPlayers().map((player) => ({
       playerId: player.id,
-      money:
-        player.money +
-        (reward.awards.find((award) => award.playerId === player.id)?.amount ?? 0),
+      money: player.money + (awardMap.get(player.id) ?? 0),
     }));
     if (balances.some((balance) => !Number.isSafeInteger(balance.money))) {
       throw new RangeError("Un solde calculé dépasse la plage des entiers sûrs.");
