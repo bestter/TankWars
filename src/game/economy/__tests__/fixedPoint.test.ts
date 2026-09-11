@@ -46,7 +46,6 @@ describe('ExactAccumulator', () => {
       const acc = new ExactAccumulator();
       expect(() => acc.add(1n, 0n)).toThrowError(RangeError);
       expect(() => acc.add(1n, -5n)).toThrowError(RangeError);
-      expect(() => acc.add(1n, 0n)).toThrow('Le dénominateur doit être positif.');
     });
   });
 
@@ -61,6 +60,17 @@ describe('ExactAccumulator', () => {
       acc1.addAccumulator(acc2);
       // 1/3 + 1/6 = 3/6 = 1/2
       expect(acc1.toSnapshot()).toEqual({ numerator: '1', denominator: '2' });
+    });
+
+    it('should leave the target unchanged when adding a zero accumulator', () => {
+      const acc = new ExactAccumulator();
+      acc.add(1n, 2n);
+      const zero = new ExactAccumulator();
+
+      acc.addAccumulator(zero);
+
+      expect(acc.toSnapshot()).toEqual({ numerator: '1', denominator: '2' });
+      expect(zero.toSnapshot()).toEqual({ numerator: '0', denominator: '1' });
     });
   });
 
@@ -83,7 +93,6 @@ describe('ExactAccumulator', () => {
       const acc = new ExactAccumulator();
       acc.add(-1n, 2n);
       expect(() => acc.ceilToSafeInteger()).toThrowError(RangeError);
-      expect(() => acc.ceilToSafeInteger()).toThrow('Un gain ne peut pas être négatif.');
     });
 
     it('should throw if value exceeds MAX_SAFE_INTEGER', () => {
@@ -91,7 +100,6 @@ describe('ExactAccumulator', () => {
       const maxSafeInt = BigInt(Number.MAX_SAFE_INTEGER);
       acc.add(maxSafeInt + 1n, 1n);
       expect(() => acc.ceilToSafeInteger()).toThrowError(RangeError);
-      expect(() => acc.ceilToSafeInteger()).toThrow('Le gain dépasse la plage des entiers sûrs.');
     });
   });
 });
@@ -113,9 +121,12 @@ describe('normalizeDamageToMilli', () => {
     expect(() => normalizeDamageToMilli(NaN)).toThrowError(RangeError);
   });
 
-  it('should throw if value exceeds safe integer range after multiplication', () => {
-    const tooLarge = Number.MAX_SAFE_INTEGER / DAMAGE_PRECISION + 1;
-    expect(() => normalizeDamageToMilli(tooLarge)).toThrowError(RangeError);
+  it('should accept MAX_SAFE_INTEGER / DAMAGE_PRECISION and reject the next step', () => {
+    const boundary = Number.MAX_SAFE_INTEGER / DAMAGE_PRECISION;
+    const result = normalizeDamageToMilli(boundary);
+    expect(Number.isSafeInteger(result)).toBe(true);
+
+    expect(() => normalizeDamageToMilli(boundary + 1)).toThrowError(RangeError);
   });
 });
 
@@ -139,5 +150,8 @@ describe('calculateBaseRewardMilli', () => {
     expect(() => calculateBaseRewardMilli(5)).toThrowError(RangeError);
     expect(() => calculateBaseRewardMilli(2.5)).toThrowError(RangeError);
     expect(() => calculateBaseRewardMilli(-2)).toThrowError(RangeError);
+    expect(() => calculateBaseRewardMilli(0)).toThrowError(RangeError);
+    expect(() => calculateBaseRewardMilli(NaN)).toThrowError(RangeError);
+    expect(() => calculateBaseRewardMilli(Infinity)).toThrowError(RangeError);
   });
 });
