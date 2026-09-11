@@ -18,7 +18,7 @@
 | Décisions des tanks IA, traces de développement et erreurs client/serveur | [Journaux et erreurs](./AGENTS.md#journaux-et-erreurs) |
 | Frontière React/Canvas et pas physique | [Architecture à préserver](./AGENTS.md#architecture-à-préserver) |
 | Combat, économie, IA, réseau et Zeus | [Contrats sensibles](./AGENTS.md#contrats-sensibles) |
-| Commandes et contrôles, dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React | [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation) |
+| Commandes et contrôles, dont React Doctor si React change | [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation) |
 
 ## Livraison
 

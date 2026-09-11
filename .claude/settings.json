@@ -1,7 +1,6 @@
 {
   "hooks": {
-    "PostToolBatch": [],
-    "Stop": [
+    "PostToolBatch": [
       {
         "hooks": [
           {

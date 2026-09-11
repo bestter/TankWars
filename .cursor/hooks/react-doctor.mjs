@@ -6,11 +6,11 @@ import { spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const HOOK_EVENT_NAME = "stop";
-const MAX_CONTINUATIONS = 1;
 
 // --verbose scans on large diffs can exceed spawnSync's 1 MiB default.
 const SPAWN_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
+const EDIT_TOOL_NAMES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'ApplyPatch']);
 
 const readFileOrEmpty = (source) => {
   try {
@@ -21,10 +21,13 @@ const readFileOrEmpty = (source) => {
 };
 
 const shouldScan = (input) => {
-  if (HOOK_EVENT_NAME === 'Stop') return !input.stop_hook_active;
-  if (input.status && input.status !== 'completed') return false;
-  const loopCount = Number(input.loop_count);
-  return !Number.isFinite(loopCount) || loopCount < MAX_CONTINUATIONS;
+  const eventName = input.hook_event_name || input.eventName || input.event_name;
+  if (eventName === 'PostToolBatch') {
+    const toolCalls = Array.isArray(input.tool_calls) ? input.tool_calls : [];
+    return toolCalls.some((toolCall) => EDIT_TOOL_NAMES.has(toolCall.tool_name));
+  }
+  const toolName = input.tool_name || input.toolName || input.tool;
+  return !toolName || EDIT_TOOL_NAMES.has(toolName);
 };
 
 const runReactDoctor = (outputPath) => {
@@ -40,11 +43,11 @@ const runReactDoctor = (outputPath) => {
     : './node_modules/.bin/react-doctor';
   const commands = [
     ...(existsSync(localBin)
-      ? [localBin + ' --verbose --scope changed --include-untracked --blocking warning --no-score']
+      ? [localBin + ' --verbose --scope changed --blocking warning --no-score']
       : []),
-    'react-doctor --verbose --scope changed --include-untracked --blocking warning --no-score',
-    'pnpm dlx react-doctor@latest --verbose --scope changed --include-untracked --blocking warning --no-score',
-    'npx --yes react-doctor@latest --verbose --scope changed --include-untracked --blocking warning --no-score',
+    'react-doctor --verbose --scope changed --blocking warning --no-score',
+    'pnpm dlx react-doctor@latest --verbose --scope changed --blocking warning --no-score',
+    'npx --yes react-doctor@latest --verbose --scope changed --blocking warning --no-score',
   ];
 
   for (const command of commands) {
@@ -103,10 +106,10 @@ const main = () => {
 
   const message = `React Doctor found issues in the changed files. Review this output and fix the regressions before finishing. For confirmed issues that cannot be fixed now, create GitHub issues with the rule, file/line, confidence, impact, and proposed fix.\n\n${scanOutput}`;
 
-  if (HOOK_EVENT_NAME === 'Stop') {
-    console.log(JSON.stringify({ decision: 'block', reason: message }));
+  if (input.hook_event_name === 'PostToolBatch') {
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolBatch', additionalContext: message } }));
   } else {
-    console.log(JSON.stringify({ followup_message: message }));
+    console.log(JSON.stringify({ additional_context: message }));
   }
 };
 

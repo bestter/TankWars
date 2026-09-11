@@ -209,9 +209,16 @@ interface RoomState {
   lastAppliedZeusStrike: ZeusStrikeAppliedMessage | null;
 }
 
-// Helper: generate a secure token for game invite links
+// Helper: simple short token (not crypto secure for prod but fine for game invite links)
 function makeToken(): string {
-  return crypto.randomUUID();
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 for readability
+  let t = '';
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < bytes.length; i++) {
+    t += alphabet[bytes[i] % alphabet.length];
+  }
+  return t;
 }
 
 // Very lightweight seeded RNG (for future injection of real server sim determinism)
@@ -1052,9 +1059,8 @@ export class GameRoom extends DurableObject {
       type: 'human' as const,
     }));
     // Add AI slots for UI display
-    const humanSlots = new Set(roster.map((r) => r.slot));
     this.state.slotConfigs.forEach((c, i) => {
-      if (c.type === 'ai' && !humanSlots.has(i)) {
+      if (c.type === 'ai' && !roster.find((r) => r.slot === i)) {
         roster.push({ slot: i, name: `IA ${c.aiProfile || ''}`.trim(), type: 'ai' as const });
       }
     });

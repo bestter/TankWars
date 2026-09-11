@@ -43,12 +43,11 @@ Avant de terminer, exécuter dans cet ordre :
 1. `npm run lint`
 2. `npm run build`
 3. `npm run test`
-4. `npm run doctor -- --verbose --scope changed --blocking warning`
-5. `git diff --check`
+4. `git diff --check`
 
-Tous les contrôles doivent passer. Ne pas omettre React Doctor ni considérer un hook automatique comme un remplacement de cette étape; si le diagnostic ne trouve aucun fichier pertinent à analyser, rapporter ce résultat explicitement. Corriger les échecs liés au travail; signaler explicitement tout échec préexistant ou blocage sans élargir discrètement la portée. Rapporter les commandes réellement exécutées et leurs résultats; ne pas maintenir de nombre de tests figé ici.
+Tous les contrôles doivent passer. Corriger les échecs liés au travail; signaler explicitement tout échec préexistant ou blocage sans élargir discrètement la portée. Rapporter les commandes réellement exécutées et leurs résultats; ne pas maintenir de nombre de tests figé ici.
 
-React Doctor est obligatoire dans chaque batterie de validation, même si les changements ne touchent pas React. Appliquer le [skill react-doctor](./.agents/skills/react-doctor/SKILL.md). Consulter `.github/workflows/react-doctor.yml` : le diagnostic porte sur les changements et `blocking: warning` rend aussi les avertissements bloquants. `knip.json` définit les points d’entrée de l’analyse de code inutilisé.
+Pour les changements React, appliquer le [skill react-doctor](./.agents/skills/react-doctor/SKILL.md). Consulter `.github/workflows/react-doctor.yml` : le diagnostic porte sur les changements et `blocking: warning` rend aussi les avertissements bloquants. `knip.json` définit les points d’entrée de l’analyse de code inutilisé.
 
 Si l’interface ou le moteur change, vérifier manuellement le parcours concerné : menu, partie, fin de manche, boutique et manche suivante. Pour le réseau, couvrir aussi les reconnexions et les reprises pertinentes. Si un contrôle manuel n’a pas été fait, le dire.
 

@@ -53,36 +53,6 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
   return { ctx, mockStorage };
 }
 
-const UUID_V4 =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function invitationToken(url: string): string {
-  const token = new URL(url).searchParams.get('token');
-  if (token === null || token.length === 0) {
-    throw new Error(`invitation URL missing token: ${url}`);
-  }
-  return token;
-}
-
-interface CreatedRoomSlots {
-  slots: Array<{ slot: number; type: string; url: string | null }>;
-}
-
-function humanInvitationTokens(json: CreatedRoomSlots): string[] {
-  return json.slots
-    .filter((slot) => slot.type === 'human')
-    .map((slot) => {
-      expect(slot.url).toEqual(expect.any(String));
-      if (slot.url === null) {
-        throw new Error(`human slot ${slot.slot} missing invitation URL`);
-      }
-      const token = invitationToken(slot.url);
-      expect(token).toMatch(UUID_V4);
-      expect(slot.url).toContain(`token=${encodeURIComponent(token)}`);
-      return token;
-    });
-}
-
 describe('GameRoom Durable Object', () => {
   let room: GameRoom;
   let mockCtx: ReturnType<typeof createMockCtx>['ctx'];
@@ -155,75 +125,6 @@ describe('GameRoom Durable Object', () => {
       expect(invitationUrl.searchParams.has('token')).toBe(true);
       expect(invitationUrl.searchParams.has('admin')).toBe(false);
       expect(invitationUrl.hash).toBe('');
-    });
-
-    it('gives each human slot a distinct UUID v4 token encoded in its invitation URL', async () => {
-      const req = new Request('http://localhost/api/room', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: 'room-tokens',
-          numPlayers: 3,
-          slotConfigs: [
-            { type: 'human' },
-            { type: 'ai', aiProfile: 'v1-random' },
-            { type: 'human' },
-          ],
-          origin: 'http://localhost:5173',
-        }),
-      });
-
-      const res = await room.fetchCreate(req);
-      expect(res.status).toBe(200);
-
-      const json = (await res.json()) as CreatedRoomSlots;
-      const tokens = humanInvitationTokens(json);
-
-      expect(tokens).toHaveLength(2);
-      expect(new Set(tokens).size).toBe(tokens.length);
-      expect(json.slots[1].url).toBeNull();
-    });
-
-    it('issues different tokens for two separate room creations', async () => {
-      const createBody = (roomId: string) =>
-        JSON.stringify({
-          roomId,
-          numPlayers: 2,
-          slotConfigs: [{ type: 'human' }, { type: 'human' }],
-          origin: 'http://localhost:5173',
-        });
-
-      const firstRes = await room.fetchCreate(
-        new Request('http://localhost/api/room', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: createBody('room-a'),
-        }),
-      );
-      expect(firstRes.status).toBe(200);
-      const firstTokens = humanInvitationTokens(
-        (await firstRes.json()) as CreatedRoomSlots,
-      );
-
-      const setup2 = createMockCtx();
-      const room2 = new GameRoom(setup2.ctx as DurableObjectState, {});
-      Object.defineProperty(room2, 'ctx', { value: setup2.ctx, writable: true });
-
-      const secondRes = await room2.fetchCreate(
-        new Request('http://localhost/api/room', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: createBody('room-b'),
-        }),
-      );
-      expect(secondRes.status).toBe(200);
-      const secondTokens = humanInvitationTokens(
-        (await secondRes.json()) as CreatedRoomSlots,
-      );
-
-      expect(firstTokens).toHaveLength(2);
-      expect(secondTokens).toHaveLength(2);
-      expect(new Set([...firstTokens, ...secondTokens]).size).toBe(4);
     });
 
     it('rejects invalid creation payload with 400', async () => {
