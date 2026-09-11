@@ -225,7 +225,8 @@ describe('MobileControls', () => {
       vi.advanceTimersByTime(100);
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(3);
 
-      vi.useRealTimers();
+      vi.clearAllTimers();
+    vi.useRealTimers();
     });
   });
 
@@ -250,7 +251,8 @@ describe('MobileControls', () => {
       vi.advanceTimersByTime(80);
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2); // Still 2
 
-      vi.useRealTimers();
+      vi.clearAllTimers();
+    vi.useRealTimers();
     });
 
     it('stops action on touchCancel and mouseLeave', () => {
@@ -273,7 +275,8 @@ describe('MobileControls', () => {
       vi.advanceTimersByTime(250 + 80);
       expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
 
-      vi.useRealTimers();
+      vi.clearAllTimers();
+    vi.useRealTimers();
     });
   });
 
