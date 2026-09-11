@@ -176,6 +176,7 @@ describe('useOnlineLobby', () => {
 
     // Should NOT have attempted any reconnect
     expect(wsConstructor).toHaveBeenCalledTimes(1);
+    vi.clearAllTimers();
     vi.useRealTimers();
   });
 

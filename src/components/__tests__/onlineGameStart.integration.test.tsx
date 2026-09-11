@@ -42,6 +42,7 @@ describe("Online GAME_START with materials integration", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

@@ -41,11 +41,13 @@ describe("useGameSession local shop AI advance", () => {
       configurable: true,
       value: () => stubCanvas2d(),
     });
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
+    vi.runOnlyPendingTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

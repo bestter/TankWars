@@ -128,6 +128,7 @@ describe("useGameSession FIRE reconnect", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

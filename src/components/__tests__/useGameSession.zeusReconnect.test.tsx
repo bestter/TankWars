@@ -73,6 +73,7 @@ describe("useGameSession Zeus reconnect", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

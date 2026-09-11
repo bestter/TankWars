@@ -25,6 +25,7 @@ describe("ShotEarningsOverlay", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
   });
 
