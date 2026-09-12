@@ -957,6 +957,7 @@ export class GameEngine {
   }
 
   public stop(): void {
+    this.turnManager.pauseForInterRound();
     this.isRunning = false;
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);

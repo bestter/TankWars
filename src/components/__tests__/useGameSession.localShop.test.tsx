@@ -8,6 +8,7 @@ import * as aiShopHelper from "../../game/entities/ai/aiShopHelper";
 import type { Player } from "../../types/player";
 import { TurnManager } from "../../game/engine/TurnManager";
 import { TankManager } from "../../game/entities/TankManager";
+import { AIByProfileStrategy } from "../../game/entities/ai/AIByProfileStrategy";
 
 type SessionApi = ReturnType<typeof useGameSession>;
 
@@ -156,6 +157,48 @@ describe("useGameSession local shop AI advance", () => {
 
     expect(autoBuySpy).not.toHaveBeenCalled();
     expect(setPlayersSpy).toHaveBeenCalledTimes(setPlayersCallCount);
+  });
+
+  it("stops a deferred AI turn when unmounted after the shop", async () => {
+    let resolveDecision:
+      | ((decision: { angle: number; power: number; weaponId: "MISSILE" }) => void)
+      | undefined;
+    const executeTurnSpy = vi
+      .spyOn(AIByProfileStrategy.prototype, "executeTurn")
+      .mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const aiPlayers = Array.from({ length: 2 }, (_, index) => makePlayer({
+      id: `ai-${index + 1}`,
+      name: `CPU-${index + 1}`,
+      isHuman: false,
+      aiProfile: "v1-random",
+      tank: makeTank(`tank-ai-${index + 1}`, 160 + index * 420, 300),
+    }));
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const { unmount } = render(
+      <ShopHarness players={aiPlayers} sessionRef={sessionRef} />,
+    );
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(executeTurnSpy).toHaveBeenCalledOnce();
+    const logCountBeforeUnmount = consoleLogSpy.mock.calls.length;
+
+    unmount();
+    resolveDecision?.({ angle: 45, power: 60, weaponId: "MISSILE" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(consoleLogSpy).toHaveBeenCalledTimes(logCountBeforeUnmount);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retains purchases for all AI players in a pure 4-AI match across round transition", () => {

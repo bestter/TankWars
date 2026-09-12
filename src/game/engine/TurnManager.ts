@@ -106,6 +106,9 @@ export class TurnManager {
   // resolve after we have paused for SUMMARY / SHOP. Prevents "ghost" AI shots
   // and watchdog triggers during the shop phase.
   private aiTurnGeneration = 0;
+  private aiThinkingTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private aiThinkingDelayResolve: (() => void) | null = null;
+  private aiRecoveryTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Settlement timeout (120ms physics delay for tank falling and damage logic)
   // Driven by real-time setTimeout because it is a very short rendering transition delay
@@ -268,7 +271,7 @@ export class TurnManager {
         this.clearResolutionTimeout();
         this.clearSettlementSafetyTimeout();
         this.clearTurnLockSafetyTimeout();
-        this.aiTurnGeneration++;
+        this.invalidatePendingAITurn();
         if (this.hasUnresolvedShot) {
           this.finishShotResolution();
         } else {
@@ -441,7 +444,7 @@ export class TurnManager {
 
     // Invalidate any in-flight async AI turns so they abort before firing
     // or arming watchdogs during SUMMARY/SHOP.
-    this.aiTurnGeneration++;
+    this.invalidatePendingAITurn();
     // AI handling will see locked state and skip
   }
 
@@ -847,7 +850,7 @@ export class TurnManager {
     );
     if (index < 0) return false;
 
-    this.aiTurnGeneration++;
+    this.invalidatePendingAITurn();
     this.currentPlayerIndex = index;
     this.turnNumber++;
     this.isInputLocked = true;
@@ -866,7 +869,7 @@ export class TurnManager {
   /** Completes a non-projectile domain action while preserving normal round/turn semantics. */
   public completeSpecialTurn(isRoundEnd: boolean): void {
     this.isProcessingAI = false;
-    this.aiTurnGeneration++;
+    this.invalidatePendingAITurn();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
     this.clearTurnLockSafetyTimeout();
@@ -882,7 +885,7 @@ export class TurnManager {
 
   /** Sync the current turn index from server authoritative state. */
   public syncTurn(currentPlayerIndex: number): void {
-    this.aiTurnGeneration++;
+    this.invalidatePendingAITurn();
     this.isProcessingAI = false;
     this.currentPlayerIndex = currentPlayerIndex;
 
@@ -1140,7 +1143,47 @@ export class TurnManager {
     this.removeInputListeners();
 
     // Invalidate any pending async AI activity
+    this.invalidatePendingAITurn();
+  }
+
+  private invalidatePendingAITurn(): void {
     this.aiTurnGeneration++;
+
+    if (this.aiThinkingTimeoutId !== null) {
+      clearTimeout(this.aiThinkingTimeoutId);
+      this.aiThinkingTimeoutId = null;
+    }
+    const resolveThinkingDelay = this.aiThinkingDelayResolve;
+    resolveThinkingDelay?.();
+
+    if (this.aiRecoveryTimeoutId !== null) {
+      clearTimeout(this.aiRecoveryTimeoutId);
+      this.aiRecoveryTimeoutId = null;
+    }
+  }
+
+  private waitForAIThinkingDelay(): Promise<void> {
+    return new Promise((resolve) => {
+      const finishDelay = (): void => {
+        if (this.aiThinkingDelayResolve !== finishDelay) return;
+        this.aiThinkingTimeoutId = null;
+        this.aiThinkingDelayResolve = null;
+        resolve();
+      };
+      this.aiThinkingDelayResolve = finishDelay;
+      this.aiThinkingTimeoutId = setTimeout(finishDelay, 1500);
+    });
+  }
+
+  private scheduleAIRecovery(delay: number, turnGeneration: number): void {
+    if (this.aiRecoveryTimeoutId !== null) {
+      clearTimeout(this.aiRecoveryTimeoutId);
+    }
+    this.aiRecoveryTimeoutId = setTimeout(() => {
+      this.aiRecoveryTimeoutId = null;
+      if (this.aiTurnGeneration !== turnGeneration) return;
+      this.nextTurn();
+    }, delay);
   }
 
   private clearEarningsRelease(): void {
@@ -1172,7 +1215,7 @@ export class TurnManager {
       console.warn(
         `[TurnManager] No AIEngine configured for AI player (player redacted). Skipping turn.`,
       );
-      setTimeout(() => this.nextTurn(), 800);
+      this.scheduleAIRecovery(800, this.aiTurnGeneration);
       return;
     }
 
@@ -1207,14 +1250,12 @@ export class TurnManager {
         gameState,
         this.terrainManager,
       );
-      console.log('[TurnManager] handleAITurnIfNeeded: AI strategy decided:', decision);
 
       // Abort if the game moved on (SUMMARY/SHOP) while we were awaiting the strategy.
       if (this.aiTurnGeneration !== turnGeneration) {
-        console.log('[TurnManager] handleAITurnIfNeeded: aborted after executeTurn due to generation mismatch');
-        this.isProcessingAI = false;
         return;
       }
+      console.log('[TurnManager] handleAITurnIfNeeded: AI strategy decided:', decision);
 
       if (decision.weaponId) {
         player.tank.currentWeapon = decision.weaponId;
@@ -1225,15 +1266,13 @@ export class TurnManager {
 
       // Artificial thinking delay
       console.log('[TurnManager] handleAITurnIfNeeded: starting thinking delay...');
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      console.log('[TurnManager] handleAITurnIfNeeded: thinking delay done');
+      await this.waitForAIThinkingDelay();
 
       // Abort before firing if we have been paused for inter-round in the meantime.
       if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked) {
-        console.log('[TurnManager] handleAITurnIfNeeded: aborted before firing (gen mismatch or input unlocked)');
-        this.isProcessingAI = false;
         return;
       }
+      console.log('[TurnManager] handleAITurnIfNeeded: thinking delay done');
 
       console.log('[TurnManager] handleAITurnIfNeeded: firing projectile!');
       const command: FireCommand = {
@@ -1273,13 +1312,16 @@ export class TurnManager {
         this.isSettlementSafetyArmed = true;
       }
     } catch (error) {
+      if (this.aiTurnGeneration !== turnGeneration) return;
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error("[TurnManager] AI turn failed:", errorMessage);
       this.clearResolutionTimeout();
       this.clearSettlementSafetyTimeout();
-      setTimeout(() => this.nextTurn(), 1000);
+      this.scheduleAIRecovery(1000, turnGeneration);
     } finally {
-      this.isProcessingAI = false;
+      if (this.aiTurnGeneration === turnGeneration) {
+        this.isProcessingAI = false;
+      }
     }
   }
 
