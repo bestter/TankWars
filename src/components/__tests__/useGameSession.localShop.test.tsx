@@ -46,6 +46,7 @@ describe("useGameSession local shop AI advance", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -114,6 +115,47 @@ describe("useGameSession local shop AI advance", () => {
     expect(lastSetPlayersCall).toBeDefined();
     expect(lastSetPlayersCall?.[1].money).toBe(uiPlayers?.[1].money);
     expect(lastSetPlayersCall?.[1].inventory).toEqual(uiPlayers?.[1].inventory);
+  });
+
+  it("cancels pending AI purchases when unmounted during the shop", () => {
+    const autoBuySpy = vi.spyOn(aiShopHelper, "autoBuyForAI");
+    const setPlayersSpy = vi.spyOn(TankManager.prototype, "setPlayers");
+    const players: Player[] = [
+      makePlayer({ id: "human", isHuman: true }),
+      makePlayer({
+        id: "ai",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+      }),
+    ];
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const { unmount } = render(
+      <ShopHarness players={players} sessionRef={sessionRef} />,
+    );
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+    });
+    act(() => {
+      sessionRef.current?.handleShopReady();
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
+    expect(sessionRef.current?.state.currentShopIndex).toBe(1);
+    expect(autoBuySpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    const setPlayersCallCount = setPlayersSpy.mock.calls.length;
+
+    unmount();
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(autoBuySpy).not.toHaveBeenCalled();
+    expect(setPlayersSpy).toHaveBeenCalledTimes(setPlayersCallCount);
   });
 
   it("retains purchases for all AI players in a pure 4-AI match across round transition", () => {
