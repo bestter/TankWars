@@ -164,3 +164,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** URL invite links in `worker/src/game-room.ts` interpolated variables (roomId, idx, tokens) directly without encoding, which could potentially allow XSS or injection payloads if input validation was weak or bypassed.
 **Learning:** Raw string interpolation for URLs is dangerous; parameters must always be sanitized to prevent malicious content injection.
 **Prevention:** Always use `encodeURIComponent` when dynamically generating URLs based on variables.
+
+## 2026-11-20 - [Missing Origin Validation for HTTP API Endpoints]
+**Vulnerability:** The `/api/rooms` and `/api/rooms/:roomId/join` endpoints in `worker/src/index.ts` accepted POST requests without strictly validating the `Origin` header.
+**Learning:** While WebSocket endpoints bypass standard CORS restrictions and need explicit validation, HTTP endpoints like POST can also be vulnerable to Cross-Site Request Forgery (CSRF) if the `Origin` is missing or mismatched and not explicitly blocked, especially when handling state-changing requests.
+**Prevention:** Always implement explicit `Origin` validation (`if (origin !== null && !isAllowedOrigin)`) for state-changing HTTP endpoints, returning a `403 Forbidden` response to ensure defense-in-depth against CSRF attacks.

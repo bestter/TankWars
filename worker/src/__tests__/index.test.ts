@@ -205,7 +205,8 @@ describe('Worker Entrypoint', () => {
       });
       const response = await worker.fetch(request, env);
       expect(response.status).toBe(403);
-      expect(await response.text()).toBe('Forbidden: Invalid Origin');
+      const errorObj = (await response.json()) as { error: string };
+      expect(errorObj.error).toBe('Forbidden: Invalid Origin');
       expectSecurityHeaders(response);
     });
 
@@ -227,7 +228,7 @@ describe('Worker Entrypoint', () => {
 
       expect(response.status).toBe(400);
       const text = await response.text();
-      expect(text).toBe('Missing or invalid room/slot/token');
+      expect(text).toContain('Missing or invalid room/slot/token');
       expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
 
