@@ -62,25 +62,14 @@ describe('TurnManager', () => {
     it('advances turn safely if AI engine throws an error', async () => {
       const p1 = makePlayer({ id: 'human', isHuman: true });
       const ai = makePlayer({ id: 'ai-error', isHuman: false });
-
       mockTankManager.getPlayers = vi.fn().mockReturnValue([p1, ai]);
 
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      const turnManagerAsAny = (turnManager as unknown) as Record<string, unknown>;
-      const clearResolutionTimeoutSpy = vi.spyOn(turnManagerAsAny, 'clearResolutionTimeout' as never);
-      const clearSettlementSafetyTimeoutSpy = vi.spyOn(turnManagerAsAny, 'clearSettlementSafetyTimeout' as never);
-
-      turnManager.setAIEngine({
-        executeTurn: vi.fn().mockRejectedValue(new Error('AI crash simulation'))
-      });
+      const executeTurn = vi.fn().mockRejectedValue(new Error('AI crash simulation'));
+      turnManager.setAIEngine({ executeTurn });
 
       turnManager.startFirstTurn();
-
-      // Advance to AI turn
       turnManager.nextTurn();
-
-      // Allow promises to resolve
       await Promise.resolve();
       await Promise.resolve();
 
@@ -88,16 +77,20 @@ describe('TurnManager', () => {
         '[TurnManager] AI turn failed:',
         'AI crash simulation'
       );
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-error');
 
-      expect(clearResolutionTimeoutSpy).toHaveBeenCalled();
-      expect(clearSettlementSafetyTimeoutSpy).toHaveBeenCalled();
-      expect(turnManagerAsAny.isProcessingAI).toBe(false);
-
-      // Should schedule a turn advance after 1000ms
       await vi.advanceTimersByTimeAsync(1000);
 
-      // Turn advances to human
       expect(turnManager.getCurrentPlayer()?.id).toBe('human');
+      expect(mockFireCallback).not.toHaveBeenCalled();
+
+      turnManager.nextTurn();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(executeTurn).toHaveBeenCalledTimes(2);
+      expect(mockFireCallback).not.toHaveBeenCalled();
     });
   });
 

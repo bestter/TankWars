@@ -150,7 +150,6 @@ describe("useGameSession local shop AI advance", () => {
 
     unmount();
 
-    // Exercise cancellation by the component before the global timer cleanup.
     act(() => {
       vi.advanceTimersByTime(200);
     });
