@@ -48,6 +48,52 @@ describe('TurnManager', () => {
     });
   });
 
+
+  describe('AI error handling', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it('advances turn safely if AI engine throws an error', async () => {
+      const p1 = makePlayer({ id: 'human', isHuman: true });
+      const ai = makePlayer({ id: 'ai-error', isHuman: false });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([p1, ai]);
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const executeTurn = vi.fn().mockRejectedValue(new Error('AI crash simulation'));
+      turnManager.setAIEngine({ executeTurn });
+
+      turnManager.startFirstTurn();
+      turnManager.nextTurn();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        '[TurnManager] AI turn failed:',
+        'AI crash simulation'
+      );
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-error');
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(turnManager.getCurrentPlayer()?.id).toBe('human');
+      expect(mockFireCallback).not.toHaveBeenCalled();
+
+      turnManager.nextTurn();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(executeTurn).toHaveBeenCalledTimes(2);
+      expect(mockFireCallback).not.toHaveBeenCalled();
+    });
+  });
+
   describe('reset', () => {
     it('restores turn 1 and lets a local human fire again', () => {
       const human = makePlayer({

@@ -1,12 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "code-review": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "skillPath": "skills/engineering/code-review/SKILL.md",
-      "computedHash": "b4f17857c85ca60af1df7d0b623dd03c2a48419f6123e714f3d9748ca744a1bf"
-    },
     "create-github-issues-for-unmet-specification-requirements": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
