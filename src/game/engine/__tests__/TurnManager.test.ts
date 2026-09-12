@@ -94,6 +94,125 @@ describe('TurnManager', () => {
     });
   });
 
+  describe('AI lifecycle cancellation', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it('silently ignores a deferred AI decision after inter-round pause', async () => {
+      const ai = makePlayer({ id: 'ai-deferred', isHuman: false });
+      const human = makePlayer({ id: 'human', isHuman: true });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([ai, human]);
+      let resolveDecision:
+        | ((decision: { angle: number; power: number; weaponId: 'MISSILE' }) => void)
+        | undefined;
+      const executeTurn = vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+      turnManager.setAIEngine({ executeTurn });
+
+      turnManager.startFirstTurn();
+      expect(executeTurn).toHaveBeenCalledOnce();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-deferred');
+
+      turnManager.pauseForInterRound();
+      resolveDecision?.({ angle: 45, power: 60, weaponId: 'MISSILE' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-deferred');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('cancels the AI thinking delay without firing or logging afterward', async () => {
+      const ai = makePlayer({ id: 'ai-thinking', isHuman: false });
+      const human = makePlayer({ id: 'human', isHuman: true });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([ai, human]);
+      const executeTurn = vi.fn().mockResolvedValue({
+        angle: 45,
+        power: 60,
+        weaponId: 'MISSILE' as const,
+      });
+      turnManager.setAIEngine({ executeTurn });
+
+      turnManager.startFirstTurn();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-thinking');
+
+      turnManager.pauseForInterRound();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-thinking');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('lets the next human act after the turn-lock watchdog invalidates a pending AI decision', async () => {
+      const ai = makePlayer({ id: 'ai-watchdog', isHuman: false });
+      const human = makePlayer({ id: 'human-next', isHuman: true });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([ai, human]);
+      let resolveDecision:
+        | ((decision: { angle: number; power: number; weaponId: 'MISSILE' }) => void)
+        | undefined;
+      const executeTurn = vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      turnManager.setAIEngine({ executeTurn });
+
+      turnManager.startFirstTurn();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('ai-watchdog');
+
+      turnManager.update(12.1);
+
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('human-next');
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+      expect(mockFireCallback).toHaveBeenCalledOnce();
+
+      resolveDecision?.({ angle: 45, power: 60, weaponId: 'MISSILE' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockFireCallback).toHaveBeenCalledOnce();
+      expect(turnManager.getCurrentPlayer()?.id).toBe('human-next');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('does not log or schedule recovery for a stale AI failure', async () => {
+      const ai = makePlayer({ id: 'ai-failure', isHuman: false });
+      const human = makePlayer({ id: 'human', isHuman: true });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([ai, human]);
+      let rejectDecision: ((reason: Error) => void) | undefined;
+      const executeTurn = vi.fn().mockReturnValue(new Promise((_, reject) => {
+        rejectDecision = reject;
+      }));
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      turnManager.setAIEngine({ executeTurn });
+
+      turnManager.startFirstTurn();
+      turnManager.pauseForInterRound();
+      rejectDecision?.(new Error('late failure'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
   describe('reset', () => {
     it('restores turn 1 and lets a local human fire again', () => {
       const human = makePlayer({

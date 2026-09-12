@@ -187,6 +187,47 @@ describe("GameEngine match rules", () => {
     expect(engine.buildRoundResult().earningsByPlayer).toEqual({});
   });
 
+  it("stops a deferred AI turn without firing or advancing", async () => {
+    vi.useFakeTimers();
+    try {
+      const ai = makePlayer({
+        id: "ai-deferred",
+        isHuman: false,
+        tank: makeTank("tank-ai-deferred", 120, 200),
+      });
+      const human = makePlayer({
+        id: "human-next",
+        isHuman: true,
+        tank: makeTank("tank-human-next", 680, 200),
+      });
+      let resolveDecision:
+        | ((decision: { angle: number; power: number; weaponId: "MISSILE" }) => void)
+        | undefined;
+      const executeTurn = vi.fn().mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+      const fireProjectileSpy = vi.spyOn(engine, "fireProjectile");
+      engine.setAIEngine({ executeTurn });
+      engine.setPlayers([ai, human]);
+
+      expect(executeTurn).toHaveBeenCalledOnce();
+      expect(engine.getTurnManager().getCurrentPlayer()?.id).toBe("ai-deferred");
+
+      engine.stop();
+      resolveDecision?.({ angle: 45, power: 60, weaponId: "MISSILE" });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(fireProjectileSpy).not.toHaveBeenCalled();
+      expect(engine.getActiveProjectiles()).toHaveLength(0);
+      expect(engine.getTurnManager().getCurrentPlayer()?.id).toBe("ai-deferred");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("runs a local deadlock through rotations, appointment, strike, and round end", async () => {
     vi.useFakeTimers();
     try {
