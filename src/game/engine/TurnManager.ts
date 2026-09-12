@@ -428,7 +428,6 @@ export class TurnManager {
   public pauseForInterRound(): void {
     this.interRoundPaused = true;
     this.isInputLocked = true;
-    this.isProcessingAI = false;
     this.settlingShotWasLocal = false;
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
@@ -854,7 +853,6 @@ export class TurnManager {
     this.currentPlayerIndex = index;
     this.turnNumber++;
     this.isInputLocked = true;
-    this.isProcessingAI = false;
     this.clearAwaitingStabilization();
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
@@ -868,7 +866,6 @@ export class TurnManager {
 
   /** Completes a non-projectile domain action while preserving normal round/turn semantics. */
   public completeSpecialTurn(isRoundEnd: boolean): void {
-    this.isProcessingAI = false;
     this.invalidatePendingAITurn();
     this.clearResolutionTimeout();
     this.clearSettlementSafetyTimeout();
@@ -886,7 +883,6 @@ export class TurnManager {
   /** Sync the current turn index from server authoritative state. */
   public syncTurn(currentPlayerIndex: number): void {
     this.invalidatePendingAITurn();
-    this.isProcessingAI = false;
     this.currentPlayerIndex = currentPlayerIndex;
 
     if (this.awaitingServerTurnAfterLocalShot) {
@@ -1138,7 +1134,6 @@ export class TurnManager {
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
     this.isInputLocked = !this.isLocalHumanTurn();
-    this.isProcessingAI = false;
     this.interRoundPaused = false;
     this.removeInputListeners();
 
@@ -1146,8 +1141,14 @@ export class TurnManager {
     this.invalidatePendingAITurn();
   }
 
+  /**
+   * Invalidates the current async AI generation and releases its processing flag.
+   * Stale continuations must never clear the flag again because a newer generation
+   * may already own it; normal completion remains guarded in the async finally.
+   */
   private invalidatePendingAITurn(): void {
     this.aiTurnGeneration++;
+    this.isProcessingAI = false;
 
     if (this.aiThinkingTimeoutId !== null) {
       clearTimeout(this.aiThinkingTimeoutId);
@@ -1155,6 +1156,7 @@ export class TurnManager {
     }
     const resolveThinkingDelay = this.aiThinkingDelayResolve;
     resolveThinkingDelay?.();
+    this.aiThinkingDelayResolve = null;
 
     if (this.aiRecoveryTimeoutId !== null) {
       clearTimeout(this.aiRecoveryTimeoutId);
@@ -1301,7 +1303,6 @@ export class TurnManager {
       // Store the ID so we can cancel it cleanly on pause/reset (prevents stale forces during SUMMARY/SHOP).
       // Also guard with generation so a stale safety timer from an aborted turn doesn't fire.
       if (this.aiTurnGeneration !== turnGeneration) {
-        this.isProcessingAI = false;
         return;
       }
 
@@ -1319,6 +1320,8 @@ export class TurnManager {
       this.clearSettlementSafetyTimeout();
       this.scheduleAIRecovery(1000, turnGeneration);
     } finally {
+      // Only the active generation may release its flag. Invalidation already
+      // released stale work synchronously and a newer AI turn may now own it.
       if (this.aiTurnGeneration === turnGeneration) {
         this.isProcessingAI = false;
       }
