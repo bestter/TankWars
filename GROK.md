@@ -19,6 +19,7 @@
 | Frontière React/Canvas et pas physique | [Architecture à préserver](./AGENTS.md#architecture-à-préserver) |
 | Combat, économie, IA, réseau et Zeus | [Contrats sensibles](./AGENTS.md#contrats-sensibles) |
 | Commandes et contrôles, dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React | [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation) |
+| Gestion des pull requests et Google Labs Jules | [Gestion des pull requests](./AGENTS.md#gestion-des-pull-requests) |
 
 ## Livraison
 
