@@ -15,6 +15,7 @@
 - [Contrats sensibles](./AGENTS.md#contrats-sensibles).
 - [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation), dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React.
 - [Déploiement et staging privé](./README.md#deployment).
+- [Gestion des pull requests et Google Labs Jules](./AGENTS.md#gestion-des-pull-requests).
 
 ## Livraison
 
