@@ -149,7 +149,7 @@ Avant toute interaction ou écriture sur une pull request existante par un agent
 
 Traiter la pull request comme créée par **Google Labs Jules** si au moins un des critères suivants est satisfait :
 - `author.login` appartient à `{google-labs-jules, google-labs-jules[bot]}`.
-- Le corps (`body`) contient la signature de création par Jules (ex. `PR created automatically by Jules` ou mention explicite de Jules).
+- Le corps (`body`) contient la signature exacte de création automatique `PR created automatically by Jules`.
 - L’un des commits a pour auteur ou co-auteur Jules (`google-labs-jules` ou `google-labs-jules[bot]`).
 
 Ne jamais se fier uniquement au nom de la branche locale ou distante pour conclure qu’il s’agit ou non d’une PR Jules.
