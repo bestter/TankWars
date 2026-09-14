@@ -81,6 +81,13 @@ export default {
 
     // POST /api/rooms  -> create a new room, return roomId + per-slot join URLs/tokens
     if (pathname === '/api/rooms' && request.method === 'POST') {
+      // Strict origin validation to prevent CSRF
+      if (origin !== null && !isAllowedOrigin) {
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Forbidden: Invalid Origin' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // For MVP we trust the payload (simple game, no auth yet).
       let body: Record<string, unknown> = {};
@@ -152,6 +159,13 @@ export default {
 
     // POST /api/rooms/:roomId/join (optional REST fallback; primary join is via WS)
     if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/join') && request.method === 'POST') {
+      // Strict origin validation to prevent CSRF
+      if (origin !== null && !isAllowedOrigin) {
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Forbidden: Invalid Origin' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
       const roomId = pathname.split('/')[3];
       if (!roomId || roomId.length > 256) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid room ID' }), {

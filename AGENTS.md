@@ -13,6 +13,7 @@ Compagnons selon l’outil utilisé : [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK
 - Demander lorsqu’une ambiguïté change le comportement attendu ou la portée. Ne pas transformer une idée ou un ticket non approuvé en règle de jeu.
 - Accompagner toute fonctionnalité de tests pertinents; pour une correction de bogue, ajouter un test de régression lorsque possible. Mettre à jour la documentation touchée.
 - Ne modifier les fichiers de règles que sur demande explicite. Une demande visant `AGENTS.md` ne s’étend pas automatiquement aux compagnons.
+- Une revue de code générale, même qualifiée d’« exhaustive », ne constitue pas une demande d’audit de sécurité spécialisé. Sans demande explicite, s’en tenir à la revue ciblée du diff, aux tests pertinents et à la validation normale. Si un risque concret justifie un scan spécialisé ou une analyse multi-agent susceptible de consommer beaucoup de ressources, l’expliquer et obtenir l’accord de l’utilisateur avant de la lancer.
 - Utiliser `secureRandom` de `src/utils/random.ts`, jamais `Math.random`. Préserver les RNG injectés et l’ordre des tirages lorsqu’ils font partie du contrat testé.
 
 ## Commandes
