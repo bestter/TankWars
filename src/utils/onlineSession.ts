@@ -12,7 +12,7 @@ import {
   type GamePhase,
   type RoundResult,
 } from '../types/game';
-import type { AiProfile, Player, TankHitReaction } from '../types/player';
+import { FALL_DISTANCE_MAX_PX, type AiProfile, type Player, type TankHitReaction } from '../types/player';
 import { TERRAIN_MATERIAL, type TerrainMaterial } from '../types/terrain';
 import { ALL_WEAPON_IDS, type WeaponId } from '../types/weapon';
 import type { EarningsOverlayState } from '../components/gameCanvasReducer';
@@ -208,9 +208,15 @@ export function isShopClientSessionState(value: unknown): value is ShopClientSes
   );
 }
 
+/** Keep legacy snapshots readable while discarding useless excess fall distance. */
+function normalizePersistedReaction(key: string, value: unknown): unknown {
+  if (key !== 'hitReaction' || !isTankHitReaction(value)) return value;
+  return { ...value, fallDistance: Math.min(FALL_DISTANCE_MAX_PX, value.fallDistance) };
+}
+
 export function persistOnlineSession(session: PersistedOnlineSession): void {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session, normalizePersistedReaction));
   } catch {
     // quota / private mode — ignore
   }
@@ -220,7 +226,7 @@ export function readOnlineSession(): PersistedOnlineSession | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw, normalizePersistedReaction);
     if (!isRecord(parsed) || !isRecord(parsed.meta) || !isRecord(parsed.canvas)) return null;
     const meta = parsed.meta;
     const canvas = parsed.canvas;
@@ -365,9 +371,7 @@ function isTankHitReaction(value: unknown): value is TankHitReaction {
     isRecord(value) &&
     typeof value.wasDirectHit === 'boolean' &&
     isFiniteNumber(value.fallDistance) &&
-    value.fallDistance >= 0 &&
-    isSafeNonNegativeInteger(value.shotStep) &&
-    value.shotStep <= 2
+    value.fallDistance >= 0
   );
 }
 

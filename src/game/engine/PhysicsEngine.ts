@@ -1,3 +1,4 @@
+import { TANK_HITBOX_WIDTH } from "../combatConstants";
 import { secureRandom } from '../../utils/random';
 /**
  * TankWars - PhysicsEngine
@@ -239,7 +240,7 @@ export class PhysicsEngine {
           const ownerPlayer = tankManager.getPlayerById(p.ownerId);
           if (ownerPlayer) {
             const oTank = ownerPlayer.tank;
-            const tankWidth = 24;
+            const tankWidth = TANK_HITBOX_WIDTH;
             const tankHeight = 15;
             const insideOwner =
               p.x >= oTank.position.x - tankWidth / 2 &&

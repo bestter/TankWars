@@ -62,6 +62,28 @@ describe('Worker Entrypoint', () => {
   });
 
   describe('/api/rooms', () => {
+    it('rejects a disallowed browser Origin before creating a room', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://malicious-site.com',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ numPlayers: 2 }),
+      });
+
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get('content-type')).toBe('application/json');
+      await expect(response.json()).resolves.toEqual({
+        error: 'Forbidden: Invalid Origin',
+      });
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+      expectSecurityHeaders(response);
+    });
+
     it('does not rewrite missing or unknown AI profiles onto the combat slot', async () => {
       const { env, mockStub } = createMockEnv();
       const request = new Request('https://tankwars.pages.dev/api/rooms', {
@@ -142,6 +164,24 @@ describe('Worker Entrypoint', () => {
   });
 
   describe('/api/rooms/:roomId/join', () => {
+    it('rejects a disallowed browser Origin before joining a room', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/join', {
+        method: 'POST',
+        headers: { Origin: 'https://malicious-site.com' },
+      });
+
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get('content-type')).toBe('application/json');
+      await expect(response.json()).resolves.toEqual({
+        error: 'Forbidden: Invalid Origin',
+      });
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+      expectSecurityHeaders(response);
+    });
+
     it('rejects roomId longer than 256 characters', async () => {
       const { env, mockNamespace } = createMockEnv();
       const longRoomId = 'a'.repeat(257);
@@ -205,8 +245,7 @@ describe('Worker Entrypoint', () => {
       });
       const response = await worker.fetch(request, env);
       expect(response.status).toBe(403);
-      const errorObj = (await response.json()) as { error: string };
-      expect(errorObj.error).toBe('Forbidden: Invalid Origin');
+      expect(await response.text()).toBe('Forbidden: Invalid Origin');
       expectSecurityHeaders(response);
     });
 
@@ -228,7 +267,7 @@ describe('Worker Entrypoint', () => {
 
       expect(response.status).toBe(400);
       const text = await response.text();
-      expect(text).toContain('Missing or invalid room/slot/token');
+      expect(text).toBe('Missing or invalid room/slot/token');
       expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
 

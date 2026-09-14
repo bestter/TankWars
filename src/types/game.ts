@@ -101,7 +101,7 @@ export interface GameState {
    *  Provided to AIEngine (for wind-aware / terrain-aware smarter AI aiming). */
   windForce: number;
   gravity: number;
-  /** 1-based match round (manche). AI warmup; omit = full spec. */
+  /** 1-based match round (manche). AI curves normalize an omitted value to M1. */
   roundNumber?: number;
 }
 
@@ -118,4 +118,3 @@ export interface RoundResult {
 }
 
 export * from "./terrain";
-

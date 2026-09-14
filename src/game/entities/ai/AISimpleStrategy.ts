@@ -1,111 +1,145 @@
 import { secureRandom } from "../../../utils/random";
-/**
- * TankWars - AISimpleStrategy (V1 - "Stupid" AI)
- *
- * Phase 1 implementation as required by project guidelines.
- * Deliberately naive. No fallibleAim. Early rounds fire alcoholic shots
- * (P = 1 − min(1, roundSkill)); sober cone tightens after manche 5.
- */
-
-import type { AIEngine } from "./AIEngine";
 import type { GameState } from "../../../types/game";
-import type { Player } from "../../../types/player";
-import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
-import { AI_LATE_SKILL_CAP, clamp01, roundSkill } from "./roundSkill";
-import { advanceHitReaction, getHitReactionPenalty } from "./hitReaction";
+import type { TerrainManager } from "../../engine/Terrain";
+import type { AIEngine } from "./AIEngine";
+import {
+  finalizeSimpleAim,
+  interpolateAimCommands,
+  randomIntegerInclusive,
+  sampleSimpleGaffe,
+} from "./aimCorruption";
+import {
+  type AimMemory,
+  recordAimAttempt,
+  resetAimMemoryForRound,
+} from "./aimMemory";
+import {
+  maybeGaffe,
+  normalizeAimRound,
+  signedImpactOffset,
+} from "./fallibleAim";
+import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
+
+type SimpleMemory = AimMemory;
+
+export interface SimpleErrorChances {
+  gaffe: number;
+  direction: number;
+  power: number;
+}
+
+const SIMPLE_ERROR_CHANCES: Record<number, SimpleErrorChances> = {
+  1: { gaffe: 0.5, direction: 0.4, power: 0.5 },
+  2: { gaffe: 0.4, direction: 0.35, power: 0.45 },
+  3: { gaffe: 0.3, direction: 0.3, power: 0.4 },
+  4: { gaffe: 0.25, direction: 0.25, power: 0.35 },
+  5: { gaffe: 0.22, direction: 0.22, power: 0.3 },
+  11: { gaffe: 0.2, direction: 0.2, power: 0.25 },
+};
+
+export function getSimpleErrorChances(
+  roundNumber: number | undefined,
+): SimpleErrorChances {
+  const round = Math.floor(normalizeAimRound(roundNumber));
+  if (round <= 4) return SIMPLE_ERROR_CHANCES[round];
+  return round <= 10 ? SIMPLE_ERROR_CHANCES[5] : SIMPLE_ERROR_CHANCES[11];
+}
 
 export class AISimpleStrategy implements AIEngine {
+  private memories = new Map<string, SimpleMemory>();
+
+  private getMem(playerId: string): SimpleMemory {
+    const existing = this.memories.get(playerId);
+    if (existing) return existing;
+
+    const memory: SimpleMemory = { currentTargetAttempts: 0 };
+    this.memories.set(playerId, memory);
+    return memory;
+  }
+
   async executeTurn(
     tankId: string,
     gameState: GameState,
-    _terrainManager: TerrainManager,
+    terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
-    void _terrainManager;
-    const currentPlayer = gameState.players.find((p) => p.tank.id === tankId);
-    if (!currentPlayer) {
-      return { angle: 45, power: 50 };
+    const self = gameState.players.find((player) => player.tank.id === tankId);
+    if (!self || self.tank.isDead) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const skill = roundSkill(gameState.roundNumber);
-    const penalty = getHitReactionPenalty(
-      currentPlayer.aiProfile,
-      currentPlayer.tank.hitReaction,
-    );
-
-    const erraticChance = (1 - Math.min(1, skill)) + penalty * 0.5;
-    if (secureRandom() < erraticChance) {
-      advanceHitReaction(currentPlayer.tank.hitReaction);
-      const angle = secureRandom() * 180;
-      const power = 5 + secureRandom() * 95;
-      return {
-        angle: Math.round(angle * 10) / 10,
-        power: Math.round(power),
-        weaponId: currentPlayer.tank.currentWeapon || "MISSILE",
-      };
-    }
-
-    // Find living enemies
+    const memory = this.getMem(self.id);
+    resetAimMemoryForRound(memory, gameState.roundNumber);
     const enemies = gameState.players.filter(
-      (p) => p.id !== currentPlayer.id && !p.tank.isDead,
+      (player) => player.id !== self.id && !player.tank.isDead,
     );
-
     if (enemies.length === 0) {
-      return { angle: 45, power: 50 };
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    // Human privilege: Prioritize targeting other AIs, fallback to human only if no AIs left
-    const aiEnemies = enemies.filter((e) => !e.isHuman);
-    const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
-    const target: Player =
-      candidates[Math.floor(secureRandom() * candidates.length)];
+    let target = memory.currentTargetId
+      ? enemies.find((enemy) => enemy.id === memory.currentTargetId)
+      : undefined;
+    if (!target) {
+      const aiEnemies = enemies.filter((enemy) => !enemy.isHuman);
+      const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+      target = candidates.toSorted(
+        (left, right) => left.tank.health - right.tank.health,
+      )[0];
+    }
+    if (!target) {
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
+    }
 
-    if (import.meta.env.DEV) {
-      console.log(
-        `[AI TARGET] ${currentPlayer.name} (Simple V1) targeted ${target.name}`,
+    const attempts = recordAimAttempt(memory, target.id);
+    const weaponId = self.tank.currentWeapon || "MISSILE";
+    self.tank.currentWeapon = weaponId;
+    const chances = getSimpleErrorChances(gameState.roundNumber);
+    const reactionIntensity = getHitReactionIntensity(
+      self.aiProfile ?? "v1-random",
+      self.tank.hitReaction,
+    );
+
+    if (maybeGaffe(chances.gaffe)) {
+      consumeHitReaction(self.tank.hitReaction);
+      return { ...finalizeSimpleAim(sampleSimpleGaffe()), weaponId };
+    }
+
+    const aimX =
+      target.tank.position.x +
+      signedImpactOffset(attempts, "v1-random", gameState.roundNumber);
+    const { computeHeuristicShot } = await import("./heuristicShot");
+    let command = computeHeuristicShot(
+      self,
+      aimX,
+      target.tank.position.y - 6,
+      gameState.windForce,
+      gameState.gravity,
+      terrainManager,
+    );
+
+    if (maybeGaffe(chances.direction)) {
+      command = { ...command, angle: secureRandom() * 180 };
+    }
+    if (maybeGaffe(chances.power)) {
+      command = { ...command, power: randomIntegerInclusive(1, 99) };
+    }
+    if (reactionIntensity > 0) {
+      command = interpolateAimCommands(
+        command,
+        sampleSimpleGaffe(),
+        reactionIntensity,
       );
     }
 
-    const myX = currentPlayer.tank.position.x;
-    const targetX = target.tank.position.x;
-
-    const isTargetToTheRight = targetX > myX;
-
-    let angle: number;
-
-    // Safer trajectories (higher arc, more power). After manche 5 the cone tightens.
-    const late = clamp01((skill - 1) / (AI_LATE_SKILL_CAP - 1));
-    const angleSpread =
-      (isTargetToTheRight ? 30 : 45) * (1 - 0.5 * late) * (1 + penalty);
-    const powerSpread = 30 * (1 - 0.5 * late) * (1 + penalty);
-    if (isTargetToTheRight) {
-      angle = 45 + secureRandom() * angleSpread;
-    } else {
-      angle = 105 + secureRandom() * angleSpread;
-    }
-
-    const power = 60 + secureRandom() * powerSpread;
-
-    advanceHitReaction(currentPlayer.tank.hitReaction);
-
-    const weaponId = currentPlayer.tank.currentWeapon || "MISSILE";
-    return {
-      angle: Math.round(angle * 10) / 10,
-      power: Math.round(power),
-      weaponId,
-    };
+    consumeHitReaction(self.tank.hitReaction);
+    return { ...finalizeSimpleAim(command), weaponId };
   }
 
-  /**
-   * Fallback when the AI turn gets stuck.
-   * SimpleStrategy just fires a completely random safe shot.
-   */
   getResolutionFallback(): { angle: number; power: number } | null {
-    const angle = 40 + secureRandom() * 100; // 40° → 140°
-    const power = 55 + secureRandom() * 30; // 55-85 (safer)
     return {
-      angle: Math.round(angle),
-      power: Math.round(power),
+      angle: Math.round(40 + secureRandom() * 100),
+      power: Math.round(55 + secureRandom() * 30),
     };
   }
 }

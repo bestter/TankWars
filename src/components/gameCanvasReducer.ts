@@ -9,6 +9,7 @@ import type {
 import type { FireRejectedReason } from "../game/online/protocol";
 
 export const ZEUS_ANNOUNCEMENT_DURATION_MS = 3_000;
+export const FIRE_REJECTION_DURATION_MS = 3_500;
 
 export interface EarningsOverlayState {
   shotId: number;

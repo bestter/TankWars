@@ -165,7 +165,12 @@ No security impact, strictly an internal performance cache.
 **Learning:** Raw string interpolation for URLs is dangerous; parameters must always be sanitized to prevent malicious content injection.
 **Prevention:** Always use `encodeURIComponent` when dynamically generating URLs based on variables.
 
-## 2026-11-20 - [Missing Origin Validation for HTTP API Endpoints]
+## 2026-09-12 - [Missing Origin Validation for HTTP API Endpoints]
 **Vulnerability:** The `/api/rooms` and `/api/rooms/:roomId/join` endpoints in `worker/src/index.ts` accepted POST requests without strictly validating the `Origin` header.
-**Learning:** While WebSocket endpoints bypass standard CORS restrictions and need explicit validation, HTTP endpoints like POST can also be vulnerable to Cross-Site Request Forgery (CSRF) if the `Origin` is missing or mismatched and not explicitly blocked, especially when handling state-changing requests.
+**Learning:** While WebSocket endpoints bypass standard CORS restrictions and need explicit validation, state-changing HTTP endpoints should also reject an `Origin` header that does not match the allowlist. Requests without `Origin` remain supported for non-browser clients.
 **Prevention:** Always implement explicit `Origin` validation (`if (origin !== null && !isAllowedOrigin)`) for state-changing HTTP endpoints, returning a `403 Forbidden` response to ensure defense-in-depth against CSRF attacks.
+
+## 2026-09-11 - Weak Token Generation in Game Room Invite Links
+**Vulnerability:** Weak token generation for game invite links in `worker/src/game-room.ts`. The custom `makeToken()` function used a 32-character alphabet and 6 bytes of entropy, resulting in a predictable sequence.
+**Learning:** This function was used as the secret for users to join a game room slot, effectively providing authorization for a participant. Short, weak tokens are susceptible to brute force attacks where a malicious actor could intercept or guess an active game room's invitation token.
+**Prevention:** Ensure functions acting as secrets, invite links, and authorization tokens use secure standard methods for generating identifiers, such as standard UUIDv4 by utilizing `crypto.randomUUID()`. Do not reinvent custom cryptographically-weak generators for authorization.

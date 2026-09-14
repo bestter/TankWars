@@ -33,7 +33,7 @@ export function isAiProfile(value: string): value is AiProfile {
   return Object.hasOwn(AI_PROFILE_UI, value);
 }
 
-export const AI_PROFILE_IDS: readonly AiProfile[] = Object.keys(AI_PROFILE_UI).filter(isAiProfile);
+export const AI_PROFILE_IDS: readonly AiProfile[] = Object.keys(AI_PROFILE_UI) as AiProfile[];
 
 export function controllerBadge(isHuman: boolean, profile?: AiProfile): string {
   if (isHuman) return "P";

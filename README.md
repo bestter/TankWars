@@ -32,14 +32,15 @@
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, editable names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Local AI names default to the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). Suffixes preserve profile ordering while skipping every name already used by a human or an AI (`Simple`, `Simple-1`, `Simple-2`). Name comparisons are trimmed, case-insensitive, and locale-independent (`trim()` + `toLowerCase()`), so browser locale cannot change collision results. Manual duplicate names are highlighted after leaving the field or pressing a button and block local match start until corrected. Names are assigned in the active language, remain frozen after language changes, and are never retroactively renumbered. Unique VGA colors include live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Zeus Lightning Anti-Deadlock** — If only two or more AIs remain and five full rotations produce no paid hit (`hasEarnings`), one eligible AI is appointed Zeus and immediately takes the next turn. Zeus then vaporizes one opponent per turn, preferring its last living direct attacker, until the round ends or Zeus dies. `ZEUS_LIGHTNING` is an internal special action: players cannot select, buy, fire, or teach it to an AI strategy.
-- **Pluggable AI System** — `AIEngine` interface. `AIByProfileStrategy` selects per player (mixed Human + AI supported):
-  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — deliberately naive, no `fallibleAim`. Early rounds: alcoholic shots (random 0°–180°, including self); sobers via `roundSkill`.
-  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. First shot always ≥ 36 px; locks on shot 5 (`SHOTS_TO_HIT`).
-  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. First shot ≥ 36 px; locks on shot 4; occasional mid-round slip after lock.
-  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — adaptive. First shot ≥ 36 px; locks on shot 3.
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (ease-out warmup, then late tighten), `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it).
+- **Pluggable Local AI System** — `AIEngine` interface. In local matches, `AIByProfileStrategy` selects per player (mixed Human + AI supported):
+  - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — curve by round/target, sticks to a live target, prioritizes the weakest AI, and does not use revenge or weapon tactics. Locks on shot 7.
+  - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. Locks on shot 5.
+  - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. Locks on shot 3; its only deliberate overcorrection is shot 2.
+  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — persistent target, 2D heavy-weapon groups and a single conditional tactical roll. Locks on shot 2 (see #228 behavior below).
+  All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Only OK and EXPERT use `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
   AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
-  **Post-hit & fall learning curves (`hitReaction.ts`):** Direct projectile hit causes a 50% accuracy penalty on the next shot; falling causes a 1–25% penalty based on fall distance (0–120 px); both are cumulative on shot 1. On shot 2 (if not hit again), Sniper recovers immediately (0%), Expert has 12% penalty, OK and Simple have 25% penalty; shot 3 is fully normalized. Wired in MainMenu + GameCanvas.
+  **Post-hit & fall reaction (`hitReaction.ts`):** Direct hits and cumulative fall distance are retained for one next riposte, then consumed. Reaction intensity varies by profile and never introduces RNG when it is zero. Wired in MainMenu + GameCanvas.
+  **Online combat limitation:** The Worker currently uses `maybeRunAIServerTurn` and a generated `fakeCommand`, not these local strategies. Local aiming, material and heavy-weapon tactics therefore do not describe online AI combat. Online AI purchases still use the shared authoritative shop policy.
 - **Keyboard Controls** — ← → angle, ↑ ↓ power, SPACE to fire. Full on-screen HUD.
 - **Wind Simulation** — Adjustable wind affects every shot.
 - **Shields + Health & Dynamic Gauges** — Tanks spawn with 40 innate shield points per round. Direct hits deal 2× damage to the shield (absorbs via `Math.ceil(shield / 2)`; normal 1× damage overflow to health); indirect splash deals 1× damage. Fall damage bypasses shield directly to health. Visual HUD on canvas: dark cyan shield bar (`VGA_PALETTE.DARK_CYAN`) above tank while shield > 0; if health is also reduced, a green health bar appears below the dark cyan shield bar; when shield is depleted, only the health bar (green, red if $\le 40\%$) is shown.
@@ -72,8 +73,8 @@ When combat stalls with only AIs alive, a three-second bilingual banner announce
 
 ### Prerequisites
 
-- Node.js 18+
-- npm (or pnpm/yarn)
+- Node.js 24 (the version used by CI)
+- npm (the repository includes `package-lock.json`)
 
 ### Install & Run
 
@@ -96,7 +97,7 @@ npm run lint
 # React health scan (before/after UI changes)
 npm run doctor
 
-# Run tests (773 unit and integration tests across 74 files)
+# Run unit and integration tests (Vitest, without watch mode)
 npm run test
 
 # Online multiplayer backend (run alongside npm run dev)
@@ -108,11 +109,25 @@ npm run worker:deploy
 
 **Online dev:** start both `npm run dev` (frontend, port 5173) and `npm run worker:dev` (API, port 8787). Restart the worker after editing `worker/src/game-room.ts`.
 
+### Validation
+
+To reproduce the CI dependency installation, run `npm ci --ignore-scripts`. Before finishing a change, run these checks in order:
+
+```bash
+npm run lint
+npm run build
+npm run test
+npm run doctor -- --verbose --scope changed --blocking warning
+git diff --check
+```
+
+The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
+
 ### Deployment
 
 Production uses a controlled Worker-first publication. First, [disable automatic production deployments in Cloudflare Pages](https://developers.cloudflare.com/pages/configuration/git-integration/#disable-automatic-deployments); otherwise a Git push can publish the client before its compatible Worker.
 
-Run `.\deploy-cloudflare.ps1` from PowerShell. The script:
+On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
 1. runs `npm run lint` → `npm run build` → `npm run test`;
 2. deploys the Worker with the repository's local Wrangler;
@@ -123,6 +138,8 @@ Run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 Set the `WORKER_API_URL` environment variable when workers.dev URL auto-detection is not suitable. A failed Worker deploy or health gate prevents any Pages publication. The script restores its working directory and Vite environment variables on every exit.
 
 For the private staging machine, run `.\deploy-staging.ps1`. It performs the same validations, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
+
+The repository also contains a separate [GitHub Pages workflow](./.github/workflows/deploy.yml), triggered by pushes to `main`. It builds and publishes the client to GitHub Pages; it does not deploy the Worker or perform the Cloudflare Worker-first health gate. Disabling automatic Cloudflare Pages deployments does not disable this GitHub Actions workflow.
 
 ---
 
@@ -142,7 +159,8 @@ This project follows a strict separation of concerns:
   - `v2-heuristic` → `AIHeuristicStrategy` ("IA OK")
   - `v3-sniper` → `AISniperStrategy` ("IA SNIPER")
   - `v4-smart` → `AISmartStrategy` ("IA EXPERT")
-  v2–v4 share `fallibleAim.ts` + `roundSkill.ts` (per-attempt lock + per-round warmup) and `terrainMaterialTactics.ts`. Swap implementations without touching the core engine.
+  All four profiles share `fallibleAim.ts`, target/round memory, corruption helpers, and the shared ballistic solver. Weapon tactics remain specific to OK, SNIPER, and EXPERT. Swap implementations without touching the core engine.
+- **EXPERT tactics** (`src/game/entities/ai/expertTactics.ts`): Pure group enumeration, admissibility, ranking and primary selection. `AISmartStrategy` owns the conditional heavy roll, final aim-memory update and fallible aim. `src/game/combatConstants.ts` shares the 24 px tank hitbox width with collision handling and the 75 px THERMO instant-kill radius with explosion damage.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -165,18 +183,19 @@ In the build today:
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
 - Destructible heightmap, DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
-- Four AI profiles; v2–v4 use `fallibleAim` + `roundSkill` + `terrainMaterialTactics` (first shot ≥ 36 px; OK/Sniper/Expert lock at shots 5/4/3; v1 stays naive / alcoholic early); shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
+- Four AI profiles use `fallibleAim` plus target/round memory (first shot remains outside direct aim; locks Simple/OK/Sniper/Expert at 7/5/3/2); SIMPLE avoids revenge/material/BULLDOZER tactics and SNIPER has no post-lock slip; shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
 - i18n FR/EN, PWA (network-first SW), mobile D-Pads
 - Online lobby + strict combat/shop protocol (`ONLINE_PROTOCOL_VERSION`, mismatch overlay), server-first shots, authoritative transactional shop, reward/balance application, Durable Object authority failover, session resume, reconnect
 - Durable Object-authoritative Zeus nomination/strike, fair cross-round history, deterministic VFX, bilingual announcement, and reconnect restoration
 - Terrain dirty-band redraw, HUD ~15 Hz + `React.memo`, projectile pooling
-- **773 unit and integration tests** across **74 files** (Vitest)
+- Unit and integration coverage with Vitest; run `npm run test` for the current totals
 
 Still planned:
 
 - Authoritative server simulation (terrain / damage / HP shot-by-shot)
+- Migration of local AI combat strategies to the authoritative Worker
 - More weapons and power-ups
 - Persistent high scores / match history
 - Further audio and particle polish
@@ -214,7 +233,7 @@ To explore the codebase:
 - Main game view + engine integration: `src/components/GameCanvas.tsx` + `useGameSession.ts`
 - Core simulation: `src/game/engine/GameEngine.ts` (indicator, recoil trigger, celebration, audio)
 - Terrain: `src/game/engine/Terrain.ts` (craters + `destroyTerrainShaft`) + `src/types/terrain.ts` (materials, spawn, grenade bounce)
-- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `roundSkill.ts` + `terrainMaterialTactics.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
+- AI: `src/game/entities/ai/AIEngine.ts` + `AIByProfileStrategy.ts` + `fallibleAim.ts` + `aimMemory.ts` + `aimCorruption.ts` + `heuristicShot.ts` + `hitReaction.ts` + `terrainMaterialTactics.ts` (v1 `AISimpleStrategy`, v2 `AIHeuristicStrategy`, v3 `AISniperStrategy`, v4 `AISmartStrategy`)
 - Tanks: `src/game/entities/TankManager.ts` + `src/game/rendering/tankSprite.ts`
 - Projectiles: `src/game/engine/PhysicsEngine.ts`
 - Online lobby + WS client: `src/components/OnlineLobby.tsx`, `useOnlineLobby.ts`, `OnlineLobbyCreate.tsx`, `OnlineLobbyWaiting.tsx`, `useGameSession.ts`
@@ -226,3 +245,25 @@ To explore the codebase:
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
 Enjoy blowing up the landscape!
+
+### Chargement et couverture IA (#212)
+
+Le solveur partagé synchrone `heuristicShot` et `BallisticsSimulator` restent chargés à la demande : SIMPLE importe le solveur au premier tir normal, après le court-circuit de grosse gaffe; OK, SNIPER et EXPERT demeurent des stratégies chargées à la demande. Tous les achats IA passent exclusivement par `autoBuyForAI` (#207), sans méthode boutique dans les stratégies de combat.
+
+Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, aucun appel au solveur ni aux décisions de remplacement pour SIMPLE), ainsi que le vrai solveur sur terrain plat à gauche/droite, ses bornes et la conservation des fractions avant l’arrondi final.
+
+### Décision lourde EXPERT (#228)
+
+En combat local, EXPERT conserve toute cible courante vivante, humaine ou IA, sans priorité « finish-off ». Sans cible courante vivante, il choisit une IA avant un humain, puis la santé seule croissante et l'ordre du roster.
+
+NUKE et THERMONUCLEAR évaluent séparément les paires et le triplet d'adversaires vivants. Un groupe exige au moins une paire à moins de 80 px horizontalement et tous ses membres strictement dans le rayon 2D de l'arme autour du centroïde exact. Un adversaire extérieur couvert ne compte pas dans ce sous-ensemble. La primaire est le membre au plus faible total santé+bouclier, avec départage par le roster, sans préférence IA/humain.
+
+Les candidats sont filtrés avant classement : arme en stock, géométrie valide, distance EXPERT-centroïde strictement supérieure à rayon+24 et, pour THERMO, hors de la zone d'élimination inclusive de 75 px. Une lourde exige aussi une tentative virtuelle supérieure à 1 sur sa primaire. Le classement privilégie le nombre de membres, leur total santé+bouclier, puis la distance EXPERT-centroïde (tous décroissants), enfin les indices triés du roster en ordre lexicographique croissant.
+
+S'il existe une lourde admissible, EXPERT effectue un seul jet tactique : `r < 0.22` choisit la meilleure THERMO admissible; `0.22 <= r < 0.50` choisit la meilleure NUKE admissible. Un intervalle sans action ou `r >= 0.50` ramène à une arme ordinaire sur la cible ordinaire, sans second jet, transfert de probabilité ou préparation. Sans lourde admissible, aucun RNG tactique : le meilleur candidat bloqué uniquement par les tentatives prépare sa primaire avec une arme ordinaire, sinon EXPERT garde sa cible ordinaire. Aucun ancien seuil individuel de santé ou de distance ne subsiste pour les lourdes.
+
+Le reset de manche précède l'évaluation. Seule l'action finale enregistre une tentative : changer de primaire remet à 1, déplacer le centroïde autour de la même primaire conserve la convergence. Une lourde vise le centroïde exact; une arme ordinaire, y compris préparation ou repli, vise la position individuelle à `y - 6`. Les tactiques ordinaires GRENADE/CLUSTER/DRILLER/BULLDOZER/MISSILE sont conservées, avec CLUSTER horizontal et ajustement ROCK/SOFT sous la cible finale. L'offset faillible est ajouté une seule fois à X, puis viennent le solveur, la réaction et la gaffe indépendante à 2 %. Une gaffe compte comme une tentative.
+
+Cette sécurité est géométrique et évaluée avant l'offset. Elle ne garantit ni impact, ni dégâts, ni survie réelle : l'occlusion ROCK et les centroïdes dans les airs ou sous le terrain ne sont pas des filtres d'admissibilité. La pénalité du solveur inclut la limite rayon+24, sans devenir une interdiction absolue. La survie (#229), la menace BULLDOZER (#230) et l'IA Worker ne sont pas implémentées par cette tactique.
+
+La couverture #228 vérifie les frontières géométriques et RNG, chaque clé de classement, les sous-ensembles indépendants, les préparations/replis, les resets, les coordonnées transmises au solveur, les contrats de corruption #212 et l'absence de mutations tactiques. Les tests moteur encadrent la limite réelle de 75 px de THERMO, sans occlusion et en distinguant l'élimination instantanée du souffle ordinaire.

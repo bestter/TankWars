@@ -1,72 +1,22 @@
-# Bestter's TankWars — Cursor Rules (CURSOR.md)
+# TankWars — Guide pour Cursor
 
-**Cursor users:** read [AGENTS.md](./AGENTS.md) first. It is the single source of truth for layout, commands, verification, pitfalls, and the file map. This file is a Cursor-friendly companion. It is not a changelog. Also see [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules), [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md).
+**Agents dans Cursor : lire et appliquer [AGENTS.md](./AGENTS.md) avant toute modification.** Il centralise les règles communes, les commandes, l’architecture, les contrats du jeu et les chemins utiles. Ce guide contient seulement des indications de travail pour Cursor; il ne doit pas devenir un miroir des autres compagnons ou des spécifications.
 
-## Role & Stack
+## Méthode de travail
 
-- Role: Senior Software Architect & Expert Game Developer (retro artillery)
-- Stack: TypeScript (strict, zero `any`), React 19 (hooks), HTML5 Canvas 2D (no WebGL, no game libs)
-- Styling: monospace retro; `App.css` / `index.css` only (no Tailwind, no UI kit)
-- Language: reply in French (Québécois preferred), even if the user writes in English
+- Répondre en français québécois et respecter la portée autorisée selon les [règles de travail](./AGENTS.md#règles-de-travail).
+- Utiliser la recherche de fichiers et de symboles disponible dans Cursor pour repérer les points d’entrée indiqués dans [Où intervenir](./AGENTS.md#où-intervenir), puis lire les tests concernés.
+- Privilégier des modifications ciblées et présenter les chemins utiles dans le compte rendu.
 
-## Core Principles
+## Références selon la tâche
 
-1. Never mix React state with the Canvas high-frequency loop. React owns `GamePhase`, players, money, shop, HUD. GameEngine owns physics, terrain, projectiles, drawing, combat audio.
-2. Modular, strongly-typed TypeScript. Shared types go in `src/types/`.
-3. Physics at fixed `PHYSICS_DT = 1/120` in `GameEngine`, decoupled from display raf.
-4. All rendering uses `VGA_PALETTE` from `src/types/game.ts`.
-5. RNG: `secureRandom` from `src/utils/random.ts` — never `Math.random`.
+- [Journaux et erreurs](./AGENTS.md#journaux-et-erreurs).
+- [Architecture à préserver](./AGENTS.md#architecture-à-préserver).
+- [Contrats sensibles](./AGENTS.md#contrats-sensibles).
+- [Commandes](./AGENTS.md#commandes) et [Validation](./AGENTS.md#validation), dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React.
+- [Déploiement et staging privé](./README.md#deployment).
 
-## Game Specs (current)
+## Livraison
 
-- Players: 2–4, any mix Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT (`MainMenu.tsx`). Local AI names use the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`); suffixes count all other slots with that profile and advance past names used by any human or AI (`Simple`, `Simple-1`, `Simple-2`). Existing names are not renumbered, remain editable, and stay frozen after language changes. Manual names must be unique after locale-independent `trim().toLowerCase()` normalization; duplicates are highlighted after blur/button interaction and block local start. Never use default-locale `toLocaleLowerCase()` for this comparison.
-- Tanks: `drawTankSprite` only (`src/game/rendering/tankSprite.ts`), 24×15, hull tilt + independent `turretAngle`. Active triangle, `ownerColor` shells, micro recoil.
-- State machine (`src/types/game.ts`): `MENU` → `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → `GAME_OVER`.
-- Shields & Gauges: 40 innate shield points per tank/round. Direct hits deal 2× damage to shield (absorbs via `Math.ceil(shield / 2)`; 1× overflow to health); indirect splash deals 1× damage. Fall damage directly reduces health, leaving shield intact. Visual gauge on Canvas (constants `TANK_GAUGE_*`): single dark cyan bar (`VGA_PALETTE.DARK_CYAN`) at $y-24$ when shield > 0 and health is full; stacked dual bars (dark cyan shield at $y-28$, green health at $y-23$, name at $y-36$) when shield > 0 and health < maxHealth; single green bar at $y-24$ when shield <= 0 (red if $\le 40\%$).
-- Terrain: heightmap custom dans `Terrain.ts` (relief diversifié multi-octaves avec bosses et creux tactiques). Matériaux (`src/types/terrain.ts`) : `DIRT` (normal), `ROCK` (roche indestructible, mur pour le souffle latéral ; explosion par-dessus : +50% dégâts, portée inchangée), `SOFT` (terrain meuble, multiplicateur 2.5x). GRENADE : rebond ~2× sur ROCK ; colle et explose au premier contact sur SOFT (`grenadeBounceParams`).
-- Weapons (`WEAPON_REGISTRY` in `src/types/weapon.ts`): Missile unlimited (not in shop). Others decrement. Baby Nuke (`NUKE`) costs $420. DRILLER carves an oriented shaft of depth `DRILLER_SHAFT_DEPTH` (53 px); splash stays as registered. BULLET ×3 on direct hitbox hit. BULLDOZER ($150, 0 HP / 0 blast) pushes on direct hit and skips `applyExplosionDamage`. NUKE / THERMONUCLEAR have special VFX/audio in `GameEngine`.
-- Economy: exact per-shot rewards in `src/game/economy/`. Base $X = $3 / $3.50 / $4 for 2 / 3 / 4 players; actual damage, attributed falls, destructions and round outcome are combined with one final ceiling. Self-damage pays nothing. Floating feedback lasts 3 seconds without blocking; summary = round earnings, shop = total balance.
-- Zeus Lightning: pure anti-deadlock domain in `src/game/zeus/`, never a weapon. With ≥2 living AIs and no living human, appoint fairly after `living AI × 5` shots without a paid hit (`hasEarnings`). Reset on earnings/human/<2 survivors/Zeus death/round end; preserve fair history across rounds. Consume the last living direct attacker (BULLDOZER excluded), otherwise injected RNG; kill only the target and award `25X`. Never add `ZEUS_LIGHTNING` to `WeaponId`, `WEAPON_REGISTRY`, `FireCommand`, shop, or `AIEngine`.
-- Spawns: shuffled X biased toward hollows (max canvas Y), 100 px gap, 13 % margins, `Y = groundY`. Local humans: −25 % on SOFT. AI all modes: −25 % on ROCK (`spawnAcceptsMaterial`).
-- Hits: AABB 24×15, owner hitbox ignored until the shell exits it.
-- Online (in `main`): `OnlineLobby.tsx` + `useGameSession.ts` + `onlineSession.ts` + `worker/` (`GameRoom` DO). Protocol v1 keeps temporary compatibility with unversioned v0 messages; strict/v0 `FIRE` and authoritative `SHOT` share finite inclusive `FIRE_COMMAND_*` bounds (angle -360° to 360°, power 0 to 100), repeated defensively in `GameRoom.executeFire`. Only unsupported numeric versions close in `4402`. Shop success carries `{ slot, actionId }`; only the correlated ack clears pending state, and retries reuse the ID. Deploy Worker first, validate `/api/health` protocol 1/client minimum 0, then build/deploy Pages with automatic Pages production deploy disabled. `VITE_HOTSEAT_ONLY=true` removes online from staging. Shot replay: `authoritativeShotQueue.ts` + `DeferredTransitionBuffer`; the server remains authoritative for turns, FIRE/ammo, shop, rewards and reconnect state. Dev: `npm run dev` + `npm run worker:dev`.
-- Online Zeus: `GameRoom` alone decides and persists appointment/history/revenge/RNG/order/strike before broadcast. `ZEUS_APPOINTED`, `ZEUS_STRIKE`, `ZEUS_STRIKE_APPLIED`, `ZEUS_STATE` are reconnect-safe and idempotent; economic-authority changes do nothing. VFX use strike ID + time, never room RNG.
-- Tests: **773** across **74** files (`npm run test`).
-- Version: `0.8.0` (footer on the main menu).
-
-## AI (Cursor must respect)
-
-All tank AI implements `AIEngine` (`src/game/entities/ai/AIEngine.ts`). Single router: `AIByProfileStrategy` (wired in `GameCanvas.tsx`).
-
-| Profile | Class | Label |
-|---------|--------|-------|
-| `v1-random` | `AISimpleStrategy` | IA SIMPLE — naive, **no** `fallibleAim` |
-| `v2-heuristic` | `AIHeuristicStrategy` | IA OK — first shot ≥ 36 px, lock at shot 5 |
-| `v3-sniper` | `AISniperStrategy` | IA SNIPER — first shot ≥ 36 px, lock at shot 4, 14 % slip after |
-| `v4-smart` | `AISmartStrategy` | IA EXPERT — first shot ≥ 36 px, lock at shot 3 |
-
-v2–v4 share `fallibleAim.ts` + `roundSkill.ts`, `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE), and `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80; v1 never buys or fires it). All AI share `hitReaction.ts` (Issue 174: direct hit +50%, fall 1–25% cumulative on shot 1; shot 2: Sniper 0%, Expert 12%, OK/Simple 25%; shot 3: 0%). Warmup ease-out: 15% on round 1, table spec at round 5, then late tighten to skill 1.35. First shot stays ≥ 36 px. Before round 5 the lock shot can still miss. New strategies → new file under `game/entities/ai/`, register in the dispatcher + `GameCanvas.tsx`. Never put AI inside `TankManager` or `GameEngine`. `AIStrategy` is legacy and unwired.
-
-AI shop (#207): capture initial `N` once; target `min(3N, profile cap, #215 policy)` through unit `delta: 1` transactions, with no budget ratio/reserve. Orders are Simple G→C; OK G→C→D→B→N; Sniper BULLET→D→B; Expert THERMO→N→G→C→D→B. Missing/unknown shop profiles use OK. Local applies immediately; online Worker applies once per shop epoch after normalization.
-
-## Edit strategy
-
-- Concise, production-ready. Lead with paths and diffs.
-- Small targeted edits. Explore with grep / symbols before writing.
-- After changes: `npm run lint` → `npm run build` → `npm run test` (see [AGENTS.md § Verification](./AGENTS.md#verification-checklist)).
-- React-heavy work: run the react-doctor skill (`/doctor`).
-- Document architecture inline only when it is not already in AGENTS.md.
-- Do not edit rule files unless the user asked.
-
-## Commit style
-
-- Imperative mood.
-- Sign with agent identity + exact model.
-
-## Quick Links
-
-- [AGENTS.md](./AGENTS.md) — operational source of truth
-- [GROK.md](./GROK.md)
-- [CLAUDE.md](./CLAUDE.md)
-- [.cursorrules](./.cursorrules)
-- [.antigravityrules](./.antigravityrules)
+- Appliquer la validation centrale et rapporter les résultats réels et les limites restantes, sans conserver de total de tests ou de version du jeu ici.
+- Suivre les [consignes de commit et de compte rendu](./AGENTS.md#commits-et-compte-rendu) : application Cursor, identité de l’agent et modèle exact fourni par l’environnement, sans inventer de version.

@@ -8,6 +8,8 @@ import * as aiShopHelper from "../../game/entities/ai/aiShopHelper";
 import type { Player } from "../../types/player";
 import { TurnManager } from "../../game/engine/TurnManager";
 import { TankManager } from "../../game/entities/TankManager";
+import { AIByProfileStrategy } from "../../game/entities/ai/AIByProfileStrategy";
+import { GameEngine } from "../../game/engine/GameEngine";
 
 type SessionApi = ReturnType<typeof useGameSession>;
 
@@ -46,6 +48,7 @@ describe("useGameSession local shop AI advance", () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -114,6 +117,93 @@ describe("useGameSession local shop AI advance", () => {
     expect(lastSetPlayersCall).toBeDefined();
     expect(lastSetPlayersCall?.[1].money).toBe(uiPlayers?.[1].money);
     expect(lastSetPlayersCall?.[1].inventory).toEqual(uiPlayers?.[1].inventory);
+  });
+
+  it("cancels pending AI purchases when unmounted during the shop", () => {
+    const autoBuySpy = vi.spyOn(aiShopHelper, "autoBuyForAI");
+    const setPlayersSpy = vi.spyOn(TankManager.prototype, "setPlayers");
+    const players: Player[] = [
+      makePlayer({ id: "human", isHuman: true }),
+      makePlayer({
+        id: "ai",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        money: 1000,
+        inventory: {},
+      }),
+    ];
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const { unmount } = render(
+      <ShopHarness players={players} sessionRef={sessionRef} />,
+    );
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+    });
+    act(() => {
+      sessionRef.current?.handleShopReady();
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
+    expect(sessionRef.current?.state.currentShopIndex).toBe(1);
+    expect(autoBuySpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    const setPlayersCallCount = setPlayersSpy.mock.calls.length;
+
+    unmount();
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(autoBuySpy).not.toHaveBeenCalled();
+    expect(setPlayersSpy).toHaveBeenCalledTimes(setPlayersCallCount);
+  });
+
+  it("stops a deferred AI turn when unmounted after the shop", async () => {
+    let resolveDecision:
+      | ((decision: { angle: number; power: number; weaponId: "MISSILE" }) => void)
+      | undefined;
+    const executeTurnSpy = vi
+      .spyOn(AIByProfileStrategy.prototype, "executeTurn")
+      .mockReturnValue(new Promise((resolve) => {
+        resolveDecision = resolve;
+      }));
+    const fireProjectileSpy = vi.spyOn(GameEngine.prototype, "fireProjectile");
+    const stopSpy = vi.spyOn(GameEngine.prototype, "stop");
+    const aiPlayers = Array.from({ length: 2 }, (_, index) => makePlayer({
+      id: `ai-${index + 1}`,
+      name: `CPU-${index + 1}`,
+      isHuman: false,
+      aiProfile: "v1-random",
+      tank: makeTank(`tank-ai-${index + 1}`, 160 + index * 420, 300),
+    }));
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const { unmount } = render(
+      <ShopHarness players={aiPlayers} sessionRef={sessionRef} />,
+    );
+
+    act(() => {
+      sessionRef.current?.handleNextRound();
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(executeTurnSpy).toHaveBeenCalledOnce();
+
+    unmount();
+    expect(stopSpy).toHaveBeenCalledOnce();
+    const stoppedEngine = stopSpy.mock.instances.at(-1) as GameEngine | undefined;
+    expect(stoppedEngine?.getTurnManager().getCurrentPlayer()?.id).toBe("ai-1");
+    resolveDecision?.({ angle: 45, power: 60, weaponId: "MISSILE" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fireProjectileSpy).not.toHaveBeenCalled();
+    expect(stoppedEngine?.getTurnManager().getCurrentPlayer()?.id).toBe("ai-1");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retains purchases for all AI players in a pure 4-AI match across round transition", () => {
