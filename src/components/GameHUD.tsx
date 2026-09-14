@@ -37,14 +37,143 @@ const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "wea
   BULLDOZER: "weapons.BULLDOZER",
 };
 
-export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
-  const { t } = useTranslation();
-  const isHumanTurn = !!turnInfo?.isHuman;
-  const isLocked = !!turnInfo?.isInputLocked;
-  const canInteract = isHumanTurn && !isLocked;
+function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
+  if (!turnInfo) {
+    return <span style={{ color: VGA_PALETTE.GRAY }}>-</span>;
+  }
+  return (
+    <>
+      <span
+        style={{
+          display: "inline-block",
+          width: 9,
+          height: 9,
+          backgroundColor: turnInfo.playerColor,
+          border: `1px solid ${VGA_PALETTE.WHITE}`,
+          marginRight: 2,
+          verticalAlign: "middle",
+        }}
+      />
+      <span style={{ color: turnInfo.playerColor, fontWeight: "bold" }}>
+        {turnInfo.playerName}
+      </span>
+    </>
+  );
+}
 
+function AimReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        pointerEvents: "none",
+      }}
+    >
+      <span style={{ color: VGA_PALETTE.CYAN }}>ANG</span>
+      <span style={{ color: VGA_PALETTE.YELLOW, fontWeight: "bold", minWidth: 28 }}>
+        {turnInfo ? `${turnInfo.angle}°` : "--"}
+      </span>
+      <span style={{ color: VGA_PALETTE.CYAN, marginLeft: 4 }}>POW</span>
+      <span style={{ color: VGA_PALETTE.YELLOW, fontWeight: "bold", minWidth: 20 }}>
+        {turnInfo ? turnInfo.power : "--"}
+      </span>
+    </div>
+  );
+}
+
+function TurnStatus({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
+  const { t } = useTranslation();
+  if (!turnInfo) return null;
+
+  if (turnInfo.tanksAreFalling) {
+    return (
+      <span style={{ marginLeft: 6, color: VGA_PALETTE.YELLOW, fontSize: "12px", pointerEvents: "none", fontWeight: "bold" }}>
+        {t("status_tanks_falling")}
+      </span>
+    );
+  }
+  if (turnInfo.isInputLocked) {
+    return (
+      <span style={{ marginLeft: 6, color: VGA_PALETTE.RED, fontSize: "12px", pointerEvents: "none" }}>
+        {t("status_resolving")}
+      </span>
+    );
+  }
+  if (!turnInfo.isHuman) {
+    return (
+      <span style={{ marginLeft: 6, color: VGA_PALETTE.CYAN, fontSize: "12px", pointerEvents: "none" }}>
+        {t("status_ai_turn")}
+      </span>
+    );
+  }
+  return null;
+}
+
+function WeaponSelector({ turnInfo, onWeaponSelect }: GameHUDProps) {
+  const { t } = useTranslation();
   const currentWeapon = turnInfo?.currentWeapon;
   const inventory = turnInfo?.inventory ?? {};
+  const canInteract = !!turnInfo?.isHuman && !turnInfo.isInputLocked;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        marginLeft: "auto",
+        pointerEvents: "auto",
+      }}
+    >
+      <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
+      {WEAPON_ORDER.map((weaponId) => {
+        const definition = WEAPON_REGISTRY[weaponId];
+        const ammo = inventory[weaponId] ?? 0;
+        const isCurrent = currentWeapon === weaponId;
+        const hasAmmo = weaponId === "MISSILE" || ammo > 0;
+        const selectable = canInteract && hasAmmo;
+        const backgroundColor = isCurrent ? "#002200" : hasAmmo ? "#111111" : "#0a0a0a";
+        const borderColor = isCurrent
+          ? VGA_PALETTE.GREEN
+          : hasAmmo
+            ? VGA_PALETTE.GRAY
+            : VGA_PALETTE.DARK_GRAY;
+        const color = isCurrent
+          ? definition.color
+          : hasAmmo
+            ? VGA_PALETTE.WHITE
+            : VGA_PALETTE.DARK_GRAY;
+
+        return (
+          <button
+            key={weaponId}
+            type="button"
+            disabled={!selectable}
+            onClick={() => onWeaponSelect?.(weaponId)}
+            className="retro-weapon-btn"
+            style={{
+              backgroundColor,
+              color,
+              borderColor,
+              cursor: selectable ? "pointer" : "default",
+              opacity: hasAmmo ? 1 : 0.55,
+            }}
+            title={t(WEAPON_KEYS[weaponId])}
+          >
+            {getShortLabel(weaponId)}:{weaponId === "MISSILE" ? "∞" : ammo}
+          </button>
+        );
+      })}
+      <TurnStatus turnInfo={turnInfo} />
+    </div>
+  );
+}
+
+export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
+  const { t } = useTranslation();
+  const currentWeapon = turnInfo?.currentWeapon;
 
   return (
     <div
@@ -67,58 +196,11 @@ export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameH
         <span style={{ color: VGA_PALETTE.MAGENTA, fontWeight: "bold" }}>
           P:
         </span>
-        {turnInfo ? (
-          <>
-            <span
-              style={{
-                display: "inline-block",
-                width: 9,
-                height: 9,
-                backgroundColor: turnInfo.playerColor,
-                border: `1px solid ${VGA_PALETTE.WHITE}`,
-                marginRight: 2,
-                verticalAlign: "middle",
-              }}
-            />
-            <span style={{ color: turnInfo.playerColor, fontWeight: "bold" }}>
-              {turnInfo.playerName}
-            </span>
-          </>
-        ) : (
-          <span style={{ color: VGA_PALETTE.GRAY }}>-</span>
-        )}
+        <PlayerReadout turnInfo={turnInfo} />
       </div>
 
       {/* === ANGLE / POWER === */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          pointerEvents: "none",
-        }}
-      >
-        <span style={{ color: VGA_PALETTE.CYAN }}>ANG</span>
-        <span
-          style={{
-            color: VGA_PALETTE.YELLOW,
-            fontWeight: "bold",
-            minWidth: 28,
-          }}
-        >
-          {turnInfo ? `${turnInfo.angle}°` : "--"}
-        </span>
-        <span style={{ color: VGA_PALETTE.CYAN, marginLeft: 4 }}>POW</span>
-        <span
-          style={{
-            color: VGA_PALETTE.YELLOW,
-            fontWeight: "bold",
-            minWidth: 20,
-          }}
-        >
-          {turnInfo ? turnInfo.power : "--"}
-        </span>
-      </div>
+      <AimReadout turnInfo={turnInfo} />
 
       {/* === TURN (within current combat round) === */}
       <div style={{ color: VGA_PALETTE.GRAY, pointerEvents: "none" }}>
@@ -129,100 +211,7 @@ export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameH
       </div>
 
       {/* === WEAPON + SELECTOR (clickable) === */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 3,
-          marginLeft: "auto",
-          pointerEvents: "auto",
-        }}
-      >
-        <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
-
-        {WEAPON_ORDER.map((wid) => {
-          const def = WEAPON_REGISTRY[wid];
-          const ammo = inventory[wid] ?? 0;
-          const isCurrent = currentWeapon === wid;
-          const hasAmmo = wid === "MISSILE" || ammo > 0;
-          const selectable = canInteract && hasAmmo;
-
-          const bg = isCurrent ? "#002200" : hasAmmo ? "#111111" : "#0a0a0a";
-          const borderCol = isCurrent
-            ? VGA_PALETTE.GREEN
-            : hasAmmo
-              ? VGA_PALETTE.GRAY
-              : VGA_PALETTE.DARK_GRAY;
-          const textCol = isCurrent
-            ? def.color
-            : hasAmmo
-              ? VGA_PALETTE.WHITE
-              : VGA_PALETTE.DARK_GRAY;
-
-          return (
-            <button
-              key={wid}
-              type="button"
-              disabled={!selectable}
-              onClick={() => {
-                if (selectable && onWeaponSelect) {
-                  onWeaponSelect(wid);
-                }
-              }}
-              className="retro-weapon-btn"
-              style={{
-                backgroundColor: bg,
-                color: textCol,
-                borderColor: borderCol,
-                cursor: selectable ? "pointer" : "default",
-                opacity: hasAmmo ? 1 : 0.55,
-              }}
-              title={t(WEAPON_KEYS[wid])}
-            >
-              {getShortLabel(wid)}:{wid === "MISSILE" ? "∞" : ammo}
-            </button>
-          );
-        })}
-
-        {/* Lock / status indicator */}
-        {turnInfo && turnInfo.tanksAreFalling && (
-          <span
-            style={{
-              marginLeft: 6,
-              color: VGA_PALETTE.YELLOW,
-              fontSize: "12px",
-              pointerEvents: "none",
-              fontWeight: "bold",
-            }}
-          >
-            {t("status_tanks_falling")}
-          </span>
-        )}
-        {turnInfo && isLocked && !turnInfo.tanksAreFalling && (
-          <span
-            style={{
-              marginLeft: 6,
-              color: VGA_PALETTE.RED,
-              fontSize: "12px",
-              pointerEvents: "none",
-            }}
-          >
-            {t("status_resolving")}
-          </span>
-        )}
-        {turnInfo && !isHumanTurn && !isLocked && !turnInfo.tanksAreFalling && (
-          <span
-            style={{
-              marginLeft: 6,
-              color: VGA_PALETTE.CYAN,
-              fontSize: "12px",
-              pointerEvents: "none",
-            }}
-          >
-            {t("status_ai_turn")}
-          </span>
-        )}
-      </div>
+      <WeaponSelector turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />
 
       {/* Current weapon name (small) */}
       {turnInfo && (

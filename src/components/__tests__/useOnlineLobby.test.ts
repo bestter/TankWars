@@ -109,8 +109,9 @@ describe('useOnlineLobby', () => {
       onerror: null,
       onclose: null,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    global.WebSocket = vi.fn().mockImplementation(() => mockWs) as any;
+    global.WebSocket = vi.fn().mockImplementation(
+      () => mockWs,
+    ) as unknown as typeof WebSocket;
 
     const { result } = renderHook(() =>
       useOnlineLobby({

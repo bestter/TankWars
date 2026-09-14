@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
+import { makePlayer } from '../game/__tests__/helpers';
+import { createEmptyShopSession } from '../components/gameCanvasReducer';
+import type { PersistedOnlineSession } from '../utils/onlineSession';
 
 const sessionStorageData = new Map<string, string>();
 const deploymentMode = vi.hoisted(() => ({ hotseatOnly: false }));
@@ -144,6 +147,72 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByRole('button', { name: 'join_room_btn' })).toBeDefined();
 
     window.history.replaceState({}, '', '/');
+  });
+
+  it.each([
+    '/?room=ROOM77&slot=invalid&token=TOK77',
+    '/?room=ROOM77&slot=1',
+    '/?slot=1&token=TOK77',
+  ])('keeps the local menu for an incomplete invitation URL: %s', (url) => {
+    window.history.replaceState({}, '', url);
+    render(<App />);
+
+    expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'join_room_btn' })).toBeNull();
+  });
+
+  it('confirms before returning from a restored online game', () => {
+    const players = [
+      makePlayer({ id: 'player-1', name: 'Host' }),
+      makePlayer({ id: 'player-2', name: 'Guest' }),
+    ];
+    const session: PersistedOnlineSession = {
+      meta: {
+        roomId: 'room-abc',
+        localPlayerId: 'player-1',
+        slot: 0,
+        token: 'TOKEN1',
+      },
+      players,
+      canvas: {
+        gamePhase: 'COMBAT',
+        currentManche: 1,
+        uiPlayers: players,
+        shopPlayers: players,
+        currentShopIndex: 0,
+        roundResult: null,
+        lastRoundOutcome: null,
+        wind: 0,
+        authoritySlot: 0,
+        authorityEpoch: 1,
+        lastAppliedShotId: 0,
+        lastAppliedZeusStrikeId: 0,
+        shopSession: createEmptyShopSession(),
+        lastAppliedShopEpoch: 0,
+        lastCompletedRoundNumber: 0,
+        lastSeenShotId: 0,
+        pendingFireIntent: null,
+        fireRejection: null,
+        roundEarningsByPlayer: {},
+        earningsOverlay: null,
+      },
+    };
+    window.sessionStorage.setItem(
+      'tankwars-online-session-v1',
+      JSON.stringify(session),
+    );
+    const confirmSpy = vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+
+    render(<App />);
+    const returnButton = screen.getByRole('button', { name: 'Mock Return To Menu' });
+    fireEvent.click(returnButton);
+    expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
+
+    fireEvent.click(returnButton);
+    expect(screen.getByText('main_title')).toBeDefined();
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
   });
 
   it('keeps staging hotseat-only even with an invitation URL and a saved online session', () => {

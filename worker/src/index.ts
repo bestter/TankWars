@@ -1,7 +1,7 @@
 /**
  * TankWars Online - Worker entry (src/worker/index.ts)
  * Routes REST for room creation/join + WebSocket upgrade to the GameRoom Durable Object.
- * All game lobby coordination and authoritative simulation (MVP 1-round) lives in the DO.
+ * Lobby coordination and authoritative online state live in the DO; combat physics remains client-side.
  *
  * Usage:
  * - Client creates room via POST /api/rooms
@@ -89,7 +89,7 @@ export default {
         }));
       }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
-      // For MVP we trust the payload (simple game, no auth yet).
+      // Normalize the external payload before forwarding the room configuration to the DO.
       let body: Record<string, unknown> = {};
       try {
         const parsed = await request.json();

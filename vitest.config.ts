@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     alias: {
-      'cloudflare:workers': resolve(__dirname, 'worker/__mocks__/cloudflare-workers.ts')
+      'cloudflare:workers': resolve(import.meta.dirname, 'worker/__mocks__/cloudflare-workers.ts')
     }
   },
 });

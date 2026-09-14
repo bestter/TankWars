@@ -2,7 +2,7 @@
 
 Lire ce fichier avant toute modification. Il centralise les consignes opérationnelles du dépôt; les règles de jeu détaillées vivent dans le code, ses tests et le [README](./README.md).
 
-Compagnons selon l’outil utilisé : [CLAUDE.md](./CLAUDE.md), [GROK.md](./GROK.md), [CURSOR.md](./CURSOR.md), [.cursorrules](./.cursorrules), [.antigravityrules](./.antigravityrules), [.github/copilot-instructions.md](./.github/copilot-instructions.md). Garder ici les consignes communes, sans journal de changements ni copie des tableaux d’équilibrage.
+Compagnons selon l’outil utilisé : [CLAUDE.md](./CLAUDE.md) et [.github/copilot-instructions.md](./.github/copilot-instructions.md). Garder ici les consignes communes, sans journal de changements ni copie des tableaux d’équilibrage.
 
 ## Règles de travail
 

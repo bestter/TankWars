@@ -101,4 +101,47 @@ describe('GameHUD', () => {
 
     expect(onWeaponSelect).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [{ tanksAreFalling: true }, 'status_tanks_falling'],
+    [{ isInputLocked: true }, 'status_resolving'],
+    [{ isHuman: false }, 'status_ai_turn'],
+  ])('renders the applicable turn status %#', (overrides, expected) => {
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: false,
+      ...overrides,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} />);
+    expect(screen.getByText(expected)).toBeDefined();
+  });
+
+  it('disables a weapon button when the player has no ammunition', () => {
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99, GRENADE: 0 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: false,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} />);
+    expect(screen.getByTitle('weapons.GRENADE').hasAttribute('disabled')).toBe(true);
+  });
 });

@@ -18,6 +18,103 @@ import {
 } from "./appReducer";
 import { isHotseatOnlyBuild } from "./utils/deploymentMode";
 
+interface OnlineParams {
+  readonly room: string | null;
+  readonly slot: number | null;
+  readonly token: string | null;
+}
+
+interface AppScreenProps {
+  readonly showMenu: boolean;
+  readonly showOnlineLobby: boolean;
+  readonly isOnlineJoin: boolean;
+  readonly onlineMultiplayerEnabled: boolean;
+  readonly onlineParams: OnlineParams;
+  readonly players: Player[] | null;
+  readonly onlineMeta: OnlineMeta | null;
+  readonly resumeCanvas: ReturnType<typeof createInitialAppState>["resumeCanvas"];
+  readonly onStartLocalGame: (players: Player[]) => void;
+  readonly onStartOnlineGame: (
+    players: Player[],
+    meta: OnlineMeta & { gameMode: "online" },
+  ) => void;
+  readonly onHideOnlineLobby: () => void;
+  readonly onReturnToMenu: () => void;
+}
+
+function readOnlineParams(enabled: boolean): OnlineParams {
+  if (!enabled || typeof window === "undefined") {
+    return { room: null, slot: null, token: null };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const slotValue = params.get("slot");
+  const parsedSlot = slotValue === null ? null : Number(slotValue);
+  return {
+    room: params.get("room"),
+    slot: Number.isInteger(parsedSlot) ? parsedSlot : null,
+    token: params.get("token"),
+  };
+}
+
+function AppScreen({
+  showMenu,
+  showOnlineLobby,
+  isOnlineJoin,
+  onlineMultiplayerEnabled,
+  onlineParams,
+  players,
+  onlineMeta,
+  resumeCanvas,
+  onStartLocalGame,
+  onStartOnlineGame,
+  onHideOnlineLobby,
+  onReturnToMenu,
+}: AppScreenProps) {
+  if (!showMenu) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <GameCanvas
+          initialPlayers={players ?? undefined}
+          onReturnToMenu={onReturnToMenu}
+          gameMode={onlineMeta ? "online" : "local"}
+          localPlayerId={onlineMeta?.localPlayerId}
+          roomId={onlineMeta?.roomId}
+          initialHeights={onlineMeta?.initialHeights}
+          initialMaterials={onlineMeta?.initialMaterials}
+          initialWind={onlineMeta?.initialWind}
+          initialCurrentPlayerIndex={onlineMeta?.initialCurrentPlayerIndex}
+          resumeCanvas={resumeCanvas ?? undefined}
+          slot={onlineMeta?.slot}
+          token={onlineMeta?.token}
+          ws={onlineMeta?.ws}
+        />
+      </div>
+    );
+  }
+
+  if (showOnlineLobby) {
+    return (
+      <OnlineLobby
+        initialRoomId={isOnlineJoin ? onlineParams.room! : undefined}
+        initialSlot={isOnlineJoin ? onlineParams.slot! : undefined}
+        initialToken={isOnlineJoin ? onlineParams.token! : undefined}
+        onStartGame={onStartOnlineGame}
+        onExitToLocalMenu={onHideOnlineLobby}
+      />
+    );
+  }
+
+  return (
+    <MainMenu
+      onStartGame={onStartLocalGame}
+      {...(onlineMultiplayerEnabled
+        ? { onPlayOnline: onHideOnlineLobby }
+        : {})}
+    />
+  );
+}
+
 /**
  * Bestter's TankWars - Root App (src/App.tsx)
  *
@@ -45,18 +142,9 @@ function App() {
   );
 
   // Parse URL once on mount (supports direct join links and after create)
-  const [onlineParams] = useState(() => {
-    if (!onlineMultiplayerEnabled) {
-      return { room: null, slot: null, token: null };
-    }
-    if (typeof window === 'undefined') return { room: null as string | null, slot: null as number | null, token: null as string | null };
-    const p = new URLSearchParams(window.location.search);
-    const room = p.get('room');
-    const slotStr = p.get('slot');
-    const token = p.get('token');
-    const slot = slotStr !== null ? Number(slotStr) : null;
-    return { room, slot: Number.isInteger(slot) ? slot! : null, token };
-  });
+  const [onlineParams] = useState(() =>
+    readOnlineParams(onlineMultiplayerEnabled),
+  );
 
   const isOnlineJoin = !!onlineParams.room && onlineParams.slot !== null && !!onlineParams.token;
   const showOnlineLobby =
@@ -108,6 +196,15 @@ function App() {
   const showMenu = state.phase === "MENU" && state.players === null;
   const { players, onlineMeta, resumeCanvas } = state;
 
+  const handleOnlineMenuToggle = (): void => {
+    if (showOnlineLobby) {
+      dispatch({ type: "HIDE_ONLINE_LOBBY" });
+      handleReturnToMenu();
+      return;
+    }
+    dispatch({ type: "SHOW_ONLINE_LOBBY" });
+  };
+
   return (
     <div
       style={{
@@ -125,48 +222,20 @@ function App() {
         <LanguageSwitcher />
       </div>
 
-      {showMenu ? (
-        showOnlineLobby ? (
-          <OnlineLobby
-            initialRoomId={isOnlineJoin ? onlineParams.room! : undefined}
-            initialSlot={isOnlineJoin ? onlineParams.slot! : undefined}
-            initialToken={isOnlineJoin ? onlineParams.token! : undefined}
-            onStartGame={handleStartOnlineGame}
-            onExitToLocalMenu={() => {
-              dispatch({ type: "HIDE_ONLINE_LOBBY" });
-              handleReturnToMenu();
-            }}
-          />
-        ) : (
-          <MainMenu
-            onStartGame={handleStartGame}
-            {...(onlineMultiplayerEnabled
-              ? {
-                  onPlayOnline: () =>
-                    dispatch({ type: "SHOW_ONLINE_LOBBY" as const }),
-                }
-              : {})}
-          />
-        )
-      ) : (
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <GameCanvas
-            initialPlayers={players ?? undefined}
-            onReturnToMenu={handleReturnToLobbyOrMenu}
-            gameMode={onlineMeta ? 'online' : 'local'}
-            localPlayerId={onlineMeta?.localPlayerId}
-            roomId={onlineMeta?.roomId}
-            initialHeights={onlineMeta?.initialHeights}
-            initialMaterials={onlineMeta?.initialMaterials}
-            initialWind={onlineMeta?.initialWind}
-            initialCurrentPlayerIndex={onlineMeta?.initialCurrentPlayerIndex}
-            resumeCanvas={resumeCanvas ?? undefined}
-            slot={onlineMeta?.slot}
-            token={onlineMeta?.token}
-            ws={onlineMeta?.ws}
-          />
-        </div>
-      )}
+      <AppScreen
+        showMenu={showMenu}
+        showOnlineLobby={showOnlineLobby}
+        isOnlineJoin={isOnlineJoin}
+        onlineMultiplayerEnabled={onlineMultiplayerEnabled}
+        onlineParams={onlineParams}
+        players={players}
+        onlineMeta={onlineMeta}
+        resumeCanvas={resumeCanvas}
+        onStartLocalGame={handleStartGame}
+        onStartOnlineGame={handleStartOnlineGame}
+        onHideOnlineLobby={handleOnlineMenuToggle}
+        onReturnToMenu={handleReturnToLobbyOrMenu}
+      />
     </div>
   );
 }

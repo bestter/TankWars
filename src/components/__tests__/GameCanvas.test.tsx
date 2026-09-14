@@ -313,6 +313,71 @@ describe("GameCanvas component", () => {
     expect(screen.getByTestId("trans-component")).toBeDefined();
   });
 
+  it("waits for the authoritative shop state online", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: { ...defaultSessionState, gamePhase: "SHOP" },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" />);
+    expect(screen.getByText("shop_waiting_state")).toBeDefined();
+  });
+
+  it("renders the local player's authoritative shop online", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SHOP",
+        shopSession: {
+          ...createEmptyShopSession(),
+          authoritativeReceived: true,
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" />);
+    expect(screen.getByRole("button", { name: /btn_ready/i })).toBeDefined();
+  });
+
+  it.each([
+    [false, "shop_waiting_opponent_Player 1"],
+    [true, "shop_waiting_others"],
+  ])("renders the online waiting state when localShopDone is %s", (localShopDone, expected) => {
+    vi.mocked(useGameSession).mockReturnValue({
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SHOP",
+        shopSession: {
+          ...createEmptyShopSession(),
+          authoritativeReceived: true,
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" />);
+    expect(screen.getByText(expected)).toBeDefined();
+  });
+
   it("renders GameOverOverlay during GAME_OVER phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       canvasRef: { current: null },
