@@ -28,6 +28,7 @@ deploy-cloudflare.ps1
 /Temp
 coverage/
 *.tsbuildinfo
+pr_description.txt
 
 # Wrangler local dev state (Durable Objects SQLite, cache)
 worker/.wrangler/
