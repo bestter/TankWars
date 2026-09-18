@@ -232,7 +232,7 @@ export function WeaponShop({
                 </div>
                 <div
                   style={{
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: VGA_PALETTE.GRAY,
                     lineHeight: 1.2,
                   }}
@@ -241,7 +241,7 @@ export function WeaponShop({
                 </div>
                 <div
                   style={{
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: VGA_PALETTE.CYAN,
                     lineHeight: 1.2,
                   }}
@@ -255,7 +255,7 @@ export function WeaponShop({
                   <div
                     id={buyReasonId}
                     style={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: VGA_PALETTE.RED,
                       lineHeight: 1.2,
                     }}
@@ -267,7 +267,7 @@ export function WeaponShop({
                   <div
                     id={sellReasonId}
                     style={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: VGA_PALETTE.RED,
                       lineHeight: 1.2,
                     }}
