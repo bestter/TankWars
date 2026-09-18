@@ -58,11 +58,20 @@ export function evaluateExpertTactics(
     const hasClosePair = members.some((a, i) => members.slice(i + 1).some((b) =>
       Math.abs(a.player.tank.position.x - b.player.tank.position.x) < 80));
     if (!hasClosePair) continue;
-    const point = {
-      x: members.reduce((sum, { player }) => sum + player.tank.position.x, 0) / members.length,
-      y: members.reduce((sum, { player }) => sum + player.tank.position.y, 0) / members.length,
-    };
     const total = (player: Player) => player.tank.health + player.tank.shield;
+    let sumX = 0;
+    let sumY = 0;
+    let healthTotal = 0;
+    for (let i = 0; i < members.length; i++) {
+      const p = members[i].player;
+      sumX += p.tank.position.x;
+      sumY += p.tank.position.y;
+      healthTotal += total(p);
+    }
+    const point = {
+      x: sumX / members.length,
+      y: sumY / members.length,
+    };
     const primary = [...members].sort((a, b) => total(a.player) - total(b.player) || a.index - b.index)[0].player;
     const selfDistance = Math.hypot(self.tank.position.x - point.x, self.tank.position.y - point.y);
     for (const weaponId of ["NUKE", "THERMONUCLEAR"] as const) {
@@ -74,7 +83,7 @@ export function evaluateExpertTactics(
       candidates.push({
         weaponId, primaryTargetId: primary.id, point,
         memberIndices: members.map(({ index }) => index),
-        healthTotal: members.reduce((sum, { player }) => sum + total(player), 0),
+        healthTotal,
         selfDistance,
         virtualAttempts: memory.currentTargetId === primary.id ? memory.currentTargetAttempts + 1 : 1,
       });
