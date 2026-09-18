@@ -41,8 +41,6 @@ export function PlayerConfigList({
   }
 
   return playerConfigs.map((cfg, index) => {
-    const unavailableColors = new Set(usedColors);
-    unavailableColors.delete(cfg.color);
     const conflictIds = getNameConflictIds(playerConfigs, cfg.id);
     const hasNameError = nameErrorIds.has(cfg.id);
     const isEmptyError = emptyNameErrorIds?.has(cfg.id) ?? false;
@@ -68,7 +66,7 @@ export function PlayerConfigList({
         key={cfg.id}
         cfg={cfg}
         index={index}
-        unavailableColors={unavailableColors}
+        unavailableColors={usedColors}
         colorPool={colorPool}
         nameInputRef={(el) => onNameInputRef(index, el)}
         nameError={errorMessage}
