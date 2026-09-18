@@ -31,7 +31,7 @@ export function ColorPicker({
     >
       {colorPool.map((color) => {
         const isSelected = color === selectedColor;
-        const isUnavailable = unavailableColors.has(color);
+        const isUnavailable = color !== selectedColor && unavailableColors.has(color);
         const btnClass = `retro-color-swatch-btn${isSelected ? " selected" : ""}${isUnavailable ? " unavailable" : ""}`;
 
         return (
