@@ -40,6 +40,18 @@ describe("expert group geometry", () => {
     expect(Boolean(result.thermonuclear)).toBe(distance < 160);
   });
 
+  it.each([
+    [0, 62],
+    [22, 58],
+  ])("rejects a NUKE member on or just outside the squared radius (%s, %s)", (dx, dy) => {
+    const self = shooter();
+    const result = evaluateExpertTactics(self,
+      [self, enemy("a", 400 - dx, 300 - dy), enemy("b", 400 + dx, 300 + dy)], memory);
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(62 * 62);
+    expect(Boolean(result.nuke)).toBe(false);
+    expect(Boolean(result.thermonuclear)).toBe(true);
+  });
+
   it("requires at least one close pair even for a covered triplet", () => {
     const self = shooter();
     const players = [self, enemy("a", 300), enemy("b", 380), enemy("c", 460)];
