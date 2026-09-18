@@ -6,12 +6,6 @@
       "sourceType": "github",
       "skillPath": "skills/create-github-issues-for-unmet-specification-requirements/SKILL.md",
       "computedHash": "f44956e909348a20a808bcc2aa56a1b063ff1cc2ae1a1659de6193cff45f59ac"
-    },
-    "gemini-interactions-api": {
-      "source": "google-gemini/gemini-skills",
-      "sourceType": "github",
-      "skillPath": "skills/gemini-interactions-api/SKILL.md",
-      "computedHash": "39a67aefac061dcdb0b1eae1ff44b4a493b0e2fa5b4b2676ea3324e92680be33"
     }
   }
 }

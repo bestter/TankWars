@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "entry": [
     "src/main.tsx",
-    "worker/src/index.ts"
+    "worker/src/index.ts",
+    "worker/__mocks__/cloudflare-workers.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
