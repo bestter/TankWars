@@ -589,24 +589,25 @@ export class TankManager {
       const tank = player.tank;
       if (tank.isDead) continue;
 
-      const outOfBoundsX = tank.position.x < 0 || tank.position.x > terrain.width;
-      const groundY = terrain.getHeightAt(tank.position.x);
+      const { x, y } = tank.position;
+      const outOfBoundsX = x < 0 || x > terrain.width;
+      const groundY = terrain.getHeightAt(x);
       const unsupported = groundY >= pitFloorY;
-      const fallenThrough = tank.position.y > terrain.height + 8;
-      const touchedLava = tank.position.y >= lavaY;
+      const fallenThrough = y > terrain.height + 8;
+      const touchedLava = y >= lavaY;
 
       if (outOfBoundsX || unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
         this.invalidateAliveCache();
         let details: string;
         if (outOfBoundsX) {
-          details = `pushed off map boundary (x=${tank.position.x.toFixed(1)})`;
+          details = `pushed off map boundary (x=${x.toFixed(1)})`;
         } else if (touchedLava) {
-          details = `touched lava (y=${tank.position.y.toFixed(1)} >= lavaTop=${lavaY})`;
+          details = `touched lava (y=${y.toFixed(1)} >= lavaTop=${lavaY})`;
         } else if (unsupported) {
           details = `no ground support (surfaceY=${groundY.toFixed(1)} >= pitFloor=${pitFloorY.toFixed(1)})`;
         } else {
-          details = `y=${tank.position.y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
+          details = `y=${y.toFixed(1)} > height=${terrain.height} (fallen off screen)`;
         }
         this.onPlayerDied?.(player.id, "burial", details);
         const cause: DestructionCause = outOfBoundsX
