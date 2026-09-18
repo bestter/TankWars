@@ -1355,11 +1355,7 @@ export class GameEngine {
   private ensureAudioContext(): AudioContext | null {
     if (this.audioContext) return this.audioContext;
     try {
-      const win = window as unknown as {
-        AudioContext?: typeof AudioContext;
-        webkitAudioContext?: typeof AudioContext;
-      };
-      const AudioContextClass = win.AudioContext || win.webkitAudioContext;
+      const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (AudioContextClass) {
         this.audioContext = new AudioContextClass();
         return this.audioContext;
