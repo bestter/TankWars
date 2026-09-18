@@ -15,7 +15,7 @@ import {
 export interface PlayerConfigRowProps {
   cfg: PlayerConfig;
   index: number;
-  unavailableColors: Set<Color>;
+  unavailableColors: ReadonlySet<Color>;
   colorPool: readonly Color[];
   nameInputRef: (el: HTMLInputElement | null) => void;
   nameError?: string;

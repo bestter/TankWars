@@ -41,7 +41,6 @@ export function PlayerConfigList({
   }
 
   return playerConfigs.map((cfg, index) => {
-
     const conflictIds = getNameConflictIds(playerConfigs, cfg.id);
     const hasNameError = nameErrorIds.has(cfg.id);
     const isEmptyError = emptyNameErrorIds?.has(cfg.id) ?? false;
