@@ -582,7 +582,7 @@ export function useGameSession({
       engineRef.current = null;
       ctxRef.current = null;
     };
-  }, [clearCelebrationTimer, clearShopAiTimeout, clearZeusAnnouncement, goToSummary]); // eslint-disable-line react-hooks/exhaustive-deps -- complex effect with conditional online logic; re-running on those is acceptable for game session mount
+  }, [authorityEpochRef, authoritySlotRef, clearCelebrationTimer, clearShopAiTimeout, clearZeusAnnouncement, gameMode, goToSummary, initialCurrentPlayerIndex, initialHeights, initialMaterials, initialWind, lastAppliedShopEpochRef, lastAppliedShotIdRef, lastAppliedZeusStrikeIdRef, lastCompletedRoundNumberRef, lastSeenShotIdRef, localPlayerId, pendingFireRef, resumeCanvas, roomId, sendCombatMessage, shopSessionRef, slot, token]);
 
   // Global SPACE to skip round celebration fireworks
   useEffect(() => {
