@@ -119,4 +119,29 @@ describe('ColorPicker', () => {
 
     expect(mockOnColorSelect).not.toHaveBeenCalled();
   });
+
+  it('keeps selected color enabled even if present in unavailableColors', () => {
+    const unavailableSet = new Set<Color>([mockColorPool[0], mockColorPool[2]]);
+    render(
+      <ColorPicker
+        selectedColor={mockColorPool[0]}
+        onColorSelect={mockOnColorSelect}
+        unavailableColors={unavailableSet}
+        colorPool={mockColorPool}
+      />
+    );
+
+    const buttons = screen.getAllByRole('button');
+
+    // Le bouton 0 (sélectionné) doit être actif et marqué selected, même si présent dans unavailableSet
+    expect(buttons[0].hasAttribute('disabled')).toBe(false);
+    expect(buttons[0].className).toContain('selected');
+    expect(buttons[0].className).not.toContain('unavailable');
+    expect(buttons[0].textContent).not.toContain('✕');
+
+    // Le bouton 2 (autre joueur) doit être désactivé
+    expect(buttons[2].hasAttribute('disabled')).toBe(true);
+    expect(buttons[2].className).toContain('unavailable');
+    expect(buttons[2].textContent).toBe('✕');
+  });
 });

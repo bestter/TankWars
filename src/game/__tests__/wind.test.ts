@@ -28,6 +28,11 @@ describe('formatWindDisplay', () => {
   it('handles NaN gracefully', () => {
     expect(formatWindDisplay(NaN)).toEqual({ direction: 'WEST', arrow: '←', strength: NaN, label: 'WEST' });
   });
+
+  it('handles Infinity correctly', () => {
+    expect(formatWindDisplay(Infinity)).toEqual({ direction: 'EAST', arrow: '→', strength: Infinity, label: 'EAST' });
+    expect(formatWindDisplay(-Infinity)).toEqual({ direction: 'WEST', arrow: '←', strength: Infinity, label: 'WEST' });
+  });
 });
 
 describe('rollRoundWind', () => {
