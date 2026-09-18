@@ -69,8 +69,11 @@ export function evaluateExpertTactics(
       const radius = WEAPON_REGISTRY[weaponId].blastRadius;
       if ((self.inventory[weaponId] ?? 0) <= 0 || selfDistance <= radius + TANK_HITBOX_WIDTH) continue;
       if (weaponId === "THERMONUCLEAR" && selfDistance <= THERMONUCLEAR_INSTANT_KILL_RADIUS) continue;
-      if (members.some(({ player }) => Math.hypot(player.tank.position.x - point.x,
-        player.tank.position.y - point.y) >= radius)) continue;
+      if (members.some(({ player }) => {
+        const dx = player.tank.position.x - point.x;
+        const dy = player.tank.position.y - point.y;
+        return dx * dx + dy * dy >= radius * radius;
+      })) continue;
       candidates.push({
         weaponId, primaryTargetId: primary.id, point,
         memberIndices: members.map(({ index }) => index),
