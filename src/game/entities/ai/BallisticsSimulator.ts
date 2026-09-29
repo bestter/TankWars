@@ -54,7 +54,7 @@ export interface BallisticSearchResult {
   angle: number;
   power: number;
   err: number;
-  /** False when the chosen trajectory exhausted its deterministic step bound. */
+  /** False when the chosen trajectory exhausted its step bound or no trial was evaluated. */
   complete?: boolean;
 }
 
@@ -274,10 +274,12 @@ function evaluateAnglePower(
           );
 
     const err = computeShotError(res, config);
-    if (err < bestErr) {
+    const complete = res.complete !== false;
+    // A truncated endpoint must not displace a resolved trajectory.
+    if ((complete && !bestComplete) || (complete === bestComplete && err < bestErr)) {
       bestErr = err;
       bestPower = p;
-      bestComplete = res.complete !== false;
+      bestComplete = complete;
     }
 
     if (res.landX < config.tx) {
@@ -303,10 +305,11 @@ function sweepAngles(
 
   for (let a = from; a <= to; a += step) {
     const { power, err, complete } = evaluateAnglePower(a, config);
-    if (err < best.err) {
+    const bestComplete = best.complete === true;
+    if ((complete && !bestComplete) || (complete === bestComplete && err < best.err)) {
       best = { angle: a, power, err, complete };
     }
-    if (config.earlyExitError != null && best.err <= config.earlyExitError) {
+    if (best.complete === true && config.earlyExitError != null && best.err <= config.earlyExitError) {
       break;
     }
   }
@@ -324,6 +327,7 @@ export function searchBallisticSolution(
     angle: config.isRight ? 55 : 125,
     power: 60,
     err: 999999,
+    complete: false,
   };
 
   let best = sweepAngles(config, config.coarseStep, config.aMin, config.aMax, fallback);

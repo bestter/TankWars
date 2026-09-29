@@ -29,6 +29,43 @@ function fixture() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("EXPERT full-shot forecast", () => {
+  it.each([0, 1])("prévoit une destruction réelle à 450 px pour le tireur %s", (index) => {
+    const f = fixture();
+    f.enemy.tank.position.x = 550;
+    f.self.tank.health = f.enemy.tank.health = 30;
+    const shooter = f.state.players[index];
+    const target = f.state.players[1 - index];
+    const rng = vi.spyOn(random, "secureRandom");
+    const result = evaluateExpertShot(f.state, f.terrain, shooter, "MISSILE",
+      [target], true, false, createExpertForecastCache());
+
+    expect(result.destination).not.toBe(-1);
+    expect(result.forecast?.complete).toBe(true);
+    expect(result.destroyedIds.has(target.id)).toBe(true);
+    expect(result.shooterDestroyed).toBe(false);
+    expect(result.forecast?.survivors).toEqual([shooter.id]);
+    expect(rng).not.toHaveBeenCalled();
+    expect(f.state.players.map((player) => player.tank.health)).toEqual([30, 30]);
+  });
+
+  it("rejette les approximations du vrai solveur quand toutes sont incomplètes", () => {
+    const f = fixture();
+    f.enemy.tank.position.x = f.self.tank.position.x;
+    f.state.gravity = 0;
+    // Keep every upward shot in bounds for the entire search budget.
+    const terrain = flatTerrain(10000, 480);
+    f.self.tank.position.x = f.enemy.tank.position.x = 5000;
+    const solution = solveExpertAim(f.self, 5000, 328.5, 0, 0, terrain, "MISSILE");
+
+    expect(solution.complete).toBe(false);
+    expect(solution.command.angle).toBeGreaterThanOrEqual(6);
+    expect(solution.command.angle).toBeLessThanOrEqual(174);
+    expect(solution.command.power).toBeGreaterThanOrEqual(25);
+    expect(solution.command.power).toBeLessThanOrEqual(95);
+    expect(evaluateExpertShot(f.state, terrain, f.self, "MISSILE", [f.enemy],
+      false, false, createExpertForecastCache()).destination).toBe(-1);
+  });
+
   it("uses resolved damage and shooter reward without changing live state or RNG", () => {
     const f = fixture();
     const before = structuredClone(f.state.players);
@@ -151,6 +188,31 @@ describe("EXPERT full-shot forecast", () => {
 });
 
 describe("EXPERT decision and fallback", () => {
+  it.each([0, 1])("détecte la menace réelle à 450 px et choisit SURVIE depuis le slot %s", (index) => {
+    const f = fixture();
+    f.enemy.tank.position.x = 550;
+    f.self.tank.health = f.enemy.tank.health = 30;
+    f.state.currentPlayerIndex = index;
+    f.state.localShotContext!.isFirstShotOfRound = false;
+    const shooter = f.state.players[index];
+    const target = f.state.players[1 - index];
+    shooter.isHuman = false;
+    shooter.aiProfile = "v4-smart";
+    target.isHuman = true;
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const trace = vi.fn();
+    const plan = chooseExpertPlan(shooter, f.state, f.terrain, undefined, trace);
+
+    expect(plan).toMatchObject({ weaponId: "MISSILE", primaryTargetId: target.id });
+    expect(trace).toHaveBeenCalledOnce();
+    expect(trace.mock.calls[0][0]).toMatchObject({
+      phase: "SURVIE", selectedThreatId: target.id, survivalRoll: 0,
+      threats: [{ playerId: target.id, turnsUntilShot: 1 }],
+      selected: { shooterDestroyed: false, destroyedIds: [target.id] },
+    });
+    expect(rng).toHaveBeenCalledOnce();
+  });
+
   it("selects a simulated candidate and updates aim memory only for the final shot", async () => {
     const f = fixture();
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);

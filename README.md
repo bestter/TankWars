@@ -252,6 +252,8 @@ Le solveur partagé synchrone `heuristicShot` et `BallisticsSimulator` restent c
 
 Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, aucun appel au solveur ni aux décisions de remplacement pour SIMPLE), ainsi que le vrai solveur sur terrain plat à gauche/droite, ses bornes et la conservation des fractions avant l’arrondi final.
 
+Le solveur commun privilégie les trajectoires complètes avant leur erreur de visée, dans la recherche de puissance et les deux balayages d'angles. Seule une solution complète peut déclencher l'arrêt anticipé. Si aucune trajectoire ne se résout dans la limite existante, la meilleure approximation demeure disponible avec `complete: false`; la commande de secours porte aussi ce statut. Ce classement conserve les paramètres des profils et les contrats de visée faillible de #212, sans tirage RNG supplémentaire.
+
 ### Décision EXPERT locale (#229)
 
 EXPERT prévoit les conséquences d'un tir complet sur une copie des tanks, du terrain et de ses matériaux. Une commande idéale du solveur #212 est bornée et arrondie comme le vrai tir; les projectiles, chutes et ensevelissements sont ensuite simulés à pas fixe avec un RNG privé déterministe. Seuls les tirs résolus qui affectent réellement un adversaire et satisfont le point tactique sont retenus. Le gain entier attribué au tireur par `calculateShotRewards`, moins une munition (MISSILE : 0), donne le profit net. Chaque recherche et prévision a sa propre borne déterministe; une prévision incomplète est rejetée.
