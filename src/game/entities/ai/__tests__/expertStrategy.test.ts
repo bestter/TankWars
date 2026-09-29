@@ -175,7 +175,42 @@ describe("EXPERT full-shot forecast", () => {
     expect(ballistics.simulateShot(100, 336, 90, 99, 0, 0, f.terrain).complete).toBe(false);
   });
 
-  it("treats an effect-free ground hit as invalid and permits a negative-profit hit", () => {
+  it("rejects a resolved ground explosion that affects no opponent", () => {
+    const f = fixture();
+    const heights = [...f.terrain.getHeightmap()];
+    // Keep the target above the explosion on an indestructible plateau, without a fall.
+    heights.fill(120, 390);
+    f.terrain.loadHeights(heights);
+    f.terrain.setMaterialRange(390, f.terrain.width - 1, TERRAIN_MATERIAL.ROCK);
+    f.enemy.tank.position.y = 120;
+    const groundX = f.enemy.tank.position.x - WEAPON_REGISTRY.MISSILE.blastRadius / 2;
+    const groundY = f.terrain.getHeightAt(groundX);
+    const solution = solveExpertAim(f.self, groundX, groundY, 0, 260, f.terrain, "MISSILE");
+    const forecast = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",
+      finalizeAdvancedAim(solution.command), false);
+
+    expect(solution.complete).toBe(true);
+    expect(forecast.complete).toBe(true);
+    expect(forecast.hits.some((hit) => Math.hypot(hit.x - groundX, hit.y - groundY) <=
+      Math.max(24, WEAPON_REGISTRY.MISSILE.blastRadius))).toBe(true);
+    expect(forecast.damage).toEqual([]);
+    expect(forecast.destruction).toEqual([]);
+    expect(forecast.profit).toBe(0);
+
+    // Isolate this ground point: the other searches cannot provide a valid alternative.
+    const solver = vi.spyOn(ballistics, "searchBallisticSolution")
+      .mockImplementation(({ tx, ty }) => ({ ...solution.command, err: 0,
+        complete: tx === groundX && ty === groundY }));
+    const result = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE",
+      [f.enemy], false, false, createExpertForecastCache());
+
+    expect(solver).toHaveBeenCalledTimes(3);
+    expect(result.destination).toBe(-1);
+    expect(result.profit).toBe(0);
+    expect(result.destroyedIds.size).toBe(0);
+  });
+
+  it("compares missile profit with the cost of a NUKE", () => {
     const f = fixture();
     const miss = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE",
       [f.enemy], false, true, createExpertForecastCache());
