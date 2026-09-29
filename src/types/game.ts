@@ -103,6 +103,11 @@ export interface GameState {
   gravity: number;
   /** 1-based match round (manche). AI curves normalize an omitted value to M1. */
   roundNumber?: number;
+  /** Contexte autoritatif du prochain tir local, fourni par GameEngine à l'IA. */
+  localShotContext?: {
+    playerCountAtMatchStart: number;
+    isFirstShotOfRound: boolean;
+  };
 }
 
 /** Summary emitted after a RESOLUTION phase for logging / money rewards / UI. */

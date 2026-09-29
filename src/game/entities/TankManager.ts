@@ -1,4 +1,4 @@
-import { TANK_HITBOX_WIDTH, THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../combatConstants";
+import { TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT, THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../combatConstants";
 import { secureRandom } from "../../utils/random";
 /**
  * TankWars - TankManager
@@ -644,7 +644,7 @@ export class TankManager {
     ignoreOwnerId?: string,
   ): Player | null {
     const tankWidth = TANK_HITBOX_WIDTH;
-    const tankHeight = 15;
+    const tankHeight = TANK_HITBOX_HEIGHT;
 
     for (const player of this.players) {
       const tank = player.tank;
@@ -780,7 +780,7 @@ export class TankManager {
 
       if (isDirectHit) {
         const tankWidth = TANK_HITBOX_WIDTH;
-        const tankHeight = 15;
+        const tankHeight = TANK_HITBOX_HEIGHT;
         isDirectHitOnThisTank =
           explosionX >= pos.x - tankWidth / 2 &&
           explosionX <= pos.x + tankWidth / 2 &&
@@ -941,7 +941,7 @@ export class TankManager {
     terrain?: TerrainManager,
   ): void {
     const tankWidth = TANK_HITBOX_WIDTH;
-    const tankHeight = 15;
+    const tankHeight = TANK_HITBOX_HEIGHT;
 
     for (const player of this.players) {
       const tank = player.tank;

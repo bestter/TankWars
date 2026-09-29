@@ -36,7 +36,7 @@
   - `AISimpleStrategy` ("IA SIMPLE", `v1-random`) — curve by round/target, sticks to a live target, prioritizes the weakest AI, and does not use revenge or weapon tactics. Locks on shot 7.
   - `AIHeuristicStrategy` ("IA OK", `v2-heuristic`) — wind/terrain-aware, revenge (`lastHitBy`), memory, smart weapon choice. Locks on shot 5.
   - `AISniperStrategy` ("IA SNIPER", `v3-sniper`) — ballistic search. Locks on shot 3; its only deliberate overcorrection is shot 2.
-  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — persistent target, 2D heavy-weapon groups and a single conditional tactical roll. Locks on shot 2 (see #228 behavior below).
+  - `AISmartStrategy` ("IA EXPERT", `v4-smart`) — forecasts complete local shots, counters the next lethal threat, then ranks net profit. Its final aim still locks on shot 2 (see #229 below).
   All profiles share `fallibleAim.ts`, `aimMemory.ts`, `aimCorruption.ts`, `heuristicShot.ts`, and `hitReaction.ts`. Curves interpolate across M1/M5/M12+ and preserve a 36 px first-shot direct-aim floor. OK, SNIPER, and EXPERT retain `terrainMaterialTactics.ts` (no DRILLER on ROCK; prefer DRILLER on SOFT when the default is MISSILE). Only OK and EXPERT use `bulldozerTactics.ts` (pick BULLDOZER on map edge / drop ≥ 12 px, dist ≥ 80).
   AI shop stocks scale from the initial 2–4 player count: Simple buys GRENADE/CLUSTER; OK adds DRILLER/BULLDOZER/NUKE; Sniper buys BULLET/DRILLER/BULLDOZER; Expert prioritizes THERMONUCLEAR/NUKE before GRENADE/CLUSTER/DRILLER/BULLDOZER. Every unit uses the shared #215 shop transaction and its global limits; there is no percentage budget or cash reserve. Local hotseat applies purchases immediately, while online purchases run once per shop epoch on the authoritative Worker.
   **Post-hit & fall reaction (`hitReaction.ts`):** Direct hits and cumulative fall distance are retained for one next riposte, then consumed. Reaction intensity varies by profile and never introduces RNG when it is zero. Wired in MainMenu + GameCanvas.
@@ -160,7 +160,7 @@ This project follows a strict separation of concerns:
   - `v3-sniper` → `AISniperStrategy` ("IA SNIPER")
   - `v4-smart` → `AISmartStrategy` ("IA EXPERT")
   All four profiles share `fallibleAim.ts`, target/round memory, corruption helpers, and the shared ballistic solver. Weapon tactics remain specific to OK, SNIPER, and EXPERT. Swap implementations without touching the core engine.
-- **EXPERT tactics** (`src/game/entities/ai/expertTactics.ts`): Pure group enumeration, admissibility, ranking and primary selection. `AISmartStrategy` owns the conditional heavy roll, final aim-memory update and fallible aim. `src/game/combatConstants.ts` shares the 24 px tank hitbox width with collision handling and the 75 px THERMO instant-kill radius with explosion damage.
+- **EXPERT tactics** (`src/game/entities/ai/expertPlanner.ts`, `expertShotEvaluator.ts`): Local survival and profit ranking use isolated full-shot forecasts. `AISmartStrategy` owns the final aim-memory update and fallible aim. `src/game/combatConstants.ts` shares the 24 × 15 px tank hitbox with collision handling and the 75 px THERMO instant-kill radius with explosion damage.
 - **Types** (`src/types/`): Single source of truth. Zero `any`. Structural types only.
 
 **Design Rules (enforced):**
@@ -175,7 +175,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.8.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.9.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
@@ -252,18 +252,14 @@ Le solveur partagé synchrone `heuristicShot` et `BallisticsSimulator` restent c
 
 Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, aucun appel au solveur ni aux décisions de remplacement pour SIMPLE), ainsi que le vrai solveur sur terrain plat à gauche/droite, ses bornes et la conservation des fractions avant l’arrondi final.
 
-### Décision lourde EXPERT (#228)
+### Décision EXPERT locale (#229)
 
-En combat local, EXPERT conserve toute cible courante vivante, humaine ou IA, sans priorité « finish-off ». Sans cible courante vivante, il choisit une IA avant un humain, puis la santé seule croissante et l'ordre du roster.
+EXPERT prévoit les conséquences d'un tir complet sur une copie des tanks, du terrain et de ses matériaux. Une commande idéale du solveur #212 est bornée et arrondie comme le vrai tir; les projectiles, chutes et ensevelissements sont ensuite simulés à pas fixe avec un RNG privé déterministe. Seuls les tirs résolus qui affectent réellement un adversaire et satisfont le point tactique sont retenus. Le gain entier attribué au tireur par `calculateShotRewards`, moins une munition (MISSILE : 0), donne le profit net. Chaque recherche et prévision a sa propre borne déterministe; une prévision incomplète est rejetée.
 
-NUKE et THERMONUCLEAR évaluent séparément les paires et le triplet d'adversaires vivants. Un groupe exige au moins une paire à moins de 80 px horizontalement et tous ses membres strictement dans le rayon 2D de l'arme autour du centroïde exact. Un adversaire extérieur couvert ne compte pas dans ce sous-ensemble. La primaire est le membre au plus faible total santé+bouclier, avec départage par le roster, sans préférence IA/humain.
+Avant son tir, EXPERT cherche si un adversaire pourrait le détruire avec une arme permise par son profil et son stock. Il retient la menace vivante qui jouera la première; le score de profil décide d'un unique jet de SURVIE, sauf pour EXPERT à 1,00. SURVIE cherche le meilleur tir non suicidaire qui détruit cette menace, seule ou dans une paire. Si elle échoue, EXPERT optimise le profit sur tous les adversaires seuls et toutes leurs paires de deux. Les classements départagent ensuite selon les profils, le vrai ordre des tours et un ordre stable d'énumération. Aucun triplet, filtre universel de 80 px ni préparation de lourde ne sélectionne le tir.
 
-Les candidats sont filtrés avant classement : arme en stock, géométrie valide, distance EXPERT-centroïde strictement supérieure à rayon+24 et, pour THERMO, hors de la zone d'élimination inclusive de 75 px. Une lourde exige aussi une tentative virtuelle supérieure à 1 sur sa primaire. Le classement privilégie le nombre de membres, leur total santé+bouclier, puis la distance EXPERT-centroïde (tous décroissants), enfin les indices triés du roster en ordre lexicographique croissant.
+Chaque point tactique provient du centre de la boîte d'un tank, du terrain voisin, du centroïde des centres d'une paire ou du forage DRILLER côté tireur. La cible principale d'une paire est son membre au plus faible total santé+bouclier, départagé par le roster; elle sert seulement à la mémoire de visée. Seul le tir finalement choisi met cette mémoire à jour. La visée réelle garde ensuite l'offset, la réaction et la gaffe de #212 : la prévision idéale ne garantit donc pas son résultat.
 
-S'il existe une lourde admissible, EXPERT effectue un seul jet tactique : `r < 0.22` choisit la meilleure THERMO admissible; `0.22 <= r < 0.50` choisit la meilleure NUKE admissible. Un intervalle sans action ou `r >= 0.50` ramène à une arme ordinaire sur la cible ordinaire, sans second jet, transfert de probabilité ou préparation. Sans lourde admissible, aucun RNG tactique : le meilleur candidat bloqué uniquement par les tentatives prépare sa primaire avec une arme ordinaire, sinon EXPERT garde sa cible ordinaire. Aucun ancien seuil individuel de santé ou de distance ne subsiste pour les lourdes.
+Si aucun candidat prévu n'est valide, EXPERT conserve sa cible ordinaire vivante, sinon privilégie une IA, puis la santé et le roster. Il utilise alors le choix tactique ordinaire, les ajustements ROCK/SOFT et le point `(x, y − 6)`. BULLDOZER peut être choisi dans ce repli, mais ne figure ni dans la détection des menaces ni dans les prévisions de #229; sa menace létale relève de #230. L'IA EXPERT du Worker et les parties multijoueurs ne sont pas modifiées par #229.
 
-Le reset de manche précède l'évaluation. Seule l'action finale enregistre une tentative : changer de primaire remet à 1, déplacer le centroïde autour de la même primaire conserve la convergence. Une lourde vise le centroïde exact; une arme ordinaire, y compris préparation ou repli, vise la position individuelle à `y - 6`. Les tactiques ordinaires GRENADE/CLUSTER/DRILLER/BULLDOZER/MISSILE sont conservées, avec CLUSTER horizontal et ajustement ROCK/SOFT sous la cible finale. L'offset faillible est ajouté une seule fois à X, puis viennent le solveur, la réaction et la gaffe indépendante à 2 %. Une gaffe compte comme une tentative.
-
-Cette sécurité est géométrique et évaluée avant l'offset. Elle ne garantit ni impact, ni dégâts, ni survie réelle : l'occlusion ROCK et les centroïdes dans les airs ou sous le terrain ne sont pas des filtres d'admissibilité. La pénalité du solveur inclut la limite rayon+24, sans devenir une interdiction absolue. La survie (#229), la menace BULLDOZER (#230) et l'IA Worker ne sont pas implémentées par cette tactique.
-
-La couverture #228 vérifie les frontières géométriques et RNG, chaque clé de classement, les sous-ensembles indépendants, les préparations/replis, les resets, les coordonnées transmises au solveur, les contrats de corruption #212 et l'absence de mutations tactiques. Les tests moteur encadrent la limite réelle de 75 px de THERMO, sans occlusion et en distinguant l'élimination instantanée du souffle ordinaire.
+Pour diagnostiquer un tir local dans `npm run dev`, ouvrir la console du navigateur : `[AI EXPERT] Décision` indique SURVIE, OPTIMISER_PROFIT ou REPLI, la menace et son éventuel jet, le candidat retenu, les meilleurs tirs par arme et la visée réelle après offset, réaction et gaffe. `[AI] Résultat réel du tir` relie ensuite le même tireur et l'arme aux dégâts, destructions et gains effectivement attribués. Ces traces de décision sont réservées au développement.

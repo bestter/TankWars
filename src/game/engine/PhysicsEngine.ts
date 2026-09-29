@@ -1,4 +1,4 @@
-import { TANK_HITBOX_WIDTH } from "../combatConstants";
+import { TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT } from "../combatConstants";
 import { secureRandom } from '../../utils/random';
 /**
  * TankWars - PhysicsEngine
@@ -60,12 +60,23 @@ export interface ProjectileHitEvent {
   x: number;
   y: number;
   weaponId: WeaponId;
+  directTargetId?: string;
 }
 
 /** Air drag coefficient (1/s); slows shells slightly without overpowering wind. */
 const PROJECTILE_DRAG = 0.28;
 
 export class PhysicsEngine {
+  private readonly random: () => number;
+  private readonly logExplosions: boolean;
+
+  constructor(
+    random: () => number = secureRandom,
+    logExplosions = true,
+  ) {
+    this.random = random;
+    this.logExplosions = logExplosions;
+  }
   private projectiles: Projectile[] = [];
   private projectilePool: Projectile[] = [];
   private nextFallbackShotId = 1;
@@ -234,6 +245,7 @@ export class PhysicsEngine {
       // (not buried in ground). The impact uses the projectile's current position and the
       // weapon's own rules (blastRadius, damage, special direct-kill zones like nuke/thermo, etc.).
       let collision = false;
+      let directTargetId: string | undefined;
       if (tankManager) {
         let ignoreOwnerId: string | undefined = undefined;
         if (p.ownerId && !p.hasLeftOwnerHitbox) {
@@ -241,7 +253,7 @@ export class PhysicsEngine {
           if (ownerPlayer) {
             const oTank = ownerPlayer.tank;
             const tankWidth = TANK_HITBOX_WIDTH;
-            const tankHeight = 15;
+            const tankHeight = TANK_HITBOX_HEIGHT;
             const insideOwner =
               p.x >= oTank.position.x - tankWidth / 2 &&
               p.x <= oTank.position.x + tankWidth / 2 &&
@@ -256,10 +268,11 @@ export class PhysicsEngine {
           }
         }
         collision = tankManager.checkTankCollision(p.x, p.y, ignoreOwnerId);
+        if (collision) directTargetId = tankManager.findTankAt?.(p.x, p.y, ignoreOwnerId)?.id;
       }
 
       if (collision) {
-        this.handleImpact(i, p, terrainManager, tankManager, true);
+        this.handleImpact(i, p, terrainManager, tankManager, true, directTargetId);
         continue;
       }
 
@@ -329,6 +342,7 @@ export class PhysicsEngine {
     terrainManager: TerrainManager,
     tankManager?: TankManager,
     isDirectHit: boolean = false,
+    directTargetId?: string,
   ): void {
     const weapon = WEAPON_REGISTRY[p.weaponId];
     const blastRadius = weapon?.blastRadius ?? 28;
@@ -342,7 +356,7 @@ export class PhysicsEngine {
         ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
         : baseDamage;
 
-    if (p.weaponId !== "BULLDOZER") {
+    if (this.logExplosions && p.weaponId !== "BULLDOZER") {
       console.log(
         `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
       );
@@ -393,6 +407,7 @@ export class PhysicsEngine {
       x: p.x,
       y: p.y,
       weaponId: p.weaponId,
+      directTargetId,
     });
 
     // 4. Retirer le projectile
@@ -417,11 +432,11 @@ export class PhysicsEngine {
 
     for (let k = 0; k < numSubs; k++) {
       const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
-      const spread = frac * maxSpreadRad * (0.7 + secureRandom() * 0.6);
+      const spread = frac * maxSpreadRad * (0.7 + this.random() * 0.6);
       const subDir = dir + spread;
 
       // subs get a fraction of current speed + variation; higher power gives more energetic subs
-      const subSpeed = currentSpeed * (0.5 + secureRandom() * 0.4) * (0.65 + (power / 100) * 0.6);
+      const subSpeed = currentSpeed * (0.5 + this.random() * 0.4) * (0.65 + (power / 100) * 0.6);
       const subVx = Math.cos(subDir) * subSpeed;
       const subVy = Math.sin(subDir) * subSpeed;
 
@@ -478,7 +493,7 @@ export class PhysicsEngine {
 
     const bounce = grenadeBounceParams(
       terrainManager.getMaterialAt(p.x),
-      secureRandom,
+      this.random,
     );
 
     // Check if this contact should cause detonation rather than another bounce.
@@ -502,14 +517,14 @@ export class PhysicsEngine {
     p.vy = -p.vy * bounce.restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= bounce.friction + (secureRandom() - 0.5) * 0.06;
+    p.vx *= bounce.friction + (this.random() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
-    p.vy += (secureRandom() - 0.5) * 0.5;
+    p.vy += (this.random() - 0.5) * 0.5;
 
     // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
     if (p.vy > -1.0) {
-      p.vy = -1.0 - secureRandom() * 1.2;
+      p.vy = -1.0 - this.random() * 1.2;
     }
 
     // Clamp absurd horizontal speeds after many skids (safety).

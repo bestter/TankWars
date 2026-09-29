@@ -172,6 +172,40 @@ describe("GameEngine match rules", () => {
     expect(a.money).toBe(525);
   });
 
+  it("logs the resolved local AI damage, destruction and award once in development", () => {
+    const { a, b } = threePlayers();
+    a.isHuman = false;
+    a.aiProfile = "v4-smart";
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    engine.fireProjectile(a.tank.position,
+      { angle: 0, power: 50, weaponId: "MISSILE" }, a.id);
+    const projectile = engine.getActiveProjectiles()[0];
+    engine.getTankManager().applyExplosionDamage({
+      explosionX: b.tank.position.x,
+      explosionY: b.tank.position.y,
+      radius: 80,
+      maxDamage: 200,
+      shooterId: a.id,
+      weaponId: "MISSILE",
+      isDirectHit: true,
+      shotId: projectile.shotId,
+      munitionId: projectile.munitionId,
+    });
+    const finalize = Reflect.get(engine, "finalizeActiveShot") as () => ResolvedShotPreview;
+    finalize.call(engine);
+    const resultLogs = log.mock.calls.filter(([label]) => label === "[AI] Résultat réel du tir");
+    expect(resultLogs).toHaveLength(1);
+    expect(typeof resultLogs[0][1]).toBe("string");
+    expect(JSON.parse(String(resultLogs[0][1]))).toMatchObject({
+      shooterId: "a",
+      profile: "v4-smart",
+      weaponId: "MISSILE",
+      damage: [{ victimId: "b", classification: "direct" }],
+      destructions: [{ victimId: "b", cause: "health-zero" }],
+      awards: [{ playerId: "a", amount: 525 }],
+    });
+  });
+
   it("resets the first-shot flag and round earnings for a new round", () => {
     const { a } = threePlayers();
     engine.fireProjectile(a.tank.position, { angle: 0, power: 50, weaponId: "MISSILE" }, a.id);
