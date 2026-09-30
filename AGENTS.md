@@ -39,7 +39,7 @@ Pour le multijoueur local, lancer le client **et** le Worker. Après une modific
 
 ## Validation
 
-Avant de terminer, exécuter dans cet ordre :
+Avant de terminer une modification du code source ou de la configuration pouvant affecter le fonctionnement du projet, exécuter les validations suivantes dans cet ordre; une analyse, une revue ou une mise à jour de ticket ou de documentation seule ne nécessite pas cette batterie de validation :
 
 1. `npm run lint`
 2. `npm run build`
