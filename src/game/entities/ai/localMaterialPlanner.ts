@@ -3,6 +3,7 @@ import type { Player } from "../../../types/player";
 import { TERRAIN_MATERIAL } from "../../../types/terrain";
 import type { WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
+import type { CombatDamageEvent } from "../../economy/shotRewards";
 import { finalizeAdvancedAim, type AimCommand } from "./aimCorruption";
 import type { AimVariant } from "./aimSearch";
 import { localMaterialPoints, type TacticalPoint } from "./materialCandidates";
@@ -19,11 +20,17 @@ export interface LocalMaterialChoice {
   readonly reason: "useful" | "surviving" | "ordinary";
 }
 
+export function hasAppliedPhysicalDamage(event: CombatDamageEvent, shooterId: string, victimIds: ReadonlySet<string>): boolean {
+  return event.shotId === FORECAST_SHOT_ID && event.shooterId === shooterId &&
+    event.victimId !== shooterId && victimIds.has(event.victimId) &&
+    event.shieldLostMilli + event.healthDamageMilli > 0;
+}
+
 export function hasPhysicalEffect(forecast: PhysicalResolution, shooter: Player, victimIds: ReadonlySet<string>): boolean {
   return forecast.complete && (forecast.damage.some((event) =>
-    event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id && victimIds.has(event.victimId) &&
-    event.shieldLostMilli + event.healthDamageMilli > 0) || forecast.destruction.some((event) =>
-    event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id && victimIds.has(event.victimId)));
+    hasAppliedPhysicalDamage(event, shooter.id, victimIds)) || forecast.destruction.some((event) =>
+    event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id &&
+    event.victimId !== shooter.id && victimIds.has(event.victimId)));
 }
 
 /** Fixed-order local tactics; no rewards, memory mutation, or live RNG. */
@@ -49,9 +56,12 @@ export function chooseLocalMaterialShot(
   const diagnostics = import.meta.env.DEV ? { proposals: 0, searches: 0, forecasts: 0, rejections: [] as string[] } : undefined;
   let usefulForecast: PhysicalResolution | undefined;
   let survivingForecast: PhysicalResolution | undefined;
+  let proposals = 0;
   outer: for (const weaponId of [...new Set(weapons)].filter(has)) {
     for (const point of localMaterialPoints(self, target, weaponId, terrain)) {
       for (const variant of ["full", "high"] as const) {
+        if (proposals >= LOCAL_MATERIAL_MAX_PROPOSALS) break outer;
+        proposals++;
         if (diagnostics) { diagnostics.proposals++; diagnostics.searches++; }
         const solution = solve(point, weaponId, variant);
         if (!solution.complete) { diagnostics?.rejections.push("recherche incomplète"); continue; }

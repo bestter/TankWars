@@ -11,7 +11,7 @@ import { compareExpertConsequences, type ExpertConsequences } from "./expertCons
 import { resolvePhysicalShot, FORECAST_SHOT_ID, FORECAST_MAX_STEPS, type PhysicalResolution } from "./physicalShotForecast";
 import { TERRAIN_MATERIAL } from "../../../types/terrain";
 import { materialBoundaryPoints, bulldozerPoint } from "./materialCandidates";
-import { hasPhysicalEffect } from "./localMaterialPlanner";
+import { hasAppliedPhysicalDamage, hasPhysicalEffect } from "./localMaterialPlanner";
 import { MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
 export const EXPERT_FORECAST_MAX_STEPS = FORECAST_MAX_STEPS;
 
@@ -211,6 +211,8 @@ export function evaluateExpertShot(
     return INVALID;
   }
   let best = INVALID;
+  const enemyIds = new Set(state.players.filter((player) => player.id !== shooter.id).map((player) => player.id));
+  const targetIds = new Set([targets[0].id]);
   for (const { point, pointOrder, policy, command, forecast } of expertProposals(
     state, terrain, shooter, weaponId, targets, isFirstShotOfRound, cache, mode,
   )) {
@@ -218,15 +220,16 @@ export function evaluateExpertShot(
     const destroyedIds = new Set(forecast.destruction
       .filter((event) => event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id)
       .map((event) => event.victimId));
-    const hasEnemyEffect = forecast.damage.some((event) =>
+    const hasEnemyEffect = mode === "own" ? hasPhysicalEffect(forecast, shooter, enemyIds) : forecast.damage.some((event) =>
       event.victimId !== shooter.id && event.shooterId === shooter.id &&
       event.shieldAbsorbedMilli + event.healthDamageMilli > 0) ||
       [...destroyedIds].some((id) => id !== shooter.id);
     if (!hasEnemyEffect || (requireTargetDestruction && !destroyedIds.has(targets[0].id))) continue;
     const pointMatches = point.kind === "tank"
       ? forecast.hits.some((hit) => hit.directTargetId === targets[0].id) ||
-        forecast.damage.some((event) => event.victimId === targets[0].id &&
-          event.shieldAbsorbedMilli + event.healthDamageMilli > 0) ||
+        forecast.damage.some((event) => mode === "own"
+          ? hasAppliedPhysicalDamage(event, shooter.id, targetIds)
+          : event.victimId === targets[0].id && event.shieldAbsorbedMilli + event.healthDamageMilli > 0) ||
         destroyedIds.has(targets[0].id)
       : forecast.hits.some((hit) => Math.hypot(hit.x - point.x, hit.y - point.y) <=
           Math.max(24, WEAPON_REGISTRY[weaponId].blastRadius));

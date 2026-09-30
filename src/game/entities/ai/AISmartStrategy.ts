@@ -17,7 +17,7 @@ import {
 import { createExpertForecastCache, chooseExpertFallback } from "./expertShotEvaluator";
 import { ORDINARY_AIM_POLICY } from "./aimSearch";
 import { solveExpertAim } from "./expertAim";
-import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace } from "./expertPlanner";
+import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace, type ExpertPlan } from "./expertPlanner";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
@@ -74,9 +74,14 @@ export class AISmartStrategy implements AIEngine {
         (id) => (self.inventory[id] ?? 0) > 0,
       ), cache,
     );
-    const weaponId = plan?.weaponId ?? fallback!.weaponId;
-    const point = plan?.point ?? fallback!.point;
-    const policy = plan?.policy ?? fallback?.policy ?? ORDINARY_AIM_POLICY;
+    const choice: Pick<ExpertPlan, "weaponId" | "point" | "policy"> | undefined = plan ?? fallback;
+    if (!choice) {
+      console.error("[AI EXPERT] Aucun choix de tir", { shooterId: self.id,
+        round: gameState.roundNumber, turn: gameState.turn });
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
+    }
+    const { weaponId, point } = choice;
+    const policy = choice.policy ?? ORDINARY_AIM_POLICY;
     const attempts = recordAimAttempt(memory, target.id);
     self.tank.currentWeapon = weaponId;
 

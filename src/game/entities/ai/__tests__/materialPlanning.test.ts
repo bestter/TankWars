@@ -9,6 +9,7 @@ import * as economics from "../../../economy/shotRewards";
 import * as random from "../../../../utils/random";
 import * as ballistics from "../BallisticsSimulator";
 import { materialBoundaryPoints, localMaterialPoints } from "../materialCandidates";
+import * as candidates from "../materialCandidates";
 import { chooseLocalMaterialShot, hasPhysicalEffect, LOCAL_MATERIAL_MAX_PROPOSALS, type MaterialSolver } from "../localMaterialPlanner";
 import { chooseExpertFallback, createExpertForecastCache, evaluateExpertShot, expertTacticalPoints } from "../expertShotEvaluator";
 import { aimCone, ORDINARY_AIM_POLICY } from "../aimSearch";
@@ -57,7 +58,153 @@ function solver(): MaterialSolver & ReturnType<typeof vi.fn<MaterialSolver>> {
   let angle = 30;
   return vi.fn<MaterialSolver>(() => ({ command: { angle: angle++, power: 50 }, complete: true }));
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+const physicalEffectCases = [
+  { name: "physical shield loss only", event: damage(), own: true, adverse: false },
+  { name: "economic absorption only", event: { ...damage(), shieldLostMilli: 0, shieldAbsorbedMilli: 1000 }, own: false, adverse: true },
+  { name: "health damage", event: { ...damage(), shieldLostMilli: 0, healthDamageMilli: 1000 }, own: true, adverse: true },
+  { name: "self damage", event: damage("self"), own: false, adverse: false },
+  { name: "foreign shooter", event: { ...damage(), shooterId: "other", shieldAbsorbedMilli: 1000 }, own: false, adverse: false },
+  { name: "foreign shot", event: { ...damage(), shotId: 99, shieldAbsorbedMilli: 1000 }, own: false, adverse: true },
+  { name: "inadmissible victim", event: damage("other"), own: false, adverse: false },
+];
+
+describe("applied physical effects and preserved adverse criteria", () => {
+  it.each(physicalEffectCases)("separates $name from economic absorption", ({ event, own }) => {
+    const f = fixture();
+    // Include self in the supplied set to verify the predicate's explicit exclusion.
+    expect(hasPhysicalEffect(forecast({ damage: [event] }), f.self, new Set(["target", "self"]))).toBe(own);
+  });
+
+  it.each(physicalEffectCases)("uses $name for own tank points and preserves adverse results", ({ event, own, adverse }) => {
+    const f = fixture();
+    vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
+    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [event] }));
+    if (event.shotId !== 1) {
+      const reward = economics.calculateShotRewards;
+      vi.spyOn(economics, "calculateShotRewards").mockImplementation((input) => reward({ ...input, damageEvents: [] }));
+    }
+    for (const [mode, valid] of [["own", own], ["adverse", adverse]] as const) {
+      const result = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.target], false, false,
+        createExpertForecastCache(), mode);
+      expect(result.destination !== -1).toBe(valid);
+    }
+    expect(chooseExpertFallback(f.state, f.terrain, f.self, f.target, "MISSILE", createExpertForecastCache()).useful)
+      .toBe(own);
+  });
+
+  it("requires own damage to the tank point even when collateral damage is useful", () => {
+    const f = fixture();
+    f.state.players.push(makePlayer({ id: "other", tank: makeTank("other", 650, 336) }));
+    vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
+    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [damage("other"),
+      { ...damage(), shieldLostMilli: 0, shieldAbsorbedMilli: 1000 }] }));
+    expect(evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.target], false, false,
+      createExpertForecastCache(), "own").destination).toBe(-1);
+    expect(evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.target], false, false,
+      createExpertForecastCache(), "adverse").destination).not.toBe(-1);
+  });
+
+  it.each([
+    { shotId: 1, shooterId: "self", victimId: "target", expected: true },
+    { shotId: 99, shooterId: "self", victimId: "target", expected: false },
+    { shotId: 1, shooterId: "other", victimId: "target", expected: false },
+    { shotId: 1, shooterId: "self", victimId: "self", expected: false },
+  ])("checks elimination attribution $shotId/$shooterId/$victimId", ({ expected, ...attribution }) => {
+    const f = fixture();
+    const result = forecast({ destruction: [{ ...attribution, weaponId: "MISSILE", cause: "out-of-bounds" }] });
+    expect(hasPhysicalEffect(result, f.self, new Set(["self", "target"]))).toBe(expected);
+    vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
+    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(result);
+    if (attribution.shotId !== 1) {
+      const reward = economics.calculateShotRewards;
+      vi.spyOn(economics, "calculateShotRewards").mockImplementation((input) => reward({ ...input, destructionEvents: [] }));
+    }
+    expect(evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.target], true, false,
+      createExpertForecastCache(), "own").destination !== -1).toBe(expected);
+  });
+});
+
+describe("enforced local proposal budgets", () => {
+  function longList() {
+    return Array.from({ length: 20 }, (_, index) => ({ x: 400 + index, y: 330, kind: "tank" as const }));
+  }
+
+  it.each(["v2-heuristic", "v3-sniper"] as const)("bounds %s independently of DEV, completeness and command deduplication", (profile) => {
+    vi.stubEnv("DEV", false);
+    const f = fixture();
+    vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
+    const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
+    for (const mode of ["unique", "duplicate", "incomplete"] as const) {
+      resolve.mockClear();
+      let index = 0;
+      const solve = vi.fn<MaterialSolver>(() => ({ command: { angle: mode === "unique" ? 30 + index++ : 45, power: 50 },
+        complete: mode !== "incomplete" }));
+      expect(chooseLocalMaterialShot(profile, f.self, f.target, f.state, f.terrain, "MISSILE", 2, solve))
+        .toMatchObject({ weaponId: "MISSILE", reason: mode === "incomplete" ? "ordinary" : "surviving" });
+      expect(solve).toHaveBeenCalledTimes(12);
+      expect(resolve).toHaveBeenCalledTimes(mode === "unique" ? 12 : mode === "duplicate" ? 1 : 0);
+      expect(solve.mock.calls.map(([point, , variant]) => [point.x, variant])).toEqual(
+        longList().slice(0, 6).flatMap((point) => [[point.x, "full"], [point.x, "high"]]));
+    }
+  });
+
+  it("stops immediately on the first useful surviving proposal", () => {
+    const f = fixture();
+    vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
+    const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [damage()] }));
+    const solve = solver();
+    expect(chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "MISSILE", 2, solve).reason)
+      .toBe("useful");
+    expect(solve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([AIHeuristicStrategy, AISniperStrategy])("bounds the complete %s turn to 12 ideal searches and one final search", async (Strategy) => {
+    const f = fixture();
+    f.self.inventory = {};
+    vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
+    let angle = 30;
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockImplementation(() =>
+      ({ angle: angle++, power: 50, err: 0, complete: true }));
+    const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
+    vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
+    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    const rng = vi.spyOn(random, "secureRandom");
+    await new Strategy().executeTurn("self", f.state, f.terrain);
+    expect(search).toHaveBeenCalledTimes(13);
+    expect(resolve).toHaveBeenCalledTimes(12);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("bounds a complete EXPERT turn and reuses main forecasts in fallback (useful=%s)", async (useful) => {
+    const f = fixture();
+    f.self.inventory = { DRILLER: 1 };
+    f.terrain.setMaterialRange(390, 409, TERRAIN_MATERIAL.SOFT);
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
+    const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: useful ? [damage()] : [],
+      hits: useful ? [{ shotId: 1, munitionId: 0, x: 400, y: 330, weaponId: "MISSILE", directTargetId: "target" }] : [] }));
+    const fallback = vi.spyOn(expertEvaluator, "chooseExpertFallback");
+    vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
+    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    const rng = vi.spyOn(random, "secureRandom");
+    await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+    const ownSearches = search.mock.calls.filter(([config]) => config.sx === 100);
+    // Seven MISSILE points and eight DRILLER points, three arcs each, plus the real shot.
+    expect(ownSearches).toHaveLength(46);
+    expect(ownSearches.slice(0, -1).filter(([config]) => config.weaponId === "DRILLER")).toHaveLength(24);
+    expect(ownSearches.slice(0, -1).filter(([config]) => config.weaponId === "MISSILE")).toHaveLength(21);
+    expect(resolve.mock.calls.filter(([, , shooter]) => shooter.id === "self")).toHaveLength(2);
+    expect(fallback).toHaveBeenCalledTimes(useful ? 0 : 1);
+    if (!useful) {
+      const cache = fallback.mock.calls[0][5];
+      expect(cache.diagnostics?.ownProposals).toBe(90);
+      expect(cache.diagnostics && cache.diagnostics.ownProposals - 45).toBeLessThanOrEqual(48);
+    }
+    expect(rng).not.toHaveBeenCalled();
+  });
+});
 
 describe("material candidate geometry and profile search contracts", () => {
   it.each([
@@ -145,6 +292,57 @@ describe("material candidate geometry and profile search contracts", () => {
 });
 
 describe("selected material aim is transported once to the real shot", () => {
+  it("EXPERT transports fallback policy and advances memory only after choosing", async () => {
+    const f = fixture();
+    vi.spyOn(expertPlanner, "chooseExpertPlan").mockReturnValue(null);
+    const record = vi.spyOn(aimMemory, "recordAimAttempt");
+    vi.spyOn(expertEvaluator, "chooseExpertFallback").mockImplementation(() => {
+      expect(record).not.toHaveBeenCalled();
+      return { weaponId: "DRILLER", point: { x: 350, y: 300, kind: "terrain" },
+        policy: { variant: "high", penalizeProximity: false }, useful: true };
+    });
+    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(12);
+    vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 70, power: 50, err: 0, complete: true });
+    const rng = vi.spyOn(random, "secureRandom");
+    expect(await new AISmartStrategy().executeTurn("self", f.state, f.terrain)).toEqual({ angle: 70, power: 50, weaponId: "DRILLER" });
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(search).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ weaponId: "DRILLER", tx: 362, ty: 300,
+      aMin: 50, aMax: 85, selfHarmPenalty: undefined }));
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it("EXPERT reports an absent choice before changing attempts, weapon, reaction or RNG", async () => {
+    const f = fixture();
+    const strategy = new AISmartStrategy();
+    vi.spyOn(expertPlanner, "chooseExpertPlan").mockReturnValue(null);
+    const fallback = vi.spyOn(expertEvaluator, "chooseExpertFallback").mockReturnValue({ weaponId: "MISSILE",
+      point: { x: 400, y: 330, kind: "tank" }, policy: ORDINARY_AIM_POLICY, useful: false });
+    vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0 });
+    await strategy.executeTurn("self", f.state, f.terrain);
+    // Simulate a broken collaborator contract to exercise the defensive runtime guard.
+    fallback.mockReturnValue(undefined as unknown as expertEvaluator.ExpertFallbackChoice);
+    const before = structuredClone(f.state);
+    const record = vi.spyOn(aimMemory, "recordAimAttempt");
+    const offset = vi.spyOn(fallible, "signedImpactOffset");
+    const rng = vi.spyOn(random, "secureRandom");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    search.mockClear();
+    expect(await strategy.executeTurn("self", f.state, f.terrain)).toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
+    expect(error).toHaveBeenCalledExactlyOnceWith("[AI EXPERT] Aucun choix de tir",
+      { shooterId: "self", round: 1, turn: 1 });
+    expect(record).not.toHaveBeenCalled();
+    expect(offset).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(rng).not.toHaveBeenCalled();
+    expect(f.state).toEqual(before);
+    fallback.mockReturnValue({ weaponId: "MISSILE", point: { x: 400, y: 330, kind: "tank" },
+      policy: ORDINARY_AIM_POLICY, useful: false });
+    await strategy.executeTurn("self", f.state, f.terrain);
+    expect(offset).toHaveBeenCalledExactlyOnceWith(2, "v4-smart", 1);
+  });
+
   it.each([
     { profile: "v2-heuristic", create: () => new AIHeuristicStrategy(), aMin: 52, aMax: 82 },
     { profile: "v3-sniper", create: () => new AISniperStrategy(), aMin: 50, aMax: 85 },
