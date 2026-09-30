@@ -15,10 +15,10 @@ import {
   resetAimMemoryForRound,
 } from "./aimMemory";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
-import { computeHeuristicShot } from "./heuristicShot";
+import { computeHeuristicShot, solveHeuristicAim } from "./heuristicShot";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
-import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
+import { chooseLocalMaterialShot } from "./localMaterialPlanner";
 
 export class AIHeuristicStrategy implements AIEngine {
   private memories = new Map<string, AimMemory>();
@@ -96,17 +96,18 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const virtualAttempts = memory.currentTargetId === target.id ? memory.currentTargetAttempts + 1 : 1;
+    const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
+    const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
+      ordinaryWeapon, virtualAttempts, (point, weapon, variant) => solveHeuristicAim(
+        self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
+      ));
     const attempts = recordAimAttempt(memory, target.id);
-    let weaponId = this.chooseWeapon(self, target, terrainManager, gameState);
-    weaponId = adjustWeaponForMaterial(
-      weaponId,
-      terrainManager.getMaterialAt(target.tank.position.x),
-      (id) => (self.inventory[id] ?? 0) > 0,
-    );
+    const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
 
     const aimX =
-      target.tank.position.x +
+      choice.point.x +
       signedImpactOffset(
         attempts,
         "v2-heuristic",
@@ -115,10 +116,12 @@ export class AIHeuristicStrategy implements AIEngine {
     let command = computeHeuristicShot(
       self,
       aimX,
-      target.tank.position.y - 6,
+      choice.point.y,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
+      weaponId,
+      choice.variant,
     );
 
     const gaffe = ADVANCED_GAFFES["v2-heuristic"];

@@ -14,6 +14,8 @@ import {
   recordAimAttempt,
   resetAimMemoryForRound,
 } from "./aimMemory";
+import { createExpertForecastCache, chooseExpertFallback } from "./expertShotEvaluator";
+import { ORDINARY_AIM_POLICY } from "./aimSearch";
 import { solveExpertAim } from "./expertAim";
 import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace } from "./expertPlanner";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
@@ -49,8 +51,9 @@ export class AISmartStrategy implements AIEngine {
     resetAimMemoryForRound(memory, gameState.roundNumber);
 
     let decisionTrace: ExpertDecisionTrace | undefined;
+    const cache = createExpertForecastCache();
     const plan = chooseExpertPlan(self, gameState, terrainManager, undefined,
-      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined);
+      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache);
     const target = plan
       ? gameState.players.find((player) => player.id === plan.primaryTargetId)
       : ordinaryExpertTarget(self, gameState.players, memory);
@@ -64,12 +67,16 @@ export class AISmartStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const weaponId = plan?.weaponId ?? adjustWeaponForMaterial(
-      this.chooseTacticalWeapon(self, target, terrainManager, gameState),
-      terrainManager.getMaterialAt(target.tank.position.x),
-      (id) => (self.inventory[id] ?? 0) > 0,
+    const fallback = plan ? undefined : chooseExpertFallback(
+      gameState, terrainManager, self, target, adjustWeaponForMaterial(
+        this.chooseTacticalWeapon(self, target, terrainManager, gameState),
+        terrainManager.getMaterialAt(target.tank.position.x),
+        (id) => (self.inventory[id] ?? 0) > 0,
+      ), cache,
     );
-    const point = plan?.point ?? { x: target.tank.position.x, y: target.tank.position.y - 6 };
+    const weaponId = plan?.weaponId ?? fallback!.weaponId;
+    const point = plan?.point ?? fallback!.point;
+    const policy = plan?.policy ?? fallback?.policy ?? ORDINARY_AIM_POLICY;
     const attempts = recordAimAttempt(memory, target.id);
     self.tank.currentWeapon = weaponId;
 
@@ -83,6 +90,7 @@ export class AISmartStrategy implements AIEngine {
       gameState.gravity,
       terrainManager,
       weaponId,
+      policy,
     ).command;
     let command = idealAim;
 
@@ -132,6 +140,18 @@ export class AISmartStrategy implements AIEngine {
           weaponId,
           targetId: target.id,
           tacticalPoint: point,
+          policy,
+          materialFallback: fallback && { useful: fallback.useful, profit: fallback.forecast?.profit },
+          searches: cache.search.size, physicalForecasts: cache.physics.size, ...cache.diagnostics,
+          pointOrigin: "origin" in point ? point.origin : "historical",
+          predictedImpactMaterials: decisionTrace?.selected?.predictedImpacts?.map((hit) => ({
+            x: hit.x, material: terrainManager.getMaterialAt(hit.x),
+          })),
+          fallbackImpactMaterials: fallback?.forecast?.hits.map((hit) => ({
+            x: hit.x, material: terrainManager.getMaterialAt(hit.x),
+          })),
+          supportMaterials: gameState.players.map((player) => ({ id: player.id,
+            material: terrainManager.getMaterialAt(player.tank.position.x) })),
           attemptsOnTarget: attempts,
           horizontalOffset: offset,
           aimedPoint: { x: aimX, y: point.y },

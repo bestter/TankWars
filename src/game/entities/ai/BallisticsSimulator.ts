@@ -48,6 +48,8 @@ export interface BallisticSearchConfig {
   weaponId?: WeaponId;
   /** Stop refining once total error drops below this threshold. */
   earlyExitError?: number;
+  /** Restricted searches must also bound the initial fallback. */
+  projectFallbackToCone?: boolean;
 }
 
 export interface BallisticSearchResult {
@@ -324,7 +326,9 @@ export function searchBallisticSolution(
   config: BallisticSearchConfig,
 ): BallisticSearchResult {
   const fallback = {
-    angle: config.isRight ? 55 : 125,
+    angle: config.projectFallbackToCone
+      ? Math.max(config.aMin, Math.min(config.aMax, config.isRight ? 55 : 125))
+      : config.isRight ? 55 : 125,
     power: 60,
     err: 999999,
     complete: false,

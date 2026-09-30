@@ -15,10 +15,11 @@ import {
   recordAimAttempt,
   resetAimMemoryForRound,
 } from "./aimMemory";
-import { searchBallisticSolution } from "./BallisticsSimulator";
+import { solveSniperAim } from "./sniperAim";
+import type { AimVariant } from "./aimSearch";
+import { chooseLocalMaterialShot } from "./localMaterialPlanner";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
-import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
 type SniperMemory = AimMemory;
 
@@ -71,15 +72,14 @@ export class AISniperStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    const virtualAttempts = memory.currentTargetId === target.id ? memory.currentTargetAttempts + 1 : 1;
+    const ordinaryWeapon = this.chooseSniperWeapon(self, virtualAttempts);
+    const choice = chooseLocalMaterialShot("v3-sniper", self, target, gameState, terrainManager,
+      ordinaryWeapon, virtualAttempts, (point, weapon, variant) => solveSniperAim(
+        self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
+      ));
     const attempts = recordAimAttempt(memory, target.id);
-    let weaponId = this.chooseSniperWeapon(self, attempts);
-    if (attempts > 1) {
-      weaponId = adjustWeaponForMaterial(
-        weaponId,
-        terrainManager.getMaterialAt(target.tank.position.x),
-        (id) => (self.inventory[id] ?? 0) > 0,
-      );
-    }
+    const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
 
     const targetX = target.tank.position.x;
@@ -89,7 +89,7 @@ export class AISniperStrategy implements AIEngine {
       offsetDirection *= -1;
     }
     const aimX =
-      targetX +
+      choice.point.x +
       signedImpactOffset(
         attempts,
         "v3-sniper",
@@ -99,10 +99,12 @@ export class AISniperStrategy implements AIEngine {
     let command = this.computePrecisionShot(
       self,
       aimX,
-      target.tank.position.y - 6,
+      choice.point.y,
       gameState.windForce,
       gameState.gravity,
       terrainManager,
+      weaponId,
+      choice.variant,
     );
 
     const gaffe = ADVANCED_GAFFES["v3-sniper"];
@@ -145,33 +147,10 @@ export class AISniperStrategy implements AIEngine {
     wind: number,
     gravity: number,
     terrain: TerrainManager,
+    weaponId?: WeaponId,
+    variant: AimVariant = "full",
   ): AimCommand {
-    const sx = self.tank.position.x;
-    const sy = self.tank.position.y;
-    const isRight = targetX - sx > 0;
-    const aMin = isRight ? 15 : 95;
-    const aMax = isRight ? 85 : 165;
-    const best = searchBallisticSolution({
-      sx,
-      sy,
-      tx: targetX,
-      ty: targetY,
-      wind,
-      gravity,
-      terrain,
-      isRight,
-      aMin,
-      aMax,
-      coarseStep: 5,
-      fineStep: 1,
-      fineWindow: 4,
-      powerLo: 20,
-      powerHi: 95,
-      powerIterations: 10,
-      obstaclePenaltyHigh: 10000,
-      earlyExitError: 2,
-    });
-    return { angle: best.angle, power: best.power };
+    return solveSniperAim(self, targetX, targetY, wind, gravity, terrain, weaponId, variant).command;
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
