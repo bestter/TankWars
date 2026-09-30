@@ -1,23 +1,21 @@
-import { TANK_HITBOX_WIDTH } from "../../combatConstants";
-import { evaluateExpertTactics } from "./expertTactics";
 import { secureRandom } from "../../../utils/random";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
-import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
+import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
   finalizeAdvancedAim,
-  type AimCommand,
 } from "./aimCorruption";
 import {
   type AimMemory,
   recordAimAttempt,
   resetAimMemoryForRound,
 } from "./aimMemory";
-import { searchBallisticSolution } from "./BallisticsSimulator";
+import { solveExpertAim } from "./expertAim";
+import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace } from "./expertPlanner";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
@@ -50,34 +48,34 @@ export class AISmartStrategy implements AIEngine {
     const memory = this.getMem(self.id);
     resetAimMemoryForRound(memory, gameState.roundNumber);
 
-    const tactics = evaluateExpertTactics(self, gameState.players, memory);
-    let target = tactics.ordinaryTarget;
-    let heavy: typeof tactics.nuke = undefined;
-    if (tactics.nuke || tactics.thermonuclear) {
-      const roll = secureRandom();
-      heavy = roll < 0.22 ? tactics.thermonuclear : roll < 0.50 ? tactics.nuke : undefined;
-    } else if (tactics.preparation) {
-      const primaryTargetId = tactics.preparation.primaryTargetId;
-      target = gameState.players.find((player) => player.id === primaryTargetId);
+    let decisionTrace: ExpertDecisionTrace | undefined;
+    const plan = chooseExpertPlan(self, gameState, terrainManager, undefined,
+      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined);
+    const target = plan
+      ? gameState.players.find((player) => player.id === plan.primaryTargetId)
+      : ordinaryExpertTarget(self, gameState.players, memory);
+    if (!target) {
+      if (import.meta.env.DEV) {
+        console.info("[AI EXPERT] Décision", JSON.stringify({
+          shooterId: self.id, round: gameState.roundNumber, turn: gameState.turn,
+          ...decisionTrace, finalReason: "aucun adversaire vivant",
+        }));
+      }
+      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
-    if (heavy) {
-      target = gameState.players.find((player) => player.id === heavy.primaryTargetId);
-    }
-    if (!target) return { angle: 45, power: 50, weaponId: "MISSILE" };
 
-    const weaponId = heavy?.weaponId ?? adjustWeaponForMaterial(
+    const weaponId = plan?.weaponId ?? adjustWeaponForMaterial(
       this.chooseTacticalWeapon(self, target, terrainManager, gameState),
       terrainManager.getMaterialAt(target.tank.position.x),
       (id) => (self.inventory[id] ?? 0) > 0,
     );
-    const point = heavy?.point ?? { x: target.tank.position.x, y: target.tank.position.y - 6 };
+    const point = plan?.point ?? { x: target.tank.position.x, y: target.tank.position.y - 6 };
     const attempts = recordAimAttempt(memory, target.id);
     self.tank.currentWeapon = weaponId;
 
-    const aimX =
-      point.x +
-      signedImpactOffset(attempts, "v4-smart", gameState.roundNumber);
-    let command = this.computeSmartShot(
+    const offset = signedImpactOffset(attempts, "v4-smart", gameState.roundNumber);
+    const aimX = point.x + offset;
+    const idealAim = solveExpertAim(
       self,
       aimX,
       point.y,
@@ -85,7 +83,8 @@ export class AISmartStrategy implements AIEngine {
       gameState.gravity,
       terrainManager,
       weaponId,
-    );
+    ).command;
+    let command = idealAim;
 
     const gaffe = ADVANCED_GAFFES["v4-smart"];
     const reactionIntensity = getHitReactionIntensity(
@@ -99,7 +98,8 @@ export class AISmartStrategy implements AIEngine {
         reactionIntensity * gaffe.powerAmplitude,
       );
     }
-    if (maybeGaffe(gaffe.chance)) {
+    const gaffeOccurred = maybeGaffe(gaffe.chance);
+    if (gaffeOccurred) {
       command = applySignedCorruption(
         command,
         gaffe.angleAmplitude,
@@ -107,8 +107,43 @@ export class AISmartStrategy implements AIEngine {
       );
     }
 
+    const finalAim = finalizeAdvancedAim(command);
+    if (import.meta.env.DEV) {
+      console.info("[AI EXPERT] Décision", JSON.stringify({
+        shooterId: self.id,
+        round: gameState.roundNumber,
+        turn: gameState.turn,
+        currentPlayerIndex: gameState.currentPlayerIndex,
+        windForce: gameState.windForce,
+        gravity: gameState.gravity,
+        isFirstShotOfRound: gameState.localShotContext?.isFirstShotOfRound,
+        roster: gameState.players.map((player) => ({
+          id: player.id,
+          isHuman: player.isHuman,
+          profile: player.aiProfile,
+          health: player.tank.health,
+          shield: player.tank.shield,
+          position: { ...player.tank.position },
+          isDead: player.tank.isDead,
+          inventory: { ...player.inventory },
+        })),
+        ...decisionTrace,
+        realAim: {
+          weaponId,
+          targetId: target.id,
+          tacticalPoint: point,
+          attemptsOnTarget: attempts,
+          horizontalOffset: offset,
+          aimedPoint: { x: aimX, y: point.y },
+          solverCommand: idealAim,
+          reactionIntensity,
+          gaffeOccurred,
+          finalCommand: finalAim,
+        },
+      }));
+    }
     consumeHitReaction(self.tank.hitReaction);
-    return { ...finalizeAdvancedAim(command), weaponId };
+    return { ...finalAim, weaponId };
   }
 
   private chooseTacticalWeapon(
@@ -144,53 +179,6 @@ export class AISmartStrategy implements AIEngine {
     if (isHidden && has("DRILLER")) return "DRILLER";
     if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
     return "MISSILE";
-  }
-
-  private computeSmartShot(
-    self: Player,
-    targetX: number,
-    targetY: number,
-    wind: number,
-    gravity: number,
-    terrain: TerrainManager,
-    weaponId: WeaponId,
-  ): AimCommand {
-    const sx = self.tank.position.x;
-    const sy = self.tank.position.y;
-    const isRight = targetX - sx > 0;
-    const aMin = isRight ? 15 : 95;
-    const aMax = isRight ? 85 : 165;
-    const blastRadius = WEAPON_REGISTRY[weaponId]?.blastRadius ?? 28;
-
-    const best = searchBallisticSolution({
-      sx,
-      sy,
-      tx: targetX,
-      ty: targetY,
-      wind,
-      gravity,
-      terrain,
-      isRight,
-      aMin,
-      aMax,
-      coarseStep: 5,
-      fineStep: 1.5,
-      fineWindow: 4,
-      powerLo: 20,
-      powerHi: 95,
-      powerIterations: 10,
-      obstaclePenaltyHigh: 10000,
-      obstaclePenaltyLow: 20,
-      weaponId,
-      earlyExitError: 4,
-      selfHarmPenalty: (landX, landY) =>
-        Math.hypot(landX - sx, landY - sy) <= blastRadius + TANK_HITBOX_WIDTH ? 50000 : 0,
-    });
-
-    return {
-      angle: Math.max(6, Math.min(174, best.angle)),
-      power: Math.max(25, Math.min(95, best.power)),
-    };
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {

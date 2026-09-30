@@ -1,14 +1,136 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { TerrainManager } from "../../../engine/Terrain";
 import {
   searchBallisticSolution,
   simulateShot,
   simulateSmartShot,
-
+  type BallisticSearchConfig,
 } from "../BallisticsSimulator";
 import { flatTerrain, terrainWithMidObstacle } from "../../../__tests__/helpers";
+import * as random from "../../../../utils/random";
+
+function searchConfig(terrain: TerrainManager): BallisticSearchConfig {
+  return {
+    sx: 100, sy: 336, tx: 550, ty: 328.5, wind: 0, gravity: 260,
+    terrain, isRight: true, aMin: 15, aMax: 85, coarseStep: 5,
+    fineStep: 1.5, fineWindow: 4, powerLo: 20, powerHi: 95,
+    powerIterations: 10, obstaclePenaltyHigh: 10000,
+    obstaclePenaltyLow: 20, earlyExitError: 4,
+  };
+}
 
 describe("BallisticsSimulator", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { sx: 100, tx: 550, isRight: true, aMin: 15, aMax: 85 },
+    { sx: 550, tx: 100, isRight: false, aMin: 95, aMax: 165 },
+  ])("retient une trajectoire complète de x=$sx vers x=$tx sans RNG", (direction) => {
+    const terrain = flatTerrain(800, 480);
+    const rng = vi.spyOn(random, "secureRandom");
+    const result = searchBallisticSolution({ ...searchConfig(terrain), ...direction });
+    const trajectory = simulateShot(direction.sx, 336, result.angle, result.power,
+      0, 260, terrain);
+
+    expect(result.complete).toBe(true);
+    expect(trajectory.complete).toBe(true);
+    expect(Math.abs(trajectory.landX - direction.tx)).toBeLessThan(10);
+    expect(result.angle).toBeGreaterThanOrEqual(direction.aMin);
+    expect(result.angle).toBeLessThanOrEqual(direction.aMax);
+    expect(result.power).toBeGreaterThanOrEqual(20);
+    expect(result.power).toBeLessThanOrEqual(95);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "privilégie la puissance complète même si le premier essai est complet=%s",
+    (firstComplete) => {
+      const terrain = flatTerrain(800, 480);
+      // At zero gravity both free trajectories exhaust exactly 420 steps.
+      const incomplete = simulateShot(100, 336, 15, firstComplete ? 52.5 : 55,
+        0, 0, terrain);
+      expect(incomplete.complete).toBe(false);
+      let checks = 0;
+      vi.spyOn(terrain, "checkCollision").mockImplementation(() =>
+        firstComplete ? ++checks === 1 : ++checks > 420);
+
+      const result = searchBallisticSolution({
+        ...searchConfig(terrain), gravity: 0, tx: incomplete.landX,
+        ty: incomplete.landY, aMin: 15, aMax: 15, fineStep: 0,
+        powerLo: 50, powerHi: 60, powerIterations: 2,
+      });
+
+      expect(result.complete).toBe(true);
+      expect(result.power).toBe(firstComplete ? 55 : 52.5);
+      expect(result.err).toBeGreaterThan(0);
+      expect(checks).toBe(421);
+    },
+  );
+
+  it.each([false, true])(
+    "privilégie l'angle complet même si le premier angle est complet=%s",
+    (firstComplete) => {
+      const terrain = flatTerrain(800, 480);
+      const incomplete = simulateShot(100, 336, firstComplete ? 20 : 15, 55,
+        0, 0, terrain);
+      expect(incomplete.complete).toBe(false);
+      let checks = 0;
+      vi.spyOn(terrain, "checkCollision").mockImplementation(() =>
+        firstComplete ? ++checks === 1 : ++checks > 420);
+
+      const result = searchBallisticSolution({
+        ...searchConfig(terrain), gravity: 0, tx: incomplete.landX,
+        ty: incomplete.landY, aMin: 15, aMax: 20, fineStep: 0,
+        powerLo: 50, powerHi: 60, powerIterations: 1,
+        earlyExitError: firstComplete ? undefined : 0,
+      });
+
+      expect(result.complete).toBe(true);
+      expect(result.angle).toBe(firstComplete ? 15 : 20);
+      expect(result.err).toBeGreaterThan(0);
+      expect(checks).toBe(421);
+    },
+  );
+
+  it("conserve la meilleure approximation incomplète sans arrêt anticipé", () => {
+    const terrain = flatTerrain(800, 480);
+    const incomplete = simulateShot(100, 336, 15, 55, 0, 0, terrain);
+    const collision = vi.spyOn(terrain, "checkCollision");
+    const result = searchBallisticSolution({
+      ...searchConfig(terrain), gravity: 0, tx: incomplete.landX,
+      ty: incomplete.landY, aMin: 15, aMax: 20, fineStep: 0,
+      powerLo: 50, powerHi: 60, powerIterations: 1, earlyExitError: 0,
+    });
+
+    expect(result).toEqual({ angle: 15, power: 55, err: 0, complete: false });
+    expect(collision).toHaveBeenCalledTimes(840);
+  });
+
+  it("ne remplace pas le gagnant complet du balayage grossier par un essai fin incomplet", () => {
+    const terrain = flatTerrain(800, 480);
+    const incomplete = simulateShot(100, 336, 20, 55, 0, 0, terrain);
+    let checks = 0;
+    vi.spyOn(terrain, "checkCollision").mockImplementation(() => ++checks === 1);
+    const result = searchBallisticSolution({
+      ...searchConfig(terrain), gravity: 0, tx: incomplete.landX,
+      ty: incomplete.landY, aMin: 15, aMax: 20, coarseStep: 10,
+      fineStep: 5, fineWindow: 5, powerLo: 50, powerHi: 60,
+      powerIterations: 1, earlyExitError: undefined,
+    });
+
+    expect(result.complete).toBe(true);
+    expect(result.angle).toBe(15);
+    expect(result.err).toBeGreaterThan(0);
+    expect(checks).toBe(841);
+  });
+
+  it("marque la commande de secours incomplète si aucun essai n'est évalué", () => {
+    const result = searchBallisticSolution({
+      ...searchConfig(flatTerrain(800, 480)), powerIterations: 0, fineStep: 0,
+    });
+    expect(result).toEqual({ angle: 55, power: 60, err: 999999, complete: false });
+  });
+
   it("simulateShot returns early when projectile leaves the map", () => {
     const terrain = new TerrainManager(800, 480);
     terrain.generate();

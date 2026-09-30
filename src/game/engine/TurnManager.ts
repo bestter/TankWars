@@ -153,6 +153,7 @@ export class TurnManager {
 
   /** When true, nextTurn / AI turns are suppressed (match ended). Wired from GameEngine.gameOver. */
   private isMatchEnded: () => boolean = () => false;
+  private localShotContextProvider?: () => NonNullable<GameState["localShotContext"]>;
 
   /** Callback optionnel appelé lorsque la simulation physique d'un tir est complètement stabilisée sur le client. */
   public onShotSettled?: () => void;
@@ -192,6 +193,12 @@ export class TurnManager {
 
   public setMatchEndedChecker(checker: () => boolean): void {
     this.isMatchEnded = checker;
+  }
+
+  public setLocalShotContextProvider(
+    provider: () => NonNullable<GameState["localShotContext"]>,
+  ): void {
+    this.localShotContextProvider = provider;
   }
 
   /** Update current wind/gravity so they can be included in GameState snapshots for AIEngine (heuristic aiming etc). */
@@ -1244,6 +1251,7 @@ export class TurnManager {
         windForce: this.currentWindForce,
         gravity: this.currentGravity,
         roundNumber: this.currentRoundNumber,
+        localShotContext: this.localShotContextProvider?.(),
       };
 
       console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');

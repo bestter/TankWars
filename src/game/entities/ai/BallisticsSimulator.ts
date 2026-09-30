@@ -19,6 +19,7 @@ export interface ShotResult {
   landX: number;
   landY: number;
   hitTerrainEarly: boolean;
+  complete?: boolean;
 }
 
 export interface BallisticSearchConfig {
@@ -53,6 +54,8 @@ export interface BallisticSearchResult {
   angle: number;
   power: number;
   err: number;
+  /** False when the chosen trajectory exhausted its step bound or no trial was evaluated. */
+  complete?: boolean;
 }
 
 function launchFromBarrel(
@@ -91,6 +94,7 @@ export function simulateShot(
   let landX = x;
   let landY = y;
   let hitEarly = false;
+  let complete = false;
 
   for (let step = 0; step < BALLISTICS_MAX_STEPS; step++) {
     vy += gravity * BALLISTICS_DT;
@@ -110,15 +114,19 @@ export function simulateShot(
       landX = x;
       landY = y;
       hitEarly = true;
+      complete = true;
       break;
     }
-    if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) break;
+    if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) {
+      complete = true;
+      break;
+    }
 
     landX = x;
     landY = y;
   }
 
-  return { landX, landY, hitTerrainEarly: hitEarly };
+  return { landX, landY, hitTerrainEarly: hitEarly, complete };
 }
 
 /** Grenade bounce + cluster-aware trajectory for Expert AI weapon selection. */
@@ -140,6 +148,7 @@ export function simulateSmartShot(
   let landX = x;
   let landY = y;
   let hitEarly = false;
+  let complete = false;
   let bounceCount = 0;
 
   const isGrenade = weaponId === "GRENADE";
@@ -178,6 +187,7 @@ export function simulateSmartShot(
         if (shouldExplode) {
           landX = x;
           landY = y;
+          complete = true;
           break;
         }
         vy = -vy * bounce.restitution;
@@ -186,16 +196,20 @@ export function simulateSmartShot(
         landX = x;
         landY = y;
         hitEarly = true;
+        complete = true;
         break;
       }
     }
-    if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) break;
+    if (x < -80 || x > terrain.width + 80 || y > terrain.height + 120) {
+      complete = true;
+      break;
+    }
 
     landX = x;
     landY = y;
   }
 
-  return { landX, landY, hitTerrainEarly: hitEarly };
+  return { landX, landY, hitTerrainEarly: hitEarly, complete };
 }
 
 function computeShotError(res: ShotResult, config: BallisticSearchConfig): number {
@@ -227,11 +241,12 @@ function computeShotError(res: ShotResult, config: BallisticSearchConfig): numbe
 function evaluateAnglePower(
   angle: number,
   config: BallisticSearchConfig,
-): { power: number; err: number } {
+): { power: number; err: number; complete: boolean } {
   let lo = config.powerLo;
   let hi = config.powerHi;
   let bestPower = (lo + hi) / 2;
   let bestErr = 999999;
+  let bestComplete = false;
 
   for (let iter = 0; iter < config.powerIterations; iter++) {
     const p = (lo + hi) / 2;
@@ -259,9 +274,12 @@ function evaluateAnglePower(
           );
 
     const err = computeShotError(res, config);
-    if (err < bestErr) {
+    const complete = res.complete !== false;
+    // A truncated endpoint must not displace a resolved trajectory.
+    if ((complete && !bestComplete) || (complete === bestComplete && err < bestErr)) {
       bestErr = err;
       bestPower = p;
+      bestComplete = complete;
     }
 
     if (res.landX < config.tx) {
@@ -273,7 +291,7 @@ function evaluateAnglePower(
     }
   }
 
-  return { power: bestPower, err: bestErr };
+  return { power: bestPower, err: bestErr, complete: bestComplete };
 }
 
 function sweepAngles(
@@ -286,11 +304,12 @@ function sweepAngles(
   let best = seed;
 
   for (let a = from; a <= to; a += step) {
-    const { power, err } = evaluateAnglePower(a, config);
-    if (err < best.err) {
-      best = { angle: a, power, err };
+    const { power, err, complete } = evaluateAnglePower(a, config);
+    const bestComplete = best.complete === true;
+    if ((complete && !bestComplete) || (complete === bestComplete && err < best.err)) {
+      best = { angle: a, power, err, complete };
     }
-    if (config.earlyExitError != null && best.err <= config.earlyExitError) {
+    if (best.complete === true && config.earlyExitError != null && best.err <= config.earlyExitError) {
       break;
     }
   }
@@ -308,6 +327,7 @@ export function searchBallisticSolution(
     angle: config.isRight ? 55 : 125,
     power: 60,
     err: 999999,
+    complete: false,
   };
 
   let best = sweepAngles(config, config.coarseStep, config.aMin, config.aMax, fallback);

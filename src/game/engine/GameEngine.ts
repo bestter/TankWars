@@ -297,6 +297,10 @@ export class GameEngine {
     // Connecte le TurnManager au système de physique (fin de volée → nextTurn)
     this.turnManager.connectToPhysics(this.physicsEngine);
     this.turnManager.setMatchEndedChecker(() => this.gameOver);
+    this.turnManager.setLocalShotContextProvider(() => ({
+      playerCountAtMatchStart: this.tankManager.getPlayers().length,
+      isFirstShotOfRound: this.shotNumberInRound === 0,
+    }));
     this.turnManager.onShotResolutionReady = () => {
       const preview = this.finalizeActiveShot();
       const appointment = this.pendingZeusAppointment;
@@ -565,11 +569,41 @@ export class GameEngine {
       this.tankManager.clearShotAttribution();
       return null;
     }
+    const survivorsAfterShot = this.tankManager.getAlivePlayers().map((player) => player.id);
     const reward = calculateShotRewards({
       ...ledger,
       playerCountAtMatchStart: this.tankManager.getPlayers().length,
-      survivorsAfterShot: this.tankManager.getAlivePlayers().map((player) => player.id),
+      survivorsAfterShot,
     });
+    if (import.meta.env.DEV && this.localMatch) {
+      const shooter = this.tankManager.getPlayerById(ledger.shooterId);
+      if (shooter && !shooter.isHuman) {
+        console.info("[AI] Résultat réel du tir", JSON.stringify({
+          shotId: ledger.shotId,
+          shooterId: ledger.shooterId,
+          profile: shooter.aiProfile,
+          weaponId: ledger.weaponId,
+          isFirstShotOfRound: ledger.isFirstShotOfRound,
+          aliveBeforeShot: [...ledger.aliveBeforeShot],
+          survivorsAfterShot,
+          damage: ledger.damageEvents.map((event) => ({
+            victimId: event.victimId,
+            source: event.source,
+            classification: event.classification,
+            shield: event.shieldAbsorbedMilli / 1_000,
+            health: event.healthDamageMilli / 1_000,
+          })),
+          destructions: ledger.destructionEvents.map((event) => ({
+            victimId: event.victimId,
+            cause: event.cause,
+          })),
+          awards: reward.awards.map((award) => ({
+            playerId: award.playerId,
+            amount: award.amount,
+          })),
+        }));
+      }
+    }
     for (const [playerId, damageMilli] of Object.entries(reward.damageDealtMilliByPlayer)) {
       this.roundDamageDealt[playerId] =
         (this.roundDamageDealt[playerId] ?? 0) + damageMilli / 1_000;

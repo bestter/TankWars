@@ -1,230 +1,472 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { AISmartStrategy } from "../AISmartStrategy";
+import { chooseExpertPlan } from "../expertPlanner";
+import { createExpertForecastCache, evaluateExpertShot, forecastPhysicalShot } from "../expertShotEvaluator";
+import type { ExpertShotResult } from "../expertShotEvaluator";
+import { solveExpertAim } from "../expertAim";
 import * as ballistics from "../BallisticsSimulator";
-import * as fallibleAim from "../fallibleAim";
 import * as random from "../../../../utils/random";
-import { flatTerrain, makeGameState, makePlayer, makeTank, terrainWithMidObstacle } from "../../../__tests__/helpers";
-import type { AimMemory } from "../aimMemory";
-import type { Player } from "../../../../types/player";
-import { TANK_HITBOX_WIDTH } from "../../../combatConstants";
+import { finalizeAdvancedAim } from "../aimCorruption";
+import type { GameState } from "../../../../types/game";
+import { calculateShotRewards } from "../../../economy/shotRewards";
+import { WEAPON_REGISTRY } from "../../../../types/weapon";
+import { TERRAIN_MATERIAL } from "../../../../types/terrain";
+import { TerrainManager } from "../../../engine/Terrain";
 
-function fixture(inventory: Player["inventory"] = { NUKE: 1, THERMONUCLEAR: 1 }) {
-  const self = makePlayer({ id: "self", isHuman: false, aiProfile: "v4-smart", inventory,
-    tank: makeTank("self", 50, 336, { currentWeapon: "THERMONUCLEAR" }) });
-  const a = makePlayer({ id: "a", isHuman: false, tank: makeTank("a", 400, 336, { health: 10 }) });
-  const b = makePlayer({ id: "b", isHuman: true, tank: makeTank("b", 440, 356, { health: 20 }) });
-  const state = makeGameState(self, a, "v4-smart");
-  state.players = [self, a, b];
-  state.roundNumber = 1;
-  const terrain = flatTerrain(1000, 480);
-  const strategy = new AISmartStrategy();
-  const memories = (strategy as unknown as { memories: Map<string, AimMemory> }).memories;
-  const memory = { currentTargetId: "a", currentTargetAttempts: 1, lastRoundNumber: 1 };
-  memories.set(self.id, memory);
-  return { self, a, b, state, terrain, strategy, memory,
-    run: () => strategy.executeTurn("self", state, terrain) };
+function fixture() {
+  const terrain = flatTerrain(800, 480);
+  const self = makePlayer({ id: "self", isHuman: false, aiProfile: "v4-smart",
+    tank: makeTank("self", 100, 336), inventory: { MISSILE: 99 } });
+  const enemy = makePlayer({ id: "enemy", isHuman: true,
+    tank: makeTank("enemy", 400, 336), inventory: {} });
+  const state: GameState = { phase: "COMBAT", players: [self, enemy],
+    currentPlayerIndex: 0, turn: 2, roundNumber: 1, windForce: 0, gravity: 260,
+    localShotContext: { playerCountAtMatchStart: 2, isFirstShotOfRound: true } };
+  return { terrain, self, enemy, state };
 }
 
-beforeEach(() => {
-  vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0 });
-  vi.spyOn(fallibleAim, "signedImpactOffset").mockReturnValue(7);
-  vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
-});
 afterEach(() => vi.restoreAllMocks());
 
-describe("EXPERT heavy orchestration", () => {
-  it.each([
-    [0, "THERMONUCLEAR"], [0.219999, "THERMONUCLEAR"], [0.22, "NUKE"],
-    [0.499999, "NUKE"], [0.50, "MISSILE"], [0.99, "MISSILE"],
-  ] as const)("uses one tactical roll at %s, returning %s", async (roll, weapon) => {
+describe("EXPERT full-shot forecast", () => {
+  it.each([0, 1])("prévoit une destruction réelle à 450 px pour le tireur %s", (index) => {
     const f = fixture();
-    vi.mocked(random.secureRandom).mockReturnValueOnce(roll);
-    expect((await f.run()).weaponId).toBe(weapon);
-    expect(random.secureRandom).toHaveBeenCalledTimes(2); // tactique + gaffe, offset doublé par le test
-    const heavy = weapon !== "MISSILE";
-    expect(ballistics.searchBallisticSolution).toHaveBeenCalledWith(expect.objectContaining({
-      tx: heavy ? 427 : 407, ty: heavy ? 346 : 330, weaponId: weapon,
-    }));
-    expect(f.memory.currentTargetAttempts).toBe(2);
-    expect(f.self.tank.currentWeapon).toBe(weapon);
-    expect(fallibleAim.signedImpactOffset).toHaveBeenCalledExactlyOnceWith(2, "v4-smart", 1);
+    f.enemy.tank.position.x = 550;
+    f.self.tank.health = f.enemy.tank.health = 30;
+    const shooter = f.state.players[index];
+    const target = f.state.players[1 - index];
+    const rng = vi.spyOn(random, "secureRandom");
+    const result = evaluateExpertShot(f.state, f.terrain, shooter, "MISSILE",
+      [target], true, false, createExpertForecastCache());
+
+    expect(result.destination).not.toBe(-1);
+    expect(result.forecast?.complete).toBe(true);
+    expect(result.destroyedIds.has(target.id)).toBe(true);
+    expect(result.shooterDestroyed).toBe(false);
+    expect(result.forecast?.survivors).toEqual([shooter.id]);
+    expect(rng).not.toHaveBeenCalled();
+    expect(f.state.players.map((player) => player.tank.health)).toEqual([30, 30]);
   });
 
-  it.each([
-    [{ NUKE: 1 }, 0.1], [{ THERMONUCLEAR: 1 }, 0.22],
-  ])("does not switch weapons or prepare after an empty interval", async (inventory, roll) => {
-    const f = fixture(inventory as Player["inventory"]);
-    vi.mocked(random.secureRandom).mockReturnValueOnce(roll as number);
-    expect((await f.run()).weaponId).toBe("MISSILE");
-    expect(ballistics.searchBallisticSolution).toHaveBeenCalledWith(expect.objectContaining({ tx: 407, ty: 330 }));
-    expect(f.memory.currentTargetId).toBe("a");
-    expect(random.secureRandom).toHaveBeenCalledTimes(2);
-  });
-
-  it("prepares a new primary on turn one and permits a heavy on turn two", async () => {
+  it("rejette les approximations du vrai solveur quand toutes sont incomplètes", () => {
     const f = fixture();
-    f.memory.currentTargetId = "b";
-    expect((await f.run()).weaponId).toBe("MISSILE");
-    expect(f.memory).toMatchObject({ currentTargetId: "a", currentTargetAttempts: 1 });
-    expect(random.secureRandom).toHaveBeenCalledTimes(1);
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 407, ty: 330 }));
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.1);
-    expect((await f.run()).weaponId).toBe("THERMONUCLEAR");
-    expect(f.memory.currentTargetAttempts).toBe(2);
-    f.a.tank.position.x += 10;
-    f.b.tank.position.x += 10;
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.1);
-    await f.run();
-    expect(f.memory.currentTargetAttempts).toBe(3);
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 437, ty: 346 }));
+    f.enemy.tank.position.x = f.self.tank.position.x;
+    f.state.gravity = 0;
+    // Keep every upward shot in bounds for the entire search budget.
+    const terrain = flatTerrain(10000, 480);
+    f.self.tank.position.x = f.enemy.tank.position.x = 5000;
+    const solution = solveExpertAim(f.self, 5000, 328.5, 0, 0, terrain, "MISSILE");
+
+    expect(solution.complete).toBe(false);
+    expect(solution.command.angle).toBeGreaterThanOrEqual(6);
+    expect(solution.command.angle).toBeLessThanOrEqual(174);
+    expect(solution.command.power).toBeGreaterThanOrEqual(25);
+    expect(solution.command.power).toBeLessThanOrEqual(95);
+    expect(evaluateExpertShot(f.state, terrain, f.self, "MISSILE", [f.enemy],
+      false, false, createExpertForecastCache()).destination).toBe(-1);
   });
 
-  it("resets the round before virtual attempts and never rolls on the first attempt", async () => {
+  it("uses resolved damage and shooter reward without changing live state or RNG", () => {
     const f = fixture();
-    f.state.roundNumber = 2;
-    f.memory.currentTargetAttempts = 20;
-    expect((await f.run()).weaponId).toBe("MISSILE");
-    expect(f.memory).toEqual({ currentTargetId: "a", currentTargetAttempts: 1, lastRoundNumber: 2 });
-    expect(random.secureRandom).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses no tactical RNG with one target or no stock, ignoring an equipped heavy", async () => {
-    for (const single of [true, false]) {
-      const f = fixture(single ? { NUKE: 1, THERMONUCLEAR: 1 } : {});
-      if (single) f.state.players.pop();
-      vi.mocked(random.secureRandom).mockClear();
-      expect((await f.run()).weaponId).toBe("MISSILE");
-      expect(random.secureRandom).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it("returns to the ordinary target instead of preparing a better unready group after a roll", async () => {
-    const f = fixture();
-    const c = makePlayer({ id: "c", tank: makeTank("c", 420, 340, { health: 1 }) });
-    f.state.players.push(c);
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.5);
-    expect((await f.run()).weaponId).toBe("MISSILE");
-    expect(f.memory).toMatchObject({ currentTargetId: "a", currentTargetAttempts: 2 });
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 407, ty: 330 }));
-  });
-
-  it("selects an eligible pair before preparing a better unready triplet", async () => {
-    const f = fixture();
-    f.state.players.push(makePlayer({ id: "c", tank: makeTank("c", 420, 340, { health: 1 }) }));
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.1);
-    expect((await f.run()).weaponId).toBe("THERMONUCLEAR");
-    expect(f.memory.currentTargetId).toBe("a");
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 427, ty: 346 }));
-  });
-
-  it("retains a human target without finish-off and resets A to B to A", async () => {
-    const f = fixture({});
-    f.memory.currentTargetId = "b";
-    await f.run();
-    expect(f.memory).toMatchObject({ currentTargetId: "b", currentTargetAttempts: 2 });
-    f.b.tank.isDead = true;
-    await f.run();
-    expect(f.memory).toMatchObject({ currentTargetId: "a", currentTargetAttempts: 1 });
-    f.a.tank.isDead = true;
-    f.b.tank.isDead = false;
-    await f.run();
-    expect(f.memory).toMatchObject({ currentTargetId: "b", currentTargetAttempts: 1 });
-  });
-
-  it("keeps geometry independent of ROCK occlusion and off-surface centroids", async () => {
-    const f = fixture();
-    const occlusion = vi.spyOn(f.terrain, "isBlastOccludedByRock").mockReturnValue(true);
-    vi.spyOn(f.terrain, "getMaterialAt").mockReturnValue("ROCK");
-    f.a.tank.position.y = 200;
-    f.b.tank.position.y = 240;
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.1);
-    expect((await f.run()).weaponId).toBe("THERMONUCLEAR");
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ ty: 220 }));
-    expect(occlusion).not.toHaveBeenCalled();
-  });
-
-  it("penalizes the shared safety boundary inclusively", async () => {
-    const f = fixture();
-    vi.mocked(random.secureRandom).mockReturnValueOnce(0.22);
-    await f.run();
-    const penalty = vi.mocked(ballistics.searchBallisticSolution).mock.calls[0][0].selfHarmPenalty!;
-    const limit = 62 + TANK_HITBOX_WIDTH;
-    expect(penalty(50 + limit - 0.001, 336)).toBe(50000);
-    expect(penalty(50 + limit, 336)).toBe(50000);
-    expect(penalty(50 + limit + 0.001, 336)).toBe(0);
-  });
-
-  it("keeps the real aim RNG contract with exactly one additional heavy roll", async () => {
-    vi.mocked(fallibleAim.signedImpactOffset).mockRestore();
-    const f = fixture();
-    f.memory.currentTargetAttempts = 0;
-    await f.run();
-    expect(random.secureRandom).toHaveBeenCalledTimes(3); // magnitude, signe, gaffe
-    vi.mocked(random.secureRandom).mockClear().mockReturnValueOnce(0.1);
-    await f.run();
-    expect(random.secureRandom).toHaveBeenCalledTimes(3); // lourde, signe, gaffe (lock)
-    f.self.inventory = {};
-    vi.mocked(random.secureRandom).mockClear();
-    await f.run();
-    expect(random.secureRandom).toHaveBeenCalledTimes(2); // signe, gaffe (lock)
-  });
-
-  it("preserves terrain, inventory, positions and health while consuming reaction", async () => {
-    const f = fixture();
-    const snapshot = structuredClone(f.state.players);
-    const heights = Array.from({ length: f.terrain.width }, (_, x) => f.terrain.getHeightAt(x));
+    const before = structuredClone(f.state.players);
+    const heights = [...f.terrain.getHeightmap()];
     const materials = [...f.terrain.getMaterials()];
-    f.self.tank.hitReaction = { wasDirectHit: true, fallDistance: 120 };
-    vi.mocked(random.secureRandom)
-      .mockReturnValueOnce(0.1) // lourde
-      .mockReturnValueOnce(0.99).mockReturnValueOnce(0.99) // réaction positive
-      .mockReturnValueOnce(0) // gaffe 2 %
-      .mockReturnValueOnce(0).mockReturnValueOnce(0); // gaffe négative
-    expect(await f.run()).toEqual({ weaponId: "THERMONUCLEAR", angle: 38, power: 47 });
-    expect(random.secureRandom).toHaveBeenCalledTimes(6);
-    expect(f.memory.currentTargetAttempts).toBe(2);
-    expect(f.self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
-    expect(Array.from({ length: f.terrain.width }, (_, x) => f.terrain.getHeightAt(x))).toEqual(heights);
+    const rng = vi.spyOn(random, "secureRandom");
+    const command = solveExpertAim(f.self, 400, 328.5, 0, 260, f.terrain, "MISSILE");
+    const result = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",
+      finalizeAdvancedAim(command.command), true);
+    expect(result.complete).toBe(true);
+    expect(result.damage.some((event) => event.victimId === "enemy")).toBe(true);
+    expect(result.profit).toBeGreaterThan(0);
+    expect(f.state.players).toEqual(before);
+    expect(f.terrain.getHeightmap()).toEqual(heights);
     expect(f.terrain.getMaterials()).toEqual(materials);
-    for (const [index, player] of f.state.players.entries()) {
-      expect(player.inventory).toEqual(snapshot[index].inventory);
-      expect(player.tank.position).toEqual(snapshot[index].tank.position);
-      expect(player.tank.health).toBe(snapshot[index].tank.health);
-      expect(player.tank.shield).toBe(snapshot[index].tank.shield);
-    }
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it("credits a fall caused by the forecasted crater to the shooter", () => {
+    const f = fixture();
+    f.enemy.tank.health = 1000;
+    const command = finalizeAdvancedAim(solveExpertAim(f.self, 400, 336, 0, 260,
+      f.terrain, "MISSILE").command);
+    const result = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",
+      command, false);
+    expect(result.complete).toBe(true);
+    expect(result.damage.some((event) => event.victimId === "enemy" &&
+      event.shooterId === "self" && event.source === "fall")).toBe(true);
+  });
+
+  it("uses the first-shot context and subtracts the ammunition price once", () => {
+    const f = fixture();
+    f.enemy.tank.health = 1;
+    const missile = finalizeAdvancedAim(solveExpertAim(f.self, 400, 328.5, 0, 260,
+      f.terrain, "MISSILE").command);
+    const first = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE", missile, true);
+    const later = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE", missile, false);
+    expect(first.complete).toBe(true);
+    expect(first.destruction.some((event) => event.victimId === "enemy")).toBe(true);
+    expect(first.profit).toBeGreaterThan(later.profit);
+    const nuke = forecastPhysicalShot(f.state, f.terrain, f.self, "NUKE", missile, true);
+    const reward = calculateShotRewards({ shotId: 1, shooterId: "self", weaponId: "NUKE",
+      playerCountAtMatchStart: 2, isFirstShotOfRound: true,
+      aliveBeforeShot: ["self", "enemy"], survivorsAfterShot: [...nuke.survivors],
+      damageEvents: [...nuke.damage], destructionEvents: [...nuke.destruction] });
+    expect(nuke.profit).toBe(
+      (reward.awards.find((award) => award.playerId === "self")?.amount ?? 0) -
+      WEAPON_REGISTRY.NUKE.price);
+  });
+
+  it("resolves CLUSTER submunitions with a private RNG and one ammunition cost", () => {
+    const f = fixture();
+    const rng = vi.spyOn(random, "secureRandom");
+    const command = finalizeAdvancedAim(solveExpertAim(f.self, 400, 328.5, 0, 260,
+      f.terrain, "CLUSTER").command);
+    const forecast = forecastPhysicalShot(f.state, f.terrain, f.self, "CLUSTER",
+      command, true);
+    expect(forecast.complete).toBe(true);
+    expect(forecast.hits.length).toBeGreaterThan(0);
+    expect(forecast.hits.length).toBeLessThanOrEqual(5);
+    expect(rng).not.toHaveBeenCalled();
+    const reward = calculateShotRewards({ shotId: 1, shooterId: "self", weaponId: "CLUSTER",
+      playerCountAtMatchStart: 2, isFirstShotOfRound: true,
+      aliveBeforeShot: ["self", "enemy"], survivorsAfterShot: [...forecast.survivors],
+      damageEvents: [...forecast.damage], destructionEvents: [...forecast.destruction] });
+    expect(forecast.profit).toBe(
+      (reward.awards.find((award) => award.playerId === "self")?.amount ?? 0) -
+      WEAPON_REGISTRY.CLUSTER.price);
+  });
+
+  it("copies the actual terrain materials once for a DRILLER forecast", () => {
+    const f = fixture();
+    f.terrain.setMaterialRange(380, 420, TERRAIN_MATERIAL.ROCK);
+    const materials = [...f.terrain.getMaterials()];
+    const load = vi.spyOn(TerrainManager.prototype, "loadHeights");
+    const command = finalizeAdvancedAim(solveExpertAim(f.self, 381, 336, 0, 260,
+      f.terrain, "DRILLER").command);
+    forecastPhysicalShot(f.state, f.terrain, f.self, "DRILLER", command, true);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(load.mock.calls[0][1]).toEqual(materials);
+    expect(f.terrain.getMaterials()).toEqual(materials);
+  });
+
+  it("normalizes ideal commands and rejects incomplete searches and BULLDOZER", () => {
+    const f = fixture();
+    f.self.inventory.BULLDOZER = 1;
+    const solver = vi.spyOn(ballistics, "searchBallisticSolution")
+      .mockReturnValue({ angle: 45.44, power: 52.7, err: 0, complete: false });
+    const result = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE",
+      [f.enemy], false, true, createExpertForecastCache());
+    expect(result.destination).toBe(-1);
+    expect(evaluateExpertShot(f.state, f.terrain, f.self, "BULLDOZER",
+      [f.enemy], false, true, createExpertForecastCache()).destination).toBe(-1);
+    expect(finalizeAdvancedAim(solveExpertAim(f.self, 400, 328.5, 0, 260, f.terrain, "MISSILE").command))
+      .toEqual({ angle: 45.4, power: 53 });
+    expect(solver).toHaveBeenCalled();
+  });
+
+  it("invalidates an unresolved physical forecast at its own step limit", () => {
+    const f = fixture();
+    f.state.gravity = 0;
+    const forecast = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",
+      { angle: 90, power: 99 }, false);
+    expect(forecast.complete).toBe(false);
+    expect(forecast.damage).toEqual([]);
+    expect(forecast.destruction).toEqual([]);
+    expect(ballistics.simulateShot(100, 336, 90, 99, 0, 0, f.terrain).complete).toBe(false);
+  });
+
+  it("rejects a resolved ground explosion that affects no opponent", () => {
+    const f = fixture();
+    const heights = [...f.terrain.getHeightmap()];
+    // Keep the target above the explosion on an indestructible plateau, without a fall.
+    heights.fill(120, 390);
+    f.terrain.loadHeights(heights);
+    f.terrain.setMaterialRange(390, f.terrain.width - 1, TERRAIN_MATERIAL.ROCK);
+    f.enemy.tank.position.y = 120;
+    const groundX = f.enemy.tank.position.x - WEAPON_REGISTRY.MISSILE.blastRadius / 2;
+    const groundY = f.terrain.getHeightAt(groundX);
+    const solution = solveExpertAim(f.self, groundX, groundY, 0, 260, f.terrain, "MISSILE");
+    const forecast = forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",
+      finalizeAdvancedAim(solution.command), false);
+
+    expect(solution.complete).toBe(true);
+    expect(forecast.complete).toBe(true);
+    expect(forecast.hits.some((hit) => Math.hypot(hit.x - groundX, hit.y - groundY) <=
+      Math.max(24, WEAPON_REGISTRY.MISSILE.blastRadius))).toBe(true);
+    expect(forecast.damage).toEqual([]);
+    expect(forecast.destruction).toEqual([]);
+    expect(forecast.profit).toBe(0);
+
+    // Isolate this ground point: the other searches cannot provide a valid alternative.
+    const solver = vi.spyOn(ballistics, "searchBallisticSolution")
+      .mockImplementation(({ tx, ty }) => ({ ...solution.command, err: 0,
+        complete: tx === groundX && ty === groundY }));
+    const result = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE",
+      [f.enemy], false, false, createExpertForecastCache());
+
+    expect(solver).toHaveBeenCalledTimes(3);
+    expect(result.destination).toBe(-1);
+    expect(result.profit).toBe(0);
+    expect(result.destroyedIds.size).toBe(0);
+  });
+
+  it("compares missile profit with the cost of a NUKE", () => {
+    const f = fixture();
+    const miss = evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE",
+      [f.enemy], false, true, createExpertForecastCache());
+    expect(miss.destination).not.toBe(-1);
+    f.self.inventory.NUKE = 1;
+    const costly = evaluateExpertShot(f.state, f.terrain, f.self, "NUKE",
+      [f.enemy], false, true, createExpertForecastCache());
+    if (costly.destination !== -1) expect(costly.profit).toBeLessThan(miss.profit);
   });
 });
 
-describe("EXPERT ordinary tactics", () => {
-  it("adjusts a preparatory weapon under its new primary and uses its individual point", async () => {
-    const f = fixture({ THERMONUCLEAR: 1, DRILLER: 1 });
-    f.b.tank.health = 5;
-    const material = vi.spyOn(f.terrain, "getMaterialAt").mockImplementation((x) => x === 440 ? "SOFT" : "ROCK");
-    expect((await f.run()).weaponId).toBe("DRILLER");
-    expect(material).toHaveBeenCalledWith(440);
-    expect(f.memory).toMatchObject({ currentTargetId: "b", currentTargetAttempts: 1 });
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 447, ty: 350 }));
-    expect(random.secureRandom).toHaveBeenCalledTimes(1);
+describe("EXPERT decision and fallback", () => {
+  it.each([0, 1])("détecte la menace réelle à 450 px et choisit SURVIE depuis le slot %s", (index) => {
+    const f = fixture();
+    f.enemy.tank.position.x = 550;
+    f.self.tank.health = f.enemy.tank.health = 30;
+    f.state.currentPlayerIndex = index;
+    f.state.localShotContext!.isFirstShotOfRound = false;
+    const shooter = f.state.players[index];
+    const target = f.state.players[1 - index];
+    shooter.isHuman = false;
+    shooter.aiProfile = "v4-smart";
+    target.isHuman = true;
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const trace = vi.fn();
+    const plan = chooseExpertPlan(shooter, f.state, f.terrain, undefined, trace);
+
+    expect(plan).toMatchObject({ weaponId: "MISSILE", primaryTargetId: target.id });
+    expect(trace).toHaveBeenCalledOnce();
+    expect(trace.mock.calls[0][0]).toMatchObject({
+      phase: "SURVIE", selectedThreatId: target.id, survivalRoll: 0,
+      threats: [{ playerId: target.id, turnsUntilShot: 1 }],
+      selected: { shooterDestroyed: false, destroyedIds: [target.id] },
+    });
+    expect(rng).toHaveBeenCalledOnce();
   });
 
-  it("keeps CLUSTER horizontal and aims at the individual even on strong elevation", async () => {
-    const f = fixture({ CLUSTER: 1 });
-    f.b.tank.position.y = 1000;
-    expect((await f.run()).weaponId).toBe("CLUSTER");
-    expect(ballistics.searchBallisticSolution).toHaveBeenLastCalledWith(expect.objectContaining({ tx: 407, ty: 330 }));
+  it("selects a simulated candidate and updates aim memory only for the final shot", async () => {
+    const f = fixture();
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain);
+    expect(plan).not.toBeNull();
+    const strategy = new AISmartStrategy();
+    const shot = await strategy.executeTurn("self", f.state, f.terrain);
+    expect(shot.weaponId).toBe(plan?.weaponId);
+    expect(f.self.tank.currentWeapon).toBe(shot.weaponId);
+    expect(f.self.tank.health).toBe(100);
   });
 
-  it.each(["GRENADE", "DRILLER"] as const)("keeps %s for hidden targets", async (weapon) => {
-    const f = fixture({ [weapon]: 1 });
-    const terrain = terrainWithMidObstacle(1000, 480, 180, 300, 100);
-    expect((await f.strategy.executeTurn("self", f.state, terrain)).weaponId).toBe(weapon);
+  it("logs the tactical reason and the final fallible command in development", async () => {
+    const f = fixture();
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+    const entry = log.mock.calls.find(([label]) => label === "[AI EXPERT] Décision")?.[1];
+    expect(typeof entry).toBe("string");
+    const decision = JSON.parse(String(entry)) as {
+      phase: string;
+      realAim: { horizontalOffset: number };
+    };
+    expect(decision).toMatchObject({
+      shooterId: "self",
+      round: 1,
+      availableWeapons: ["MISSILE"],
+      selected: { weaponId: shot.weaponId, profit: expect.any(Number) },
+      realAim: {
+        weaponId: shot.weaponId,
+        targetId: "enemy",
+        attemptsOnTarget: 1,
+        gaffeOccurred: false,
+        finalCommand: { angle: shot.angle, power: shot.power },
+      },
+    });
+    expect(["SURVIE", "OPTIMISER_PROFIT"]).toContain(decision.phase);
+    expect(decision.realAim.horizontalOffset).toBeGreaterThanOrEqual(45);
   });
 
-  it.each(["ROCK", "SOFT"] as const)("adjusts ordinary weapons for %s under the final target", async (material) => {
-    const f = fixture({ DRILLER: 1 });
-    const terrain = terrainWithMidObstacle(1000, 480, 180, 300, material === "ROCK" ? 100 : 336);
-    const getMaterial = vi.spyOn(terrain, "getMaterialAt").mockReturnValue(material);
-    expect((await f.strategy.executeTurn("self", f.state, terrain)).weaponId).toBe(material === "ROCK" ? "MISSILE" : "DRILLER");
-    expect(getMaterial).toHaveBeenCalledWith(400);
+  it("keeps the ordinary BULLDOZER fallback when forecasts are unavailable", async () => {
+    const f = fixture();
+    f.state.localShotContext = undefined;
+    f.enemy.tank.position.x = 780;
+    f.self.inventory.BULLDOZER = 1;
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+    expect(shot.weaponId).toBe("BULLDOZER");
+  });
+
+  it("examines a four-player full-stock decision within per-shot bounds", () => {
+    const f = fixture();
+    const fullStock = { GRENADE: 2, CLUSTER: 2, NUKE: 2,
+      THERMONUCLEAR: 2, DRILLER: 2, BULLET: 2, BULLDOZER: 2 };
+    f.self.inventory = { ...fullStock };
+    f.enemy.isHuman = false;
+    f.enemy.aiProfile = "v2-heuristic";
+    f.enemy.inventory = { ...fullStock };
+    f.state.players.push(
+      makePlayer({ id: "third", isHuman: false, aiProfile: "v3-sniper",
+        tank: makeTank("third", 550, 336), inventory: { ...fullStock } }),
+      makePlayer({ id: "fourth", isHuman: true,
+        tank: makeTank("fourth", 700, 336), inventory: { ...fullStock } }),
+    );
+    f.state.localShotContext = { playerCountAtMatchStart: 4, isFirstShotOfRound: false };
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const start = performance.now();
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain);
+    const elapsedMs = performance.now() - start;
+    expect(plan).not.toBeNull();
+    expect(elapsedMs).toBeLessThan(10_000);
+  });
+});
+
+describe("EXPERT survival and profit ordering", () => {
+  const invalid: ExpertShotResult = { destination: -1, profit: 0,
+    destroyedIds: new Set(), shooterDestroyed: false, pointOrder: -1 };
+  const valid = (x: number, profit: number, destroyed: string[]): ExpertShotResult => ({
+    destination: { x, y: 320, kind: "tank" }, profit,
+    destroyedIds: new Set(destroyed), shooterDestroyed: destroyed.includes("self"),
+    pointOrder: 0,
+  });
+
+  function threePlayers() {
+    const f = fixture();
+    f.enemy.id = "early";
+    f.enemy.tank.id = "early";
+    f.enemy.isHuman = false;
+    f.enemy.aiProfile = "v1-random";
+    const later = makePlayer({ id: "later", isHuman: false, aiProfile: "v4-smart",
+      tank: makeTank("later", 200, 336, { health: 10 }), inventory: {} });
+    f.state.players.push(later);
+    f.state.localShotContext = { playerCountAtMatchStart: 3, isFirstShotOfRound: true };
+    return { ...f, later };
+  }
+
+  it("chooses the next living threat before a stronger profile and rolls once", () => {
+    const f = threePlayers();
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill, firstShot) => {
+      if (shooter.id === "early" && weapon === "MISSILE") {
+        expect(firstShot).toBe(false);
+        return valid(400, 1, ["self"]);
+      }
+      if (shooter.id === "later" && weapon === "MISSILE") return valid(200, 999, ["self"]);
+      if (shooter.id === "self" && requireKill && targets[0].id === "early") {
+        return valid(400, 10, ["early"]);
+      }
+      return invalid;
+    };
+    const traces: { phase: string; selectedThreatId?: string;
+      survivalRoll?: number; transitionReason: string; candidateCount: number }[] = [];
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain, evaluate,
+      (trace) => traces.push(trace));
+    expect(plan?.point.x).toBe(400);
+    expect(rng).toHaveBeenCalledTimes(1);
+    expect(traces).toMatchObject([{
+      phase: "SURVIE", selectedThreatId: "early", survivalRoll: 0,
+      transitionReason: expect.stringContaining("early"), candidateCount: 2,
+    }]);
+  });
+
+  it("falls through a failed survival roll to profit over all opponents", () => {
+    const f = threePlayers();
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill) => {
+      if (shooter.id === "early" && weapon === "MISSILE") return valid(400, 1, ["self"]);
+      if (shooter.id === "self" && !requireKill && targets.length === 1 &&
+          targets[0].id === "later") return valid(200, 20, []);
+      return invalid;
+    };
+    const traces: { phase: string; selectedThreatId?: string;
+      survivalRoll?: number; transitionReason: string;
+      selected?: { primaryTargetId: string } }[] = [];
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, evaluate,
+      (trace) => traces.push(trace))?.primaryTargetId).toBe("later");
+    expect(rng).toHaveBeenCalledTimes(1);
+    expect(traces).toMatchObject([{
+      phase: "OPTIMISER_PROFIT", selectedThreatId: "early",
+      survivalRoll: 0.99, transitionReason: expect.stringContaining("jet de SURVIE refusé"),
+      selected: { primaryTargetId: "later" },
+    }]);
+  });
+
+  it("allows a survival pair only when its first member dies and remembers the weaker other member", () => {
+    const f = threePlayers();
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill) => {
+      if (shooter.id === "early" && weapon === "MISSILE") return valid(400, 1, ["self"]);
+      if (shooter.id === "self" && requireKill && targets.length === 2 &&
+          targets[0].id === "early") return valid(300, -5, ["early"]);
+      return invalid;
+    };
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain, evaluate);
+    expect(plan).toMatchObject({ primaryTargetId: "later", point: { x: 300 } });
+    expect(rng).toHaveBeenCalledTimes(1);
+  });
+
+  it("enters survival without RNG for a score-one threat", () => {
+    const f = fixture();
+    f.enemy.isHuman = false;
+    f.enemy.aiProfile = "v4-smart";
+    const rng = vi.spyOn(random, "secureRandom");
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill) => {
+      if (shooter.id === "enemy" && weapon === "MISSILE") return valid(400, 1, ["self"]);
+      if (shooter.id === "self" && requireKill && targets[0].id === "enemy") {
+        return valid(400, -10, ["enemy"]);
+      }
+      return invalid;
+    };
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, evaluate)?.point.x).toBe(400);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it("can choose a heavy against one threat, or reject it on net profit", () => {
+    const f = fixture();
+    f.enemy.isHuman = false;
+    f.enemy.aiProfile = "v4-smart";
+    f.self.inventory.NUKE = 1;
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill) => {
+      if (shooter.id === "enemy" && weapon === "MISSILE") return valid(400, 1, ["self"]);
+      if (shooter.id !== "self" || !requireKill || targets[0].id !== "enemy") return invalid;
+      if (weapon === "NUKE") return valid(400, 20, ["enemy"]);
+      return invalid;
+    };
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, evaluate)?.weaponId).toBe("NUKE");
+    const profitableMissile: typeof evaluateExpertShot = (...args) => {
+      if (args[2].id === "self" && args[3] === "MISSILE" && args[5]) {
+        return valid(400, 21, ["enemy"]);
+      }
+      return evaluate(...args);
+    };
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, profitableMissile)?.weaponId)
+      .toBe("MISSILE");
+  });
+
+  it("ranks survival before profit, then pair scores and roster turns", () => {
+    const f = threePlayers();
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
+      targets, requireKill) => {
+      if (shooter.id !== "self" || requireKill || weapon !== "MISSILE") return invalid;
+      if (targets.length === 1 && targets[0].id === "early") return valid(400, 10, []);
+      if (targets.length === 1 && targets[0].id === "later") return valid(200, 10, []);
+      if (targets.length === 2) return valid(300, 10, []);
+      return invalid;
+    };
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain, evaluate);
+    expect(plan).toMatchObject({ primaryTargetId: "later", point: { x: 300 } });
+    const suicidal: typeof evaluateExpertShot = (...args) => {
+      if (args[2].id === "self" && args[4].length === 2) {
+        return valid(300, 1000, ["self"]);
+      }
+      return evaluate(...args);
+    };
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, suicidal)?.point.x).toBe(200);
   });
 });

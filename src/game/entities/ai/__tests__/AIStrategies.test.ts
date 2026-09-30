@@ -199,30 +199,6 @@ describe("AI weapon gates", () => {
     expect(missShot.weaponId).not.toBe("NUKE");
   });
 
-  it("smart never uses a heavy weapon against a single target", async () => {
-    const terrain = flatTerrain(800, 480);
-    const strategy = new AISmartStrategy();
-    const shooter = makePlayer({
-      id: "ai",
-      isHuman: false,
-      aiProfile: "v4-smart",
-      tank: makeTank("shooter-tank", 80, 310),
-      inventory: { THERMONUCLEAR: 1, NUKE: 1 },
-    });
-    const weak = makePlayer({
-      id: "enemy",
-      tank: makeTank("enemy-tank", 500, 310, { health: 20, shield: 0 }),
-    });
-    vi.spyOn(random, "secureRandom").mockReturnValue(0.05);
-    const shot = await strategy.executeTurn(
-      "shooter-tank",
-      makeGameState({ ...shooter, aiProfile: "v4-smart" }, weak, "v4-smart"),
-      terrain,
-    );
-    expect(shot.weaponId).not.toBe("THERMONUCLEAR");
-    expect(shot.weaponId).not.toBe("NUKE");
-  });
-
   it("heuristic does not pick CLUSTER against an isolated target", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AIHeuristicStrategy();
@@ -371,7 +347,7 @@ describe("AI weapon gates", () => {
     expect(shot.weaponId).not.toBe("BULLDOZER");
   });
 
-  it("smart picks BULLDOZER when the target sits at the map edge", async () => {
+  it("smart fallback picks BULLDOZER when the target sits at the map edge", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISmartStrategy();
     const shooter = makePlayer({
@@ -458,7 +434,7 @@ describe("AI fallibility contracts", () => {
     expect(Math.abs(impact.landX - 500)).toBeGreaterThanOrEqual(50);
   });
 
-  it("smart prefers a healthy AI over a wounded human", async () => {
+  it("smart fallback prefers a healthy AI over a wounded human", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISmartStrategy();
     const shooter: Player = makePlayer({
