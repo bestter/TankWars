@@ -32,10 +32,23 @@ function damage(overrides: Partial<CombatDamageEvent> = {}): CombatDamageEvent {
     source: "projectile",
     classification: "direct",
     shieldAbsorbedMilli: 0,
+    shieldLostMilli: 0,
     healthDamageMilli: 1_000,
     ...overrides,
   };
 }
+
+it("keeps every economic result identical when only actual shield loss changes", () => {
+  const input = baseInput({
+    damageEvents: [damage({ shieldAbsorbedMilli: 5_000, shieldLostMilli: 10_000 })],
+    destructionEvents: [destruction()],
+    survivorsAfterShot: ["p1"],
+  });
+  const expected = calculateShotRewards(input);
+  expect(calculateShotRewards({
+    ...input, damageEvents: [damage({ shieldAbsorbedMilli: 5_000, shieldLostMilli: 1 })],
+  })).toEqual(expected);
+});
 
 function destruction(overrides: Partial<CombatDestructionEvent> = {}): CombatDestructionEvent {
   return {

@@ -340,6 +340,7 @@ export class TankManager {
       victimId: playerId,
       source: "fall",
       shieldAbsorbedMilli: 0,
+      shieldLostMilli: 0,
       healthDamageMilli: normalizeDamageToMilli(healthDamage),
     });
   }
@@ -886,6 +887,7 @@ export class TankManager {
           source: "projectile",
           classification: isDirectHitOnThisTank ? "direct" : "indirect",
           shieldAbsorbedMilli: normalizeDamageToMilli(shieldAbsorbed),
+          shieldLostMilli: normalizeDamageToMilli(shieldBefore - tank.shield),
           healthDamageMilli: normalizeDamageToMilli(healthDamage),
         });
       }

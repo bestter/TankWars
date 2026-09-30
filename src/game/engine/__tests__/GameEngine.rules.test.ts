@@ -172,10 +172,11 @@ describe("GameEngine match rules", () => {
     expect(a.money).toBe(525);
   });
 
-  it("logs the resolved local AI damage, destruction and award once in development", () => {
+  it.each([0, 10])("logs the resolved local AI damage, destruction and award once in development with shield=%s", (shield) => {
     const { a, b } = threePlayers();
     a.isHuman = false;
     a.aiProfile = "v4-smart";
+    b.tank.shield = shield;
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     engine.fireProjectile(a.tank.position,
       { angle: 0, power: 50, weaponId: "MISSILE" }, a.id);
@@ -200,9 +201,10 @@ describe("GameEngine match rules", () => {
       shooterId: "a",
       profile: "v4-smart",
       weaponId: "MISSILE",
-      damage: [{ victimId: "b", classification: "direct" }],
+      damage: [{ victimId: "b", classification: "direct", shield: shield / 2,
+        shieldAbsorbed: shield / 2, shieldLost: shield }],
       destructions: [{ victimId: "b", cause: "health-zero" }],
-      awards: [{ playerId: "a", amount: 525 }],
+      awards: [{ playerId: "a", amount: shield === 0 ? 525 : 543 }],
     });
   });
 

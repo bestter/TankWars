@@ -19,6 +19,8 @@ export interface CombatDamageEvent {
   source: DamageSource;
   classification: HitClassification;
   shieldAbsorbedMilli: number;
+  /** Actual shield removed, independent of the economic absorption ratio. */
+  shieldLostMilli: number;
   healthDamageMilli: number;
 }
 
