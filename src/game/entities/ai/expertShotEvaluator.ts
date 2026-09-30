@@ -8,6 +8,7 @@ import { TerrainManager } from "../../engine/Terrain";
 import { TankManager } from "../TankManager";
 import { solveExpertAim } from "./expertAim";
 import { finalizeAdvancedAim } from "./aimCorruption";
+import { aggregateExpertConsequences, compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
 
 const PHYSICS_DT = 1 / 120;
 /** 20 simulated seconds, per forecast. A timeout invalidates only this point. */
@@ -20,8 +21,7 @@ export interface ExpertPoint {
   readonly kind: "tank" | "terrain" | "pair";
 }
 
-export interface ExpertShotResult {
-  readonly destination: ExpertPoint | -1;
+interface ExpertShotBase {
   readonly profit: number;
   readonly destroyedIds: ReadonlySet<string>;
   readonly shooterDestroyed: boolean;
@@ -31,14 +31,29 @@ export interface ExpertShotResult {
   readonly idealCommand?: { readonly angle: number; readonly power: number };
 }
 
-export interface PhysicalForecast {
-  readonly complete: boolean;
+export interface ValidExpertShotResult extends ExpertShotBase, ExpertConsequences {
+  readonly destination: ExpertPoint;
+}
+
+export type ExpertShotResult = ValidExpertShotResult | (ExpertShotBase & {
+  readonly destination: -1;
+});
+
+export function isValidExpertShot(result: ExpertShotResult): result is ValidExpertShotResult {
+  return result.destination !== -1;
+}
+
+interface PhysicalForecastBase {
   readonly hits: readonly ProjectileHitEvent[];
   readonly damage: readonly CombatDamageEvent[];
   readonly destruction: readonly CombatDestructionEvent[];
   readonly survivors: readonly string[];
   readonly profit: number;
 }
+
+export type PhysicalForecast = PhysicalForecastBase & (
+  { readonly complete: true } & ExpertConsequences | { readonly complete: false }
+);
 
 /** One cache belongs to one immutable decision snapshot. No entries survive the decision. */
 export interface ExpertForecastCache {
@@ -163,7 +178,8 @@ export function forecastPhysicalShot(
   });
   const shooterAward = reward.awards.find((award) => award.playerId === shooter.id)?.amount ?? 0;
   return {
-    complete,
+    complete: true,
+    ...aggregateExpertConsequences(players, FORECAST_SHOT_ID, shooter.id, damage, destruction),
     hits,
     damage,
     destruction,
@@ -217,7 +233,9 @@ export function evaluateExpertShot(
       cache.physics.set(physicsKey, forecast);
     }
     if (!forecast.complete) continue;
-    const destroyedIds = new Set(forecast.destruction.map((event) => event.victimId));
+    const destroyedIds = new Set(forecast.destruction
+      .filter((event) => event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id)
+      .map((event) => event.victimId));
     const hasEnemyEffect = forecast.damage.some((event) =>
       event.victimId !== shooter.id && event.shooterId === shooter.id &&
       event.shieldAbsorbedMilli + event.healthDamageMilli > 0) ||
@@ -231,7 +249,11 @@ export function evaluateExpertShot(
       : forecast.hits.some((hit) => Math.hypot(hit.x - point.x, hit.y - point.y) <=
           Math.max(24, WEAPON_REGISTRY[weaponId].blastRadius));
     if (!pointMatches) continue;
-    const candidate: ExpertShotResult = {
+    const candidate: ValidExpertShotResult = {
+      humanDestroyedCount: forecast.humanDestroyedCount,
+      humanDamageMilli: forecast.humanDamageMilli,
+      aiDestroyedCount: forecast.aiDestroyedCount,
+      aiDamageMilli: forecast.aiDamageMilli,
       destination: point,
       profit: forecast.profit,
       destroyedIds,
@@ -240,9 +262,10 @@ export function evaluateExpertShot(
       forecast,
       idealCommand: command,
     };
-    if (best.destination === -1 ||
-        Number(best.shooterDestroyed) > Number(candidate.shooterDestroyed) ||
-        (best.shooterDestroyed === candidate.shooterDestroyed && candidate.profit > best.profit)) {
+    if (!isValidExpertShot(best) ||
+        (Number(candidate.shooterDestroyed) - Number(best.shooterDestroyed) ||
+          best.profit - candidate.profit ||
+          compareExpertConsequences(candidate, best) || candidate.pointOrder - best.pointOrder) < 0) {
       best = candidate;
     }
   }

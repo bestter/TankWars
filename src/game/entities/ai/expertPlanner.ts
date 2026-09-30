@@ -5,7 +5,8 @@ import { secureRandom } from "../../../utils/random";
 import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
-import { createExpertForecastCache, evaluateExpertShot, type ExpertShotResult } from "./expertShotEvaluator";
+import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult } from "./expertShotEvaluator";
+import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
 
 export interface ExpertPlan {
   readonly weaponId: WeaponId;
@@ -15,7 +16,7 @@ export interface ExpertPlan {
 
 interface RankedPlan extends ExpertPlan {
   readonly targetIds: readonly string[];
-  readonly result: ExpertShotResult;
+  readonly result: ValidExpertShotResult;
   readonly profileScore: number;
   readonly nextTurnDelay: number;
   readonly nextTurnIndex: number;
@@ -23,7 +24,7 @@ interface RankedPlan extends ExpertPlan {
   readonly order: number;
 }
 
-interface ExpertCandidateTrace {
+interface ExpertCandidateTrace extends ExpertConsequences {
   readonly weaponId: WeaponId;
   readonly targetIds: readonly string[];
   readonly primaryTargetId: string;
@@ -43,6 +44,8 @@ interface ExpertCandidateTrace {
     source: string;
     classification: string;
     shield: number;
+    shieldAbsorbed: number;
+    shieldLost: number;
     health: number;
   }[];
   readonly predictedDestructions?: readonly { victimId: string; cause: string }[];
@@ -79,6 +82,10 @@ function traceCandidate(candidate: RankedPlan): ExpertCandidateTrace {
     point: candidate.point,
     pointOrder: result.pointOrder,
     profit: result.profit,
+    humanDestroyedCount: result.humanDestroyedCount,
+    humanDamageMilli: result.humanDamageMilli,
+    aiDestroyedCount: result.aiDestroyedCount,
+    aiDamageMilli: result.aiDamageMilli,
     ammunitionCost,
     predictedShooterReward: result.profit + ammunitionCost,
     shooterDestroyed: result.shooterDestroyed,
@@ -94,6 +101,8 @@ function traceCandidate(candidate: RankedPlan): ExpertCandidateTrace {
       source: event.source,
       classification: event.classification,
       shield: event.shieldAbsorbedMilli / 1_000,
+      shieldAbsorbed: event.shieldAbsorbedMilli / 1_000,
+      shieldLost: event.shieldLostMilli / 1_000,
       health: event.healthDamageMilli / 1_000,
     })),
     predictedDestructions: forecast?.destruction.map((event) => ({
@@ -102,15 +111,30 @@ function traceCandidate(candidate: RankedPlan): ExpertCandidateTrace {
   };
 }
 
-function selectionReason(winner: RankedPlan, runnerUp: RankedPlan | undefined): string {
+function compareSurvivalPlans(a: RankedPlan, b: RankedPlan): number {
+  return b.result.profit - a.result.profit ||
+    compareExpertConsequences(a.result, b.result) ||
+    a.weaponOrder - b.weaponOrder || a.order - b.order ||
+    a.result.pointOrder - b.result.pointOrder;
+}
+
+function selectionReason(
+  phase: ExpertDecisionTrace["phase"], winner: RankedPlan, runnerUp: RankedPlan | undefined,
+): string {
   if (!runnerUp) return "seul candidat admissible";
   if (winner.result.shooterDestroyed !== runnerUp.result.shooterDestroyed) {
     return "EXPERT survit, contrairement au suivant";
   }
   if (winner.result.profit !== runnerUp.result.profit) return "profit net supérieur";
-  if (winner.profileScore !== runnerUp.profileScore) return "score de profil supérieur";
-  if (winner.nextTurnDelay !== runnerUp.nextTurnDelay) return "adversaire jouant plus tôt";
-  if (winner.nextTurnIndex !== runnerUp.nextTurnIndex) return "ordre du roster";
+  if (winner.result.humanDestroyedCount !== runnerUp.result.humanDestroyedCount) return "moins d'humains détruits";
+  if (winner.result.humanDamageMilli !== runnerUp.result.humanDamageMilli) return "moins de dégâts aux humains";
+  if (winner.result.aiDestroyedCount !== runnerUp.result.aiDestroyedCount) return "davantage d'IA détruites";
+  if (winner.result.aiDamageMilli !== runnerUp.result.aiDamageMilli) return "davantage de dégâts aux IA";
+  if (phase === "OPTIMISER_PROFIT") {
+    if (winner.profileScore !== runnerUp.profileScore) return "score de profil supérieur";
+    if (winner.nextTurnDelay !== runnerUp.nextTurnDelay) return "adversaire jouant plus tôt";
+    if (winner.nextTurnIndex !== runnerUp.nextTurnIndex) return "ordre du roster";
+  }
   if (winner.weaponOrder !== runnerUp.weaponOrder) return "ordre stable des armes";
   return "ordre stable des groupes ou des points";
 }
@@ -193,12 +217,12 @@ export function chooseExpertPlan(
   const shooterWeapons = ALL_WEAPON_IDS.filter((id) => id !== "BULLDOZER" &&
     (id === "MISSILE" || (self.inventory[id] ?? 0) > 0));
 
-  const threats: { player: Player; result: ExpertShotResult }[] = [];
+  const threats: { player: Player; result: ValidExpertShotResult }[] = [];
   for (const enemy of enemies) {
-    let best: ExpertShotResult | null = null;
+    let best: ValidExpertShotResult | null = null;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
       const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache);
-      if (result.destination === -1) continue;
+      if (!isValidExpertShot(result)) continue;
       if (!best ||
           Number(best.shooterDestroyed) > Number(result.shooterDestroyed) ||
           (best.shooterDestroyed === result.shooterDestroyed && result.profit > best.profit)) {
@@ -249,7 +273,7 @@ export function chooseExpertPlan(
       availableWeapons: shooterWeapons,
       candidateCount: ranked.length,
       selected: selected && traceCandidate(selected),
-      selectionReason: selected && selectionReason(selected, runnerUp),
+      selectionReason: selected && selectionReason(phase, selected, runnerUp),
       runnerUp: runnerUp && traceCandidate(runnerUp),
       bestByWeapon,
     });
@@ -275,7 +299,7 @@ export function chooseExpertPlan(
       for (const group of groups) {
         const result = evaluate(state, terrain, self, weapon, group, true,
           state.localShotContext.isFirstShotOfRound, cache);
-        if (result.destination === -1 || result.shooterDestroyed) {
+        if (!isValidExpertShot(result) || result.shooterDestroyed) {
           order++;
           continue;
         }
@@ -293,14 +317,14 @@ export function chooseExpertPlan(
         };
         survivalCandidateCount++;
         survivalCandidates?.push(candidate);
-        if (!bestSurvival || candidate.result.profit > bestSurvival.result.profit) {
+        if (!bestSurvival || compareSurvivalPlans(candidate, bestSurvival) < 0) {
           bestSurvival = candidate;
         }
       }
     }
     if (bestSurvival) {
       if (survivalCandidates) {
-        survivalCandidates.sort((a, b) => b.result.profit - a.result.profit);
+        survivalCandidates.sort(compareSurvivalPlans);
         report("SURVIE", `menace ${threat.id} à neutraliser par un tir non suicidaire`,
           survivalCandidates, bestSurvival);
       }
@@ -322,7 +346,7 @@ export function chooseExpertPlan(
     for (const weapon of shooterWeapons) {
       const result = evaluate(state, terrain, self, weapon, group, false,
         state.localShotContext.isFirstShotOfRound, cache);
-      if (result.destination !== -1) candidates.push({
+      if (isValidExpertShot(result)) candidates.push({
         weaponId: weapon,
         point: result.destination,
         targetIds: group.map((player) => player.id),
@@ -339,6 +363,7 @@ export function chooseExpertPlan(
   candidates.sort((a, b) =>
     Number(a.result.shooterDestroyed) - Number(b.result.shooterDestroyed) ||
     b.result.profit - a.result.profit ||
+    compareExpertConsequences(a.result, b.result) ||
     b.profileScore - a.profileScore ||
     a.nextTurnDelay - b.nextTurnDelay ||
     a.nextTurnIndex - b.nextTurnIndex ||

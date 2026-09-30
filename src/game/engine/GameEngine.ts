@@ -591,6 +591,8 @@ export class GameEngine {
             source: event.source,
             classification: event.classification,
             shield: event.shieldAbsorbedMilli / 1_000,
+            shieldAbsorbed: event.shieldAbsorbedMilli / 1_000,
+            shieldLost: event.shieldLostMilli / 1_000,
             health: event.healthDamageMilli / 1_000,
           })),
           destructions: ledger.destructionEvents.map((event) => ({

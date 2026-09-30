@@ -24,6 +24,48 @@ function explosion(overrides: Partial<ExplosionDamageOptions> = {}): ExplosionDa
 }
 
 describe("TankManager.applyExplosionDamage", () => {
+  it.each([
+    { direct: true, shield: 40, damage: 5, lost: 10_000, absorbed: 5_000, health: 0 },
+    { direct: false, shield: 40, damage: 5, lost: 5_000, absorbed: 5_000, health: 0 },
+    { direct: true, shield: 0, damage: 5, lost: 0, absorbed: 0, health: 5_000 },
+  ])("emits applied losses for direct=$direct and shield=$shield", ({ direct, shield, damage, lost, absorbed, health }) => {
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100, 200, { shield }) });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.applyExplosionDamage(explosion({ isDirectHit: direct, maxDamage: damage, shotId: 1, munitionId: 0 }));
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldLostMilli: lost, shieldAbsorbedMilli: absorbed, healthDamageMilli: health,
+    }));
+  });
+
+  it("normalizes fractional losses separately on successive applied events", () => {
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100, 200) });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    for (const munitionId of [0, 1]) {
+      tm.applyExplosionDamage(explosion({ maxDamage: 0.0004, shotId: 1, munitionId }));
+    }
+    expect(applied).toHaveBeenCalledTimes(2);
+    for (const [event] of applied.mock.calls) {
+      expect(event).toMatchObject({ shieldLostMilli: 0, healthDamageMilli: 0 });
+    }
+    expect(target.tank.health).toBeCloseTo(99.9992);
+  });
+
+  it.each([true, false])("reports actual THERMONUCLEAR losses for direct=$direct", (direct) => {
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100, 200, { shield: 39 }) });
+    const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.applyExplosionDamage(explosion({ weaponId: "THERMONUCLEAR", isDirectHit: direct, shotId: 1, munitionId: 0 }));
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldLostMilli: 39_000, shieldAbsorbedMilli: direct ? 20_000 : 39_000,
+      healthDamageMilli: 100_000,
+    }));
+  });
+
   it.each([-0.001, 0, 0.001])("preserves the inclusive THERMO kill boundary at 75 + %s px", (delta) => {
     const distance = THERMONUCLEAR_INSTANT_KILL_RADIUS + delta;
     const target = makePlayer({ id: "victim", tank: makeTank("victim", 100 + distance, 200,
@@ -61,6 +103,7 @@ describe("TankManager.applyExplosionDamage", () => {
       munitionId: 3,
       classification: "direct",
       shieldAbsorbedMilli: 5_000,
+      shieldLostMilli: 10_000,
       healthDamageMilli: 0,
     }));
   });
@@ -81,11 +124,12 @@ describe("TankManager.applyExplosionDamage", () => {
     }));
     expect(applied).toHaveBeenCalledWith(expect.objectContaining({
       shieldAbsorbedMilli: 2_000,
+      shieldLostMilli: 4_000,
       healthDamageMilli: 4_000,
     }));
   });
 
-  it("reports real shield and health loss for instant massive kill zones", () => {
+  it("reports absorption separately from actual shield and health loss for instant massive kill zones", () => {
     const target = makePlayer({
       id: "victim",
       tank: makeTank("t-v", 100, 200, { health: 100, shield: 40, maxShield: 40 }),
@@ -103,6 +147,7 @@ describe("TankManager.applyExplosionDamage", () => {
     }));
     expect(applied).toHaveBeenCalledWith(expect.objectContaining({
       shieldAbsorbedMilli: 20_000,
+      shieldLostMilli: 40_000,
       healthDamageMilli: 100_000,
     }));
   });
@@ -309,12 +354,17 @@ describe("TankManager.applyExplosionDamage", () => {
       tank: makeTank("t-v", 100, 200, { health: 100, shield: 1, maxShield: 40 }),
     });
     const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
 
-    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 1, isDirectHit: true }));
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 1, isDirectHit: true, shotId: 1, munitionId: 0 }));
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(100);
     expect(target.tank.isDead).toBe(false);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldAbsorbedMilli: 1000, shieldLostMilli: 1000, healthDamageMilli: 0,
+    }));
   });
 
   it("handles odd shield = 39 on direct hit with non-multiple-of-2 damage = 25", () => {
@@ -326,12 +376,17 @@ describe("TankManager.applyExplosionDamage", () => {
       tank: makeTank("t-v", 100, 200, { health: 100, shield: 39, maxShield: 40 }),
     });
     const tm = managerWith(target);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
 
-    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 25, isDirectHit: true }));
+    tm.applyExplosionDamage(explosion({ radius: 28, maxDamage: 25, isDirectHit: true, shotId: 1, munitionId: 0 }));
 
     expect(target.tank.shield).toBe(0);
     expect(target.tank.health).toBe(95);
     expect(target.tank.isDead).toBe(false);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      shieldAbsorbedMilli: 20000, shieldLostMilli: 39000, healthDamageMilli: 5000,
+    }));
   });
 
   it("handles odd shield = 39 on direct hit with damage = 15 without touching health", () => {
@@ -367,6 +422,8 @@ describe("TankManager.applyGravity and burial", () => {
     expect(applied).toHaveBeenCalled();
     expect(applied.mock.calls.every(([event]) => event.classification === "direct")).toBe(true);
     expect(applied.mock.calls.every(([event]) => event.shotId === 12)).toBe(true);
+    expect(applied.mock.calls.every(([event]) => event.shieldLostMilli === 0 &&
+      event.munitionId === 4 && event.shooterId === "cluster-owner")).toBe(true);
   });
   it("applies fall damage while dropping through a crater", () => {
     const tank = makeTank("t-v", 50, 80, { health: 100, shield: 0 });
@@ -387,6 +444,9 @@ describe("TankManager.applyGravity and burial", () => {
     const player = makePlayer({ id: "victim", tank });
     const tm = managerWith(player);
     const terrain = flatTerrain(200, 200, 0.9);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.beginShotAttribution(13, "killer", "MISSILE");
 
     tm.updateTankPositions(terrain);
     for (let i = 0; i < 80; i++) {
@@ -395,6 +455,11 @@ describe("TankManager.applyGravity and burial", () => {
 
     expect(tank.shield).toBe(40);
     expect(tank.health).toBeLessThan(100);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({
+      source: "fall", shieldLostMilli: 0, shieldAbsorbedMilli: 0,
+    }));
+    expect(applied.mock.calls.reduce((total, [event]) => total + event.healthDamageMilli, 0))
+      .toBe(Math.round((100 - tank.health) * 1000));
   });
 
   it("kills tank when fall damage reduces health to 0 even if shield is intact", () => {
