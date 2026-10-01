@@ -1,5 +1,13 @@
-const CACHE_NAME = "tankwars-v2";
-const ASSETS = ["/", "/index.html", "/favicon.svg", "/manifest.json"];
+const CACHE_NAME = "tankwars-v3";
+const ASSETS = [
+  "/",
+  "/index.html",
+  "/favicon.svg",
+  "/favicon-32.png",
+  "/apple-touch-icon.png",
+  "/icon-512.png",
+  "/manifest.json",
+];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(

@@ -16,6 +16,7 @@
 import { useTranslation } from 'react-i18next';
 import { VGA_PALETTE } from '../types/game';
 import type { OnlineLobbyProps } from './onlineLobbyTypes';
+import { GameLogo } from './GameLogo';
 import { OnlineLobbyCreate } from './OnlineLobbyCreate';
 import { OnlineLobbyWaiting } from './OnlineLobbyWaiting';
 import { useOnlineLobby } from './useOnlineLobby';
@@ -31,7 +32,7 @@ export function OnlineLobby(props: OnlineLobbyProps) {
     <div className="retro-menu-container" style={{ padding: 12 }}>
       <div className="retro-menu-frame" style={{ maxWidth: 820, margin: '0 auto' }}>
         <div className="retro-menu-inner">
-          <h1 className="retro-title" style={{ fontSize: 28 }}>{t('main_title')}</h1>
+          <GameLogo compact />
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>
 
           {error && (

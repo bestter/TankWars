@@ -382,7 +382,7 @@
 
 /* ========================================
    Retro DOS / VGA Main Menu styles
-   Double-line borders, flashing title, config rows
+   Double-line borders, pixel logo, config rows
    ======================================== */
 
 .retro-menu-frame {
@@ -402,19 +402,27 @@
 }
 
 .retro-title {
-  font-size: 34px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  color: #FFFF55;
-  text-shadow: 0 0 6px #FFFF00, 2px 2px 0 #000000;
-  animation: vga-flash 820ms infinite steps(2, end);
+  position: relative;
   margin: 0 0 2px 0;
   text-align: center;
 }
 
-@keyframes vga-flash {
-  0%, 49% { color: #FFFF55; }
-  50%, 100% { color: #FFFFFF; }
+.retro-logo {
+  display: block;
+  margin: 0 auto;
+  shape-rendering: crispEdges;
+}
+
+.retro-logo-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .retro-subtitle {
