@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { version } from "../../package.json";
 import type { Color } from "../types/game";
 import type { PlayerConfig } from "./MainMenu";
+import { GameLogo } from "./GameLogo";
 import { PlayerConfigList } from "./PlayerConfigList";
 import type { PlayerController } from "./playerControllerUi";
 
@@ -51,7 +52,7 @@ export function MainMenuView({
     <div className="retro-menu-container" onClickCapture={onMenuClickCapture}>
       <div className="retro-menu-frame">
         <div className="retro-menu-inner">
-          <h1 className="retro-title">{t("main_title")}</h1>
+          <GameLogo />
           <p className="retro-subtitle" style={{ whiteSpace: "pre-line" }}>
             {t("retro_subtitle")}
           </p>

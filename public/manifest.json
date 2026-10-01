@@ -6,7 +6,7 @@
   "display": "standalone",
   "orientation": "landscape",
   "background_color": "#000000",
-  "theme_color": "#00ffff",
+  "theme_color": "#55FFFF",
   "icons": [
     {
       "src": "/favicon.svg",
@@ -15,15 +15,21 @@
       "purpose": "any"
     },
     {
-      "src": "/favicon.svg",
-      "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/favicon.svg",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ]
