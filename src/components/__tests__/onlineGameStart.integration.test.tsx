@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, renderHook, act } from "@testing-library/react";
 import { useOnlineLobby } from "../useOnlineLobby";
 import { useGameSession } from "../useGameSession";
-import { makePlayer, makeTank } from "../../game/__tests__/helpers";
+import { makePlayer, makeTank, makeRoundMap } from "../../game/__tests__/helpers";
 import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
 import type { Player } from "../../types/player";
 import type { ServerGameMessage } from "../../types/room";
+import { TerrainManager } from "../../game/engine/Terrain";
+import { TankManager } from "../../game/entities/TankManager";
+import * as wind from "../../game/wind";
+import { resetRNG } from "../../utils/random";
 
 // Mock react-i18next
 vi.mock("react-i18next", () => ({
@@ -42,6 +46,7 @@ describe("Online GAME_START with materials integration", () => {
 
   afterEach(() => {
     cleanup();
+    resetRNG();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -119,12 +124,11 @@ describe("Online GAME_START with materials integration", () => {
       const gameStartMsg: ServerGameMessage = {
         type: "GAME_START",
         players: [
-          makePlayer({ id: "player-1", name: "Player 1", isHuman: true }),
-          makePlayer({ id: "player-2", name: "Player 2", isHuman: true }),
+          makePlayer({ id: "player-1", name: "Player 1", isHuman: true, tank: makeTank("tank-1", 120, heights[120]) }),
+          makePlayer({ id: "player-2", name: "Player 2", isHuman: true, tank: makeTank("tank-2", 600, heights[600]) }),
         ],
-        heights,
-        materials,
-        wind: 8,
+        protocolVersion: 2,
+        map: { ...makeRoundMap(), heights, materials, wind: 8 },
         currentPlayerIndex: 0,
       };
 
@@ -138,13 +142,16 @@ describe("Online GAME_START with materials integration", () => {
     expect(startedPlayers.length).toBe(2);
     expect(meta.gameMode).toBe("online");
     expect(meta.roomId).toBe("room-abc");
-    expect(meta.initialHeights).toEqual(heights);
-    expect(meta.initialMaterials).toEqual(materials);
-    expect(meta.initialWind).toBe(8);
+    expect(meta.initialMap.heights).toEqual(heights);
+    expect(meta.initialMap.materials).toEqual(materials);
+    expect(meta.initialMap.wind).toBe(8);
     expect(meta.initialCurrentPlayerIndex).toBe(0);
   });
 
   it("useGameSession loads authoritative heights and materials into client game engine", () => {
+    const generate = vi.spyOn(TerrainManager.prototype, "generate");
+    const spawn = vi.spyOn(TankManager.prototype, "spawnTanks");
+    const roll = vi.spyOn(wind, "rollRoundWind");
     const fixedHeight = 320;
     const heights = Array.from({ length: CANVAS_WIDTH }, () => fixedHeight);
     const materials: TerrainMaterial[] = Array.from({ length: CANVAS_WIDTH }, (_, i) => {
@@ -158,13 +165,13 @@ describe("Online GAME_START with materials integration", () => {
         id: "player-1",
         name: "Joueur-1",
         isHuman: true,
-        tank: makeTank("tank-1", 150, 200),
+        tank: makeTank("tank-1", 150, fixedHeight),
       }),
       makePlayer({
         id: "player-2",
         name: "Joueur-2",
         isHuman: true,
-        tank: makeTank("tank-2", 600, 200),
+        tank: makeTank("tank-2", 600, fixedHeight),
       }),
     ];
 
@@ -176,9 +183,7 @@ describe("Online GAME_START with materials integration", () => {
         gameMode: "online",
         roomId: "room-abc",
         localPlayerId: "player-1",
-        initialHeights: heights,
-        initialMaterials: materials,
-        initialWind: 10,
+        initialMap: { ...makeRoundMap(), heights, materials, wind: 10 },
         initialCurrentPlayerIndex: 0,
       });
       sessionApi = session;
@@ -186,6 +191,10 @@ describe("Online GAME_START with materials integration", () => {
     }
 
     render(<Harness />);
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(roll).not.toHaveBeenCalled();
 
     expect(sessionApi).not.toBeNull();
     const state = sessionApi!.state;
@@ -198,21 +207,20 @@ describe("Online GAME_START with materials integration", () => {
     }
   });
 
-  it("useGameSession safely handles GAME_START when materials array is omitted", () => {
+  it("refuses an online start without a map and leaves combat stopped", () => {
     const fixedHeight = 280;
-    const heights = Array.from({ length: CANVAS_WIDTH }, () => fixedHeight);
     const players: Player[] = [
       makePlayer({
         id: "player-1",
         name: "Joueur-1",
         isHuman: true,
-        tank: makeTank("tank-1", 150, 200),
+        tank: makeTank("tank-1", 150, fixedHeight),
       }),
       makePlayer({
         id: "player-2",
         name: "Joueur-2",
         isHuman: true,
-        tank: makeTank("tank-2", 600, 200),
+        tank: makeTank("tank-2", 600, fixedHeight),
       }),
     ];
 
@@ -224,9 +232,7 @@ describe("Online GAME_START with materials integration", () => {
         gameMode: "online",
         roomId: "room-abc",
         localPlayerId: "player-1",
-        initialHeights: heights,
-        initialMaterials: undefined,
-        initialWind: 5,
+        initialMap: undefined,
         initialCurrentPlayerIndex: 0,
       });
       sessionApi = session;
@@ -236,9 +242,7 @@ describe("Online GAME_START with materials integration", () => {
     render(<Harness />);
 
     expect(sessionApi).not.toBeNull();
-    expect(sessionApi!.state.gamePhase).toBe("COMBAT");
-    for (const p of sessionApi!.state.uiPlayers) {
-      expect(p.tank.position.y).toBe(fixedHeight);
-    }
+    expect(sessionApi!.state.roundPreparationError).toBe("EXHAUSTED");
+    expect(sessionApi!.state.uiPlayers).toEqual([]);
   });
 });

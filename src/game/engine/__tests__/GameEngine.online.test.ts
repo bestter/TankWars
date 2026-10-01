@@ -109,7 +109,7 @@ describe('GameEngine online multiplayer', () => {
       money: 250,
       tank: makeTank('tank-bystander', 110, 120, { health: 100, shield: 40, maxShield: 40 }),
     });
-    engine.setPlayers([zeus, target, bystander]);
+    engine.getTankManager().setPlayers([zeus, target, bystander]);
     const terrainBefore = [25, 100, 175].map((x) => engine.getTerrain().getHeightAt(x));
     const applied = vi.fn();
     engine.onZeusStrikeApplied = applied;

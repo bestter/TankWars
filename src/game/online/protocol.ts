@@ -1,8 +1,10 @@
+import { isRoundMap, hasValidSpawnRoster, type RoundMap } from "../round/prepareRound";
 import {
   FIRE_COMMAND_MAX_ANGLE,
   FIRE_COMMAND_MAX_POWER,
   FIRE_COMMAND_MIN_ANGLE,
   FIRE_COMMAND_MIN_POWER,
+  VGA_PALETTE,
   type FireCommand,
 } from "../../types/game";
 import type { Player } from "../../types/player";
@@ -13,10 +15,9 @@ import type {
   ShopVisitCounters,
 } from "../shop/shopTransaction";
 import { isValidActionId } from "./actionId";
-import type { TerrainMaterial } from "../../types/terrain";
 
-export const ONLINE_PROTOCOL_VERSION = 1 as const;
-export const MINIMUM_CLIENT_PROTOCOL_VERSION = 0 as const;
+export const ONLINE_PROTOCOL_VERSION = 2 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 2 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
@@ -37,10 +38,8 @@ export interface GameStartMessage {
   type: "GAME_START";
   protocolVersion: typeof ONLINE_PROTOCOL_VERSION;
   currentPlayerIndex: number;
-  wind?: number;
-  players?: Player[];
-  heights?: number[];
-  materials?: TerrainMaterial[];
+  players: Player[];
+  map: RoundMap;
 }
 
 export interface ClientFireMessage {
@@ -112,6 +111,7 @@ export interface ShopRejectedMessage {
 }
 
 export interface ShopFinishMessage {
+  map: RoundMap;
   type: "SHOP_FINISH";
   shopEpoch: number;
   completedRoundNumber: number;
@@ -229,7 +229,14 @@ export interface ZeusStateMessage {
   lastAppliedStrikeId: number;
 }
 
+export interface RoundPreparationFailedMessage {
+  type: "ROUND_PREPARATION_FAILED";
+  reason: "EXHAUSTED" | "NEW_GAME_REQUIRED";
+  roundNumber: number;
+}
+
 export type StrictOnlineMessage =
+  | RoundPreparationFailedMessage
   | RequestGameStartMessage
   | ProtocolMismatchMessage
   | GameStartMessage
@@ -421,6 +428,7 @@ function isPlayers(value: unknown): value is Player[] {
         if (
           !isRecord(entry) ||
           typeof entry.id !== "string" ||
+          entry.id.trim().length === 0 ||
           typeof entry.name !== "string" ||
           typeof entry.isHuman !== "boolean" ||
           !isSafeNonNegativeInteger(entry.money) ||
@@ -433,6 +441,7 @@ function isPlayers(value: unknown): value is Player[] {
         const tank = entry.tank;
         return (
           typeof tank.id === "string" &&
+          tank.id.trim().length > 0 &&
           isRecord(tank.position) &&
           typeof tank.position.x === "number" &&
           Number.isFinite(tank.position.x) &&
@@ -440,18 +449,29 @@ function isPlayers(value: unknown): value is Player[] {
           Number.isFinite(tank.position.y) &&
           typeof tank.angle === "number" &&
           Number.isFinite(tank.angle) &&
+          tank.angle >= FIRE_COMMAND_MIN_ANGLE && tank.angle <= FIRE_COMMAND_MAX_ANGLE &&
           typeof tank.power === "number" &&
           Number.isFinite(tank.power) &&
+          tank.power >= FIRE_COMMAND_MIN_POWER && tank.power <= FIRE_COMMAND_MAX_POWER &&
           typeof tank.health === "number" &&
           Number.isFinite(tank.health) &&
           typeof tank.maxHealth === "number" &&
           Number.isFinite(tank.maxHealth) &&
+          tank.maxHealth >= 0 && tank.health >= 0 && tank.health <= tank.maxHealth &&
           typeof tank.shield === "number" &&
           Number.isFinite(tank.shield) &&
           typeof tank.maxShield === "number" &&
           Number.isFinite(tank.maxShield) &&
+          tank.maxShield >= 0 && tank.shield >= 0 && tank.shield <= tank.maxShield &&
           typeof tank.isDead === "boolean" &&
           typeof tank.color === "string" &&
+          Object.values(VGA_PALETTE).some((color) => color === tank.color) &&
+          (entry.aiProfile === undefined || (typeof entry.aiProfile === "string" && ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"].includes(entry.aiProfile))) &&
+          (tank.lastHitBy === undefined || typeof tank.lastHitBy === "string") &&
+          (tank.lastDirectAttackerId === undefined || typeof tank.lastDirectAttackerId === "string") &&
+          (tank.hitReaction === undefined || (isRecord(tank.hitReaction) &&
+            typeof tank.hitReaction.wasDirectHit === "boolean" &&
+            typeof tank.hitReaction.fallDistance === "number" && Number.isFinite(tank.hitReaction.fallDistance) && tank.hitReaction.fallDistance >= 0)) &&
           isWeaponId(tank.currentWeapon)
         );
       },
@@ -493,7 +513,9 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
     case "GAME_START":
       return (
         value.protocolVersion === ONLINE_PROTOCOL_VERSION &&
-        isSafeNonNegativeInteger(value.currentPlayerIndex)
+        isSafeNonNegativeInteger(value.currentPlayerIndex) &&
+        isPlayers(value.players) && value.currentPlayerIndex < value.players.length &&
+        isRoundMap(value.map) && hasValidSpawnRoster(value.map, value.players)
       );
     case "FIRE":
       return isValidActionId(value.actionId) && isFireCommand(value.command);
@@ -572,12 +594,17 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         (value.delta === undefined || value.delta === 1 || value.delta === -1) &&
         isShopDenial(value.reason)
       );
+    case "ROUND_PREPARATION_FAILED":
+      return (value.reason === "EXHAUSTED" || value.reason === "NEW_GAME_REQUIRED") &&
+        isSafeNonNegativeInteger(value.roundNumber);
     case "SHOP_FINISH":
       return (
         isSafeNonNegativeInteger(value.shopEpoch) &&
         isSafeNonNegativeInteger(value.completedRoundNumber) &&
         isSafeNonNegativeInteger(value.nextRoundNumber) &&
-        isPlayers(value.players) &&
+        value.nextRoundNumber === Number(value.completedRoundNumber) + 1 &&
+        isRoundMap(value.map) && value.map.roundNumber === value.nextRoundNumber &&
+        isPlayers(value.players) && hasValidSpawnRoster(value.map, value.players) &&
         (value.acknowledgedAction === undefined ||
           isShopActionAcknowledgement(value.acknowledgedAction))
       );
@@ -765,25 +792,4 @@ export function readProtocolVersion(value: unknown): number | null {
   return isSafeNonNegativeInteger(value.protocolVersion)
     ? value.protocolVersion
     : null;
-}
-
-export function isLegacyFirePayload(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    value.type === "FIRE" &&
-    value.actionId === undefined &&
-    isFireCommand(value.command)
-  );
-}
-
-export function isLegacyShopPayload(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  if (value.type === "SHOP_ADVANCE") return true;
-  if (value.type === "SHOP_BUY_SELL") {
-    return isRecord(value.player) || value.actionId === undefined;
-  }
-  if (value.type === "SHOP_READY") {
-    return value.actionId === undefined;
-  }
-  return false;
 }

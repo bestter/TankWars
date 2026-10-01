@@ -1,8 +1,8 @@
+import { type RoundMap } from "../game/round/prepareRound";
 import { useEffect, type MutableRefObject } from "react";
 import type { GameEngine } from "../game/engine/GameEngine";
 import type { GamePhase } from "../types/game";
 import type { Player } from "../types/player";
-import type { TerrainMaterial } from "../types/terrain";
 import {
   clearOnlineSession,
   persistOnlineSession,
@@ -30,9 +30,7 @@ export function usePersistOnlineCanvas(opts: {
   readonly lastRoundOutcome: { isDraw: boolean; winner: Player | null } | null;
   readonly canvasWind: number;
   readonly initialPlayers?: Player[];
-  readonly initialHeights?: number[];
-  readonly initialMaterials?: TerrainMaterial[];
-  readonly initialWind?: number;
+  readonly initialMap?: RoundMap;
   readonly initialCurrentPlayerIndex?: number;
   readonly earningsOverlay: EarningsOverlayState | null;
   readonly shopSession: ShopClientSessionState;
@@ -62,9 +60,7 @@ export function usePersistOnlineCanvas(opts: {
     lastRoundOutcome,
     canvasWind,
     initialPlayers,
-    initialHeights,
-    initialMaterials,
-    initialWind,
+    initialMap,
     initialCurrentPlayerIndex,
     earningsOverlay,
     shopSession,
@@ -95,7 +91,7 @@ export function usePersistOnlineCanvas(opts: {
       return;
     }
     const roster = uiPlayers.length > 0 ? uiPlayers : (initialPlayers ?? []);
-    if (roster.length < 2) return;
+    if (roster.length < 2 || !engineRef.current) return;
 
     persistOnlineSession({
       meta: {
@@ -103,13 +99,12 @@ export function usePersistOnlineCanvas(opts: {
         localPlayerId,
         slot,
         token,
-        initialHeights,
-        initialMaterials,
-        initialWind,
+        initialMap: engineRef.current?.getInitialRoundMap() ?? initialMap,
         initialCurrentPlayerIndex,
       },
       players: roster,
       canvas: {
+        map: engineRef.current!.getCombatMap(engineRef.current?.getInitialRoundMap()?.roundNumber ?? currentManche),
         gamePhase,
         currentManche,
         uiPlayers: roster,
@@ -150,9 +145,7 @@ export function usePersistOnlineCanvas(opts: {
     lastRoundOutcome,
     canvasWind,
     initialPlayers,
-    initialHeights,
-    initialMaterials,
-    initialWind,
+    initialMap,
     initialCurrentPlayerIndex,
     earningsOverlay,
     shopSession,

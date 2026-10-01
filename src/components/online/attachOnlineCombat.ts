@@ -1,3 +1,4 @@
+import type { RoundMap } from "../../game/round/prepareRound";
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine, ResolvedShotPreview } from "../../game/engine/GameEngine";
 import type { FireCommand } from "../../types/game";
@@ -75,6 +76,7 @@ export interface AttachOnlineCombatOptions {
     players: Player[],
     shopEpoch: number,
     nextRoundNumber: number,
+    map: RoundMap,
   ) => void;
   readonly clearCelebrationTimer: () => void;
   readonly setLocalShopDone: (done: boolean) => void;
@@ -443,6 +445,7 @@ export function attachOnlineCombat(
       item.message.players,
       item.message.shopEpoch,
       item.message.nextRoundNumber,
+      item.message.map,
     );
     schedulePendingShopRetry();
     const queue = shotQueueRef.current;
@@ -646,7 +649,7 @@ export function attachOnlineCombat(
     ) {
       return;
     }
-    const wsUrl = `${wsBase}/api/rooms/${roomId}/ws?slot=${slot}&token=${encodeURIComponent(token)}`;
+    const wsUrl = `${wsBase}/api/rooms/${roomId}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}`;
     gameWs = new WebSocket(wsUrl);
     gameWsRef.current = gameWs;
     bindCombatWsHandlers(gameWs);

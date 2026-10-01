@@ -1,9 +1,10 @@
+import { makeRoundMap } from "../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
-import { makePlayer } from '../game/__tests__/helpers';
+import { makePlayer, makeTank } from '../game/__tests__/helpers';
 import { createEmptyShopSession } from '../components/gameCanvasReducer';
 import type { PersistedOnlineSession } from '../utils/onlineSession';
 
@@ -164,10 +165,11 @@ describe('App component (State and Lifecycle integration)', () => {
   it('confirms before returning from a restored online game', () => {
     const players = [
       makePlayer({ id: 'player-1', name: 'Host' }),
-      makePlayer({ id: 'player-2', name: 'Guest' }),
+      makePlayer({ id: 'player-2', name: 'Guest', tank: makeTank('tank-2', 620, 300) }),
     ];
     const session: PersistedOnlineSession = {
       meta: {
+        initialMap: makeRoundMap(),
         roomId: 'room-abc',
         localPlayerId: 'player-1',
         slot: 0,
@@ -175,7 +177,8 @@ describe('App component (State and Lifecycle integration)', () => {
       },
       players,
       canvas: {
-        gamePhase: 'COMBAT',
+        map: makeRoundMap(),
+      gamePhase: 'COMBAT',
         currentManche: 1,
         uiPlayers: players,
         shopPlayers: players,
@@ -198,7 +201,7 @@ describe('App component (State and Lifecycle integration)', () => {
       },
     };
     window.sessionStorage.setItem(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify(session),
     );
     const confirmSpy = vi.spyOn(window, 'confirm')
@@ -217,7 +220,7 @@ describe('App component (State and Lifecycle integration)', () => {
 
   it('keeps staging hotseat-only even with an invitation URL and a saved online session', () => {
     deploymentMode.hotseatOnly = true;
-    window.sessionStorage.setItem('tankwars-online-session-v1', '{"saved":true}');
+    window.sessionStorage.setItem('tankwars-online-session-v2', '{"saved":true}');
     window.history.replaceState({}, '', '/?room=ROOM77&slot=1&token=TOK77');
 
     render(<App />);
@@ -227,7 +230,7 @@ describe('App component (State and Lifecycle integration)', () => {
       screen.queryByRole('button', { name: 'online_multiplayer_button' }),
     ).toBeNull();
     expect(screen.queryByRole('button', { name: 'join_room_btn' })).toBeNull();
-    expect(window.sessionStorage.getItem('tankwars-online-session-v1')).toBeNull();
+    expect(window.sessionStorage.getItem('tankwars-online-session-v2')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
     expect(screen.getByText('Mode: local')).toBeDefined();

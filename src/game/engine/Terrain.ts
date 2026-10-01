@@ -21,19 +21,10 @@ import {
   TERRAIN_MATERIAL,
   SOFT_TERRAIN_DESTRUCTION_MULTIPLIER,
   TERRAIN_SOFT_BLEND_RADIUS,
-  TERRAIN_GENERATION_SMOOTH_STRENGTH,
   TERRAIN_CRATER_SMOOTH_STRENGTH,
-  TERRAIN_MATERIAL_MARGIN_RATIO,
-  TERRAIN_ROCK_ZONE_COUNT_MIN,
-  TERRAIN_ROCK_ZONE_COUNT_MAX,
-  TERRAIN_ROCK_ZONE_WIDTH_MIN,
-  TERRAIN_ROCK_ZONE_WIDTH_MAX,
-  TERRAIN_SOFT_ZONE_COUNT_MIN,
-  TERRAIN_SOFT_ZONE_COUNT_MAX,
-  TERRAIN_SOFT_ZONE_WIDTH_MIN,
-  TERRAIN_SOFT_ZONE_WIDTH_MAX,
   type TerrainMaterial,
 } from "../../types/terrain";
+import { generateTerrain } from "../round/generateTerrain";
 import { secureRandom } from "../../utils/random";
 
 /** Margin from canvas bottom for the lava "floor" level. When terrain is destroyed to/beyond this, lava is exposed visually and tanks touching it die instantly. */
@@ -85,134 +76,8 @@ export class TerrainManager {
    * - Distribution aléatoire de zones de roche indestructible (ROCK) et de terrain meuble (SOFT)
    */
   public generate(): void {
-    this.needsFullRedraw = true;
-    this.isDirty = true;
-    this.dirtyStartX = 0;
-    this.dirtyEndX = this.width - 1;
-
-    // 1. Paramètres aléatoires de base et d'harmoniques
-    const base = this.height * (0.58 + secureRandom() * 0.08); // 58% à 66% de la hauteur
-    const f1 = 0.006 + secureRandom() * 0.007; // Macro relief
-    const f2 = 0.014 + secureRandom() * 0.012; // Relief moyen (bosses)
-    const f3 = 0.028 + secureRandom() * 0.016; // Micro relief (crêtes)
-
-    const amp1 = this.height * (0.09 + secureRandom() * 0.07);
-    const amp2 = this.height * (0.05 + secureRandom() * 0.045);
-    const amp3 = this.height * (0.02 + secureRandom() * 0.025);
-
-    const phi1 = secureRandom() * Math.PI * 2;
-    const phi2 = secureRandom() * Math.PI * 2;
-    const phi3 = secureRandom() * Math.PI * 2;
-
-    // 2. Génération de creux tactiques et de bosses prononcées (Gaussian features)
-    const featureCount = 3 + Math.floor(secureRandom() * 3); // 3 à 5 reliefs locaux
-    interface TerrainFeature {
-      cx: number;
-      sigma: number;
-      amplitude: number; // positif = creux (vers le bas en canvas Y), négatif = bosse
-    }
-    const features: TerrainFeature[] = [];
-    const minFeatureX = this.width * 0.12;
-    const maxFeatureX = this.width * 0.88;
-
-    for (let i = 0; i < featureCount; i++) {
-      const cx = minFeatureX + secureRandom() * (maxFeatureX - minFeatureX);
-      const sigma = 35 + secureRandom() * 45; // largeur
-      // Alternance ou choix aléatoire creux vs bosse
-      const isDip = secureRandom() > 0.45;
-      const amplitude = isDip
-        ? (this.height * (0.06 + secureRandom() * 0.08)) // creux (descend en Y)
-        : -(this.height * (0.06 + secureRandom() * 0.08)); // bosse (monte en Y)
-      features.push({ cx, sigma, amplitude });
-    }
-
-    const minH = this.height * 0.28;
-    const maxH = this.height * 0.86;
-
-    for (let x = 0; x < this.width; x++) {
-      let h =
-        base +
-        Math.sin(x * f1 + phi1) * amp1 +
-        Math.sin(x * f2 + phi2) * amp2 +
-        Math.sin(x * f3 + phi3) * amp3;
-
-      // Ajout des bosses et creux gaussiens
-      for (let f = 0; f < features.length; f++) {
-        const feat = features[f];
-        const dist = x - feat.cx;
-        const g = Math.exp(-(dist * dist) / (2 * feat.sigma * feat.sigma));
-        h += feat.amplitude * g;
-      }
-
-      // Micro texture haute fréquence
-      h += Math.sin(x * 0.45 + phi1) * 2.2;
-
-      this.heights[x] = Math.max(minH, Math.min(maxH, h));
-      this.materials[x] = TERRAIN_MATERIAL.DIRT;
-    }
-
-    // Lissage pour des pentes jouables et harmonieuses
-    this.smoothHeights(TERRAIN_GENERATION_SMOOTH_STRENGTH);
-
-    // 3. Distribution des matériaux (zones de roche et zones meubles)
-    this.distributeMaterials();
-  }
-
-  /**
-   * Distribue aléatoirement des zones de roche indestructible et de terrain meuble.
-   */
-  private distributeMaterials(): void {
-    const margin = this.width * TERRAIN_MATERIAL_MARGIN_RATIO;
-    const availableWidth = this.width - 2 * margin;
-
-    // Zones de roche (ROCK)
-    const rockZoneCount =
-      TERRAIN_ROCK_ZONE_COUNT_MIN +
-      Math.floor(
-        secureRandom() *
-          (TERRAIN_ROCK_ZONE_COUNT_MAX - TERRAIN_ROCK_ZONE_COUNT_MIN + 1),
-      );
-    for (let i = 0; i < rockZoneCount; i++) {
-      const center = margin + secureRandom() * availableWidth;
-      const zoneWidth =
-        TERRAIN_ROCK_ZONE_WIDTH_MIN +
-        Math.floor(
-          secureRandom() *
-            (TERRAIN_ROCK_ZONE_WIDTH_MAX - TERRAIN_ROCK_ZONE_WIDTH_MIN + 1),
-        );
-      const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
-      const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
-
-      for (let x = startX; x <= endX; x++) {
-        this.materials[x] = TERRAIN_MATERIAL.ROCK;
-      }
-    }
-
-    // Zones de terrain mou (SOFT)
-    const softZoneCount =
-      TERRAIN_SOFT_ZONE_COUNT_MIN +
-      Math.floor(
-        secureRandom() *
-          (TERRAIN_SOFT_ZONE_COUNT_MAX - TERRAIN_SOFT_ZONE_COUNT_MIN + 1),
-      );
-    for (let i = 0; i < softZoneCount; i++) {
-      const center = margin + secureRandom() * availableWidth;
-      const zoneWidth =
-        TERRAIN_SOFT_ZONE_WIDTH_MIN +
-        Math.floor(
-          secureRandom() *
-            (TERRAIN_SOFT_ZONE_WIDTH_MAX - TERRAIN_SOFT_ZONE_WIDTH_MIN + 1),
-        );
-      const startX = Math.max(0, Math.floor(center - zoneWidth / 2));
-      const endX = Math.min(this.width - 1, Math.floor(center + zoneWidth / 2));
-
-      for (let x = startX; x <= endX; x++) {
-        // Ne pas écraser la roche
-        if (this.materials[x] !== TERRAIN_MATERIAL.ROCK) {
-          this.materials[x] = TERRAIN_MATERIAL.SOFT;
-        }
-      }
-    }
+    const generated = generateTerrain(this.width, this.height, secureRandom);
+    this.loadHeights(generated.heights, generated.materials);
   }
 
   /**

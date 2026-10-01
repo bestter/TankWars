@@ -35,7 +35,9 @@ export function OnlineLobby(props: OnlineLobbyProps) {
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>
 
           {error && (
-            <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}</div>
+            <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}
+              {lobby.roundPreparationFailed && <button type="button" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
+            </div>
           )}
 
           {view === 'create' && !isJoinMode && (

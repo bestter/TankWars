@@ -3,9 +3,8 @@
  * Used by the client OnlineLobby + useGameSession (online mode) and by the Cloudflare Worker/DO.
  */
 
-import type { Player } from './player';
-import type { TerrainMaterial } from './terrain';
 import type {
+  GameStartMessage,
   ClientFireMessage,
   ShotMessage,
   StateUpdateMessage,
@@ -48,15 +47,7 @@ export type ServerShotMessage = ShotMessage;
 export type ServerStateUpdate = StateUpdateMessage;
 
 /** Sent once when the lobby is full and the game begins (MVP = 1 round). */
-export interface ServerGameStartMessage {
-  type: 'GAME_START';
-  players: Player[];
-  heights: number[];
-  /** Présent seulement quand le serveur a vraiment généré le terrain. */
-  materials?: TerrainMaterial[];
-  wind: number;
-  currentPlayerIndex: number;
-}
+export type ServerGameStartMessage = GameStartMessage;
 
 /** Roster update while still in the waiting lobby (human names + AI placeholders). */
 export interface ServerRosterUpdate {
