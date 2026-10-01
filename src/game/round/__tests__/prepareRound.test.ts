@@ -112,13 +112,14 @@ describe("complete bounded round preparation", () => {
     expect([...xs!].sort((a, b) => a - b)).toEqual([52.13, 152.13, 252.13]);
   });
 
-  it("matches an independent exhaustive search on fragmented maps", () => {
-    // Width 400 gives integer margins (52, 348). Material boundaries and the 100 px
-    // separation are integers, so any feasible continuous packing has an integer packing.
-    const widths = [15, 35, 25, 75, 20, 80, 60, 90];
-    let feasible = 0;
-    let impossible = 0;
-    for (let mask = 0; mask < 2 ** widths.length; mask++) {
+  it.each(Array.from({ length: 256 }, (_, mask) => mask))(
+    "matches an independent exhaustive search on fragmented map mask=%i", (mask) => {
+      // Width 400 gives integer margins (52, 348). Material boundaries and the 100 px
+      // separation are integers, so any feasible continuous packing has an integer packing.
+      const widths = [15, 35, 25, 75, 20, 80, 60, 90];
+      let feasible = 0;
+      let impossible = 0;
+      // Each map gets its own timeout while retaining all 256 maps and three roster sizes.
       const materials: Array<'ROCK' | 'DIRT'> = widths.flatMap((width, i) =>
         new Array<'ROCK' | 'DIRT'>(width).fill(mask & (1 << i) ? 'ROCK' : 'DIRT'),
       );
@@ -158,10 +159,10 @@ describe("complete bounded round preparation", () => {
           expect(sorted.slice(1).every((x, i) => x - sorted[i] >= 100)).toBe(true);
         }
       }
-    }
-    expect(feasible).toBeGreaterThan(0);
-    expect(impossible).toBeGreaterThan(0);
-  });
+      expect(feasible).toBeGreaterThan(0);
+      expect(impossible).toBeGreaterThan(0);
+    },
+  );
 
   it("keeps the exact minimum distance when fractional addition rounds downward", () => {
     const map = { heights: new Array<number>(801).fill(300), materials: new Array<"DIRT">(801).fill("DIRT") };
