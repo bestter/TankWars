@@ -56,7 +56,8 @@ describe("fichiers de marque", () => {
       const png = readPng(fileName);
       expect(png.width).toBe(size);
       expect(png.height).toBe(size);
-      expect(Buffer.from(png.rgba)).toEqual(Buffer.from(faviconRgba(size)));
+      const expectedRgba = Buffer.from(faviconRgba(size));
+      expect(png.rgba.equals(expectedRgba), `Pixels RGBA de ${fileName}`).toBe(true);
     }
   });
 
