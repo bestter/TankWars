@@ -76,7 +76,7 @@ describe("EXPERT #267 consequences", () => {
     }));
     const cache = createExpertForecastCache();
     // Isolate the two valid ground points; both use the real solver and full physics.
-    cache.search.set(JSON.stringify(["self", "MISSILE", points[0].x, points[0].y, 0, 260]),
+    cache.search.set(JSON.stringify(["self", "MISSILE", points[0].x, points[0].y, 0, 260, { variant: "full", penalizeProximity: true }]),
       { command: { angle: 45, power: 50 }, complete: false });
     const before = structuredClone(f.state.players);
     const rng = vi.spyOn(random, "secureRandom");
@@ -92,12 +92,13 @@ describe("EXPERT #267 consequences", () => {
     const points = expertTacticalPoints(f.self, [f.enemy], "MISSILE", f.terrain, f.state.players);
     for (const [index, point] of points.entries()) {
       const command = { angle: 45 + index, power: 50 };
-      cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260]),
+      cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260, { variant: "full", penalizeProximity: true }]),
         { command, complete: index < 2 });
       cache.physics.set(JSON.stringify(["self", "MISSILE", command.angle, command.power, 0, 260, 2, false]), {
         complete: true, ...(index === 0 ? equalConsequences : winner),
         hits: [{ shotId: 1, munitionId: 0, x: point.x, y: point.y,
           weaponId: "MISSILE", directTargetId: "enemy" }],
+        support: [], steps: 1,
         damage: [forecastDamage()], destruction: [], survivors: ["self", "enemy"], profit: 100,
       });
     }
@@ -112,7 +113,7 @@ describe("EXPERT #267 consequences", () => {
       const points = expertTacticalPoints(f.self, [f.enemy], "MISSILE", f.terrain, f.state.players);
       for (const [index, point] of points.entries()) {
         const command = { angle: 45 + index, power: 50 };
-        cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260]),
+        cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260, { variant: "full", penalizeProximity: true }]),
           { command, complete: index < 2 });
         const destruction = index === 0 ? [forecastDestruction()] :
           criterion === "required-kill" ? [] : [forecastDestruction(),
@@ -122,6 +123,7 @@ describe("EXPERT #267 consequences", () => {
           humanDamageMilli: criterion === "stable" || index === 0 ? 10 : 9,
           hits: [{ shotId: 1, munitionId: 0, x: point.x, y: point.y,
             weaponId: "MISSILE", directTargetId: "enemy" }],
+          support: [], steps: 1,
           damage: [forecastDamage()], destruction, survivors: ["self"],
           profit: criterion === "profit" && index === 0 ? 101 : 100,
         });
@@ -613,14 +615,14 @@ describe("EXPERT decision and fallback", () => {
     expect(decision.realAim.horizontalOffset).toBeGreaterThanOrEqual(45);
   });
 
-  it("keeps the ordinary BULLDOZER fallback when forecasts are unavailable", async () => {
+  it("validates fallback physics without economics instead of imposing ordinary BULLDOZER", async () => {
     const f = fixture();
     f.state.localShotContext = undefined;
     f.enemy.tank.position.x = 780;
     f.self.inventory.BULLDOZER = 1;
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
-    expect(shot.weaponId).toBe("BULLDOZER");
+    expect(shot.weaponId).toBe("MISSILE");
   });
 
   it("examines a four-player full-stock decision within per-shot bounds", () => {

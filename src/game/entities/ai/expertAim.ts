@@ -3,6 +3,7 @@ import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
 import { TANK_HITBOX_WIDTH } from "../../combatConstants";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AimCommand } from "./aimCorruption";
+import { aimCone, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 
 /** The same bounded #212 search serves ideal forecasts and the final fallible aim. */
@@ -14,6 +15,7 @@ export function solveExpertAim(
   gravity: number,
   terrain: TerrainManager,
   weaponId: WeaponId,
+  policy: AimSearchPolicy = ORDINARY_AIM_POLICY,
 ): { command: AimCommand; complete: boolean } {
   const sx = self.tank.position.x;
   const sy = self.tank.position.y;
@@ -28,8 +30,8 @@ export function solveExpertAim(
     gravity,
     terrain,
     isRight,
-    aMin: isRight ? 15 : 95,
-    aMax: isRight ? 85 : 165,
+    ...aimCone(isRight, isRight ? 15 : 95, isRight ? 85 : 165, policy.variant),
+    projectFallbackToCone: policy.variant !== "full",
     coarseStep: 5,
     fineStep: 1.5,
     fineWindow: 4,
@@ -40,8 +42,8 @@ export function solveExpertAim(
     obstaclePenaltyLow: 20,
     weaponId,
     earlyExitError: 4,
-    selfHarmPenalty: (landX, landY) =>
-      Math.hypot(landX - sx, landY - sy) <= blastRadius + TANK_HITBOX_WIDTH ? 50000 : 0,
+    selfHarmPenalty: policy.penalizeProximity ? (landX, landY) =>
+      Math.hypot(landX - sx, landY - sy) <= blastRadius + TANK_HITBOX_WIDTH ? 50000 : 0 : undefined,
   });
   return {
     command: {

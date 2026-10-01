@@ -347,7 +347,7 @@ describe("AI weapon gates", () => {
     expect(shot.weaponId).not.toBe("BULLDOZER");
   });
 
-  it("smart fallback picks BULLDOZER when the target sits at the map edge", async () => {
+  it("smart fallback compares ordinary BULLDOZER with a physically useful MISSILE at the map edge", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISmartStrategy();
     const shooter = makePlayer({
@@ -367,7 +367,7 @@ describe("AI weapon gates", () => {
       makeGameState({ ...shooter, aiProfile: "v4-smart" }, edge, "v4-smart"),
       terrain,
     );
-    expect(shot.weaponId).toBe("BULLDOZER");
+    expect(shot.weaponId).toBe("MISSILE");
   });
 
   it("simple v1 does not switch to BULLDOZER even with stock at the map edge", async () => {

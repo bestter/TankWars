@@ -1,6 +1,8 @@
 import type { Player } from "../../../types/player";
 import type { TerrainManager } from "../../engine/Terrain";
 import { searchBallisticSolution } from "./BallisticsSimulator";
+import type { WeaponId } from "../../../types/weapon";
+import { aimCone, type AimVariant } from "./aimSearch";
 import type { AimCommand } from "./aimCorruption";
 
 /**
@@ -14,7 +16,16 @@ export function computeHeuristicShot(
   wind: number,
   gravity: number,
   terrain: TerrainManager,
+  weaponId?: WeaponId, variant: AimVariant = "full",
 ): AimCommand {
+  return solveHeuristicAim(self, targetX, targetY, wind, gravity, terrain, weaponId, variant).command;
+}
+
+/** Advanced material decisions use this path; SIMPLE keeps its original wrapper. */
+export function solveHeuristicAim(
+  self: Player, targetX: number, targetY: number, wind: number, gravity: number,
+  terrain: TerrainManager, weaponId?: WeaponId, variant: AimVariant = "full",
+): { command: AimCommand; complete: boolean } {
   const sx = self.tank.position.x;
   const sy = self.tank.position.y;
   const dx = targetX - sx;
@@ -31,8 +42,9 @@ export function computeHeuristicShot(
     gravity,
     terrain,
     isRight,
-    aMin,
-    aMax,
+    ...aimCone(isRight, aMin, aMax, variant),
+    projectFallbackToCone: variant !== "full",
+    weaponId,
     coarseStep: 3.5,
     fineStep: 1.5,
     fineWindow: 3,
@@ -45,7 +57,10 @@ export function computeHeuristicShot(
   });
 
   return {
-    angle: Math.max(8, Math.min(172, best.angle)),
-    power: Math.max(30, Math.min(90, best.power)),
+    command: {
+      angle: Math.max(8, Math.min(172, best.angle)),
+      power: Math.max(30, Math.min(90, best.power)),
+    },
+    complete: best.complete !== false,
   };
 }
