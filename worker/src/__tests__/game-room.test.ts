@@ -1,6 +1,6 @@
 import type { RoundMap } from "../../../src/game/round/prepareRound";
 import { hasValidSpawnRoster, type PreparedRound } from "../../../src/game/round/prepareRound";
-import type { GameStartMessage, ShopFinishMessage } from "../../../src/game/online/protocol";
+import type { GameStartMessage, ShopFinishMessage, ShopActionAcknowledgement, ShopStateMessage, ShopRejectedMessage } from "../../../src/game/online/protocol";
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GameRoom } from '../game-room';
 import type { WeaponId } from '../../../src/types/weapon';
@@ -87,13 +87,13 @@ function humanInvitationTokens(json: CreatedRoomSlots): string[] {
 }
 
 describe('Authoritative safe round preparation', () => {
-  async function startedRoom() {
+  async function startedRoom(withAI = false) {
     const setup = createMockCtx();
     const room = new GameRoom(setup.ctx as DurableObjectState, {});
     Object.defineProperty(room, 'ctx', { value: setup.ctx, writable: true });
     await room.fetchCreate(new Request('http://localhost/internal/create', {
-      method: 'POST', body: JSON.stringify({ roomId: 'safe-round', numPlayers: 2,
-        slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
+      method: 'POST', body: JSON.stringify({ roomId: 'safe-round', numPlayers: withAI ? 3 : 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }, ...(withAI ? [{ type: 'ai', aiProfile: 'v1-random' }] : [])], origin: 'http://localhost:5173' }),
     }));
     const sockets = [new MockWebSocket(), new MockWebSocket()];
     const connections = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
@@ -102,8 +102,12 @@ describe('Authoritative safe round preparation', () => {
     await claim.call(room, 0, 'Alice'); await claim.call(room, 1, 'Bob');
     const state = Reflect.get(room, 'state') as {
       map: RoundMap; players: Player[]; initialRoundPlayers: Player[]; roundNumber: number;
-      roundEnded: boolean; shopSession: { shopEpoch: number; readySlots: number[] } | null;
+      roundEnded: boolean; shopSession: {
+        shopEpoch: number; readySlots: number[]; closingAction: ShopActionAcknowledgement | null;
+        purchasesByPlayerId: Record<string, Record<string, number>>; aiShopApplied: boolean;
+      } | null;
       preparationAttempt: number; lastCompletedShop: ShopFinishMessage | null;
+      processedShopActions: Record<string, { slot: number; result: ShopStateMessage | ShopFinishMessage | ShopRejectedMessage }>;
     };
     const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
     const send = (slot: number, value: object) => handle.call(room, slot, JSON.stringify(value));
@@ -124,8 +128,11 @@ describe('Authoritative safe round preparation', () => {
     expect(retry).toEqual(first); // initial combat baseline survives live damage
   });
 
-  it('keeps purchases and the old map on failure, retries successfully, then replays the same finish', async () => {
-    const { setup, room, sockets, state, send } = await startedRoom();
+  it.each([
+    ['last READY', false], ['earlier READY', false], ['REQUEST_GAME_START', false],
+    ['last READY', true], ['earlier READY', true], ['REQUEST_GAME_START', true],
+  ] as const)('keeps purchases and the closing ack on failure and retries via %s (restart: %s)', async (retry, restart) => {
+    const { setup, room, sockets, state, send } = await startedRoom(true);
     state.roundEnded = true;
     await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
     const epoch = state.shopSession!.shopEpoch;
@@ -143,11 +150,42 @@ describe('Authoritative safe round preparation', () => {
     expect(state.roundNumber).toBe(1);
     expect(state.roundEnded).toBe(true);
     expect(state.shopSession).not.toBeNull();
+    expect(state.shopSession?.closingAction).toEqual({ slot: 1, actionId: 'ready-1' });
+    expect(state.processedShopActions['READY:1:ready-1'].result).toMatchObject({
+      type: 'SHOP_STATE', readySlots: [0, 1], acknowledgedAction: { slot: 1, actionId: 'ready-1' },
+    });
     expect(state.preparationAttempt).toBe(1);
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
-    // Any connected human can retry after every human has already acknowledged readiness.
-    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
-    const finish = state.lastCompletedShop!;
+    let retryRoom = room;
+    if (restart) {
+      setup.mockStorage.storageData.set('state', structuredClone(setup.mockStorage.storageData.get('state')));
+      retryRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(retryRoom, 'ctx', { value: setup.ctx, writable: true });
+      const context = setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> };
+      await context.blockConcurrencyWhile.mock.results.at(-1)?.value;
+      const restoredState = Reflect.get(retryRoom, 'state') as typeof state;
+      expect(restoredState.shopSession).toEqual(state.shopSession);
+      expect(restoredState.players).toEqual(rosterBefore);
+      expect(restoredState.preparationAttempt).toBe(1);
+      const connections = Reflect.get(retryRoom, 'sockets') as Map<number, WebSocket>;
+      sockets.forEach((ws, i) => connections.set(i, ws as unknown as WebSocket));
+      prepare.mockImplementation((players: Player[], roundNumber: number) => original.call(retryRoom, players, roundNumber));
+      Reflect.set(retryRoom, 'prepareRoomRound', prepare);
+    }
+    const retryHandle = Reflect.get(retryRoom, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+    const retrySend = (slot: number, value: object) => retryHandle.call(retryRoom, slot, JSON.stringify(value));
+    const retryState = Reflect.get(retryRoom, 'state') as typeof state;
+    if (retry === 'REQUEST_GAME_START') {
+      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    } else {
+      const slot = retry === 'last READY' ? 1 : 0;
+      await retrySend(slot, { type: 'SHOP_READY', shopEpoch: epoch, actionId: `ready-${slot}` });
+      expect(sockets[slot].getLastMessage()).toMatchObject({
+        type: 'SHOP_FINISH', acknowledgedAction: { slot, actionId: `ready-${slot}` },
+      });
+    }
+    const finish = retryState.lastCompletedShop!;
+    expect(finish.acknowledgedAction).toEqual({ slot: 1, actionId: 'ready-1' });
     expect(finish.map.roundNumber).toBe(2);
     expect(hasValidSpawnRoster(finish.map, finish.players)).toBe(true);
     expect(finish.players.map((p) => p.inventory)).toEqual(rosterBefore.map((p) => p.inventory));
@@ -155,25 +193,132 @@ describe('Authoritative safe round preparation', () => {
     expect(setup.mockStorage.storageData.get('state')).toMatchObject({ map: finish.map, lastCompletedShop: finish });
     expect(sockets[0].getAllMessages<ShopFinishMessage>().find((m) => m.type === 'SHOP_FINISH'))
       .toEqual(sockets[1].getAllMessages<ShopFinishMessage>().find((m) => m.type === 'SHOP_FINISH'));
-    state.players[0].tank.isDead = true;
-    await send(1, { type: 'SHOP_READY', shopEpoch: epoch, actionId: 'ready-1' });
+    retryState.players[0].tank.isDead = true;
+    for (const slot of [0, 1]) {
+      await retrySend(slot, { type: 'SHOP_READY', shopEpoch: epoch, actionId: `ready-${slot}` });
+      expect(sockets[slot].getLastMessage()).toEqual({
+        ...finish, acknowledgedAction: { slot, actionId: `ready-${slot}` },
+      });
+    }
+    await retrySend(0, { type: 'SHOP_BUY_SELL', shopEpoch: epoch, actionId: 'buy-safe', weaponId: 'GRENADE', delta: 1 });
+    expect(sockets[0].getLastMessage()).toEqual({ ...finish, acknowledgedAction: { slot: 0, actionId: 'buy-safe' } });
+    expect(retryState.players[0].tank.isDead).toBe(true);
+    expect(retryState.players.map((p) => p.inventory)).toEqual(rosterBefore.map((p) => p.inventory));
+    expect(retryState.players.map((p) => p.money)).toEqual(rosterBefore.map((p) => p.money));
     expect(prepare).toHaveBeenCalledTimes(2);
-    expect(state.lastCompletedShop).toEqual(finish);
+    expect(retryState.lastCompletedShop).toEqual(finish);
     expect(finish.players[0].tank.isDead).toBe(false);
   });
 
+  it.each(['ready-0', 'legacy-ready'] as const)('restores a legacy closing identity only via a valid READY (%s)', async (actionId) => {
+    const { setup, room, state, send } = await startedRoom();
+    state.roundEnded = true;
+    await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' });
+    // Older persisted sessions could contain all ready slots without a closing action or its index entry.
+    state.shopSession!.readySlots = [0, 1];
+    Reflect.deleteProperty(state.shopSession!, 'closingAction');
+    setup.mockStorage.storageData.set('state', structuredClone(state));
+    const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(restored, 'ctx', { value: setup.ctx, writable: true });
+    const context = setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> };
+    await context.blockConcurrencyWhile.mock.results.at(-1)?.value;
+    const restoredState = Reflect.get(restored, 'state') as typeof state;
+    expect(restoredState.shopSession?.closingAction).toBeNull();
+    const socket = new MockWebSocket();
+    (Reflect.get(restored, 'sockets') as Map<number, WebSocket>).set(0, socket as unknown as WebSocket);
+    const handle = Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+    const prepare = vi.spyOn(restored as unknown as { prepareRoomRound: (players: Player[], round: number) => PreparedRound }, 'prepareRoomRound');
+    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 2,
+      roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 }));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(socket.getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_STATE')).toBe(true);
+    await handle.call(restored, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 0, actionId }));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(restoredState.shopSession?.closingAction).toBeNull();
+    // Use a different ID after a persisted refusal: an action's original refusal must remain stable.
+    const validId = actionId === 'legacy-ready' ? 'valid-legacy-ready' : actionId;
+    await handle.call(restored, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: validId }));
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(restoredState.lastCompletedShop?.acknowledgedAction).toEqual({ slot: 0, actionId: validId });
+    expect(restoredState.shopSession).toBeNull();
+    expect(room).not.toBe(restored);
+  });
+
+  it('rejects unknown IDs and wrong epochs, preserves refusals and clears the index only at the next shop', async () => {
+    const { room, sockets, state, send } = await startedRoom();
+    state.roundEnded = true;
+    await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
+    await send(0, { type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'refused-sale', weaponId: 'NUKE', delta: -1 });
+    const refusal = sockets[0].getLastMessage();
+    expect(refusal).toMatchObject({ type: 'SHOP_REJECTED' });
+    await send(0, { type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'accepted-buy', weaponId: 'GRENADE', delta: 1 });
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' });
+    const original = Reflect.get(room, 'prepareRoomRound') as (players: Player[], round: number) => PreparedRound;
+    const prepare = vi.fn().mockReturnValueOnce({ ok: false, reason: 'ROUND_PREPARATION_FAILED' })
+      .mockImplementation((players: Player[], round: number) => original.call(room, players, round));
+    Reflect.set(room, 'prepareRoomRound', prepare);
+    await send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' });
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'unknown-ready' });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'ALREADY_READY' });
+    await send(0, { type: 'SHOP_READY', shopEpoch: 0, actionId: 'ready-0' });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'STALE_SHOP_EPOCH' });
+    expect(prepare).toHaveBeenCalledTimes(1);
+    await send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' });
+    const finishedRoster = structuredClone(state.players);
+    for (const value of [
+      { type: 'SHOP_READY', shopEpoch: 2, actionId: 'ready-0' },
+      { type: 'SHOP_BUY_SELL', shopEpoch: 0, actionId: 'accepted-buy', weaponId: 'GRENADE', delta: 1 },
+    ]) {
+      await send(0, value);
+      expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'STALE_SHOP_EPOCH' });
+    }
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'never-accepted' });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'SHOP_CLOSED' });
+    await send(0, { type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'refused-sale', weaponId: 'NUKE', delta: -1 });
+    expect(sockets[0].getLastMessage()).toEqual(refusal);
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'unknown-ready' });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'ALREADY_READY' });
+    await send(0, { type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'accepted-buy', weaponId: 'GRENADE', delta: 1 });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_FINISH', acknowledgedAction: { slot: 0, actionId: 'accepted-buy' } });
+    expect(state.players).toEqual(finishedRoster);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    state.roundEnded = true;
+    await send(0, { type: 'SHOP_ENTER', roundNumber: 2 });
+    expect(state.processedShopActions).toEqual({});
+    expect(state.shopSession?.closingAction).toBeNull();
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', reason: 'STALE_SHOP_EPOCH' });
+  });
+
   it('broadcasts the next map only after storage resolves', async () => {
-    const { setup, room, sockets, state } = await startedRoom();
+    const { setup, room, sockets, state, send } = await startedRoom();
     state.roundEnded = true;
     const enter = Reflect.get(room, 'handleShopEnter') as (slot: number, round: number) => Promise<void>;
     await enter.call(room, 0, 1);
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-first' });
     const context = setup.ctx as { storage: { put: (key: string, value: unknown) => Promise<void> } };
-    let release: (() => void) | undefined;
-    vi.spyOn(context.storage, 'put').mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
-    const finish = Reflect.get(room, 'completeShopPhase') as (slot: number, actionId: string) => Promise<void>;
-    const completing = finish.call(room, 0, 'ready-persist');
+    const releases: Array<() => void> = [];
+    const snapshots: unknown[] = [];
+    vi.spyOn(context.storage, 'put').mockImplementation((_key, value) => {
+      snapshots.push(structuredClone(value));
+      return new Promise<void>((resolve) => { releases.push(resolve); });
+    });
+    const prepare = vi.spyOn(room as unknown as { prepareRoomRound: (players: Player[], round: number) => PreparedRound }, 'prepareRoomRound');
+    const completing = send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-persist' });
+    expect(snapshots[0]).toMatchObject({ shopSession: { closingAction: { slot: 1, actionId: 'ready-persist' } },
+      processedShopActions: { 'READY:1:ready-persist': { result: { type: 'SHOP_STATE' } } } });
+    expect(prepare).not.toHaveBeenCalled();
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
-    release!(); await completing;
+    releases[0]();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    expect(snapshots[1]).toMatchObject({ shopSession: null, map: state.map, players: state.players,
+      processedShopActions: {
+        'READY:0:ready-first': { result: { type: 'SHOP_FINISH', acknowledgedAction: { slot: 0, actionId: 'ready-first' } } },
+        'READY:1:ready-persist': { result: { type: 'SHOP_FINISH', acknowledgedAction: { slot: 1, actionId: 'ready-persist' } } },
+      } });
+    expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
+    releases[1](); await completing;
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(true);
   });
 
@@ -1740,6 +1885,7 @@ describe('GameRoom Durable Object', () => {
         processedShopActions: Record<string, unknown>;
       };
       expect(Object.keys(persistedAfterFinish.processedShopActions)).toEqual([
+        'READY:0:ready-0',
         'READY:1:ready-1',
       ]);
 

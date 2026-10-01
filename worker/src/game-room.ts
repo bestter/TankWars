@@ -113,6 +113,7 @@ interface PersistedShopSession {
   readySlots: number[];
   purchasesByPlayerId: ShopVisitCounters;
   aiShopApplied: boolean;
+  closingAction: ShopActionAcknowledgement | null;
 }
 
 interface PersistedShopAction {
@@ -354,6 +355,10 @@ export class GameRoom extends DurableObject {
         this.state.lastAppliedEarnings ??= null;
         this.state.shopEpoch ??= 0;
         this.state.shopSession ??= null;
+        if (this.state.shopSession && this.state.shopSession.closingAction === undefined) {
+          this.state.shopSession.closingAction = null;
+          shouldPersistMigration = true;
+        }
         this.state.processedShopActions ??= {};
         this.state.lastCompletedShop ??= null;
         if (this.state.lastAppliedEarnings) {
@@ -788,8 +793,8 @@ export class GameRoom extends DurableObject {
       }
       if (!this.state.started) await this.maybeAutoStart();
       const session = this.state.shopSession;
-      if (session && this.allHumansReady(session)) {
-        await this.completeShopPhase(slot, `prepare-${session.shopEpoch}-${this.state.preparationAttempt}`);
+      if (session?.closingAction && this.allHumansReady(session)) {
+        await this.completeShopPhase();
       }
       if (this.state.started) {
         const wsConn = this.sockets.get(slot);
@@ -1813,11 +1818,13 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     if (rejection.actionId && rejection.reason !== 'MALFORMED') {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
-      this.state.processedShopActions[actionKey] = {
-        slot,
-        result: rejection,
-      };
-      await this.saveState();
+      if (!this.state.processedShopActions[actionKey]) {
+        this.state.processedShopActions[actionKey] = {
+          slot,
+          result: rejection,
+        };
+        await this.saveState();
+      }
     }
     this.sendToSlot(slot, rejection);
   }
@@ -1876,6 +1883,7 @@ export class GameRoom extends DurableObject {
       readySlots: [],
       purchasesByPlayerId: counters,
       aiShopApplied: true,
+      closingAction: null,
     };
     await this.saveState();
     this.broadcast(this.buildShopStateMessage());
@@ -1890,11 +1898,16 @@ export class GameRoom extends DurableObject {
     const previous = this.state.processedShopActions[actionKey];
     if (previous) {
       if (previous.slot === slot) {
+        if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
+          await this.rejectShopAction(slot, {
+            type: 'SHOP_REJECTED', shopEpoch: previous.result.shopEpoch,
+            actionId: message.actionId, weaponId: message.weaponId, delta: message.delta,
+            reason: 'STALE_SHOP_EPOCH',
+          }, 'BUY_SELL');
+          return;
+        }
         const result =
-          !this.state.shopSession &&
-          this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
-            ? this.state.lastCompletedShop
-            : previous.result.type === 'SHOP_STATE' && this.state.shopSession
+          previous.result.type === 'SHOP_STATE' && this.state.shopSession
               ? this.buildShopStateMessage({ slot, actionId: message.actionId })
               : previous.result;
         this.sendToSlot(slot, result);
@@ -1988,13 +2001,27 @@ export class GameRoom extends DurableObject {
     const previous = this.state.processedShopActions[actionKey];
     if (previous) {
       if (previous.slot === slot) {
+        if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
+          await this.rejectShopAction(slot, {
+            type: 'SHOP_REJECTED', shopEpoch: previous.result.shopEpoch,
+            actionId: message.actionId, reason: 'STALE_SHOP_EPOCH',
+          }, 'READY');
+          return;
+        }
+        const session = this.state.shopSession;
+        if (previous.result.type === 'SHOP_STATE' && session && this.allHumansReady(session)) {
+          // Une ancienne session peut manquer l'identité de clôture. Un READY accepté la rétablit.
+          if (!session.closingAction) {
+            session.closingAction = { slot, actionId: message.actionId };
+            await this.saveState();
+          }
+          await this.completeShopPhase();
+        }
+        const current = this.state.processedShopActions[actionKey];
         const result =
-          !this.state.shopSession &&
-          this.state.lastCompletedShop?.shopEpoch === message.shopEpoch
-            ? this.state.lastCompletedShop
-            : previous.result.type === 'SHOP_STATE' && this.state.shopSession
+          current.result.type === 'SHOP_STATE' && this.state.shopSession
               ? this.buildShopStateMessage({ slot, actionId: message.actionId })
-              : previous.result;
+              : current.result;
         this.sendToSlot(slot, result);
       }
       return;
@@ -2013,11 +2040,9 @@ export class GameRoom extends DurableObject {
           }
         : null,
     });
-    if (session && !guard.ok && guard.reason === 'ALREADY_READY' && this.allHumansReady(session)) {
-      await this.completeShopPhase(slot, message.actionId);
-      return;
-    }
-    if (!guard.ok || !session) {
+    const canRestoreClosingAction = session && !session.closingAction &&
+      !guard.ok && guard.reason === 'ALREADY_READY' && this.allHumansReady(session);
+    if ((!guard.ok && !canRestoreClosingAction) || !session) {
       await this.rejectShopAction(slot, {
         type: 'SHOP_REJECTED',
         shopEpoch: session?.shopEpoch ?? null,
@@ -2026,34 +2051,31 @@ export class GameRoom extends DurableObject {
       }, 'READY');
       return;
     }
-    session.readySlots = [...session.readySlots, slot].sort(
-      (left, right) => left - right,
-    );
-    const readySlots = new Set(session.readySlots);
-    const allHumansReady = this.getHumanSlots().every((humanSlot) =>
-      readySlots.has(humanSlot),
-    );
-    if (allHumansReady) {
-      await this.completeShopPhase(slot, message.actionId);
-      return;
+    if (!session.readySlots.includes(slot)) {
+      session.readySlots = [...session.readySlots, slot].sort(
+        (left, right) => left - right,
+      );
     }
     const acknowledgedAction = { slot, actionId: message.actionId };
+    if (this.allHumansReady(session)) session.closingAction ??= acknowledgedAction;
     const stateMessage = this.buildShopStateMessage(acknowledgedAction);
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
     };
     await this.saveState();
+    if (session.closingAction && this.allHumansReady(session)) {
+      await this.completeShopPhase();
+      return;
+    }
     this.broadcast(stateMessage);
   }
 
-  private async completeShopPhase(
-    fromSlot: number,
-    actionId: string,
-  ): Promise<void> {
-    if (!this.state?.shopSession) return;
-    const completedRoundNumber = this.state.shopSession.roundNumber;
-    const shopEpoch = this.state.shopSession.shopEpoch;
+  private async completeShopPhase(): Promise<void> {
+    const session = this.state?.shopSession;
+    if (!this.state || !session?.closingAction || !this.allHumansReady(session)) return;
+    const completedRoundNumber = session.roundNumber;
+    const shopEpoch = session.shopEpoch;
     const nextRoundNumber = completedRoundNumber + 1;
     const prepared = this.prepareRoomRound(this.state.players, nextRoundNumber);
     if (!prepared.ok) {
@@ -2068,18 +2090,16 @@ export class GameRoom extends DurableObject {
       completedRoundNumber,
       nextRoundNumber,
       players: structuredClone(nextPlayers),
-      acknowledgedAction: { slot: fromSlot, actionId },
+      acknowledgedAction: session.closingAction,
     };
 
-    // Le résultat terminal existe dans l'état avant le nettoyage de session.
+    // Chaque action acceptée conserve son accusé et la même carte terminale. Les refus restent des refus.
     this.state.lastCompletedShop = finish;
-    const finishKey = makeShopActionKey('READY', fromSlot, actionId);
-    this.state.processedShopActions = {
-      [finishKey]: {
-        slot: fromSlot,
-        result: finish,
-      },
-    };
+    for (const action of Object.values(this.state.processedShopActions)) {
+      if (action.result.type === 'SHOP_STATE' && action.result.shopEpoch === shopEpoch) {
+        action.result = { ...finish, acknowledgedAction: action.result.acknowledgedAction };
+      }
+    }
     this.state.players = nextPlayers;
     this.state.initialRoundPlayers = structuredClone(nextPlayers);
     this.state.map = prepared.map;

@@ -14,6 +14,28 @@ function roster(count = 4, profile: AiProfile = "v1-random") {
 }
 
 describe("ROCK base geometry", () => {
+  it("a 24 px base at 212.5 touches 25 columns, including both half columns", () => {
+    const map = makeRoundMap();
+    const terrain = spawnTerrain(800, map);
+    const material = vi.spyOn(terrain, 'getMaterialAt');
+    expect(hasSafeRockBase(212.5, terrain)).toBe(true); // [200.5, 224.5)
+    expect(material.mock.calls.map(([column]) => column)).toEqual(
+      Array.from({ length: 25 }, (_, i) => 200 + i),
+    );
+    for (const edge of [200, 224]) {
+      map.materials.fill('DIRT');
+      map.materials[edge] = 'ROCK';
+      expect(hasSafeRockBase(212.5, terrain)).toBe(false);
+      map.materials.fill('ROCK');
+      map.materials[edge] = 'DIRT';
+      expect(hasSafeRockBase(212.5, terrain)).toBe(false);
+    }
+    map.materials.fill('DIRT');
+    map.materials[199] = 'ROCK';
+    map.materials[224] = 'ROCK';
+    expect(hasSafeRockBase(212, terrain)).toBe(true); // [200, 224): no overlap with either ROCK column
+  });
+
   it("counts positive overlap only, including fractions, both edges and an interior island", () => {
     const map = makeRoundMap();
     map.materials.fill("ROCK", 200, 240);
@@ -88,6 +110,57 @@ describe("complete bounded round preparation", () => {
     const map = { heights: new Array<number>(401).fill(300), materials: new Array<"DIRT">(401).fill("DIRT") };
     const xs = selectSpawnPositions(roster(3), spawnTerrain(401, map), true, () => 0.5);
     expect([...xs!].sort((a, b) => a - b)).toEqual([52.13, 152.13, 252.13]);
+  });
+
+  it("matches an independent exhaustive search on fragmented maps", () => {
+    // Width 400 gives integer margins (52, 348). Material boundaries and the 100 px
+    // separation are integers, so any feasible continuous packing has an integer packing.
+    const widths = [15, 35, 25, 75, 20, 80, 60, 90];
+    let feasible = 0;
+    let impossible = 0;
+    for (let mask = 0; mask < 2 ** widths.length; mask++) {
+      const materials: Array<'ROCK' | 'DIRT'> = widths.flatMap((width, i) =>
+        new Array<'ROCK' | 'DIRT'>(width).fill(mask & (1 << i) ? 'ROCK' : 'DIRT'),
+      );
+      const map = { heights: new Array<number>(400).fill(300), materials };
+      // Oracle enumerates column intersections directly, without the production predicate or intervals.
+      const candidates = Array.from({ length: 297 }, (_, i) => 52 + i).filter((x) => {
+        const touched = materials.filter((_, column) =>
+          Math.min(column + 1, x + 12) - Math.max(column, x - 12) > 0,
+        );
+        return touched.every((value) => value === 'ROCK') || touched.every((value) => value !== 'ROCK');
+      });
+      for (const count of [2, 3, 4]) {
+        const cache = new Map<string, boolean>();
+        const search = (start: number, remaining: number): boolean => {
+          if (remaining === 0) return true;
+          const key = `${start}:${remaining}`;
+          const cached = cache.get(key);
+          if (cached !== undefined) return cached;
+          for (let i = start; i < candidates.length; i++) {
+            let next = i + 1;
+            while (next < candidates.length && candidates[next] - candidates[i] < 100) next++;
+            if (search(next, remaining - 1)) {
+              cache.set(key, true);
+              return true;
+            }
+          }
+          cache.set(key, false);
+          return false;
+        };
+        const expected = search(0, count);
+        if (expected) feasible++; else impossible++;
+        const actual = selectSpawnPositions(roster(count), spawnTerrain(400, map), true, () => 0.5);
+        expect(actual !== null, `mask=${mask}, count=${count}`).toBe(expected);
+        if (actual) {
+          const sorted = [...actual].sort((a, b) => a - b);
+          expect(sorted.every((x) => candidates.includes(x))).toBe(true);
+          expect(sorted.slice(1).every((x, i) => x - sorted[i] >= 100)).toBe(true);
+        }
+      }
+    }
+    expect(feasible).toBeGreaterThan(0);
+    expect(impossible).toBeGreaterThan(0);
   });
 
   it("keeps the exact minimum distance when fractional addition rounds downward", () => {

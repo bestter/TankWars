@@ -5,6 +5,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
 import { TurnManager } from "../../game/engine/TurnManager";
+import { GameEngine } from "../../game/engine/GameEngine";
 import type { Player } from "../../types/player";
 import type { OnlineCanvasSnapshot } from "../../utils/onlineSession";
 import { createEmptyShopSession } from "../gameCanvasReducer";
@@ -691,6 +692,71 @@ describe("useGameSession FIRE reconnect", () => {
       players[0].money - 25,
     );
     expect(shopRetries()).toHaveLength(2);
+  });
+
+  it.each([true, false])("recovers after preparation failure and lost SHOP_FINISH exactly once (pending READY: %s)", (pendingReady) => {
+    const players = createPlayers();
+    const ready = { type: 'SHOP_READY', shopEpoch: 1, actionId: 'original-ready' };
+    const resumeCanvas = createResumeCanvas(players, {
+      gamePhase: 'SHOP', currentManche: 2, shopPlayers: players, lastCompletedRoundNumber: 1,
+      shopSession: {
+        ...createEmptyShopSession(), epoch: 1, roundNumber: 1, readySlots: [0, 1],
+        aiShopApplied: true, authoritativeReceived: true,
+        pendingIntent: pendingReady ? { kind: 'READY', shopEpoch: 1, actionId: ready.actionId } : null,
+      },
+    });
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const nextRound = vi.spyOn(GameEngine.prototype, 'startNextRound');
+    const mounted = render(<Harness players={players} resumeCanvas={resumeCanvas}
+      ws={ws as unknown as WebSocket} sessionRef={sessionRef} />);
+    act(() => ws.receive({ type: 'ROUND_PREPARATION_FAILED', reason: 'EXHAUSTED', roundNumber: 2 }));
+    expect(sessionRef.current?.state.roundPreparationError).toBe('EXHAUSTED');
+    expect(sessionRef.current?.state.gamePhase).toBe('SHOP');
+    expect(nextRound).not.toHaveBeenCalled();
+    ws.send.mockClear();
+    act(() => sessionRef.current?.retryRoundPreparation());
+    expect(getSentMessages(ws)).toContainEqual(pendingReady ? ready : {
+      type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 2,
+      lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+    });
+    // The server succeeds, but its SHOP_FINISH is lost. Reconnect with the saved SHOP state.
+    const saved = createResumeCanvas(players, {
+      ...resumeCanvas, shopSession: sessionRef.current!.state.shopSession,
+    });
+    mounted.unmount();
+    const reconnected = new MockCombatWebSocket();
+    render(<Harness players={players} resumeCanvas={saved}
+      ws={reconnected as unknown as WebSocket} sessionRef={sessionRef} />);
+    expect(getSentMessages(reconnected)).toContainEqual({
+      type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 2,
+      lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+    });
+    if (pendingReady) expect(getSentMessages(reconnected)).toContainEqual(ready);
+    const finish = {
+      type: 'SHOP_FINISH', map: makeRoundMap(2), shopEpoch: 1, completedRoundNumber: 1,
+      nextRoundNumber: 2, players, acknowledgedAction: { slot: 1, actionId: 'closing-ready' },
+    };
+    act(() => {
+      reconnected.receive({ type: 'SHOT_CATCH_UP', roundNumber: 2, activeShotId: null, shots: [], lastFireResult: null });
+      reconnected.receive(finish);
+    });
+    expect(sessionRef.current?.state.gamePhase).toBe('COMBAT');
+    expect(sessionRef.current?.state.currentManche).toBe(2);
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+    expect(sessionRef.current?.state.shopSession.pendingIntent).toBeNull();
+    expect(sessionRef.current?.state.roundPreparationError).toBeNull();
+    act(() => {
+      reconnected.receive({ ...finish, acknowledgedAction: { slot: 0, actionId: ready.actionId } });
+      reconnected.receive(finish);
+      reconnected.receive({ type: 'SHOP_STATE', shopEpoch: 1, roundNumber: 1, readySlots: [0, 1],
+        players, purchasesByPlayerId: {}, aiShopApplied: true });
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(nextRound).toHaveBeenCalledTimes(1);
+    expect(sessionRef.current?.state.gamePhase).toBe('COMBAT');
+    expect(getSentMessages(reconnected).filter((message) => message.type === 'SHOP_READY'))
+      .toHaveLength(pendingReady ? 1 : 0);
   });
 
   it("recovers the local active shot and emits settlement plus earnings", () => {
