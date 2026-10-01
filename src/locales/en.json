@@ -1,4 +1,7 @@
 {
+  "round_preparation_failed": "Could not prepare a safe map after 16 attempts. Try again.",
+  "round_new_game_required": "This room does not contain a compatible map. Create a new game.",
+  "btn_retry": "Retry",
   "ai_auto_buy_note": "AIs purchase automatically",
   "ai_name_expert": "Expert",
   "ai_name_ok": "OK",

@@ -2,6 +2,12 @@ import type { GameState } from "../../types/game";
 import { VGA_PALETTE } from "../../types/game";
 import type { Player } from "../../types/player";
 import { TerrainManager } from "../engine/Terrain";
+import type { RoundMap } from "../round/prepareRound";
+
+export function makeRoundMap(roundNumber = 1, height = 300): RoundMap {
+  return { width: 800, height: 480, roundNumber, wind: 0,
+    heights: new Array<number>(800).fill(height), materials: new Array(800).fill("DIRT") };
+}
 
 export function makeTank(
   id: string,

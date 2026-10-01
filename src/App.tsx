@@ -80,9 +80,7 @@ function AppScreen({
           gameMode={onlineMeta ? "online" : "local"}
           localPlayerId={onlineMeta?.localPlayerId}
           roomId={onlineMeta?.roomId}
-          initialHeights={onlineMeta?.initialHeights}
-          initialMaterials={onlineMeta?.initialMaterials}
-          initialWind={onlineMeta?.initialWind}
+          initialMap={onlineMeta?.initialMap}
           initialCurrentPlayerIndex={onlineMeta?.initialCurrentPlayerIndex}
           resumeCanvas={resumeCanvas ?? undefined}
           slot={onlineMeta?.slot}
@@ -163,9 +161,7 @@ function App() {
     const onlineMeta: OnlineMeta = {
       roomId: meta.roomId,
       localPlayerId: meta.localPlayerId,
-      initialHeights: meta.initialHeights,
-      initialMaterials: meta.initialMaterials,
-      initialWind: meta.initialWind,
+      initialMap: meta.initialMap,
       initialCurrentPlayerIndex: meta.initialCurrentPlayerIndex,
       slot: meta.slot,
       token: meta.token,

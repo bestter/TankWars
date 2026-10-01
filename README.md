@@ -18,6 +18,7 @@
   - `ROCK` (Indestructible stone wall: side blasts stop at the rock; exploding on top reflects the blast for +50% damage with unchanged radius)
   - `SOFT` (Loose sand/sediment: 2.5× more destructible for massive craters)
   - DRILLER also carves an oriented shaft along the impact velocity with unchanged splash.
+- **Safe Initial Placement** — In local and online play, all 24 px of a tank base must intersect either only ROCK columns or no ROCK columns; wide ROCK plateaus remain allowed and DIRT/SOFT transitions are allowed. Positions retain 13% side margins, 100 px minimum separation, tactical hollows and probabilistic material preferences. If sampling fails, a deterministic search packs the leftmost admissible continuous centers (including fractional positions). A map that cannot fit the entire roster is discarded; preparation tries at most 16 maps total. Exhaustion stops combat, preserves the roster/economy and offers a translated retry. This rule applies to initial placement only; recovery and post-shot falls never respawn tanks.
 - **Authentic 16-Color VGA Palette + Neon Extensions** — All rendering (tanks, explosions, UI, terrain) uses the classic high-contrast VGA 16-color palette, extended with arcade/neon colors (ELECTRIC_CYAN, FLASH_GREEN, NEON_PINK, CYBER_YELLOW, FLUO_ORANGE, VOLT_PURPLE, …) for the procedural tank sprites.
 - **Realistic Projectile Physics** — Gravity, variable wind, different ballistic profiles (missiles, arcing grenades, clusters). Object pool recycles launches and cluster sub-munitions.
 - **Multiple Weapons**
@@ -50,7 +51,7 @@
 - **Per-Shot Economy + Shop** — Limited shots per weapon (Missile is unlimited and removed from the shop). Rewards are calculated after every resolved shot from actual shield/health damage, attributed falls, destructions, and the round outcome. The exact fixed-point calculator uses a player-count base of $3 / $3.50 / $4 for 2 / 3 / 4 players, rounds up only once, and never rewards self-damage. A Zeus strike pays only the standard destruction reward `25X`, with no damage or last-survivor component. A non-blocking `+amount$` floats above the rewarded tank for 3 seconds; the round summary shows round earnings while the shop shows the total balance.
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
-- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Strict v1 and unversioned legacy `FIRE` commands share finite inclusive bounds: angle -360° to 360° and power 0 to 100. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. Unversioned v0 clients remain temporarily supported and logged; unsupported numeric protocol versions receive `PROTOCOL_MISMATCH` and close `4402`. Physics stays local; full authoritative terrain/damage simulation is still planned.
+- **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Protocol v2 (minimum client v2) requires a complete round map and uses finite inclusive FIRE bounds: angle -360° to 360° and power 0 to 100. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. The WebSocket handshake requires v2; older or missing versions receive `PROTOCOL_MISMATCH` and close `4402`. The Worker prepares and persists the common terrain, materials, initial positions and wind before every round. Clients load this result without regenerating terrain, respawning or rolling wind. Projectile physics and damage simulation stay local; server AI still uses its existing placeholder command.
 - **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
 
 ---
@@ -134,7 +135,7 @@ On a machine with the private deployment script configured, run `.\deploy-cloudf
 
 1. runs `npm run lint` → `npm run build` → `npm run test`;
 2. deploys the Worker with the repository's local Wrangler;
-3. polls the uncached `/api/health` for at most 60 seconds and requires protocol version `1` with minimum client version `0`;
+3. polls the uncached `/api/health` for at most 60 seconds and requires protocol version `2` with minimum client version `2`;
 4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
 5. deploys `dist` to the `tankwars` Pages project on `main`.
 
@@ -152,7 +153,7 @@ This project follows a strict separation of concerns:
 
 - **React Layer** (`src/components/`, `src/App.tsx`, `src/appReducer.ts`): Owns high-level game state (`GamePhase` starting at `'MENU'`, players, money, shop) via `useReducer`. `useGameSession` initializes the Canvas inside an effect; React rendering never reads or mutates the Canvas context directly. The Canvas is not mounted while on the menu screen.
 - **In-match phases** (`GameCanvas.tsx`): `COMBAT` → `RESOLUTION` → `CELEBRATION` → `SUMMARY` → `SHOP` → … → `GAME_OVER` (types in `src/types/game.ts`).
-- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server validates and consumes FIRE/shop intentions and persists idempotent results. Shop success is correlated explicitly by `{ slot, actionId }`, while retries reuse the original ID. Protocol v1 temporarily normalizes v0 `REQUEST_GAME_START`, `FIRE` and shop messages; a legacy buy can only become one transaction derived from the authoritative economy. Each client still runs local Canvas physics.
+- **Online layer** (`OnlineLobby.tsx` + `useOnlineLobby.ts` + create/waiting views, `useGameSession.ts`, `src/game/online/turnOrder.ts`, `src/game/online/protocol.ts`, `worker/`): REST room creation + persistent WS to `GameRoom`; the server validates and consumes FIRE/shop intentions and persists idempotent results. Shop success is correlated explicitly by `{ slot, actionId }`, while retries reuse the original ID. Protocol v2 requires a complete map on `GAME_START` and `SHOP_FINISH`; map preparation is shared with local play and authoritative online. No legacy client adapter is provided. Persisted rooms without a conforming map require a new game. Each client still runs local Canvas physics.
 - **Economy** (`src/game/economy/`): Exact rational reward calculation from structured damage/destruction events. `GameEngine` owns shot ledgers and round earnings; React owns the floating reward feedback and summaries.
 - **Zeus domain** (`src/game/zeus/`): Pure deadlock evaluation, fair appointment history, revenge/fallback targeting, monotonic event IDs, and isolated `25X` reward. It has no dependency on weapons or React.
 - **Game Engine** (`src/game/engine/`): Owns the 120 Hz fixed-timestep physics loop, terrain mutations, projectile simulation, Zeus action/VFX, rendering, and combat audio. Communicates exclusively via callbacks.
@@ -178,7 +179,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.9.1** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.9.2** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
@@ -197,7 +198,7 @@ In the build today:
 
 Still planned:
 
-- Authoritative server simulation (terrain / damage / HP shot-by-shot)
+- Authoritative server projectile/damage/HP simulation shot-by-shot (initial round terrain is already server-prepared)
 - Migration of local AI combat strategies to the authoritative Worker
 - More weapons and power-ups
 - Persistent high scores / match history

@@ -21,13 +21,7 @@ import type {
   HitClassification,
 } from "../economy/shotRewards";
 import { drawTankSprite } from "../rendering/tankSprite";
-import {
-  spawnAcceptsMaterial,
-  TANK_SPAWN_MARGIN_RATIO,
-  TANK_SPAWN_MIN_DISTANCE,
-  TANK_SPAWN_MAX_ATTEMPTS,
-  TANK_SPAWN_PER_POS_ATTEMPTS,
-} from "../../types/terrain";
+import { selectSpawnPositions } from "../round/spawnPlacement";
 
 /** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
 const BOTTOM_SUPPORT_MARGIN = 14;
@@ -203,56 +197,9 @@ export class TankManager {
     terrain: TerrainManager,
     options?: { localMode?: boolean },
   ): void {
-    this.players = players;
-    this.playersMap = new Map(players.map((p) => [p.id, p]));
-    this.invalidateAliveCache();
-
-    const count = players.length;
-    if (count < 2 || count > 4) {
-      console.warn("TankManager: recommended player count is between 2 and 4");
-    }
-
-    const margin = terrain.width * TANK_SPAWN_MARGIN_RATIO;
-    const minX = margin;
-    const maxX = terrain.width - margin;
-    const minDist = TANK_SPAWN_MIN_DISTANCE;
-    const localMode = options?.localMode ?? true;
-
-    const order = players.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(secureRandom() * (i + 1));
-      const temp = order[i];
-      order[i] = order[j];
-      order[j] = temp;
-    }
-
-    const placed: number[] = [];
-    const xs: number[] = new Array(count);
-    let failed = false;
-    for (const idx of order) {
-      const x = this.pickSpawnX(
-        minX,
-        maxX,
-        minDist,
-        terrain,
-        placed,
-        players[idx],
-        localMode,
-      );
-      if (x === null) {
-        failed = true;
-        break;
-      }
-      placed.push(x);
-      xs[idx] = x;
-    }
-
-    if (failed) {
-      const span = count === 1 ? 0 : (maxX - minX) / (count - 1);
-      for (let i = 0; i < count; i++) {
-        xs[i] = minX + span * i;
-      }
-    }
+    const xs = selectSpawnPositions(players, terrain, options?.localMode ?? true, secureRandom);
+    if (xs === null) throw new Error("ROUND_PREPARATION_FAILED");
+    this.setPlayers(players);
 
     players.forEach((player, index) => {
       const tank = player.tank;
@@ -361,46 +308,6 @@ export class TankManager {
    * Tire un X dans [minX, maxX] à minDist des positions déjà posées.
    * Préfère le Y canvas max (creux). Applique le skip matériau 25 %.
    */
-  private pickSpawnX(
-    minX: number,
-    maxX: number,
-    minDist: number,
-    terrain: TerrainManager,
-    placed: number[],
-    player: Player,
-    localMode: boolean,
-  ): number | null {
-    const range = maxX - minX;
-    const maxAttempts = TANK_SPAWN_MAX_ATTEMPTS;
-    const perPosAttempts = TANK_SPAWN_PER_POS_ATTEMPTS;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let best: number | null = null;
-      let bestHeight = -Infinity;
-      for (let t = 0; t < perPosAttempts; t++) {
-        const candidate = minX + secureRandom() * range;
-        if (!placed.every((p) => Math.abs(p - candidate) >= minDist)) continue;
-        if (
-          !spawnAcceptsMaterial(
-            terrain.getMaterialAt(candidate),
-            player.isHuman,
-            localMode,
-            secureRandom,
-          )
-        ) {
-          continue;
-        }
-        const h = terrain.getHeightAt(candidate);
-        if (h > bestHeight) {
-          bestHeight = h;
-          best = candidate;
-        }
-      }
-      if (best !== null) return best;
-    }
-    return null;
-  }
-
   public updateTankPositions(terrain: TerrainManager): void {
     // Post-impact kick only: give initial downward velocity so applyGravity (called every frame
     // from GameEngine) produces visible animated drops + sliding sounds. No more instant snaps

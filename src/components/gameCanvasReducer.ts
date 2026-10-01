@@ -74,6 +74,7 @@ export function createEmptyShopSession(): ShopClientSessionState {
 }
 
 export interface GameCanvasState {
+  roundPreparationError?: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null;
   gamePhase: GamePhase;
   wind: number;
   turnInfo: CurrentTurnInfo | null;
@@ -100,6 +101,8 @@ export interface GameCanvasState {
 }
 
 export type GameCanvasAction =
+  | { type: "SET_ROUND_PREPARATION_ERROR"; reason: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null }
+  | { type: "SET_CURRENT_MANCHE"; roundNumber: number }
   | { type: "SET_WIND"; wind: number }
   | { type: "SET_TURN_INFO"; info: CurrentTurnInfo | null }
   | { type: "SET_UI_PLAYERS"; players: Player[] }
@@ -209,6 +212,10 @@ export function gameCanvasReducer(
   action: GameCanvasAction
 ): GameCanvasState {
   switch (action.type) {
+    case "SET_ROUND_PREPARATION_ERROR":
+      return { ...state, roundPreparationError: action.reason };
+    case "SET_CURRENT_MANCHE":
+      return { ...state, currentManche: action.roundNumber };
     case "SET_WIND":
       return { ...state, wind: action.wind };
     case "SET_TURN_INFO":

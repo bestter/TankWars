@@ -1,4 +1,7 @@
 {
+  "round_preparation_failed": "Impossible de préparer une carte sécuritaire après 16 essais. Réessaie.",
+  "round_new_game_required": "Cette salle ne contient pas une carte compatible. Crée une nouvelle partie.",
+  "btn_retry": "Réessayer",
   "ai_auto_buy_note": "Les IA achètent automatiquement",
   "ai_name_expert": "Expert",
   "ai_name_ok": "OK",

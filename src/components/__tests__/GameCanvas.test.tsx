@@ -89,6 +89,7 @@ describe("GameCanvas component", () => {
     handleShopBuySell: Mock<(weaponId: WeaponId, delta: number) => void>;
     handleShopReady: Mock<() => void>;
     handleNextRound: Mock<() => void>;
+    retryRoundPreparation: Mock<() => void>;
     handleNewGameFromSummary: Mock<() => void>;
     handleNewGame: Mock<() => void>;
     handleAdjustAngle: Mock<(delta: number) => void>;
@@ -120,6 +121,7 @@ describe("GameCanvas component", () => {
       handleShopBuySell: vi.fn(),
       handleShopReady: vi.fn(),
       handleNextRound: vi.fn(),
+      retryRoundPreparation: vi.fn(),
       handleNewGameFromSummary: vi.fn(),
       handleNewGame: vi.fn(),
       handleAdjustAngle: vi.fn(),

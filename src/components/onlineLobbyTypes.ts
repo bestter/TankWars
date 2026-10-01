@@ -1,5 +1,5 @@
+import { type RoundMap } from "../game/round/prepareRound";
 import type { Player } from '../types/player';
-import type { TerrainMaterial } from '../types/terrain';
 
 export type LobbyView = 'create' | 'waiting' | 'joining';
 
@@ -27,9 +27,7 @@ export interface OnlineLobbyProps {
     roomId: string;
     localPlayerId: string;
     gameMode: 'online';
-    initialHeights?: number[];
-    initialMaterials?: TerrainMaterial[];
-    initialWind?: number;
+    initialMap?: RoundMap;
     initialCurrentPlayerIndex?: number;
     slot?: number;
     token?: string;

@@ -18,13 +18,13 @@ export interface WindDisplay {
 }
 
 /** Rolls a new wind value for the start of a combat round. */
-export function rollRoundWind(): number {
-  if (secureRandom() < CALM_CHANCE) {
+export function rollRoundWind(rng: () => number = secureRandom): number {
+  if (rng() < CALM_CHANCE) {
     return 0;
   }
 
-  const sign = secureRandom() < 0.5 ? -1 : 1;
-  const t = secureRandom();
+  const sign = rng() < 0.5 ? -1 : 1;
+  const t = rng();
   const magnitude = 10 + t * t * (WIND_ACCEL_MAX - 10);
   return Math.round(sign * magnitude * 10) / 10;
 }

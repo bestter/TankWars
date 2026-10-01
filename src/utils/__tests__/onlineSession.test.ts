@@ -1,3 +1,4 @@
+import { makeRoundMap } from "../../game/__tests__/helpers";
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   persistOnlineSession,
@@ -8,7 +9,7 @@ import {
   isShopClientSessionState,
   type PersistedOnlineSession,
 } from '../onlineSession';
-import { makePlayer } from '../../game/__tests__/helpers';
+import { makePlayer, makeTank } from '../../game/__tests__/helpers';
 import { createEmptyShopSession } from '../../components/gameCanvasReducer';
 
 function installSessionStorageMock(): Map<string, string> {
@@ -30,23 +31,23 @@ function installSessionStorageMock(): Map<string, string> {
 
 function makeSession(overrides: Partial<PersistedOnlineSession> = {}): PersistedOnlineSession {
   const player = makePlayer({ id: 'player-1', name: 'Host' });
+  const guest = makePlayer({ id: 'player-2', name: 'Guest', tank: makeTank('tank-2', 620, 300) });
   return {
     meta: {
       roomId: 'room-abc',
       localPlayerId: 'player-1',
       slot: 0,
       token: 'TOKEN1',
-      initialHeights: [100, 101, 102],
-      initialMaterials: ['DIRT', 'ROCK'],
-      initialWind: 12,
+      initialMap: makeRoundMap(),
       initialCurrentPlayerIndex: 0,
     },
-    players: [player],
+    players: [player, guest],
     canvas: {
+      map: makeRoundMap(),
       gamePhase: 'COMBAT',
       currentManche: 1,
-      uiPlayers: [player],
-      shopPlayers: [player],
+      uiPlayers: [player, guest],
+      shopPlayers: [player, guest],
       currentShopIndex: 0,
       roundResult: null,
       lastRoundOutcome: null,
@@ -84,7 +85,7 @@ describe('onlineSession', () => {
     persistOnlineSession(session);
 
     expect(readOnlineSession()).toEqual(session);
-    expect(store.has('tankwars-online-session-v1')).toBe(true);
+    expect(store.has('tankwars-online-session-v2')).toBe(true);
   });
 
   it('accepts the two-field hitReaction contract', () => {
@@ -96,9 +97,9 @@ describe('onlineSession', () => {
         hitReaction: { wasDirectHit: true, fallDistance: 42 },
       },
     };
-    session.players = [player];
-    session.canvas.uiPlayers = [player];
-    session.canvas.shopPlayers = [player];
+    session.players[0] = player;
+    session.canvas.uiPlayers[0] = player;
+    session.canvas.shopPlayers[0] = player;
 
     persistOnlineSession(session);
     expect(readOnlineSession()?.players[0].tank.hitReaction).toEqual({
@@ -120,9 +121,9 @@ describe('onlineSession', () => {
         },
       },
     };
-    session.players = [player];
-    session.canvas.uiPlayers = [player];
-    session.canvas.shopPlayers = [player];
+    session.players[0] = player;
+    session.canvas.uiPlayers[0] = player;
+    session.canvas.shopPlayers[0] = player;
 
     persistOnlineSession(session);
     expect(readOnlineSession()).not.toBeNull();
@@ -132,18 +133,18 @@ describe('onlineSession', () => {
     const session = makeSession();
     session.players[0].tank.hitReaction = { wasDirectHit: true, fallDistance: distance };
     persistOnlineSession(session);
-    const serialized = store.get('tankwars-online-session-v1') ?? '';
+    const serialized = store.get('tankwars-online-session-v2') ?? '';
     expect(serialized).toContain('"fallDistance":' + Math.min(120, distance));
     expect(session.players[0].tank.hitReaction.fallDistance).toBe(distance);
 
     // Bypass the writer to exercise snapshots produced before the cap existed.
-    store.set('tankwars-online-session-v1', JSON.stringify(session));
+    store.set('tankwars-online-session-v2', JSON.stringify(session));
     const restored = readOnlineSession();
     for (const player of [
       ...(restored?.players ?? []),
       ...(restored?.canvas.uiPlayers ?? []),
       ...(restored?.canvas.shopPlayers ?? []),
-    ]) {
+    ].filter((player) => player.id === 'player-1')) {
       expect(player.tank.hitReaction).toEqual({
         wasDirectHit: true,
         fallDistance: Math.min(120, distance),
@@ -169,7 +170,7 @@ describe('onlineSession', () => {
   it('drops persisted FIRE and shop intents whose actionId exceeds 64 characters', () => {
     const session = makeSession();
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...session,
         canvas: {
@@ -203,7 +204,7 @@ describe('onlineSession', () => {
   });
 
   it('returns null for malformed JSON', () => {
-    store.set('tankwars-online-session-v1', '{not-json');
+    store.set('tankwars-online-session-v2', '{not-json');
     expect(readOnlineSession()).toBeNull();
   });
 
@@ -223,7 +224,7 @@ describe('onlineSession', () => {
   ] as const)('returns null when meta.%s is invalid', (key, value) => {
     const session = makeSession();
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...session,
         meta: { ...session.meta, [key]: value },
@@ -235,7 +236,7 @@ describe('onlineSession', () => {
 
   it('returns null when players is not an array', () => {
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         meta: { roomId: 'x', localPlayerId: 'p1', slot: 0, token: 't' },
         players: null,
@@ -252,7 +253,7 @@ describe('onlineSession', () => {
       tank: { ...session.players[0].tank, currentWeapon: 'LASER' },
     };
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...session,
         players: [invalidPlayer],
@@ -262,15 +263,14 @@ describe('onlineSession', () => {
     expect(readOnlineSession()).toBeNull();
   });
 
-  it('drops invalid materials, FIRE intent, result and overlay instead of casting them', () => {
+  it('drops an invalid FIRE intent, result and overlay instead of casting them', () => {
     const session = makeSession();
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...session,
         meta: {
           ...session.meta,
-          initialMaterials: ['DIRT', 'LAVA'],
         },
         canvas: {
           ...session.canvas,
@@ -291,7 +291,7 @@ describe('onlineSession', () => {
 
     const read = readOnlineSession();
     expect(read).not.toBeNull();
-    expect(read?.meta.initialMaterials).toBeUndefined();
+    expect(read?.meta.initialMap?.materials).toEqual(session.meta.initialMap?.materials);
     expect(read?.canvas.pendingFireIntent).toBeNull();
     expect(read?.canvas.roundResult).toBeNull();
     expect(read?.canvas.lastRoundOutcome).toBeNull();
@@ -335,7 +335,7 @@ describe('onlineSession', () => {
     persistOnlineSession(makeSession());
     clearOnlineSession();
     expect(readOnlineSession()).toBeNull();
-    expect(store.has('tankwars-online-session-v1')).toBe(false);
+    expect(store.has('tankwars-online-session-v2')).toBe(false);
   });
 
   it('swallows sessionStorage quota errors on persist', () => {
@@ -374,7 +374,7 @@ describe('onlineSession', () => {
   it('safely falls back to empty shop session when persisted shopSession is malformed', () => {
     const rawSession = makeSession();
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...rawSession,
         canvas: {
@@ -396,7 +396,7 @@ describe('onlineSession', () => {
   it('safely falls back to null fireRejection when persisted string is not a valid FireRejectedReason', () => {
     const rawSession = makeSession();
     store.set(
-      'tankwars-online-session-v1',
+      'tankwars-online-session-v2',
       JSON.stringify({
         ...rawSession,
         canvas: {

@@ -1,3 +1,4 @@
+import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type PreparedRound } from "../round/prepareRound";
 import { secureRandom } from "../../utils/random";
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
@@ -256,7 +257,6 @@ export class GameEngine {
     this.height = Math.floor(height);
 
     this.terrain = new TerrainManager(this.width, this.height);
-    this.terrain.generate();
 
     this.physicsEngine = new PhysicsEngine();
     this.tankManager = new TankManager();
@@ -382,17 +382,15 @@ export class GameEngine {
   }
 
   /** Initialise les joueurs et place leurs tanks sur le terrain */
-  public setPlayers(players: Player[]): void {
+  public setPlayers(players: Player[], map?: RoundMap): void {
+    const prepared = this.prepareCombatRound(players, 1, map);
+    this.applyPreparedRound(prepared);
     this.roundCombatActive = true;
     this.gameOver = false;
     this.winner = null;
-    this.tankManager.spawnTanks(players, this.terrain, {
-      localMode: this.localMatch,
-    });
     this.lastSlideTimes.clear();
-    this.randomizeWindForRound();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
-    this.turnManager.setRoundNumber(1);
+    this.turnManager.setRoundNumber(map?.roundNumber ?? 1);
 
     // Initialise le système de tours
     this.turnManager.startFirstTurn();
@@ -930,14 +928,10 @@ export class GameEngine {
    * Prepare a brand new round (preserve money/inventory, reset health/terrain/turn state). Called after SHOP.
    * Safe to call while inter-round pause is active (spawns before combat resumes).
    */
-  public startNextRound(): boolean {
-    const roster = [...this.tankManager.getPlayers()];
-    if (roster.length < 2) {
-      console.warn(
-        `[GameEngine] startNextRound skipped: need at least 2 players in roster (have ${roster.length})`,
-      );
-      return false;
-    }
+  public startNextRound(map?: RoundMap, players?: Player[], roundNumber = 1): boolean {
+    const roster = players ?? [...this.tankManager.getPlayers()];
+    if (roster.length < 2) return false;
+    const prepared = this.prepareCombatRound(roster, map?.roundNumber ?? roundNumber, map);
 
     // New combat round — everyone in the match respawns (deaths only end the manche, not the campaign)
     this.gameOver = false;
@@ -955,12 +949,8 @@ export class GameEngine {
     this.celebrationAngleDir = 1;
     this.resetZeusForRound();
 
-    this.terrain.generate();
-    this.tankManager.spawnTanks(roster, this.terrain, {
-      localMode: this.localMatch,
-    });
-    this.lastSlideTimes.clear(); // fresh per round for throttle maps
-    this.randomizeWindForRound();
+    this.applyPreparedRound(prepared);
+    this.lastSlideTimes.clear();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
@@ -2009,8 +1999,48 @@ export class GameEngine {
     });
   }
 
+  private prepareCombatRound(players: Player[], roundNumber: number, map?: RoundMap): Extract<PreparedRound, { ok: true }> {
+    if (map) {
+      if (!isRoundMap(map) || map.width !== this.width || map.height !== this.height || !hasValidSpawnRoster(map, players)) {
+        throw new Error("INVALID_ROUND_MAP");
+      }
+      return { ok: true, map, players };
+    }
+    const result = prepareRound(players, this.width, this.height, roundNumber, this.localMatch, secureRandom);
+    if (!result.ok) {
+      this.enterInterRoundPhase();
+      throw new Error(result.reason);
+    }
+    return result;
+  }
+
+  private initialRoundMap: RoundMap | null = null;
+
+  public getInitialRoundMap(): RoundMap | null { return this.initialRoundMap; }
+
+  /** Combat recovery keeps damaged terrain and existing positions; it never spawns. */
+  public restoreRoundTerrain(map: RoundMap, initialMap: RoundMap = map): void {
+    if (!isRoundMap(map)) throw new Error("INVALID_ROUND_MAP");
+    this.terrain.loadHeights(map.heights, map.materials);
+    this.initialRoundMap = initialMap;
+    this.setWindForce(map.wind);
+  }
+
+  public getCombatMap(roundNumber: number): RoundMap {
+    return { width: this.width, height: this.height, roundNumber, wind: this.windForce,
+      heights: [...this.terrain.getHeightmap()], materials: [...this.terrain.getMaterials()] };
+  }
+
+  private applyPreparedRound(prepared: Extract<PreparedRound, { ok: true }>): void {
+    this.initialRoundMap = prepared.map;
+    this.terrain.loadHeights(prepared.map.heights, prepared.map.materials);
+    this.tankManager.setPlayers(prepared.players);
+    this.setWindForce(prepared.map.wind);
+  }
+
   /** Fully resets the game for a new match */
-  public resetGame(): void {
+  public resetGame(players?: Player[]): void {
+    const prepared = players ? this.prepareCombatRound(players, 1) : null;
     this.stopVictoryMusic();
     this.gameOver = false;
     this.winner = null;
@@ -2024,9 +2054,6 @@ export class GameEngine {
     this.celebrationAngleDir = 1;
     this.physicsEngine.clear(false);
     this.turnManager.reset();
-
-    // Regenerate terrain
-    this.terrain.generate();
 
     // Clear round accumulators / celebration state
     this.roundDamageDealt = {};
@@ -2054,7 +2081,7 @@ export class GameEngine {
     this.lastSlideTimes.clear();
     this.tankManager.clearVelocities();
 
-    // Note: Players should be re-set via setPlayers() after calling this
+    if (prepared) this.setPlayers(prepared.players, prepared.map);
   }
 
   // ============================================================

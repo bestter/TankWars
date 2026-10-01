@@ -1,3 +1,4 @@
+import { makeRoundMap } from "../../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
@@ -52,6 +53,7 @@ function Harness({
     localPlayerId: "player-1",
     initialCurrentPlayerIndex: 0,
     resumeCanvas,
+    initialMap: resumeCanvas.map,
     slot: 0,
     token: "TOKEN1",
     ws,
@@ -87,6 +89,7 @@ function createResumeCanvas(
   overrides: Partial<OnlineCanvasSnapshot> = {},
 ): OnlineCanvasSnapshot {
   return {
+    map: makeRoundMap(),
     gamePhase: "COMBAT",
     currentManche: 1,
     uiPlayers: players,
@@ -306,7 +309,7 @@ describe("useGameSession FIRE reconnect", () => {
     ).toEqual([{ type: "SHOP_ENTER", roundNumber: 1 }]);
     expect(recoveryMessages).toContainEqual({
       type: "REQUEST_GAME_START",
-      protocolVersion: 1,
+      protocolVersion: 2,
       roundNumber: 2,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -345,6 +348,7 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "SHOP_FINISH",
+        map: makeRoundMap(2),
         shopEpoch: 1,
         completedRoundNumber: 1,
         nextRoundNumber: 2,
@@ -435,6 +439,7 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "SHOP_FINISH",
+        map: makeRoundMap(2),
         shopEpoch: 1,
         completedRoundNumber: 1,
         nextRoundNumber: 2,
@@ -835,7 +840,7 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "PROTOCOL_MISMATCH",
-        requiredVersion: 1,
+        requiredVersion: 2,
         receivedVersion: null,
       });
       ws.onclose?.({
@@ -849,7 +854,7 @@ describe("useGameSession FIRE reconnect", () => {
     });
 
     expect(sessionRef.current?.state.protocolMismatch).toEqual({
-      requiredVersion: 1,
+      requiredVersion: 2,
       receivedVersion: null,
     });
     expect(wsCtor).not.toHaveBeenCalled();
@@ -911,6 +916,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
       ws.receive({
         type: "SHOP_FINISH",
+        map: makeRoundMap(2),
         shopEpoch: 1,
         completedRoundNumber: 1,
         nextRoundNumber: 2,
@@ -962,6 +968,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
       ws.receive({
         type: "SHOP_FINISH",
+        map: makeRoundMap(2),
         shopEpoch: 1,
         completedRoundNumber: 1,
         nextRoundNumber: 2,

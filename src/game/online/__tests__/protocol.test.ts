@@ -3,8 +3,6 @@ import {
   decodeFireMessage,
   decodeShopBuySellMessage,
   decodeShopReadyMessage,
-  isLegacyFirePayload,
-  isLegacyShopPayload,
   isStrictOnlineMessage,
   parseStrictOnlineMessage,
   readProtocolVersion,
@@ -205,38 +203,6 @@ describe("strict online protocol", () => {
     }
   });
 
-  it("applique les mêmes bornes aux FIRE legacy", () => {
-    for (const power of [-1, 101, Infinity, NaN]) {
-      expect(
-        isLegacyFirePayload({
-          type: "FIRE",
-          command: { angle: 45, power, weaponId: "MISSILE" },
-        }),
-      ).toBe(false);
-    }
-    for (const angle of [-361, 361, Infinity, NaN]) {
-      expect(
-        isLegacyFirePayload({
-          type: "FIRE",
-          command: { angle, power: 50, weaponId: "MISSILE" },
-        }),
-      ).toBe(false);
-    }
-
-    expect(
-      isLegacyFirePayload({
-        type: "FIRE",
-        command: { angle: -360, power: 0, weaponId: "MISSILE" },
-      }),
-    ).toBe(true);
-    expect(
-      isLegacyFirePayload({
-        type: "FIRE",
-        command: { angle: 360, power: 100, weaponId: "MISSILE" },
-      }),
-    ).toBe(true);
-  });
-
   it("applique les bornes partagées aux SHOT autoritaires", () => {
     const makeShot = (angle: number, power: number) => ({
       type: "SHOT",
@@ -347,7 +313,7 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "REQUEST_GAME_START",
-        protocolVersion: 1,
+        protocolVersion: 2,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -363,52 +329,23 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "GAME_START",
-        protocolVersion: 1,
+        protocolVersion: 2,
         currentPlayerIndex: 0,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(readProtocolVersion({ type: "GAME_START" })).toBeNull();
     expect(
-      readProtocolVersion({ type: "GAME_START", protocolVersion: 1 }),
-    ).toBe(1);
+      readProtocolVersion({ type: "GAME_START", protocolVersion: 2 }),
+    ).toBe(2);
   });
 
-  it("détecte les payloads FIRE/SHOP de l'ère main", () => {
-    expect(
-      isLegacyFirePayload({
-        type: "FIRE",
-        command: { angle: 45, power: 50, weaponId: "MISSILE" },
-      }),
-    ).toBe(true);
-    expect(
-      isLegacyFirePayload({
-        type: "FIRE",
-        actionId: "fire-1",
-        command: { angle: 45, power: 50, weaponId: "MISSILE" },
-      }),
-    ).toBe(false);
-    expect(
-      isLegacyShopPayload({
-        type: "SHOP_BUY_SELL",
-        player: { id: "p1" },
-        slot: 0,
-      }),
-    ).toBe(true);
-    expect(
-      isLegacyShopPayload({
-        type: "SHOP_BUY_SELL",
-        shopEpoch: 1,
-        actionId: "buy-1",
-        weaponId: "GRENADE",
-        delta: 1,
-      }),
-    ).toBe(false);
-    expect(
-      isLegacyShopPayload({ type: "SHOP_ENTER", roundNumber: 1 }),
-    ).toBe(false);
-    expect(isLegacyShopPayload({ type: "SHOP_ADVANCE", nextIndex: 1 })).toBe(
-      true,
-    );
-    expect(isLegacyShopPayload({ type: "SHOP_READY" })).toBe(true);
+
+  it("rejects legacy FIRE and shop intentions without an adapter", () => {
+    for (const payload of [
+      { type: "FIRE", command: { angle: 45, power: 50, weaponId: "MISSILE" } },
+      { type: "SHOP_BUY_SELL", player: { id: "p1" }, slot: 0 },
+      { type: "SHOP_ADVANCE", nextIndex: 1 },
+      { type: "SHOP_READY" },
+    ]) expect(isStrictOnlineMessage(payload)).toBe(false);
   });
 });

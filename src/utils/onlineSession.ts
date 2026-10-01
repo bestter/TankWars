@@ -1,3 +1,4 @@
+import { isRoundMap, hasValidCombatRoster, type RoundMap } from "../game/round/prepareRound";
 /**
  * Persists an in-progress online match in sessionStorage so a tab refresh or
  * accidental return to the menu can resume instead of dropping back into the lobby.
@@ -13,7 +14,6 @@ import {
   type RoundResult,
 } from '../types/game';
 import { FALL_DISTANCE_MAX_PX, type AiProfile, type Player, type TankHitReaction } from '../types/player';
-import { TERRAIN_MATERIAL, type TerrainMaterial } from '../types/terrain';
 import { ALL_WEAPON_IDS, type WeaponId } from '../types/weapon';
 import type { EarningsOverlayState } from '../components/gameCanvasReducer';
 import {
@@ -31,13 +31,12 @@ export interface OnlineSessionMeta {
   localPlayerId: string;
   slot: number;
   token: string;
-  initialHeights?: number[];
-  initialMaterials?: TerrainMaterial[];
-  initialWind?: number;
+  initialMap?: RoundMap;
   initialCurrentPlayerIndex?: number;
 }
 
 export interface OnlineCanvasSnapshot {
+  map: RoundMap;
   gamePhase: GamePhase;
   currentManche: number;
   uiPlayers: Player[];
@@ -66,7 +65,7 @@ export interface PersistedOnlineSession {
   canvas: OnlineCanvasSnapshot;
 }
 
-const STORAGE_KEY = 'tankwars-online-session-v1';
+const STORAGE_KEY = 'tankwars-online-session-v2';
 
 const VALID_GAME_PHASES: ReadonlySet<string> = new Set<GamePhase>([
   'MENU',
@@ -77,10 +76,6 @@ const VALID_GAME_PHASES: ReadonlySet<string> = new Set<GamePhase>([
   'SUMMARY',
   'GAME_OVER',
 ]);
-
-const VALID_TERRAIN_MATERIALS: ReadonlySet<string> = new Set<TerrainMaterial>(
-  Object.values(TERRAIN_MATERIAL),
-);
 
 const VALID_COLORS: ReadonlySet<string> = new Set(
   Object.values(VGA_PALETTE),
@@ -133,10 +128,6 @@ function isWeaponId(value: unknown): value is WeaponId {
 
 function isGamePhase(value: unknown): value is GamePhase {
   return typeof value === 'string' && VALID_GAME_PHASES.has(value);
-}
-
-function isTerrainMaterial(value: unknown): value is TerrainMaterial {
-  return typeof value === 'string' && VALID_TERRAIN_MATERIALS.has(value);
 }
 
 function isPendingFireIntent(value: unknown): value is PendingFireIntent {
@@ -259,15 +250,17 @@ export function readOnlineSession(): PersistedOnlineSession | null {
       slot: meta.slot,
       token: meta.token,
     };
-    if (Array.isArray(meta.initialHeights) && meta.initialHeights.every(isFiniteNumber)) {
-      parsedMeta.initialHeights = meta.initialHeights;
-    }
-    if (Array.isArray(meta.initialMaterials) && meta.initialMaterials.every(isTerrainMaterial)) {
-      parsedMeta.initialMaterials = meta.initialMaterials;
-    }
-    if (isFiniteNumber(meta.initialWind)) {
-      parsedMeta.initialWind = meta.initialWind;
-    }
+    if (!isRoundMap(meta.initialMap) || !isRoundMap(canvas.map) ||
+      meta.initialMap.roundNumber !== canvas.map.roundNumber) return null;
+    const players = parsed.players;
+    const uiPlayers = canvas.uiPlayers;
+    if (!hasValidCombatRoster(canvas.map, players) || !hasValidCombatRoster(canvas.map, uiPlayers) ||
+      players.some((player, i) => player.id !== uiPlayers[i]?.id) ||
+      (canvas.shopPlayers.length > 0 && (canvas.shopPlayers.length !== players.length ||
+        canvas.shopPlayers.some((player, i) => player.id !== players[i]?.id)))) return null;
+    if (canvas.map.roundNumber !== canvas.currentManche &&
+      !(canvas.gamePhase !== 'COMBAT' && canvas.map.roundNumber === canvas.currentManche - 1)) return null;
+    parsedMeta.initialMap = meta.initialMap;
     if (
       isSafeNonNegativeInteger(meta.initialCurrentPlayerIndex) &&
       meta.initialCurrentPlayerIndex < parsed.players.length
@@ -285,6 +278,7 @@ export function readOnlineSession(): PersistedOnlineSession | null {
       meta: parsedMeta,
       players: parsed.players,
       canvas: {
+        map: canvas.map,
         gamePhase: canvas.gamePhase,
         currentManche: canvas.currentManche,
         uiPlayers: canvas.uiPlayers,

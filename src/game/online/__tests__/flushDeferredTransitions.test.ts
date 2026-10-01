@@ -1,3 +1,4 @@
+import { makeRoundMap } from "../../__tests__/helpers";
 import { describe, expect, it, vi } from "vitest";
 import { DeferredTransitionBuffer } from "../deferredTransitions";
 import {
@@ -25,6 +26,7 @@ function shopState(epoch: number): ShopStateMessage {
 function shopFinish(epoch: number): ShopFinishMessage {
   return {
     type: "SHOP_FINISH",
+    map: makeRoundMap(epoch + 1),
     shopEpoch: epoch,
     completedRoundNumber: 1,
     nextRoundNumber: 2,

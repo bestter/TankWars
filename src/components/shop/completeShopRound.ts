@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine } from "../../game/engine/GameEngine";
-import { seedFromRoomRound, setRNG, createSeededRNG } from "../../utils/random";
+import type { RoundMap } from "../../game/round/prepareRound";
+import { setRNG, createSeededRNG, seedFromRoomRound } from "../../utils/random";
 import { trackEvent } from "../../utils/analytics";
 import type { GamePhase } from "../../types/game";
 import type { Player } from "../../types/player";
@@ -32,6 +33,7 @@ export interface CompleteShopRoundHost {
     players: Player[];
     shopEpoch: number;
     nextRoundNumber: number;
+    map: RoundMap;
   } | null>;
   readonly localShopDoneRef: MutableRefObject<boolean>;
   readonly currentMancheRef: MutableRefObject<number>;
@@ -117,6 +119,7 @@ export function finishShopPhase(
   finalPlayers?: Player[],
   shopEpoch?: number,
   nextRoundNumber?: number,
+  map?: RoundMap,
 ): void {
   if (host.shopFinishingRef.current) return;
   if (
@@ -137,43 +140,35 @@ export function finishShopPhase(
 
   host.shopFinishingRef.current = true;
   host.clearShopAiTimeout();
-  host.pendingShopFinishRef.current = null;
-  host.localShopDoneRef.current = false;
-  host.setLocalShopDone(false);
-
-  if (finalPlayers && finalPlayers.length >= 2) {
-    engine.getTankManager().setPlayers(finalPlayers);
-    host.shopPlayersRef.current = finalPlayers;
-  }
-
-  if (nextRoundNumber !== undefined) {
-    host.currentMancheRef.current = Math.max(
-      host.currentMancheRef.current,
-      nextRoundNumber,
-    );
-  }
-
-  if (host.gameMode === "online" && host.roomId) {
-    setRNG(
-      createSeededRNG(seedFromRoomRound(host.roomId, host.currentMancheRef.current)),
-    );
-  }
-
   const tm = engine.getTurnManager();
-  const roster = engine.getTankManager().getPlayers();
-
+  const roster = finalPlayers ?? [...engine.getTankManager().getPlayers()];
   if (roster.length < 2) {
     host.shopFinishingRef.current = false;
     endMatchFromShop(host, engine, [...roster]);
     return;
   }
-
-  const started = engine.startNextRound();
-  engine.setRoundNumber(host.currentMancheRef.current);
-  if (!started) {
+  try {
+    if (host.gameMode === "online" && !map) throw new Error("INVALID_ROUND_MAP");
+    if (!engine.startNextRound(map, finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
+      host.shopFinishingRef.current = false;
+      return;
+    }
+  } catch (error) {
+    console.error("[Shop] Round preparation failed", error);
+    tm.pauseForInterRound();
     host.shopFinishingRef.current = false;
-    endMatchFromShop(host, engine, [...roster]);
+    host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
     return;
+  }
+  host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
+  host.pendingShopFinishRef.current = null;
+  host.localShopDoneRef.current = false;
+  host.setLocalShopDone(false);
+  if (nextRoundNumber !== undefined) host.currentMancheRef.current = nextRoundNumber;
+  engine.setRoundNumber(host.currentMancheRef.current);
+
+  if (host.gameMode === "online" && host.roomId && map) {
+    setRNG(createSeededRNG(seedFromRoomRound(host.roomId, map.roundNumber)));
   }
 
   tm.resumeForCombat();
@@ -257,6 +252,7 @@ export function startShopPhase(host: CompleteShopRoundHost): void {
       pendingFinish.players,
       pendingFinish.shopEpoch,
       pendingFinish.nextRoundNumber,
+      pendingFinish.map,
     );
     return;
   }
@@ -283,6 +279,7 @@ export function applyAuthoritativeShopFinish(
   finalPlayers: Player[],
   shopEpoch: number,
   nextRoundNumber: number,
+  map: RoundMap,
 ): void {
   if (host.shopFinishingRef.current) return;
   if (shopEpoch <= host.lastAppliedShopEpochRef.current) return;
@@ -301,6 +298,7 @@ export function applyAuthoritativeShopFinish(
       players: finalPlayers,
       shopEpoch,
       nextRoundNumber,
+      map,
     };
     if (phase === "CELEBRATION") {
       host.clearCelebrationTimer();
@@ -315,5 +313,5 @@ export function applyAuthoritativeShopFinish(
     }
     return;
   }
-  finishShopPhase(host, finalPlayers, shopEpoch, nextRoundNumber);
+  finishShopPhase(host, finalPlayers, shopEpoch, nextRoundNumber, map);
 }

@@ -68,6 +68,17 @@ export function dispatchCombatMessage(
     return;
   }
 
+  if (strictMessage?.type === "ROUND_PREPARATION_FAILED") {
+    engine.enterInterRoundPhase();
+    ctx.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: strictMessage.reason });
+    return;
+  }
+
+  if (msg.type === "SHOP_FINISH" && strictMessage?.type !== "SHOP_FINISH") {
+    engine.enterInterRoundPhase();
+    ctx.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "NEW_GAME_REQUIRED" });
+    return;
+  }
   if (msg.type === "GAME_START") {
     if (strictMessage?.type !== "GAME_START") {
       applyProtocolMismatch(readProtocolVersion(msg));
@@ -77,9 +88,7 @@ export function dispatchCombatMessage(
       `[Game] Received GAME_START: currentPlayerIndex=${strictMessage.currentPlayerIndex}`,
     );
     tm.syncTurn(strictMessage.currentPlayerIndex);
-    if (typeof msg.wind === "number" && Number.isFinite(msg.wind)) {
-      engine.setWindForce(msg.wind);
-    }
+    engine.setWindForce(strictMessage.map.wind);
     ctx.syncWireEconomy(msg.players);
   }
 

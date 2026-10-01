@@ -1,3 +1,4 @@
+import { type RoundMap } from "../game/round/prepareRound";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
@@ -7,7 +8,6 @@ import {
 } from "../game/entities/ai/aiShopHelper";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
-import type { TerrainMaterial } from "../types/terrain";
 import type { GamePhase } from "../types/game";
 import {
   gameCanvasReducer,
@@ -17,7 +17,7 @@ import {
   type ShopClientSessionState,
 } from "./gameCanvasReducer";
 import { trackEvent } from "../utils/analytics";
-import { setRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
+import { setRNG, resetRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
 import {
   type OnlineCanvasSnapshot,
 } from "../utils/onlineSession";
@@ -28,6 +28,7 @@ import {
 } from "./sessionPresentation";
 import {
   applyAuthoritativeShopFinish,
+  finishShopPhase,
   startShopPhase,
   type CompleteShopRoundHost,
 } from "./shop/completeShopRound";
@@ -67,9 +68,7 @@ interface UseGameSessionProps {
   gameMode?: 'local' | 'online';
   localPlayerId?: string;
   roomId?: string;
-  initialHeights?: number[];
-  initialMaterials?: TerrainMaterial[];
-  initialWind?: number;
+  initialMap?: RoundMap;
   initialCurrentPlayerIndex?: number;
   resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
@@ -115,9 +114,7 @@ export function useGameSession({
   gameMode = 'local',
   localPlayerId,
   roomId,
-  initialHeights,
-  initialMaterials,
-  initialWind,
+  initialMap,
   initialCurrentPlayerIndex,
   resumeCanvas,
   slot,
@@ -155,9 +152,10 @@ export function useGameSession({
     players: Player[];
     shopEpoch: number;
     nextRoundNumber: number;
+    map: RoundMap;
   } | null>(null);
   const applyShopFinishRef = useRef<
-    (players: Player[], shopEpoch: number, nextRoundNumber: number) => void
+    (players: Player[], shopEpoch: number, nextRoundNumber: number, map: RoundMap) => void
   >(() => {});
 
   const [state, dispatch] = useReducer(
@@ -268,9 +266,7 @@ export function useGameSession({
     lastRoundOutcome,
     canvasWind,
     initialPlayers,
-    initialHeights,
-    initialMaterials,
-    initialWind,
+    initialMap,
     initialCurrentPlayerIndex,
     earningsOverlay: state.earningsOverlay,
     shopSession,
@@ -384,19 +380,9 @@ export function useGameSession({
     });
     const tm = engine.getTurnManager();
 
-    // Online: load the authoritative terrain heights sent by the server
-    // BEFORE setPlayers, so spawnTanks will snap tank Y positions to the server heights.
-    if (gameMode === 'online' && initialHeights && initialHeights.length > 0) {
-      try {
-        engine.getTerrain().loadHeights(initialHeights, initialMaterials);
-      } catch (e) {
-        console.warn('[useGameSession] could not load initialHeights', e);
-      }
-    }
-
-    // Online: seeded RNG per combat round so spawnTanks + wind are identical on every client.
-    if (gameMode === 'online' && roomId) {
-      setRNG(createSeededRNG(seedFromRoomRound(roomId, 1)));
+    // Keep the existing deterministic combat RNG; the authoritative map consumes no draws here.
+    if (gameMode === "online" && roomId && initialMap) {
+      setRNG(createSeededRNG(seedFromRoomRound(roomId, initialMap.roundNumber)));
     }
 
     let onlineCombat: ReturnType<typeof attachOnlineCombat> | null = null;
@@ -426,8 +412,8 @@ export function useGameSession({
         pendingShotPreviewsRef,
         submitShotEarningsRef,
         roundEndFromNetworkRef,
-        applyShopFinish: (players, shopEpoch, nextRoundNumber) => {
-          applyShopFinishRef.current(players, shopEpoch, nextRoundNumber);
+        applyShopFinish: (players, shopEpoch, nextRoundNumber, map) => {
+          applyShopFinishRef.current(players, shopEpoch, nextRoundNumber, map);
         },
         clearCelebrationTimer,
         setLocalShopDone,
@@ -450,6 +436,8 @@ export function useGameSession({
 
     const resumed = resumeCanvas;
     if (resumed && resumed.uiPlayers.length >= 2) {
+      if (!initialMap) throw new Error("INVALID_ROUND_MAP");
+      engine.restoreRoundTerrain(resumed.map, initialMap);
       engine.getTankManager().setPlayers(resumed.uiPlayers.map((p) => ({ ...p })));
       engine.restoreRoundEarningsByPlayer(resumed.roundEarningsByPlayer);
       engine.setRoundNumber(resumed.currentManche);
@@ -471,22 +459,25 @@ export function useGameSession({
       }
       dispatch({ type: "SET_UI_PLAYERS", players: resumed.uiPlayers });
     } else {
-      engine.setPlayers(players);
+      try {
+        if (gameMode === "online" && !initialMap) throw new Error("INVALID_ROUND_MAP");
+        engine.setPlayers(players, gameMode === "online" ? initialMap : undefined);
+      } catch (error) {
+        console.error("[Game] Initial round preparation failed", error);
+        engine.enterInterRoundPhase();
+        dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
+      }
       const matchPlayerCount = requireInitialPlayerCount(players.length);
       initialPlayerCountRef.current = matchPlayerCount;
       setInitialPlayerCount(matchPlayerCount);
-      engine.setRoundNumber(1);
+      const roundNumber = initialMap?.roundNumber ?? 1;
+      engine.setRoundNumber(roundNumber);
+      currentMancheRef.current = roundNumber;
+      dispatch({ type: "SET_CURRENT_MANCHE", roundNumber });
       if (gameMode === 'online' && typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
         tm.syncTurn(initialCurrentPlayerIndex);
       }
-      dispatch({ type: "SET_UI_PLAYERS", players });
-    }
-
-    // Also set wind if provided (for HUD etc.; main sync will come from server updates)
-    if (gameMode === 'online' && typeof initialWind === 'number' && Number.isFinite(initialWind)) {
-      // The engine has onWindChange but for initial we can set via internal if needed.
-      // For now the first wind update will come, or we can dispatch it.
-      // Simple: the wind banner will pick it up on first change; for start we can live with server value later.
+      dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
     }
 
     const playerStats = players.reduce(
@@ -536,6 +527,7 @@ export function useGameSession({
     });
 
     engineRef.current = engine;
+    dispatch({ type: "SET_WIND", wind: engine.getWindForce() });
 
     // Start the internal physics loop
     engine.start();
@@ -553,6 +545,7 @@ export function useGameSession({
 
     return () => {
       onlineCombat?.detach();
+      if (gameMode === "online") resetRNG();
       combatSendRef.current = () => {};
       combatActiveShotIdRef.current = () => null;
       if (celebrationTimerRef.current !== null) {
@@ -679,12 +672,13 @@ export function useGameSession({
   };
 
   useEffect(() => {
-    applyShopFinishRef.current = (players, shopEpoch, nextRoundNumber) => {
+    applyShopFinishRef.current = (players, shopEpoch, nextRoundNumber, map) => {
       applyAuthoritativeShopFinish(
         shopRoundHost,
         players,
         shopEpoch,
         nextRoundNumber,
+        map,
       );
     };
 
@@ -697,20 +691,52 @@ export function useGameSession({
     const engine = engineRef.current;
     if (!engine) return;
 
-    engine.resetGame();
-
     const newPlayers = createDemoPlayers();
     const nextPlayerCount = requireInitialPlayerCount(newPlayers.length);
     initialPlayerCountRef.current = nextPlayerCount;
     setInitialPlayerCount(nextPlayerCount);
     engine.setAIEngine(new AIByProfileStrategy());
-    engine.setPlayers(newPlayers);
+    try {
+      engine.resetGame(newPlayers);
+    } catch (error) {
+      console.error("[Game] New match preparation failed", error);
+      dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
+      return;
+    }
     engine.setRoundNumber(1);
 
-    dispatch({ type: "RESET_GAME", newPlayers });
+    dispatch({ type: "RESET_GAME", newPlayers: [...engine.getTankManager().getPlayers()] });
     shopPlayersRef.current = [];
     currentShopIndexRef.current = 0;
     clearCelebrationTimer();
+  };
+
+  const retryRoundPreparation = (): void => {
+    if (gameMode === "online") {
+      const pending = shopSessionRef.current.pendingIntent;
+      if (pending?.kind === "READY") {
+        sendCombatMessage({ type: "SHOP_READY", shopEpoch: pending.shopEpoch, actionId: pending.actionId });
+      } else {
+        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: 2,
+          roundNumber: currentMancheRef.current, lastSeenShotId: lastSeenShotIdRef.current,
+          lastAppliedShopEpoch: lastAppliedShopEpochRef.current });
+      }
+      return;
+    }
+    if (gamePhaseRef.current === "SHOP") {
+      finishShopPhase(shopRoundHost);
+      return;
+    }
+    const engine = engineRef.current;
+    if (!engine) return;
+    try {
+      engine.setPlayers(matchStartRoster(initialPlayersRef.current).map((p) => ({ ...p })));
+      dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
+      dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
+      engine.getTurnManager().resumeForCombat();
+    } catch (error) {
+      console.error("[Game] Round preparation retry failed", error);
+    }
   };
 
   const handleAdjustAngle = (delta: number): void => {
@@ -747,6 +773,7 @@ export function useGameSession({
     handleShopBuySell,
     handleShopReady,
     handleNextRound,
+    retryRoundPreparation,
     handleNewGameFromSummary,
     handleNewGame,
     handleAdjustAngle,

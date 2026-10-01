@@ -1,3 +1,4 @@
+import { type RoundMap } from "../game/round/prepareRound";
 import { useTranslation } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
 import type { Player } from "../types/player";
@@ -9,7 +10,6 @@ import { GameOverOverlay } from "./GameOverOverlay";
 import { useGameSession } from "./useGameSession";
 import { MobileControls } from "./MobileControls";
 import type { OnlineCanvasSnapshot } from "../utils/onlineSession";
-import type { TerrainMaterial } from "../types/terrain";
 import { ShotEarningsOverlay } from "./ShotEarningsOverlay";
 import type { FireRejectedReason } from "../game/online/protocol";
 import { GameShopOverlay } from "./GameShopOverlay";
@@ -34,9 +34,7 @@ export interface GameCanvasProps {
   gameMode?: "local" | "online";
   localPlayerId?: string;
   roomId?: string;
-  initialHeights?: number[];
-  initialMaterials?: TerrainMaterial[];
-  initialWind?: number;
+  initialMap?: RoundMap;
   initialCurrentPlayerIndex?: number;
   resumeCanvas?: OnlineCanvasSnapshot;
   slot?: number;
@@ -229,9 +227,7 @@ export function GameCanvas({
   gameMode,
   localPlayerId,
   roomId,
-  initialHeights,
-  initialMaterials,
-  initialWind,
+  initialMap,
   initialCurrentPlayerIndex,
   resumeCanvas,
   slot,
@@ -249,6 +245,7 @@ export function GameCanvas({
     handleShopBuySell,
     handleShopReady,
     handleNextRound,
+    retryRoundPreparation,
     handleNewGameFromSummary,
     handleNewGame,
     handleAdjustAngle,
@@ -259,7 +256,7 @@ export function GameCanvas({
     shopDisplayPlayer,
     localShopDone,
     dismissEarningsOverlay,
-  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialHeights, initialMaterials, initialWind, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
+  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialMap, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,
@@ -281,6 +278,12 @@ export function GameCanvas({
         gap: 8,
       }}
     >
+      {state.roundPreparationError && (
+        <div role="alert">
+          {t(state.roundPreparationError === "NEW_GAME_REQUIRED" ? "round_new_game_required" : "round_preparation_failed")}
+          {state.roundPreparationError === "EXHAUSTED" && <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button>}
+        </div>
+      )}
       <MenuButton canvasWidth={CANVAS_WIDTH} onReturnToMenu={onReturnToMenu} />
 
       <div style={{ position: "relative" }}>

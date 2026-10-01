@@ -1,3 +1,4 @@
+import { makeRoundMap } from "../../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
@@ -51,6 +52,7 @@ function Harness({
     localPlayerId: "player-1",
     initialCurrentPlayerIndex: 1,
     resumeCanvas,
+    initialMap: resumeCanvas.map,
     slot: 0,
     token: "TOKEN1",
     ws,
@@ -103,7 +105,8 @@ describe("useGameSession Zeus reconnect", () => {
       }),
     ];
     const resumeCanvas: OnlineCanvasSnapshot = {
-      gamePhase: "COMBAT",
+      map: makeRoundMap(),
+    gamePhase: "COMBAT",
       currentManche: 1,
       uiPlayers: players,
       shopPlayers: [],

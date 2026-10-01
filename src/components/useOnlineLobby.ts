@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { CreateRoomResponse, RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../types/room';
 import type { Player } from '../types/player';
 import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
-import { ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
+import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
 import type { JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
 
 export function useOnlineLobby({
@@ -33,6 +33,7 @@ export function useOnlineLobby({
   const [roster, setRoster] = useState<JoinedInfo[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [roundPreparationFailed, setRoundPreparationFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
 
@@ -119,9 +120,7 @@ export function useOnlineLobby({
         roomId: rId,
         localPlayerId,
         gameMode: 'online',
-        initialHeights: start.heights,
-        initialMaterials: start.materials,
-        initialWind: start.wind,
+        initialMap: start.map,
         initialCurrentPlayerIndex: start.currentPlayerIndex,
         slot,
         token,
@@ -163,7 +162,7 @@ export function useOnlineLobby({
       }
 
       const nameParam = nameForClaim ? `&name=${encodeURIComponent(nameForClaim)}` : '';
-      const wsUrl = `${getOnlineWsBase()}/api/rooms/${rId}/ws?slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
+      const wsUrl = `${getOnlineWsBase()}/api/rooms/${rId}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -188,15 +187,26 @@ export function useOnlineLobby({
       };
 
       ws.onmessage = (ev) => {
-        let msg: ServerGameMessage;
+        let parsed: unknown;
         try {
-          msg = JSON.parse(ev.data);
+          parsed = JSON.parse(ev.data);
         } catch {
           return;
         }
 
-        if (msg.type === 'ROSTER_UPDATE') {
-          const r = msg as ServerRosterUpdate;
+        if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return;
+        if (isStrictOnlineMessage(parsed) && parsed.type === 'ROUND_PREPARATION_FAILED') {
+          setRoundPreparationFailed(parsed.reason === 'EXHAUSTED');
+          setError(t(parsed.reason === 'NEW_GAME_REQUIRED' ? 'round_new_game_required' : 'round_preparation_failed'));
+          return;
+        }
+        if (isStrictOnlineMessage(parsed) && parsed.type === 'PROTOCOL_MISMATCH') {
+          setError(t('protocol_mismatch_body'));
+          connectionRef.current = null;
+          return;
+        }
+        if (parsed.type === 'ROSTER_UPDATE') {
+          const r = parsed as ServerRosterUpdate;
           setRoster(r.roster);
           rosterRef.current = r.roster;
           if (typeof r.numPlayers === 'number') {
@@ -214,8 +224,13 @@ export function useOnlineLobby({
           }
         }
 
-        if (msg.type === 'GAME_START') {
-          handleServerGameStart(msg, rId, slot, token, ws);
+        if (parsed.type === 'GAME_START') {
+          if (!isStrictOnlineMessage(parsed) || parsed.type !== 'GAME_START') {
+            console.error('[Lobby] Invalid GAME_START map');
+            setError(t('round_new_game_required'));
+            return;
+          }
+          handleServerGameStart(parsed, rId, slot, token, ws);
         }
       };
 
@@ -228,6 +243,11 @@ export function useOnlineLobby({
         setConnected(false);
         if (wsRef.current === ws) {
           wsRef.current = null;
+        }
+        if (ev.code === 4402) {
+          setError(t('protocol_mismatch_body'));
+          connectionRef.current = null;
+          return;
         }
         if (ev.code === 4001 || (typeof ev.reason === 'string' && ev.reason.includes('replaced'))) {
           connectionRef.current = null;
@@ -393,6 +413,15 @@ export function useOnlineLobby({
 
   return {
     view,
+    roundPreparationFailed,
+    retryPreparation: () => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        setError(null);
+        setRoundPreparationFailed(false);
+        requestGameStartCatchUp(ws);
+      }
+    },
     numPlayers,
     slotConfigs,
     roomId,

@@ -1,3 +1,5 @@
+import { prepareRound, isRoundMap, ROUND_WIDTH, ROUND_HEIGHT, type RoundMap } from '../../src/game/round/prepareRound';
+import { createSeededRNG, seedFromRoomRound } from '../../src/utils/random';
 /**
  * GameRoom Durable Object (worker/src/game-room.ts)
  *
@@ -7,17 +9,16 @@
  * - Manage presence: human slots claim via WS with token
  * - Track "joined" humans vs AI (AI are always "ready")
  * - Auto-start when all human slots have joined
- * - On start: build authoritative Player[] roster, generate initial terrain heights + wind
+ * - Prepare and persist terrain, materials, validated spawns and wind for every round
  * - Accept FIRE commands only from the correct human slot on their turn
  * - Validate and consume each FIRE before persisting and broadcasting its SHOT
  * - Own transactional shop sessions, AI purchases and idempotent SHOP_FINISH
  * - Persist shot history, active coordination and reconnect catch-up state
  *
- * NOTE for MVP: The real headless GameEngine / SimulationCore + RNG seeding lives in the client
- * engine files (will be extended with headless flag). For now the DO validates intentions and
- * economy while each client replays the same persisted SHOT through its local Canvas physics.
+ * The shared preparation is headless; projectile and damage simulation remains local.
+ * The DO validates intentions and economy while clients replay persisted SHOTs.
  *
- * All random MUST go through a seeded RNG for determinism (injected later).
+ * Round preparation uses a private injected RNG per room/round/attempt.
  */
 
 import { DurableObject } from "cloudflare:workers";
@@ -31,22 +32,19 @@ import {
   type Color,
 } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
-import type { TerrainMaterial } from '../../src/types/terrain';
 import {
   ALL_WEAPON_IDS,
   DEFAULT_INVENTORY,
-  SHOP_WEAPON_IDS,
 } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
 import {
   decodeFireMessage,
   decodeShopBuySellMessage,
   decodeShopReadyMessage,
-  isLegacyFirePayload,
-  isLegacyShopPayload,
   isStrictOnlineMessage,
   ONLINE_PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CLOSE_CODE,
+  type GameStartMessage,
   type AuthorityChangedMessage,
   type FireRejectedMessage,
   type ProtocolMismatchMessage,
@@ -130,28 +128,6 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
   );
 }
 
-function legacyEconomyMatchesPlayer(
-  snapshot: Record<string, unknown>,
-  player: Player,
-): boolean {
-  if (!isSafeNonNegativeInteger(snapshot.money)) return false;
-  const inventory = snapshot.inventory;
-  if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) {
-    return false;
-  }
-  const stock = inventory as Record<string, unknown>;
-  return (
-    snapshot.money === player.money &&
-    ALL_WEAPON_IDS.every((weaponId) => {
-      const proposed = stock[weaponId] ?? 0;
-      return (
-        isSafeNonNegativeInteger(proposed) &&
-        proposed === (player.inventory[weaponId] ?? 0)
-      );
-    })
-  );
-}
-
 type PersistedFireResult = ShotMessage | FireRejectedMessage;
 
 interface PersistedFireAction {
@@ -177,9 +153,9 @@ interface RoomState {
   startAt?: number;
   // Authoritative game state (MVP single round)
   players: Player[];
-  heights: number[]; // full heightmap (server truth)
-  materials: TerrainMaterial[]; // [] until headless terrain.generate is wired
-  wind: number;
+  map: RoundMap | null;
+  initialRoundPlayers: Player[];
+  preparationAttempt: number;
   currentPlayerIndex: number;
   roundEnded: boolean;
   authorityOrder: number[];
@@ -333,7 +309,9 @@ export class GameRoom extends DurableObject {
       if (stored) {
         this.state = stored;
         let shouldPersistMigration = false;
-        if (!this.state.materials) this.state.materials = [];
+        this.state.map ??= null;
+        this.state.initialRoundPlayers ??= [];
+        this.state.preparationAttempt ??= 0;
         this.state.authorityOrder ??= [];
         this.state.earningsAuthoritySlot ??= null;
         this.state.authorityEpoch ??= 0;
@@ -395,7 +373,7 @@ export class GameRoom extends DurableObject {
             if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
           });
         }
-        if (this.state.activeZeusStrike) {
+        if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
         if (shouldPersistMigration) {
@@ -441,7 +419,7 @@ export class GameRoom extends DurableObject {
     },
   ): void {
     this.sendGameStartToSocket(ws);
-    if (!this.state?.started) return;
+    if (!this.state?.started || !this.buildGameStartMessage()) return;
 
     // Always push authoritative turn index (GAME_START already has it; belt-and-suspenders).
     try {
@@ -581,9 +559,9 @@ export class GameRoom extends DurableObject {
       joinedHumans: {},
       started: false,
       players: [],
-      heights: [],
-      materials: [],
-      wind: 0,
+      map: null,
+      initialRoundPlayers: [],
+      preparationAttempt: 0,
       currentPlayerIndex: 0,
       roundEnded: false,
       authorityOrder: [],
@@ -682,6 +660,15 @@ export class GameRoom extends DurableObject {
         return new Response('Invalid token for slot', { status: 403 });
       }
 
+      const receivedVersion = url.searchParams.get('protocolVersion');
+      if (receivedVersion !== String(ONLINE_PROTOCOL_VERSION)) {
+        const pair = new WebSocketPair();
+        pair[1].accept();
+        pair[1].send(JSON.stringify({ type: 'PROTOCOL_MISMATCH', requiredVersion: ONLINE_PROTOCOL_VERSION,
+          receivedVersion: receivedVersion === null ? null : Number(receivedVersion) }));
+        pair[1].close(PROTOCOL_MISMATCH_CLOSE_CODE, 'Unsupported protocol');
+        return new Response(null, { status: 101, webSocket: pair[0] });
+      }
       // Clean any previous connection for this slot (prevents ghost connections and multiple "lost" during lobby->game transition or re-joins)
       if (this.sockets.has(slot)) {
         const old = this.sockets.get(slot);
@@ -795,22 +782,18 @@ export class GameRoom extends DurableObject {
     }
 
     if (msg?.type === 'REQUEST_GAME_START') {
-      const request: RequestGameStartMessage =
-        strictMessage?.type === 'REQUEST_GAME_START'
-          ? strictMessage
-          : {
-              type: 'REQUEST_GAME_START',
-              protocolVersion: ONLINE_PROTOCOL_VERSION,
-              roundNumber: this.state.roundNumber,
-              lastSeenShotId: 0,
-              lastAppliedShopEpoch: 0,
-            };
       if (strictMessage?.type !== 'REQUEST_GAME_START') {
-        this.logLegacyProtocolUse(slot, 'REQUEST_GAME_START');
+        this.rejectProtocolMismatch(slot, typeof msg.protocolVersion === 'number' ? msg.protocolVersion : null);
+        return;
+      }
+      if (!this.state.started) await this.maybeAutoStart();
+      const session = this.state.shopSession;
+      if (session && this.allHumansReady(session)) {
+        await this.completeShopPhase(slot, `prepare-${session.shopEpoch}-${this.state.preparationAttempt}`);
       }
       if (this.state.started) {
         const wsConn = this.sockets.get(slot);
-        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, request);
+        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
       }
       return;
     }
@@ -827,46 +810,8 @@ export class GameRoom extends DurableObject {
 
     if (!this.state.started) return;
 
-    if (isLegacyFirePayload(msg)) {
-      this.logLegacyProtocolUse(slot, 'FIRE');
-      await this.handleFireIntent(slot, {
-        ...msg,
-        actionId: `v0-fire-${crypto.randomUUID()}`,
-      });
-      return;
-    }
-
-    if (msg.type === 'SHOP_ENTER' && strictMessage?.type !== 'SHOP_ENTER') {
-      this.logLegacyProtocolUse(slot, 'SHOP_ENTER');
-      await this.handleShopEnter(slot, this.state.roundNumber);
-      return;
-    }
-
-    if (msg.type === 'SHOP_BUY_SELL' && isLegacyShopPayload(msg)) {
-      this.logLegacyProtocolUse(slot, 'SHOP_BUY_SELL');
-      await this.handleLegacyShopBuySell(slot, msg);
-      return;
-    }
-
-    if (
-      msg.type === 'SHOP_ADVANCE' ||
-      (msg.type === 'SHOP_READY' && isLegacyShopPayload(msg))
-    ) {
-      this.logLegacyProtocolUse(slot, msg.type);
-      const session = this.state.shopSession;
-      if (!session) {
-        this.sendToSlot(slot, {
-          type: 'SHOP_REJECTED',
-          shopEpoch: null,
-          reason: 'SHOP_CLOSED',
-        } satisfies ShopRejectedMessage);
-        return;
-      }
-      await this.handleShopReady(slot, {
-        type: 'SHOP_READY',
-        shopEpoch: session.shopEpoch,
-        actionId: `v0-ready-${crypto.randomUUID()}`,
-      });
+    if (!this.buildGameStartMessage()) {
+      this.sendToSlot(slot, { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber });
       return;
     }
 
@@ -933,74 +878,6 @@ export class GameRoom extends DurableObject {
       await this.handleFireIntent(slot, msg);
       return;
     }
-  }
-
-  private logLegacyProtocolUse(slot: number, messageType: string): void {
-    console.log(JSON.stringify({
-      event: 'legacy_online_protocol_message',
-      protocolVersion: 0,
-      roomId: this.state?.roomId ?? null,
-      slot,
-      messageType,
-    }));
-  }
-
-  private async handleLegacyShopBuySell(
-    slot: number,
-    message: Record<string, unknown>,
-  ): Promise<void> {
-    if (!this.state) return;
-    const session = this.state.shopSession;
-    const authoritativePlayer = this.state.players[slot];
-    const snapshot = message.player;
-    if (
-      !session ||
-      !authoritativePlayer ||
-      !snapshot ||
-      typeof snapshot !== 'object' ||
-      Array.isArray(snapshot)
-    ) {
-      this.sendToSlot(slot, {
-        type: 'SHOP_REJECTED',
-        shopEpoch: session?.shopEpoch ?? null,
-        reason: 'MALFORMED',
-      } satisfies ShopRejectedMessage);
-      return;
-    }
-
-    const snapshotRecord = snapshot as Record<string, unknown>;
-    const candidates: Array<{ weaponId: WeaponId; delta: 1 | -1 }> = [];
-    for (const weaponId of SHOP_WEAPON_IDS) {
-      for (const delta of [1, -1] as const) {
-        const result = applyShopTransaction({
-          player: authoritativePlayer,
-          counters: session.purchasesByPlayerId,
-          weaponId,
-          delta,
-        });
-        if (result.ok && legacyEconomyMatchesPlayer(snapshotRecord, result.player)) {
-          candidates.push({ weaponId, delta });
-        }
-      }
-    }
-
-    if (candidates.length !== 1) {
-      this.sendToSlot(slot, {
-        type: 'SHOP_REJECTED',
-        shopEpoch: session.shopEpoch,
-        reason: 'MALFORMED',
-      } satisfies ShopRejectedMessage);
-      return;
-    }
-
-    const transaction = candidates[0];
-    await this.handleShopBuySell(slot, {
-      type: 'SHOP_BUY_SELL',
-      shopEpoch: session.shopEpoch,
-      actionId: `v0-shop-${crypto.randomUUID()}`,
-      weaponId: transaction.weaponId,
-      delta: transaction.delta,
-    });
   }
 
   // Broadcast helper (only to connected human sockets)
@@ -1095,31 +972,41 @@ export class GameRoom extends DurableObject {
     this.sendRosterUpdate();
   }
 
-  /** Include materials only when the server has a full parallel array (real generate). */
-  private terrainWireFields(): { heights: number[]; materials?: TerrainMaterial[] } {
-    const heights = this.state?.heights ?? [];
-    const materials = this.state?.materials ?? [];
-    if (materials.length === heights.length && heights.length > 0) {
-      return { heights, materials };
-    }
-    return { heights };
-  }
-
-  private buildGameStartMessage() {
-    if (!this.state?.started) return null;
-    return {
-      type: 'GAME_START' as const,
+  private buildGameStartMessage(): GameStartMessage | null {
+    if (!this.state?.started || !isRoundMap(this.state.map) ||
+      this.state.map.roundNumber !== this.state.roundNumber) return null;
+    const message = {
+      type: 'GAME_START',
       protocolVersion: ONLINE_PROTOCOL_VERSION,
-      players: this.state.players,
-      ...this.terrainWireFields(),
-      wind: this.state.wind,
+      players: this.state.initialRoundPlayers,
+      map: this.state.map,
       currentPlayerIndex: this.state.currentPlayerIndex,
     };
+    return isStrictOnlineMessage(message) && message.type === 'GAME_START' ? message : null;
+  }
+
+  private prepareRoomRound(players: Player[], roundNumber: number) {
+    const rng = createSeededRNG(seedFromRoomRound(
+      `${this.state!.roomId}:preparation:${this.state!.preparationAttempt}`, roundNumber,
+    ));
+    return prepareRound(players, ROUND_WIDTH, ROUND_HEIGHT, roundNumber, false, () => rng.next());
+  }
+
+  private async preparationFailed(roundNumber: number): Promise<void> {
+    this.state!.preparationAttempt++;
+    await this.saveState();
+    console.error('[GameRoom] Round preparation exhausted', { roomId: this.state!.roomId, roundNumber });
+    this.broadcast({ type: 'ROUND_PREPARATION_FAILED', reason: 'EXHAUSTED', roundNumber });
   }
 
   private sendGameStartToSocket(ws: WebSocket): void {
     const msg = this.buildGameStartMessage();
-    if (!msg) return;
+    if (!msg) {
+      if (this.state?.started) ws.send(JSON.stringify({
+        type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber,
+      }));
+      return;
+    }
     try {
       ws.send(JSON.stringify(msg));
     } catch {
@@ -1190,15 +1077,14 @@ export class GameRoom extends DurableObject {
       };
     });
 
-    // TODO (next steps): call real headless terrain.generate + spawnTanks + roll wind
-    // and persist materials alongside heights. Until then GAME_START omits materials.
-    // For skeleton we emit placeholder heights (flat) — real work happens in client engine step 6/7
-    const placeholderHeights = Array.from({ length: 800 }, (_, x) => 300 + Math.sin(x / 30) * 20);
-
-    this.state.players = players;
-    this.state.heights = placeholderHeights;
-    this.state.materials = [];
-    this.state.wind = 0; // real wind roll will be done when headless sim is wired
+    const prepared = this.prepareRoomRound(players, 1);
+    if (!prepared.ok) {
+      await this.preparationFailed(1);
+      return;
+    }
+    this.state.players = prepared.players;
+    this.state.initialRoundPlayers = structuredClone(prepared.players);
+    this.state.map = prepared.map;
     this.state.currentPlayerIndex = 0;
     this.state.started = true;
     this.state.startAt = Date.now();
@@ -1744,6 +1630,7 @@ export class GameRoom extends DurableObject {
   }
 
   private async completeZeusStrike(strikeId: number): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
     if (!this.state) return;
     if (this.state.lastAppliedZeusStrike?.strikeId === strikeId) {
       this.broadcast(this.state.lastAppliedZeusStrike);
@@ -1834,6 +1721,7 @@ export class GameRoom extends DurableObject {
   }
 
   private maybeRunAIServerTurn() {
+    if (!this.buildGameStartMessage()) return;
     if (!this.state || this.state.roundEnded) return;
     if (this.shotInFlight || this.state.activeZeusStrike) return;
     const idx = this.state.currentPlayerIndex;
@@ -2125,6 +2013,10 @@ export class GameRoom extends DurableObject {
           }
         : null,
     });
+    if (session && !guard.ok && guard.reason === 'ALREADY_READY' && this.allHumansReady(session)) {
+      await this.completeShopPhase(slot, message.actionId);
+      return;
+    }
     if (!guard.ok || !session) {
       await this.rejectShopAction(slot, {
         type: 'SHOP_REJECTED',
@@ -2163,22 +2055,19 @@ export class GameRoom extends DurableObject {
     const completedRoundNumber = this.state.shopSession.roundNumber;
     const shopEpoch = this.state.shopSession.shopEpoch;
     const nextRoundNumber = completedRoundNumber + 1;
-    const nextPlayers = this.state.players.map((player) => ({
-      ...player,
-      tank: {
-        ...player.tank,
-        isDead: false,
-        health: player.tank.maxHealth,
-        shield: player.tank.maxShield,
-        lastDirectAttackerId: undefined,
-      },
-    }));
+    const prepared = this.prepareRoomRound(this.state.players, nextRoundNumber);
+    if (!prepared.ok) {
+      await this.preparationFailed(nextRoundNumber);
+      return;
+    }
+    const nextPlayers = prepared.players;
     const finish: ShopFinishMessage = {
       type: 'SHOP_FINISH',
+      map: prepared.map,
       shopEpoch,
       completedRoundNumber,
       nextRoundNumber,
-      players: nextPlayers,
+      players: structuredClone(nextPlayers),
       acknowledgedAction: { slot: fromSlot, actionId },
     };
 
@@ -2192,6 +2081,8 @@ export class GameRoom extends DurableObject {
       },
     };
     this.state.players = nextPlayers;
+    this.state.initialRoundPlayers = structuredClone(nextPlayers);
+    this.state.map = prepared.map;
     this.state.shopSession = null;
     this.resetShotCoordination();
     this.state.roundEnded = false;
@@ -2214,6 +2105,11 @@ export class GameRoom extends DurableObject {
       players: this.state.players,
     });
     this.maybeRunAIServerTurn();
+  }
+
+  private allHumansReady(session: PersistedShopSession): boolean {
+    const ready = new Set(session.readySlots);
+    return this.getHumanSlots().every((slot) => ready.has(slot));
   }
 
   // Public helper if we later expose REST status
