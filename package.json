@@ -43,7 +43,7 @@
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.8",
-    "wrangler": "^4.123.0"
+    "wrangler": "^4.145.0"
   },
   "allowScripts": {
     "msgpackr-extract@3.0.4": true,
