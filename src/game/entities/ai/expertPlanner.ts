@@ -5,15 +5,14 @@ import { secureRandom } from "../../../utils/random";
 import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
-import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult, type ExpertForecastCache } from "./expertShotEvaluator";
+import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
+import { createExpertDecisionAim, type ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
 
-export interface ExpertPlan {
+export interface ExpertPlan extends ExpertEvaluatedAim {
   readonly weaponId: WeaponId;
   readonly point: { readonly x: number; readonly y: number };
-  readonly primaryTargetId: string;
-  readonly policy?: AimSearchPolicy;
 }
 
 interface RankedPlan extends ExpertPlan {
@@ -40,7 +39,11 @@ interface ExpertCandidateTrace extends ExpertConsequences {
   readonly destroyedIds: readonly string[];
   readonly profileScore: number;
   readonly nextTurnDelay: number;
-  readonly idealCommand?: { readonly angle: number; readonly power: number };
+  readonly requestedPoint: ExpertEvaluatedAim["requestedPoint"];
+  readonly attempts: number;
+  readonly offset: number;
+  readonly predictedCommand: ExpertEvaluatedAim["command"];
+  readonly rawCommand: ExpertEvaluatedAim["rawCommand"];
   readonly predictedImpacts?: readonly { x: number; y: number; directTargetId?: string }[];
   readonly predictedDamage?: readonly {
     victimId: string;
@@ -96,7 +99,11 @@ function traceCandidate(candidate: RankedPlan): ExpertCandidateTrace {
     destroyedIds: [...result.destroyedIds],
     profileScore: candidate.profileScore,
     nextTurnDelay: candidate.nextTurnDelay,
-    idealCommand: result.idealCommand,
+    requestedPoint: candidate.requestedPoint,
+    attempts: candidate.attempts,
+    offset: candidate.offset,
+    predictedCommand: candidate.command,
+    rawCommand: candidate.rawCommand,
     predictedImpacts: forecast?.hits.map((hit) => ({
       x: hit.x, y: hit.y, directTargetId: hit.directTargetId,
     })),
@@ -207,6 +214,7 @@ export function chooseExpertPlan(
   evaluate: typeof evaluateExpertShot = evaluateExpertShot,
   onDecision?: (trace: ExpertDecisionTrace) => void,
   cache: ExpertForecastCache = createExpertForecastCache(),
+  aim: ExpertDecisionAim = createExpertDecisionAim(undefined, state.roundNumber),
 ): ExpertPlan | null {
   if (!state.localShotContext) {
     onDecision?.({
@@ -225,7 +233,7 @@ export function chooseExpertPlan(
   for (const enemy of enemies) {
     let best: ValidExpertShotResult | null = null;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
-      const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache, "adverse");
+      const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache, { mode: "adverse" });
       if (!isValidExpertShot(result)) continue;
       if (!best ||
           Number(best.shooterDestroyed) > Number(result.shooterDestroyed) ||
@@ -292,6 +300,7 @@ export function chooseExpertPlan(
       enterSurvival = survivalRoll < threatScore;
     }
   }
+  if (enemies.length > 0) aim.reserve();
   if (enterSurvival) {
     let bestSurvival: RankedPlan | null = null;
     const survivalCandidates: RankedPlan[] | null = onDecision ? [] : null;
@@ -301,18 +310,22 @@ export function chooseExpertPlan(
         .filter((enemy) => enemy.id !== threat.id)
         .map((enemy) => [threat, enemy])];
       for (const group of groups) {
+        const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
         const result = evaluate(state, terrain, self, weapon, group, true,
-          state.localShotContext.isFirstShotOfRound, cache, "own");
+          state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
         if (!isValidExpertShot(result) || result.shooterDestroyed) {
           order++;
           continue;
         }
         const candidate: RankedPlan = {
+          kind: "evaluated", ...targetAim,
+          requestedPoint: result.requestedPoint,
+          rawCommand: result.rawCommand,
+          command: result.command,
           weaponId: weapon,
           point: result.destination,
           policy: result.policy,
           targetIds: group.map((player) => player.id),
-          primaryTargetId: primaryTarget(group, state.players).id,
           result,
           profileScore: expertProfileScore(threat),
           nextTurnDelay: nextDelay(state, threat),
@@ -345,18 +358,22 @@ export function chooseExpertPlan(
   const candidates: RankedPlan[] = [];
   let order = 0;
   for (const group of groups) {
+    const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
     const earliest = [...group].sort((a, b) =>
       nextDelay(state, a) - nextDelay(state, b) ||
       state.players.indexOf(a) - state.players.indexOf(b))[0];
     for (const weapon of shooterWeapons) {
       const result = evaluate(state, terrain, self, weapon, group, false,
-        state.localShotContext.isFirstShotOfRound, cache, "own");
+        state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
       if (isValidExpertShot(result)) candidates.push({
+        kind: "evaluated", ...targetAim,
+        requestedPoint: result.requestedPoint,
+        rawCommand: result.rawCommand,
+        command: result.command,
         weaponId: weapon,
         point: result.destination,
         policy: result.policy,
         targetIds: group.map((player) => player.id),
-        primaryTargetId: primaryTarget(group, state.players).id,
         result,
         profileScore: group.reduce((sum, player) => sum + expertProfileScore(player), 0),
         nextTurnDelay: nextDelay(state, earliest),

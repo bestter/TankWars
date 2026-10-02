@@ -13,6 +13,8 @@ import * as random from "../../../../utils/random";
 import type { GameState } from "../../../../types/game";
 import type { Player } from "../../../../types/player";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
+import * as expertEvaluator from "../expertShotEvaluator";
+import type { AimMemory } from "../aimMemory";
 
 describe("AI strategy executeTurn smoke", () => {
   const terrain = new TerrainManager(800, 480);
@@ -347,7 +349,10 @@ describe("AI weapon gates", () => {
     expect(shot.weaponId).not.toBe("BULLDOZER");
   });
 
-  it("smart fallback compares ordinary BULLDOZER with a physically useful MISSILE at the map edge", async () => {
+  it.each([
+    { round: 1, previousAttempts: 0, expected: "BULLDOZER" },
+    { round: 12, previousAttempts: 1, expected: "MISSILE" },
+  ])("smart fallback compares BULLDOZER and MISSILE after offset at the map edge (round=$round)", async ({ round, previousAttempts, expected }) => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISmartStrategy();
     const shooter = makePlayer({
@@ -361,13 +366,25 @@ describe("AI weapon gates", () => {
       id: "enemy",
       tank: makeTank("enemy-tank", 780, 310),
     });
-    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const memories = (strategy as unknown as { memories: Map<string, AimMemory> }).memories;
+    memories.set("ai", { currentTargetId: "enemy", currentTargetAttempts: previousAttempts, lastRoundNumber: round });
+    const fallback = vi.spyOn(expertEvaluator, "chooseExpertFallback");
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const shot = await strategy.executeTurn(
       "shooter-tank",
-      makeGameState({ ...shooter, aiProfile: "v4-smart" }, edge, "v4-smart"),
+      { ...makeGameState({ ...shooter, aiProfile: "v4-smart" }, edge, "v4-smart"), roundNumber: round },
       terrain,
     );
-    expect(shot.weaponId).toBe("MISSILE");
+    expect(shot.weaponId).toBe(expected);
+    const choice = fallback.mock.results[0].value as expertEvaluator.ExpertFallbackChoice;
+    expect(choice).toMatchObject({ kind: "evaluated", useful: true,
+      attempts: previousAttempts + 1, offset: previousAttempts === 0 ? 56.879999999999995 : 0 });
+    expect(choice.forecast?.survivors).toContain("ai");
+    expect(shot).toEqual({ ...choice.command, weaponId: choice.weaponId });
+    const keys = [...fallback.mock.calls[0][5].physics.keys()];
+    expect(keys.some((key) => key.includes('"BULLDOZER"'))).toBe(true);
+    expect(keys.some((key) => key.includes('"MISSILE"'))).toBe(true);
+    expect(rng).toHaveBeenCalledTimes(3); // Both offset draws, even with residual zero, then gaffe.
   });
 
   it("simple v1 does not switch to BULLDOZER even with stock at the map edge", async () => {

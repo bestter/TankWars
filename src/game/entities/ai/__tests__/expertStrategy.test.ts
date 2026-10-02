@@ -3,7 +3,7 @@ import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { AISmartStrategy } from "../AISmartStrategy";
 import { chooseExpertPlan } from "../expertPlanner";
 import { createExpertForecastCache, evaluateExpertShot, expertTacticalPoints, forecastPhysicalShot } from "../expertShotEvaluator";
-import type { ExpertShotResult, ValidExpertShotResult } from "../expertShotEvaluator";
+import type { ExpertEvaluatedAim, ExpertShotResult, ValidExpertShotResult } from "../expertShotEvaluator";
 import { aggregateExpertConsequences, type ExpertConsequences } from "../expertConsequences";
 import { normalizeDamageToMilli } from "../../../economy/fixedPoint";
 import type { CombatDamageEvent, CombatDestructionEvent } from "../../../economy/shotRewards";
@@ -16,6 +16,7 @@ import { calculateShotRewards } from "../../../economy/shotRewards";
 import { WEAPON_REGISTRY } from "../../../../types/weapon";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 import { TerrainManager } from "../../../engine/Terrain";
+import { createExpertDecisionAim } from "../expertDecisionAim";
 
 function fixture() {
   const terrain = flatTerrain(800, 480);
@@ -30,6 +31,13 @@ function fixture() {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+// Ranking doubles still supply the mandatory command transport contract.
+const evaluatedAim: ExpertEvaluatedAim = {
+  kind: "evaluated", primaryTargetId: "enemy", attempts: 1, offset: 0,
+  requestedPoint: { x: 400, y: 320 }, policy: { variant: "full", penalizeProximity: false },
+  rawCommand: { angle: 45, power: 50 }, command: { angle: 45, power: 50 },
+};
 
 const equalConsequences: ExpertConsequences = {
   humanDestroyedCount: 1, humanDamageMilli: 10, aiDestroyedCount: 1, aiDamageMilli: 10,
@@ -141,13 +149,13 @@ describe("EXPERT #267 consequences", () => {
       const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon) => {
         if (shooter.id !== "self") {
           return phase === "SURVIE" ? {
-            destination: { x: 100, y: 320, kind: "tank" }, profit: 0,
+            ...evaluatedAim, destination: { x: 100, y: 320, kind: "tank" }, profit: 0,
             destroyedIds: new Set(["self"]), shooterDestroyed: false, pointOrder: 0,
             ...equalConsequences,
           } : invalid;
         }
         return {
-          destination: { x: weapon === "MISSILE" ? 400 : 420, y: 320, kind: "tank" },
+          ...evaluatedAim, destination: { x: weapon === "MISSILE" ? 400 : 420, y: 320, kind: "tank" },
           profit: 100, destroyedIds: new Set(["enemy"]), shooterDestroyed: false, pointOrder: 0,
           ...(weapon === "MISSILE" ? equalConsequences : winner),
         };
@@ -155,11 +163,11 @@ describe("EXPERT #267 consequences", () => {
       const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
       const trace = vi.fn();
       const withTrace = chooseExpertPlan(f.self, f.state, f.terrain, evaluate, trace);
-      expect(rng).toHaveBeenCalledTimes(phase === "SURVIE" ? 1 : 0);
+      expect(rng).toHaveBeenCalledTimes(phase === "SURVIE" ? 3 : 2);
       rng.mockClear();
       const withoutTrace = chooseExpertPlan(f.self, f.state, f.terrain, evaluate);
       expect(withoutTrace).toEqual(withTrace);
-      expect(rng).toHaveBeenCalledTimes(phase === "SURVIE" ? 1 : 0);
+      expect(rng).toHaveBeenCalledTimes(phase === "SURVIE" ? 3 : 2);
       expect(withTrace?.weaponId).toBe("NUKE");
       expect(trace.mock.calls[0][0]).toMatchObject({
         phase, selectionReason: reason, selected: { weaponId: "NUKE", ...winner },
@@ -225,7 +233,7 @@ describe("EXPERT #267 consequences", () => {
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, _weapon, targets) => {
       if (shooter.id !== "self" || targets.length !== 1) return invalid;
       const human = targets[0].isHuman;
-      return { destination: { x: human ? 400 : 200, y: 320, kind: "tank" },
+      return { ...evaluatedAim, destination: { x: human ? 400 : 200, y: 320, kind: "tank" },
         profit: human ? humanProfit : 100, pointOrder: 0,
         shooterDestroyed: !human && aiSuicide,
         destroyedIds: new Set(human ? ["enemy"] : aiSuicide ? ["ai", "self"] : ["ai"]),
@@ -250,7 +258,7 @@ describe("EXPERT #267 consequences", () => {
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, _weapon, targets) => {
       if (shooter.id !== "self" || targets[0].id === "ai") return invalid;
       const mixed = targets.length === 2;
-      return { destination: { x: mixed ? 300 : 400, y: 320, kind: mixed ? "pair" : "tank" },
+      return { ...evaluatedAim, destination: { x: mixed ? 300 : 400, y: 320, kind: mixed ? "pair" : "tank" },
         profit: 100, pointOrder: 0, shooterDestroyed: false,
         destroyedIds: new Set(mixed ? ["enemy", "ai"] : ["ai"]),
         humanDestroyedCount: mixed ? 1 : 0, humanDamageMilli: mixed ? 100_000 : 0,
@@ -275,7 +283,7 @@ describe("EXPERT #267 consequences", () => {
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon, targets, requireKill) => {
       if (shooter.id !== "self") {
         if (shooter.id === "collateral") return invalid;
-        return { destination: { x: 100, y: 320, kind: "tank" }, profit: 100,
+        return { ...evaluatedAim, destination: { x: 100, y: 320, kind: "tank" }, profit: 100,
           destroyedIds: new Set(["self"]), shooterDestroyed: false, pointOrder: 0,
           humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 1, aiDamageMilli: 100_000 };
       }
@@ -283,7 +291,7 @@ describe("EXPERT #267 consequences", () => {
       expect(targets[0].id).toBe("enemy");
       if (targets.length !== 1) return invalid;
       const killsCollateral = weapon === "MISSILE";
-      return { destination: { x: killsCollateral ? 400 : 420, y: 320, kind: "tank" }, profit: 100,
+      return { ...evaluatedAim, destination: { x: killsCollateral ? 400 : 420, y: 320, kind: "tank" }, profit: 100,
         destroyedIds: new Set(killsCollateral ? ["enemy", "collateral"] : ["enemy"]),
         shooterDestroyed: false, pointOrder: 0, humanDestroyedCount: killsCollateral ? 2 : 1,
         humanDamageMilli: killsCollateral ? 200_000 : 100_000, aiDestroyedCount: 0, aiDamageMilli: 0 };
@@ -294,7 +302,7 @@ describe("EXPERT #267 consequences", () => {
     expect(trace.mock.calls[0][0]).toMatchObject({ phase: "SURVIE", selectedThreatId: "enemy",
       selected: { destroyedIds: ["enemy"], humanDestroyedCount: 1 },
       selectionReason: "moins d'humains détruits" });
-    expect(rng).toHaveBeenCalledOnce();
+    expect(rng).toHaveBeenCalledTimes(3);
   });
 
   it("returns to all opponents when every threat-destroying survival shot is suicidal", () => {
@@ -305,12 +313,12 @@ describe("EXPERT #267 consequences", () => {
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, _weapon, targets, requireKill) => {
       if (shooter.id === "ai") return invalid;
       if (shooter.id === "enemy" || requireKill) return {
-        destination: { x: 400, y: 320, kind: "tank" }, profit: 100,
+        ...evaluatedAim, destination: { x: 400, y: 320, kind: "tank" }, profit: 100,
         destroyedIds: new Set(["self", "enemy"]), shooterDestroyed: true, pointOrder: 0,
         ...equalConsequences,
       };
       if (targets.length !== 1 || targets[0].id !== "ai") return invalid;
-      return { destination: { x: 200, y: 320, kind: "tank" }, profit: 1,
+      return { ...evaluatedAim, destination: { x: 200, y: 320, kind: "tank" }, profit: 1,
         destroyedIds: new Set(), shooterDestroyed: false, pointOrder: 0, ...equalConsequences };
     };
     vi.spyOn(random, "secureRandom").mockReturnValue(0);
@@ -324,7 +332,7 @@ describe("EXPERT #267 consequences", () => {
     const f = fixture();
     f.self.inventory.NUKE = 1;
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter) => ({
-      destination: { x: 400, y: 320, kind: "tank" }, profit: 100, pointOrder: 0,
+      ...evaluatedAim, destination: { x: 400, y: 320, kind: "tank" }, profit: 100, pointOrder: 0,
       destroyedIds: new Set([shooter.id === "self" ? "enemy" : "self"]), shooterDestroyed: false,
       ...equalConsequences,
     });
@@ -558,7 +566,11 @@ describe("EXPERT decision and fallback", () => {
     target.isHuman = true;
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
     const trace = vi.fn();
-    const plan = chooseExpertPlan(shooter, f.state, f.terrain, undefined, trace);
+    f.state.roundNumber = 12;
+    const aim = createExpertDecisionAim({ currentTargetId: target.id,
+      currentTargetAttempts: 1, lastRoundNumber: 12 }, 12);
+    const plan = chooseExpertPlan(shooter, f.state, f.terrain, undefined, trace,
+      createExpertForecastCache(), aim);
 
     expect(plan).toMatchObject({ weaponId: "MISSILE", primaryTargetId: target.id });
     expect(trace).toHaveBeenCalledOnce();
@@ -567,11 +579,12 @@ describe("EXPERT decision and fallback", () => {
       threats: [{ playerId: target.id, turnsUntilShot: 1 }],
       selected: { shooterDestroyed: false, destroyedIds: [target.id] },
     });
-    expect(rng).toHaveBeenCalledOnce();
+    expect(rng).toHaveBeenCalledTimes(3);
   });
 
   it("selects a simulated candidate and updates aim memory only for the final shot", async () => {
     const f = fixture();
+    f.self.inventory.NUKE = 1;
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const plan = chooseExpertPlan(f.self, f.state, f.terrain);
     expect(plan).not.toBeNull();
@@ -584,6 +597,7 @@ describe("EXPERT decision and fallback", () => {
 
   it("logs the tactical reason and the final fallible command in development", async () => {
     const f = fixture();
+    f.self.inventory.NUKE = 1;
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
@@ -596,7 +610,7 @@ describe("EXPERT decision and fallback", () => {
     expect(decision).toMatchObject({
       shooterId: "self",
       round: 1,
-      availableWeapons: ["MISSILE"],
+      availableWeapons: ["MISSILE", "NUKE"],
       selected: { weaponId: shot.weaponId, profit: expect.any(Number),
         humanDestroyedCount: expect.any(Number), humanDamageMilli: expect.any(Number),
         aiDestroyedCount: expect.any(Number), aiDamageMilli: expect.any(Number),
@@ -653,7 +667,7 @@ describe("EXPERT survival and profit ordering", () => {
   const invalid: ExpertShotResult = { destination: -1, profit: 0,
     destroyedIds: new Set(), shooterDestroyed: false, pointOrder: -1 };
   const valid = (x: number, profit: number, destroyed: string[], shooterId: string): ValidExpertShotResult => ({
-    destination: { x, y: 320, kind: "tank" }, profit,
+    ...evaluatedAim, destination: { x, y: 320, kind: "tank" }, profit,
     destroyedIds: new Set(destroyed), shooterDestroyed: destroyed.includes(shooterId),
     humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 0, aiDamageMilli: 0,
     pointOrder: 0,
@@ -692,7 +706,7 @@ describe("EXPERT survival and profit ordering", () => {
     const plan = chooseExpertPlan(f.self, f.state, f.terrain, evaluate,
       (trace) => traces.push(trace));
     expect(plan?.point.x).toBe(400);
-    expect(rng).toHaveBeenCalledTimes(1);
+    expect(rng).toHaveBeenCalledTimes(3);
     expect(traces).toMatchObject([{
       phase: "SURVIE", selectedThreatId: "early", survivalRoll: 0,
       transitionReason: expect.stringContaining("early"), candidateCount: 2,
@@ -714,7 +728,7 @@ describe("EXPERT survival and profit ordering", () => {
       selected?: { primaryTargetId: string } }[] = [];
     expect(chooseExpertPlan(f.self, f.state, f.terrain, evaluate,
       (trace) => traces.push(trace))?.primaryTargetId).toBe("later");
-    expect(rng).toHaveBeenCalledTimes(1);
+    expect(rng).toHaveBeenCalledTimes(3);
     expect(traces).toMatchObject([{
       phase: "OPTIMISER_PROFIT", selectedThreatId: "early",
       survivalRoll: 0.99, transitionReason: expect.stringContaining("jet de SURVIE refusé"),
@@ -734,10 +748,10 @@ describe("EXPERT survival and profit ordering", () => {
     };
     const plan = chooseExpertPlan(f.self, f.state, f.terrain, evaluate);
     expect(plan).toMatchObject({ primaryTargetId: "later", point: { x: 300 } });
-    expect(rng).toHaveBeenCalledTimes(1);
+    expect(rng).toHaveBeenCalledTimes(3);
   });
 
-  it("enters survival without RNG for a score-one threat", () => {
+  it("enters survival without a survival roll for a score-one threat, then reserves its two offset draws", () => {
     const f = fixture();
     f.enemy.isHuman = false;
     f.enemy.aiProfile = "v4-smart";
@@ -751,7 +765,7 @@ describe("EXPERT survival and profit ordering", () => {
       return invalid;
     };
     expect(chooseExpertPlan(f.self, f.state, f.terrain, evaluate)?.point.x).toBe(400);
-    expect(rng).not.toHaveBeenCalled();
+    expect(rng).toHaveBeenCalledTimes(2);
   });
 
   it("can choose a heavy against one threat, or reject it on net profit", () => {

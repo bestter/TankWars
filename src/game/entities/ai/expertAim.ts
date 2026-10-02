@@ -6,7 +6,7 @@ import type { AimCommand } from "./aimCorruption";
 import { aimCone, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
 import { searchBallisticSolution } from "./BallisticsSimulator";
 
-/** The same bounded #212 search serves ideal forecasts and the final fallible aim. */
+/** Bounded #212 search: ideal adverse shots, offset own proposals, ordinary last resort. */
 export function solveExpertAim(
   self: Player,
   targetX: number,

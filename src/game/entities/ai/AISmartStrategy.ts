@@ -15,10 +15,9 @@ import {
   resetAimMemoryForRound,
 } from "./aimMemory";
 import { createExpertForecastCache, chooseExpertFallback } from "./expertShotEvaluator";
-import { ORDINARY_AIM_POLICY } from "./aimSearch";
-import { solveExpertAim } from "./expertAim";
-import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace, type ExpertPlan } from "./expertPlanner";
-import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace } from "./expertPlanner";
+import { createExpertDecisionAim } from "./expertDecisionAim";
+import { maybeGaffe } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
@@ -52,8 +51,9 @@ export class AISmartStrategy implements AIEngine {
 
     let decisionTrace: ExpertDecisionTrace | undefined;
     const cache = createExpertForecastCache();
+    const aim = createExpertDecisionAim(memory, gameState.roundNumber);
     const plan = chooseExpertPlan(self, gameState, terrainManager, undefined,
-      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache);
+      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache, aim);
     const target = plan
       ? gameState.players.find((player) => player.id === plan.primaryTargetId)
       : ordinaryExpertTarget(self, gameState.players, memory);
@@ -72,44 +72,34 @@ export class AISmartStrategy implements AIEngine {
         this.chooseTacticalWeapon(self, target, terrainManager, gameState),
         terrainManager.getMaterialAt(target.tank.position.x),
         (id) => (self.inventory[id] ?? 0) > 0,
-      ), cache,
+      ), cache, aim.forTarget(target.id),
     );
-    const choice: Pick<ExpertPlan, "weaponId" | "point" | "policy"> | undefined = plan ?? fallback;
+    const choice = plan ?? fallback;
     if (!choice) {
       console.error("[AI EXPERT] Aucun choix de tir", { shooterId: self.id,
         round: gameState.roundNumber, turn: gameState.turn });
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
     const { weaponId, point } = choice;
-    const policy = choice.policy ?? ORDINARY_AIM_POLICY;
+    const policy = choice.policy;
     const attempts = recordAimAttempt(memory, target.id);
     self.tank.currentWeapon = weaponId;
 
-    const offset = signedImpactOffset(attempts, "v4-smart", gameState.roundNumber);
-    const aimX = point.x + offset;
-    const idealAim = solveExpertAim(
-      self,
-      aimX,
-      point.y,
-      gameState.windForce,
-      gameState.gravity,
-      terrainManager,
-      weaponId,
-      policy,
-    ).command;
-    let command = idealAim;
+    let command = choice.rawCommand;
 
     const gaffe = ADVANCED_GAFFES["v4-smart"];
     const reactionIntensity = getHitReactionIntensity(
       self.aiProfile ?? "v4-smart",
       self.tank.hitReaction,
     );
+    let reactionCommand: typeof command | undefined;
     if (reactionIntensity > 0) {
       command = applySignedCorruption(
         command,
         reactionIntensity * gaffe.angleAmplitude,
         reactionIntensity * gaffe.powerAmplitude,
       );
+      if (import.meta.env.DEV) reactionCommand = command;
     }
     const gaffeOccurred = maybeGaffe(gaffe.chance);
     if (gaffeOccurred) {
@@ -120,7 +110,8 @@ export class AISmartStrategy implements AIEngine {
       );
     }
 
-    const finalAim = finalizeAdvancedAim(command);
+    const finalAim = reactionIntensity > 0 || gaffeOccurred
+      ? finalizeAdvancedAim(command) : choice.command;
     if (import.meta.env.DEV) {
       console.info("[AI EXPERT] Décision", JSON.stringify({
         shooterId: self.id,
@@ -143,6 +134,7 @@ export class AISmartStrategy implements AIEngine {
         ...decisionTrace,
         realAim: {
           weaponId,
+          choiceKind: choice.kind,
           targetId: target.id,
           tacticalPoint: point,
           policy,
@@ -158,11 +150,16 @@ export class AISmartStrategy implements AIEngine {
           supportMaterials: gameState.players.map((player) => ({ id: player.id,
             material: terrainManager.getMaterialAt(player.tank.position.x) })),
           attemptsOnTarget: attempts,
-          horizontalOffset: offset,
-          aimedPoint: { x: aimX, y: point.y },
-          solverCommand: idealAim,
+          horizontalOffset: choice.offset,
+          aimedPoint: choice.requestedPoint,
+          predictedCommand: choice.kind === "evaluated" ? choice.command : undefined,
+          ordinaryCommand: choice.kind === "ordinary" ? choice.command : undefined,
+          ordinarySearchComplete: choice.kind === "ordinary" ? choice.searchComplete : undefined,
+          solverCommand: choice.rawCommand,
           reactionIntensity,
+          reactionCommand,
           gaffeOccurred,
+          gaffeCommand: gaffeOccurred ? command : undefined,
           finalCommand: finalAim,
         },
       }));
