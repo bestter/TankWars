@@ -120,15 +120,16 @@ export function getAimParameters(
 }
 
 /**
- * Offset horizontal absolu du tir courant. La magnitude ne consomme aucun RNG
- * dès que la tentative a atteint le seuil du profil.
+ * Calcul pur de l'offset horizontal absolu à partir d'une amplitude réservée.
+ * Le seuil explicite permet de tester la courbe sans modifier les seuils partagés.
  */
-export function impactOffsetMagnitude(
+export function calculateImpactOffsetMagnitude(
   attempts: number,
   profile: FallibleProfile,
   roundNumber: number | undefined,
+  amplitude: number,
+  threshold: number = SHOTS_TO_HIT[profile],
 ): number {
-  const threshold = SHOTS_TO_HIT[profile];
   const parameters = getAimParameters(profile, roundNumber);
 
   if (attempts >= threshold) {
@@ -142,13 +143,26 @@ export function impactOffsetMagnitude(
   const firstOffset = lerp(
     parameters.firstBand.min,
     parameters.firstBand.max,
-    secureRandom(),
+    amplitude,
   );
   const magnitude = lerp(firstOffset, parameters.residual, progression);
 
   return normalizedAttempt <= 1
     ? Math.max(magnitude, FIRST_SHOT_FLOOR_PX)
     : magnitude;
+}
+
+/**
+ * Offset horizontal absolu du tir courant. La magnitude ne consomme aucun RNG
+ * dès que la tentative a atteint le seuil du profil.
+ */
+export function impactOffsetMagnitude(
+  attempts: number,
+  profile: FallibleProfile,
+  roundNumber: number | undefined,
+): number {
+  const amplitude = attempts >= SHOTS_TO_HIT[profile] ? 0 : secureRandom();
+  return calculateImpactOffsetMagnitude(attempts, profile, roundNumber, amplitude);
 }
 
 /**

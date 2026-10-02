@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FIRST_SHOT_FLOOR_PX,
   SHOTS_TO_HIT,
+  calculateImpactOffsetMagnitude,
   getAimParameters,
   impactOffsetMagnitude,
   maybeGaffe,
@@ -110,6 +111,48 @@ describe("fallibleAim", () => {
     expect(impactOffsetMagnitude(2, "v3-sniper", 1)).toBe(37.5);
     expect(impactOffsetMagnitude(3, "v2-heuristic", 1)).toBe(49);
     expect(impactOffsetMagnitude(4, "v1-random", 1)).toBe(61);
+  });
+
+  it("accepte un seuil explicite sans modifier le seuil EXPERT ni consommer de RNG", () => {
+    const rng = vi.spyOn(random, "secureRandom");
+    expect(calculateImpactOffsetMagnitude(1, "v4-smart", 1, 0.25, 3)).toBe(48);
+    expect(calculateImpactOffsetMagnitude(2, "v4-smart", 1, 0.25, 3)).toBe(30);
+    expect(calculateImpactOffsetMagnitude(3, "v4-smart", 1, 0.25, 3)).toBe(12);
+    expect(calculateImpactOffsetMagnitude(4, "v4-smart", 1, 0.25, 3)).toBe(12);
+    expect(calculateImpactOffsetMagnitude(2, "v4-smart", 1, 0.25)).toBe(12);
+    expect(SHOTS_TO_HIT["v4-smart"]).toBe(2);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it.each(profiles)("partage le calcul de %s en conservant ses tirages avant le plateau", (profile) => {
+    const rng = vi.spyOn(random, "secureRandom");
+    const threshold = SHOTS_TO_HIT[profile];
+    for (const round of [undefined, Number.NaN, -2, 1, 3, 5, 8, 12, 99]) {
+      for (const attempt of [-2, 0, 1, 1.5, threshold - 0.5, threshold, threshold + 3]) {
+        for (const amplitude of [0, 0.25, 0.75, 1]) {
+          rng.mockClear().mockReturnValue(amplitude);
+          const magnitude = calculateImpactOffsetMagnitude(attempt, profile, round, amplitude);
+          expect(rng).not.toHaveBeenCalled();
+          expect(impactOffsetMagnitude(attempt, profile, round)).toBe(magnitude);
+          expect(rng).toHaveBeenCalledTimes(attempt >= threshold ? 0 : 1);
+        }
+      }
+    }
+  });
+
+  it.each(profiles)("conserve les tirages de côté de %s avant et après le plateau", (profile) => {
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.75);
+    for (const round of [1, 8, 12]) {
+      for (const attempt of [1, SHOTS_TO_HIT[profile]]) {
+        const magnitude = calculateImpactOffsetMagnitude(attempt, profile, round, 0.75);
+        rng.mockClear();
+        expect(signedImpactOffset(attempt, profile, round)).toBe(magnitude);
+        expect(rng).toHaveBeenCalledTimes(attempt >= SHOTS_TO_HIT[profile] ? 1 : 2);
+        rng.mockClear();
+        expect(signedImpactOffset(attempt, profile, round, -1)).toBe(-magnitude);
+        expect(rng).toHaveBeenCalledTimes(attempt >= SHOTS_TO_HIT[profile] ? 0 : 1);
+      }
+    }
   });
 
   it("conserve la hiérarchie d'offset à quantile identique", () => {

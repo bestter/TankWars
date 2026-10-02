@@ -1,6 +1,6 @@
 import { secureRandom } from "../../../utils/random";
 import type { AimMemory } from "./aimMemory";
-import { FIRST_SHOT_FLOOR_PX, SHOTS_TO_HIT, getAimParameters, normalizeAimRound } from "./fallibleAim";
+import { calculateImpactOffsetMagnitude, normalizeAimRound } from "./fallibleAim";
 
 export interface ExpertTargetAim {
   readonly primaryTargetId: string;
@@ -16,13 +16,12 @@ export interface ExpertDecisionAim {
 
 /** Virtual attempts and one shared primitive pair; never advances live memory. */
 export function createExpertDecisionAim(
-  memory: Readonly<AimMemory> = { currentTargetAttempts: 0 },
+  memory: Readonly<AimMemory>,
   roundNumber?: number,
 ): ExpertDecisionAim {
   const round = normalizeAimRound(roundNumber);
   const previousTarget = memory.lastRoundNumber === round ? memory.currentTargetId : undefined;
   const previousAttempts = memory.lastRoundNumber === round ? memory.currentTargetAttempts : 0;
-  const parameters = getAimParameters("v4-smart", round);
   let draws: { amplitude: number; side: number } | undefined;
   const reserve = () => draws ??= { amplitude: secureRandom(), side: secureRandom() };
   return {
@@ -30,8 +29,7 @@ export function createExpertDecisionAim(
     forTarget(targetId) {
       const values = reserve();
       const attempts = previousTarget === targetId ? previousAttempts + 1 : 1;
-      const magnitude = attempts >= SHOTS_TO_HIT["v4-smart"] ? parameters.residual : Math.max(FIRST_SHOT_FLOOR_PX,
-        parameters.firstBand.min + (parameters.firstBand.max - parameters.firstBand.min) * values.amplitude);
+      const magnitude = calculateImpactOffsetMagnitude(attempts, "v4-smart", round, values.amplitude);
       return { primaryTargetId: targetId, attempts, offset: (values.side < 0.5 ? -1 : 1) * magnitude };
     },
   };
