@@ -113,6 +113,17 @@ describe("fallibleAim", () => {
     expect(impactOffsetMagnitude(4, "v1-random", 1)).toBe(61);
   });
 
+  it("accepte un seuil explicite sans modifier le seuil EXPERT ni consommer de RNG", () => {
+    const rng = vi.spyOn(random, "secureRandom");
+    expect(calculateImpactOffsetMagnitude(1, "v4-smart", 1, 0.25, 3)).toBe(48);
+    expect(calculateImpactOffsetMagnitude(2, "v4-smart", 1, 0.25, 3)).toBe(30);
+    expect(calculateImpactOffsetMagnitude(3, "v4-smart", 1, 0.25, 3)).toBe(12);
+    expect(calculateImpactOffsetMagnitude(4, "v4-smart", 1, 0.25, 3)).toBe(12);
+    expect(calculateImpactOffsetMagnitude(2, "v4-smart", 1, 0.25)).toBe(12);
+    expect(SHOTS_TO_HIT["v4-smart"]).toBe(2);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
   it.each(profiles)("partage le calcul de %s en conservant ses tirages avant le plateau", (profile) => {
     const rng = vi.spyOn(random, "secureRandom");
     const threshold = SHOTS_TO_HIT[profile];

@@ -121,14 +121,15 @@ export function getAimParameters(
 
 /**
  * Calcul pur de l'offset horizontal absolu à partir d'une amplitude réservée.
+ * Le seuil explicite permet de tester la courbe sans modifier les seuils partagés.
  */
 export function calculateImpactOffsetMagnitude(
   attempts: number,
   profile: FallibleProfile,
   roundNumber: number | undefined,
   amplitude: number,
+  threshold: number = SHOTS_TO_HIT[profile],
 ): number {
-  const threshold = SHOTS_TO_HIT[profile];
   const parameters = getAimParameters(profile, roundNumber);
 
   if (attempts >= threshold) {

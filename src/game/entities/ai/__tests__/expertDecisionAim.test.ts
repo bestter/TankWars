@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
@@ -9,7 +9,7 @@ import * as planner from "../expertPlanner";
 import * as evaluator from "../expertShotEvaluator";
 import * as aimMemory from "../aimMemory";
 import { createExpertDecisionAim } from "../expertDecisionAim";
-import { SHOTS_TO_HIT } from "../fallibleAim";
+import * as fallibleAim from "../fallibleAim";
 import { finalizeAdvancedAim } from "../aimCorruption";
 import { AISmartStrategy } from "../AISmartStrategy";
 import { solveExpertAim } from "../expertAim";
@@ -46,6 +46,9 @@ function complete(overrides: Partial<Extract<physical.PhysicalResolution, { comp
 
 beforeEach(() => vi.spyOn(console, "info").mockImplementation(() => {}));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterAll(() => {
+  expect(fallibleAim.SHOTS_TO_HIT["v4-smart"]).toBe(2);
+});
 
 describe("EXPERT shared offset primitives and virtual attempts", () => {
   it.each([
@@ -66,21 +69,20 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
     expect(memory).toEqual(before);
   });
 
-  it("interpole le deuxième tir si le seuil EXPERT passe à trois, avec seulement deux tirages", () => {
-    const threshold = SHOTS_TO_HIT["v4-smart"];
+  it("interpole le deuxième tir avec un seuil explicite de trois, avec seulement deux tirages", () => {
+    const calculate = fallibleAim.calculateImpactOffsetMagnitude;
+    vi.spyOn(fallibleAim, "calculateImpactOffsetMagnitude").mockImplementation(
+      (attempts, profile, round, amplitude) => calculate(attempts, profile, round, amplitude, 3),
+    );
     const memory = { currentTargetId: "A", currentTargetAttempts: 1, lastRoundNumber: 1 };
     const rng = vi.spyOn(random, "secureRandom").mockReturnValueOnce(0.25).mockReturnValueOnce(0.75);
-    try {
-      SHOTS_TO_HIT["v4-smart"] = 3;
-      const aim = createExpertDecisionAim(memory, 1);
-      expect(aim.forTarget("A")).toEqual({ primaryTargetId: "A", attempts: 2, offset: 30 });
-      expect(aim.forTarget("B")).toEqual({ primaryTargetId: "B", attempts: 1, offset: 48 });
-      expect(aim.forTarget("A").offset).toBe(30);
-      expect(rng).toHaveBeenCalledTimes(2);
-      expect(memory).toEqual({ currentTargetId: "A", currentTargetAttempts: 1, lastRoundNumber: 1 });
-    } finally {
-      SHOTS_TO_HIT["v4-smart"] = threshold;
-    }
+    const aim = createExpertDecisionAim(memory, 1);
+    expect(aim.forTarget("A")).toEqual({ primaryTargetId: "A", attempts: 2, offset: 30 });
+    expect(aim.forTarget("B")).toEqual({ primaryTargetId: "B", attempts: 1, offset: 48 });
+    expect(aim.forTarget("A").offset).toBe(30);
+    expect(rng).toHaveBeenCalledTimes(2);
+    expect(memory).toEqual({ currentTargetId: "A", currentTargetAttempts: 1, lastRoundNumber: 1 });
+    expect(fallibleAim.SHOTS_TO_HIT["v4-smart"]).toBe(2);
   });
 
   it("shares distinct primitives between converged A and new B without mutating either attempt", () => {
