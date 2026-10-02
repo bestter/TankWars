@@ -6,7 +6,7 @@ import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
 import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
-import { createExpertDecisionAim, type ExpertDecisionAim } from "./expertDecisionAim";
+import type { ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
 
@@ -211,10 +211,10 @@ export function chooseExpertPlan(
   self: Player,
   state: GameState,
   terrain: TerrainManager,
+  aim: ExpertDecisionAim,
   evaluate: typeof evaluateExpertShot = evaluateExpertShot,
   onDecision?: (trace: ExpertDecisionTrace) => void,
   cache: ExpertForecastCache = createExpertForecastCache(),
-  aim: ExpertDecisionAim = createExpertDecisionAim(undefined, state.roundNumber),
 ): ExpertPlan | null {
   if (!state.localShotContext) {
     onDecision?.({

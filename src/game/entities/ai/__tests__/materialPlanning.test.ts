@@ -18,6 +18,7 @@ import { solveHeuristicAim } from "../heuristicShot";
 import { solveSniperAim } from "../sniperAim";
 import { AISimpleStrategy } from "../AISimpleStrategy";
 import { chooseExpertPlan } from "../expertPlanner";
+import { createExpertDecisionAim } from "../expertDecisionAim";
 import * as expertPlanner from "../expertPlanner";
 import * as expertEvaluator from "../expertShotEvaluator";
 import * as localPlanner from "../localMaterialPlanner";
@@ -746,7 +747,8 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
     const f = fixture();
     delete f.state.localShotContext;
     const reward = vi.spyOn(economics, "calculateShotRewards");
-    expect(chooseExpertPlan(f.self, f.state, f.terrain)).toBeNull();
+    expect(chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetAttempts: 0 }, f.state.roundNumber))).toBeNull();
     const choice = chooseIdealExpertFallback(f.state, f.terrain, f.self, f.target, "MISSILE", createExpertForecastCache());
     expect(choice.forecast).toMatchObject({ complete: true, profit: null });
     expect(reward).not.toHaveBeenCalled();

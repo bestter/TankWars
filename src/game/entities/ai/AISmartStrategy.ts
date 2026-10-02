@@ -52,8 +52,8 @@ export class AISmartStrategy implements AIEngine {
     let decisionTrace: ExpertDecisionTrace | undefined;
     const cache = createExpertForecastCache();
     const aim = createExpertDecisionAim(memory, gameState.roundNumber);
-    const plan = chooseExpertPlan(self, gameState, terrainManager, undefined,
-      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache, aim);
+    const plan = chooseExpertPlan(self, gameState, terrainManager, aim, undefined,
+      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache);
     const target = plan
       ? gameState.players.find((player) => player.id === plan.primaryTargetId)
       : ordinaryExpertTarget(self, gameState.players, memory);

@@ -9,6 +9,7 @@ import * as planner from "../expertPlanner";
 import * as evaluator from "../expertShotEvaluator";
 import * as aimMemory from "../aimMemory";
 import { createExpertDecisionAim } from "../expertDecisionAim";
+import { SHOTS_TO_HIT } from "../fallibleAim";
 import { finalizeAdvancedAim } from "../aimCorruption";
 import { AISmartStrategy } from "../AISmartStrategy";
 import { solveExpertAim } from "../expertAim";
@@ -49,6 +50,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe("EXPERT shared offset primitives and virtual attempts", () => {
   it.each([
     [1, 1, 0, 0.499, -45], [1, 1, 1, 0.5, 57], [5, 1, 0.25, 0.75, 39.75],
+    [1, 1.5, 0.25, 0.75, 30], [8, 1.5, 0.5, 0.1, -21.5],
     [1, 2, 0.25, 0.75, 12], [5, 20, 0.9, 0.1, -6], [12, 2, 0.25, 0.75, 0],
   ])("reserves amplitude/side for round %s attempt %s, including the plateau", (round, attempt, amplitude, side, offset) => {
     const memory = { currentTargetId: "A", currentTargetAttempts: attempt - 1, lastRoundNumber: round };
@@ -62,6 +64,23 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
     aim.forTarget("A");
     expect(rng).toHaveBeenCalledTimes(2);
     expect(memory).toEqual(before);
+  });
+
+  it("interpole le deuxième tir si le seuil EXPERT passe à trois, avec seulement deux tirages", () => {
+    const threshold = SHOTS_TO_HIT["v4-smart"];
+    const memory = { currentTargetId: "A", currentTargetAttempts: 1, lastRoundNumber: 1 };
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValueOnce(0.25).mockReturnValueOnce(0.75);
+    try {
+      SHOTS_TO_HIT["v4-smart"] = 3;
+      const aim = createExpertDecisionAim(memory, 1);
+      expect(aim.forTarget("A")).toEqual({ primaryTargetId: "A", attempts: 2, offset: 30 });
+      expect(aim.forTarget("B")).toEqual({ primaryTargetId: "B", attempts: 1, offset: 48 });
+      expect(aim.forTarget("A").offset).toBe(30);
+      expect(rng).toHaveBeenCalledTimes(2);
+      expect(memory).toEqual({ currentTargetId: "A", currentTargetAttempts: 1, lastRoundNumber: 1 });
+    } finally {
+      SHOTS_TO_HIT["v4-smart"] = threshold;
+    }
   });
 
   it("shares distinct primitives between converged A and new B without mutating either attempt", () => {
@@ -97,8 +116,8 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
       return targets.length === 2 ? valid([], 20) : invalid;
     };
     const trace = vi.fn();
-    const plan = planner.chooseExpertPlan(f.self, f.state, f.terrain, evaluate, trace,
-      evaluator.createExpertForecastCache(), createExpertDecisionAim(memory, 1));
+    const plan = planner.chooseExpertPlan(f.self, f.state, f.terrain, createExpertDecisionAim(memory, 1),
+      evaluate, trace, evaluator.createExpertForecastCache());
     expect(plan).toMatchObject({ primaryTargetId: "other", attempts: 2, offset: 12 });
     expect(trace.mock.calls[0][0]).toMatchObject({ phase: survival ? "SURVIE" : "OPTIMISER_PROFIT",
       survivalRoll: 0.1, survivalCandidateCount: survival ? 1 : 0 });
@@ -132,7 +151,7 @@ describe("EXPERT real decision budgets after offset", () => {
       const start = performance.now();
       const shot = await strategy.executeTurn("self", f.state, f.terrain);
       expect(performance.now() - start).toBeLessThan(10_000);
-      const cache = choose.mock.lastCall![5]!;
+      const cache = choose.mock.lastCall![6]!;
       expect(cache.diagnostics!.ownProposals).toBeLessThanOrEqual(economics ? 1512 : 48);
       expect(cache.physics.size).toBeLessThanOrEqual(cache.search.size);
       return { shot, searches: cache.search.size, physics: cache.physics.size, diagnostics: { ...cache.diagnostics } };
@@ -203,7 +222,7 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     const plan = choose.mock.results[0].value as planner.ExpertPlan;
     expect(plan.kind).toBe("evaluated");
     expect(shot).toEqual({ ...plan.command, weaponId: plan.weaponId });
-    expect(search.mock.calls).toHaveLength(choose.mock.calls[0][5]!.search.size);
+    expect(search.mock.calls).toHaveLength(choose.mock.calls[0][6]!.search.size);
     expect(rng).toHaveBeenCalledTimes(3); // amplitude, side, gaffe; no lethal threat here.
     expect(record).toHaveBeenCalledExactlyOnceWith(expect.any(Object), plan.primaryTargetId);
     if (dev) {
