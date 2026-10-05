@@ -1,4 +1,6 @@
-import { TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT } from "../combatConstants";
+import { insideTankHitbox } from "../combatConstants";
+import { BALLISTICS_BASE_SPEED, advanceProjectile, projectileOutOfBounds } from "./projectileMotion";
+import { applyBulldozerHit } from "./bulldozerImpact";
 import { secureRandom } from '../../utils/random';
 /**
  * TankWars - PhysicsEngine
@@ -15,8 +17,6 @@ import { secureRandom } from '../../utils/random';
 
 import {
   DRILLER_SHAFT_DEPTH,
-  BULLDOZER_PUSH_FACTOR,
-  MAX_BULLDOZER_PUSH,
   WEAPON_REGISTRY,
   type WeaponId,
 } from "../../types/weapon";
@@ -62,9 +62,6 @@ export interface ProjectileHitEvent {
   weaponId: WeaponId;
   directTargetId?: string;
 }
-
-/** Air drag coefficient (1/s); slows shells slightly without overpowering wind. */
-const PROJECTILE_DRAG = 0.28;
 
 export class PhysicsEngine {
   private readonly random: () => number;
@@ -152,7 +149,7 @@ export class PhysicsEngine {
     const rad = (angle * Math.PI) / 180;
 
     // Vitesse de base raisonnable pour un canvas ~800px
-    const baseSpeed = 6.0;
+    const baseSpeed = BALLISTICS_BASE_SPEED;
     const speed = power * baseSpeed;
 
     const vx = Math.cos(rad) * speed;
@@ -198,28 +195,9 @@ export class PhysicsEngine {
 
       const prevVy = p.lastVy ?? p.vy;
 
-      // Integrate velocity (semi-implicit): gravity + constant horizontal wind accel
-      p.vy += gravity * dt;
-      p.vx += wind * dt;
-
-      // Light air resistance (opposes motion; wind still drifts trajectories over time)
-      const speed = Math.hypot(p.vx, p.vy);
-      if (speed > 4) {
-        const drag = PROJECTILE_DRAG * speed * dt;
-        p.vx -= (p.vx / speed) * drag;
-        p.vy -= (p.vy / speed) * drag;
-      }
-
+      advanceProjectile(p, dt, gravity, wind);
       p.lastVy = p.vy;
-
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-
-      // Sortie d'écran (limites latérales et inférieures)
-      const outOfBounds =
-        p.x < -60 ||
-        p.x > terrainManager.width + 60 ||
-        p.y > terrainManager.height + 150;
+      const outOfBounds = projectileOutOfBounds(p, terrainManager.width, terrainManager.height);
 
       if (outOfBounds) {
         this.freeProjectile(this.projectiles[i]);
@@ -252,13 +230,7 @@ export class PhysicsEngine {
           const ownerPlayer = tankManager.getPlayerById(p.ownerId);
           if (ownerPlayer) {
             const oTank = ownerPlayer.tank;
-            const tankWidth = TANK_HITBOX_WIDTH;
-            const tankHeight = TANK_HITBOX_HEIGHT;
-            const insideOwner =
-              p.x >= oTank.position.x - tankWidth / 2 &&
-              p.x <= oTank.position.x + tankWidth / 2 &&
-              p.y >= oTank.position.y - tankHeight &&
-              p.y <= oTank.position.y;
+            const insideOwner = insideTankHitbox(p.x, p.y, oTank.position);
 
             if (insideOwner) {
               ignoreOwnerId = p.ownerId;
@@ -293,40 +265,6 @@ export class PhysicsEngine {
 
   private freeProjectile(p: Projectile): void {
     this.projectilePool.push(p);
-  }
-
-  /** Poussée cible + recul tireur. Auto-tir : déplacement net 0. */
-  private applyBulldozerHit(
-    p: Projectile,
-    terrainManager: TerrainManager,
-    tankManager: TankManager,
-  ): void {
-    const hitTank = tankManager.findTankAt(p.x, p.y);
-    if (!hitTank) return;
-    tankManager.markDirectlyAffected(hitTank.id, p.munitionId);
-    const pushDistance = Math.min(
-      Math.abs(p.vx) * BULLDOZER_PUSH_FACTOR,
-      MAX_BULLDOZER_PUSH,
-    );
-    if (pushDistance <= 0 || p.vx === 0) return;
-    const dir: 1 | -1 = p.vx > 0 ? 1 : -1;
-    if (p.ownerId && hitTank.id === p.ownerId) return;
-    tankManager.applyBulldozerDisplacement(
-      hitTank.id,
-      dir,
-      pushDistance,
-      terrainManager,
-    );
-    if (!p.ownerId) return;
-    const shooter = tankManager.getPlayerById(p.ownerId);
-    if (!shooter || shooter.tank.isDead) return;
-    const recoilDir: 1 | -1 = dir === 1 ? -1 : 1;
-    tankManager.applyBulldozerDisplacement(
-      p.ownerId,
-      recoilDir,
-      pushDistance,
-      terrainManager,
-    );
   }
 
   /**
@@ -365,7 +303,8 @@ export class PhysicsEngine {
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
       if (isDirectHit && tankManager) {
-        this.applyBulldozerHit(p, terrainManager, tankManager);
+        const target = tankManager.findTankAt(p.x, p.y);
+        if (target) applyBulldozerHit(target.id, p.vx, p.ownerId, p.munitionId, terrainManager, tankManager);
       }
     } else if (p.weaponId === "DRILLER") {
       terrainManager.destroyTerrainShaft(

@@ -9,6 +9,7 @@ import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type 
 import type { ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
+import { evaluateBulldozerThreat } from "./bulldozerThreat";
 
 export interface ExpertPlan extends ExpertEvaluatedAim {
   readonly weaponId: WeaponId;
@@ -229,9 +230,9 @@ export function chooseExpertPlan(
   const shooterWeapons = ALL_WEAPON_IDS.filter((id) => id !== "BULLDOZER" &&
     (id === "MISSILE" || (self.inventory[id] ?? 0) > 0));
 
-  const threats: { player: Player; result: ValidExpertShotResult }[] = [];
+  const threats: { player: Player; result: { readonly profit: number; readonly shooterDestroyed: boolean } }[] = [];
   for (const enemy of enemies) {
-    let best: ValidExpertShotResult | null = null;
+    let best: { readonly profit: number; readonly shooterDestroyed: boolean } | null = null;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
       const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache, { mode: "adverse" });
       if (!isValidExpertShot(result)) continue;
@@ -241,6 +242,9 @@ export function chooseExpertPlan(
         best = result;
       }
     }
+    const bulldozer = evaluateBulldozerThreat(state, terrain, enemy, self, cache).best;
+    if (bulldozer && (!best || Number(bulldozer.shooterDestroyed) < Number(best.shooterDestroyed) ||
+      (bulldozer.shooterDestroyed === best.shooterDestroyed && bulldozer.profit > best.profit))) best = bulldozer;
     if (best) threats.push({ player: enemy, result: best });
   }
   threats.sort((a, b) =>
