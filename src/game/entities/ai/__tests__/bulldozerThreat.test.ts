@@ -167,6 +167,33 @@ describe("isolated impact agrees with combat", () => {
 });
 
 describe("bounded threat search, profit and cache", () => {
+  it("caches the absence of economic context without searching, resolving, planning or drawing RNG", () => {
+    const f = fixture();
+    f.state.localShotContext = undefined;
+    const cache = createExpertForecastCache();
+    const search = vi.spyOn(ballistics, "searchDirectBulldozerSolutions");
+    const resolve = vi.spyOn(physical, "resolveBulldozerImpact");
+    const rng = vi.spyOn(random, "secureRandom");
+    const evaluate = vi.fn<typeof evaluateExpertShot>();
+    const trace = vi.fn();
+
+    const first = evaluateBulldozerThreat(f.state, f.terrain, f.shooter, f.self, cache);
+    expect(first).toEqual({ best: null, simulations: 0 });
+    expect(cache.bulldozer.get(f.shooter.id)).toBe(first);
+    expect(evaluateBulldozerThreat(f.state, f.terrain, f.shooter, f.self, cache)).toBe(first);
+    expect(chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, trace, cache)).toBeNull();
+    expect(trace).toHaveBeenCalledOnce();
+    expect(trace.mock.calls[0][0]).toEqual({
+      phase: "REPLI", transitionReason: "contexte économique absent : plan principal indisponible",
+      threats: [], survivalCandidateCount: 0, availableWeapons: [], candidateCount: 0, bestByWeapon: [],
+    });
+    expect(search).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(rng).not.toHaveBeenCalled();
+  });
+
   it("demonstrates a real edge kill, matches the launched command and leaves all live state untouched", () => {
     const f = fixture();
     const before = structuredClone(f.state);
@@ -271,7 +298,8 @@ describe("SURVIE integration", () => {
       });
       const plan = chooseExpertPlan(f.self, f.state, f.terrain,
         createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, (event) => { trace = event; });
-      expect(trace).toMatchObject({ phase: "SURVIE", selectedThreatId: "shooter", threats: [{ playerId: "shooter" }] });
+      expect(trace).toMatchObject({ phase: "SURVIE", selectedThreatId: "shooter",
+        threats: [{ playerId: "shooter", weaponId: "BULLDOZER" }] });
       expect(rng).toHaveBeenCalledTimes(profile === "v4-smart" ? 2 : 3);
       expect(plan?.command).toEqual({ angle: 150, power: 53 });
       expect(plan?.weaponId).toBe("MISSILE");
@@ -293,7 +321,63 @@ describe("SURVIE integration", () => {
     } : invalid;
     chooseExpertPlan(f.self, f.state, f.terrain, createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, trace);
     expect(trace.mock.calls[0][0]).toMatchObject({ phase: "REPLI", selectedThreatId: "shooter", survivalRoll: 0.75,
-      threats: [{ playerId: "shooter" }, { playerId: "other" }] });
+      threats: [{ playerId: "shooter", weaponId: "BULLDOZER" }, { playerId: "other", weaponId: "MISSILE" }] });
     expect(rng).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { criterion: "BULLDOZER survival", missileProfit: 100, missileSuicide: true,
+      nukeProfit: 200, nukeSuicide: true, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
+    { criterion: "ordinary survival", missileProfit: -100, missileSuicide: false,
+      nukeProfit: 200, nukeSuicide: true, bulldozerSuicide: true, expected: "MISSILE", profit: -100 },
+    { criterion: "later ordinary survival", missileProfit: 200, missileSuicide: true,
+      nukeProfit: -100, nukeSuicide: false, bulldozerSuicide: true, expected: "NUKE", profit: -100 },
+    { criterion: "BULLDOZER profit", missileProfit: -2, missileSuicide: false,
+      nukeProfit: -1, nukeSuicide: false, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
+    { criterion: "later ordinary profit", missileProfit: 1, missileSuicide: false,
+      nukeProfit: 2, nukeSuicide: false, bulldozerSuicide: false, expected: "NUKE", profit: 2 },
+    { criterion: "stable ordinary ties", missileProfit: 1, missileSuicide: false,
+      nukeProfit: 1, nukeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 1 },
+    { criterion: "stable BULLDOZER tie", missileProfit: 0, missileSuicide: false,
+      nukeProfit: 0, nukeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 0 },
+    { criterion: "stable later ordinary/BULLDOZER tie", missileProfit: -1, missileSuicide: false,
+      nukeProfit: 0, nukeSuicide: false, bulldozerSuicide: false, expected: "NUKE", profit: 0 },
+  ])("traces the winning weapon under $criterion without changing the plan or RNG", (scenario) => {
+    const f = fixture();
+    f.shooter.inventory.NUKE = 1;
+    const cache = createExpertForecastCache();
+    const bulldozer = evaluateBulldozerThreat(f.state, f.terrain, f.shooter, f.self, cache);
+    if (!bulldozer.best) throw new Error("fixture must demonstrate a lethal BULLDOZER threat");
+    const baseProfit = bulldozer.best.profit;
+    cache.bulldozer.set(f.shooter.id, { ...bulldozer,
+      best: { ...bulldozer.best, shooterDestroyed: scenario.bulldozerSuicide } });
+    const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon) => {
+      if (shooter.id === f.self.id) return invalid;
+      const suicide = weapon === "MISSILE" ? scenario.missileSuicide : scenario.nukeSuicide;
+      return {
+        kind: "evaluated", primaryTargetId: "self", attempts: 0, offset: 0,
+        requestedPoint: { x: 780, y: 300 }, policy: { variant: "full", penalizeProximity: true },
+        rawCommand: { angle: 45, power: 50 }, command: { angle: 45, power: 50 },
+        destination: { x: 780, y: 300, kind: "tank" },
+        profit: baseProfit + (weapon === "MISSILE" ? scenario.missileProfit : scenario.nukeProfit),
+        destroyedIds: new Set(suicide ? ["self", "shooter"] : ["self"]),
+        shooterDestroyed: suicide, pointOrder: 0,
+        humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 1, aiDamageMilli: 100000,
+      };
+    };
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+    const trace = vi.fn();
+    const withTrace = chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, trace, cache);
+    expect(trace.mock.calls[0][0]).toMatchObject({
+      phase: "REPLI", selectedThreatId: "shooter", threats: [{
+        playerId: "shooter", weaponId: scenario.expected, lethalProfit: baseProfit + scenario.profit,
+      }],
+    });
+    expect(rng).toHaveBeenCalledTimes(2);
+    rng.mockClear();
+    expect(chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, undefined, cache)).toEqual(withTrace);
+    expect(rng).toHaveBeenCalledTimes(2);
   });
 });

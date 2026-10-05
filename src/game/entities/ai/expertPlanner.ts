@@ -63,6 +63,7 @@ export interface ExpertDecisionTrace {
   readonly transitionReason: string;
   readonly threats: readonly {
     playerId: string;
+    weaponId: WeaponId;
     profileScore: number;
     turnsUntilShot: number;
     lethalProfit: number;
@@ -230,9 +231,10 @@ export function chooseExpertPlan(
   const shooterWeapons = ALL_WEAPON_IDS.filter((id) => id !== "BULLDOZER" &&
     (id === "MISSILE" || (self.inventory[id] ?? 0) > 0));
 
-  const threats: { player: Player; result: { readonly profit: number; readonly shooterDestroyed: boolean } }[] = [];
+  const threats: { player: Player; weaponId: WeaponId; result: { readonly profit: number; readonly shooterDestroyed: boolean } }[] = [];
   for (const enemy of enemies) {
     let best: { readonly profit: number; readonly shooterDestroyed: boolean } | null = null;
+    let bestWeapon: WeaponId | undefined;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
       const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache, { mode: "adverse" });
       if (!isValidExpertShot(result)) continue;
@@ -240,12 +242,16 @@ export function chooseExpertPlan(
           Number(best.shooterDestroyed) > Number(result.shooterDestroyed) ||
           (best.shooterDestroyed === result.shooterDestroyed && result.profit > best.profit)) {
         best = result;
+        bestWeapon = weapon;
       }
     }
     const bulldozer = evaluateBulldozerThreat(state, terrain, enemy, self, cache).best;
     if (bulldozer && (!best || Number(bulldozer.shooterDestroyed) < Number(best.shooterDestroyed) ||
-      (bulldozer.shooterDestroyed === best.shooterDestroyed && bulldozer.profit > best.profit))) best = bulldozer;
-    if (best) threats.push({ player: enemy, result: best });
+      (bulldozer.shooterDestroyed === best.shooterDestroyed && bulldozer.profit > best.profit))) {
+      best = bulldozer;
+      bestWeapon = "BULLDOZER";
+    }
+    if (best && bestWeapon !== undefined) threats.push({ player: enemy, weaponId: bestWeapon, result: best });
   }
   threats.sort((a, b) =>
     nextDelay(state, a.player) - nextDelay(state, b.player) ||
@@ -277,8 +283,9 @@ export function chooseExpertPlan(
     onDecision({
       phase,
       transitionReason,
-      threats: threats.map(({ player, result }) => ({
+      threats: threats.map(({ player, weaponId, result }) => ({
         playerId: player.id,
+        weaponId,
         profileScore: expertProfileScore(player),
         turnsUntilShot: nextDelay(state, player),
         lethalProfit: result.profit,

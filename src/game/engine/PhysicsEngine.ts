@@ -302,9 +302,8 @@ export class PhysicsEngine {
 
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
-      if (isDirectHit && tankManager) {
-        const target = tankManager.findTankAt(p.x, p.y);
-        if (target) applyBulldozerHit(target.id, p.vx, p.ownerId, p.munitionId, terrainManager, tankManager);
+      if (isDirectHit && tankManager && directTargetId !== undefined) {
+        applyBulldozerHit(directTargetId, p.vx, p.ownerId, p.munitionId, terrainManager, tankManager);
       }
     } else if (p.weaponId === "DRILLER") {
       terrainManager.destroyTerrainShaft(
