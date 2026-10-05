@@ -16,6 +16,7 @@ import { secureRandom } from "../../utils/random";
 
 import { TerrainManager } from "./Terrain";
 import { PhysicsEngine } from "./PhysicsEngine";
+import { launchFromBarrel } from "./projectileMotion";
 import { TankManager } from "../entities/TankManager";
 import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
@@ -466,11 +467,7 @@ export class GameEngine {
 
     // Calculate barrel tip position so the projectile starts at the end of the barrel
     // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
-    const barrelLength = 20;
-    const angleRad = (command.angle * Math.PI) / 180;
-    const barrelStartY = from.y - 13;
-    const launchX = from.x + Math.cos(angleRad) * barrelLength;
-    const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
+    const { x: launchX, y: launchY } = launchFromBarrel(from.x, from.y, command.angle);
 
     console.log(
       `[SHOT] weapon=${command.weaponId} angle=${command.angle} power=${command.power} (owner and coordinates redacted)`,

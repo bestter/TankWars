@@ -8,6 +8,7 @@ import { solveExpertAim } from "./expertAim";
 import { finalizeAdvancedAim, type AimCommand } from "./aimCorruption";
 import type { ExpertTargetAim } from "./expertDecisionAim";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
+import type { BulldozerThreatSearch } from "./bulldozerThreat";
 
 import { resolvePhysicalShot, FORECAST_SHOT_ID, FORECAST_MAX_STEPS, type PhysicalResolution } from "./physicalShotForecast";
 import { TERRAIN_MATERIAL } from "../../../types/terrain";
@@ -58,6 +59,7 @@ type DecisionForecast = PhysicalResolution & { readonly profit: number | null };
 
 /** One cache belongs to one immutable decision snapshot. No entries survive the decision. */
 export interface ExpertForecastCache {
+  readonly bulldozer: Map<string, BulldozerThreatSearch>;
   readonly search: Map<string, ReturnType<typeof solveExpertAim>>;
   readonly physics: Map<string, DecisionForecast>;
   readonly survivors: WeakMap<DecisionForecast, ReadonlySet<string>>;
@@ -65,7 +67,7 @@ export interface ExpertForecastCache {
 }
 
 export function createExpertForecastCache(): ExpertForecastCache {
-  return { search: new Map(), physics: new Map(), survivors: new WeakMap(), diagnostics: import.meta.env.DEV
+  return { bulldozer: new Map(), search: new Map(), physics: new Map(), survivors: new WeakMap(), diagnostics: import.meta.env.DEV
     ? { ownProposals: 0, adverseProposals: 0, drillerRockRejections: 0 } : undefined };
 }
 
