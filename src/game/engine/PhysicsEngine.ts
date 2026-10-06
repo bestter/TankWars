@@ -1,7 +1,7 @@
 import { insideTankHitbox } from "../combatConstants";
 import { BALLISTICS_BASE_SPEED, advanceProjectile, projectileOutOfBounds } from "./projectileMotion";
 import { applyBulldozerHit } from "./bulldozerImpact";
-import { secureRandom } from '../../utils/random';
+import { secureRandom, createSeededRNG } from '../../utils/random';
 /**
  * TankWars - PhysicsEngine
  *
@@ -65,6 +65,14 @@ export interface ProjectileHitEvent {
 
 export class PhysicsEngine {
   private readonly random: () => number;
+  private shotRandom: (() => number) | null = null;
+
+  public setShotSeed(seed: number | undefined): void {
+    const rng = seed === undefined ? null : createSeededRNG(seed);
+    this.shotRandom = rng ? () => rng.next() : null;
+  }
+
+  private physicalRandom = (): number => (this.shotRandom ?? this.random)();
   private readonly logExplosions: boolean;
 
   constructor(
@@ -370,11 +378,11 @@ export class PhysicsEngine {
 
     for (let k = 0; k < numSubs; k++) {
       const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
-      const spread = frac * maxSpreadRad * (0.7 + this.random() * 0.6);
+      const spread = frac * maxSpreadRad * (0.7 + this.physicalRandom() * 0.6);
       const subDir = dir + spread;
 
       // subs get a fraction of current speed + variation; higher power gives more energetic subs
-      const subSpeed = currentSpeed * (0.5 + this.random() * 0.4) * (0.65 + (power / 100) * 0.6);
+      const subSpeed = currentSpeed * (0.5 + this.physicalRandom() * 0.4) * (0.65 + (power / 100) * 0.6);
       const subVx = Math.cos(subDir) * subSpeed;
       const subVy = Math.sin(subDir) * subSpeed;
 
@@ -431,7 +439,7 @@ export class PhysicsEngine {
 
     const bounce = grenadeBounceParams(
       terrainManager.getMaterialAt(p.x),
-      this.random,
+      this.physicalRandom,
     );
 
     // Check if this contact should cause detonation rather than another bounce.
@@ -455,14 +463,14 @@ export class PhysicsEngine {
     p.vy = -p.vy * bounce.restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= bounce.friction + (this.random() - 0.5) * 0.06;
+    p.vx *= bounce.friction + (this.physicalRandom() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
-    p.vy += (this.random() - 0.5) * 0.5;
+    p.vy += (this.physicalRandom() - 0.5) * 0.5;
 
     // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
     if (p.vy > -1.0) {
-      p.vy = -1.0 - this.random() * 1.2;
+      p.vy = -1.0 - this.physicalRandom() * 1.2;
     }
 
     // Clamp absurd horizontal speeds after many skids (safety).

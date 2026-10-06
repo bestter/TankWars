@@ -1,3 +1,4 @@
+import { expertProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
@@ -150,17 +151,6 @@ function selectionReason(
   }
   if (winner.weaponOrder !== runnerUp.weaponOrder) return "ordre stable des armes";
   return "ordre stable des groupes ou des points";
-}
-
-export function expertProfileScore(player: Player): number {
-  if (player.isHuman) return 0.9;
-  switch (player.aiProfile) {
-    case "v4-smart": return 1;
-    case "v3-sniper": return 0.8;
-    case "v2-heuristic": return 0.5;
-    case "v1-random": return 0.1;
-    default: return 0.5;
-  }
 }
 
 export function possibleExpertThreatWeapons(player: Player): WeaponId[] {

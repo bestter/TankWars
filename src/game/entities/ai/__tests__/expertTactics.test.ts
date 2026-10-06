@@ -1,7 +1,8 @@
+import { expertProfileScore } from "../profileScore";
 import { describe, expect, it } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { expertTacticalPoints } from "../expertShotEvaluator";
-import { expertProfileScore, ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
+import { ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
 
 const terrain = flatTerrain(800, 480);
 const self = makePlayer({ id: "self", isHuman: false, aiProfile: "v4-smart",
