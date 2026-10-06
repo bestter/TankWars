@@ -36,6 +36,7 @@ export function validateEarnings(
     if (before.isDead && !t.isDead) return fail("RESURRECTION");
     if ((!t.isDead && t.health <= 0) || (t.isDead && t.health > 0) || report.deadSlots[index] !== t.isDead) return fail("DEATH_INCONSISTENT");
     if (t.maxHealth !== before.maxHealth || t.maxShield !== before.maxShield || t.health < 0 || t.health > before.maxHealth || t.shield < 0 || t.shield > before.maxShield) return fail("CAP_MISMATCH");
+    if (t.health > before.health || t.shield > before.shield) return fail("CAP_MISMATCH");
     players.push({ ...original, inventory: { ...original.inventory }, tank: {
       ...before, position: { ...t.position }, angle: t.angle, power: t.power,
       health: t.health, shield: t.shield, isDead: t.isDead,

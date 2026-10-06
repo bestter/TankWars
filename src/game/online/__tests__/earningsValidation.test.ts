@@ -35,7 +35,7 @@ describe("v3 earnings authority", () => {
     report.players.reverse();
     report.players[0].money = 0;
     report.players[0].tank.health = 100;
-    report.players[0].tank.shield = 40;
+    report.players[0].tank.shield = 10;
     report.players[0].tank.lastHitBy = "untrusted";
     report.players[0].tank.lastDirectAttackerId = "untrusted";
     report.players[0].tank.hitReaction = { wasDirectHit: true, fallDistance: 500 };
@@ -43,10 +43,37 @@ describe("v3 earnings authority", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.players[1].money).toBe(roster[1].money);
-    expect(result.players[1].tank).toMatchObject({ health: 100, shield: 40, hitReaction: { fallDistance: 120 } });
+    expect(result.players[1].tank).toMatchObject({ health: 100, shield: 10, hitReaction: { fallDistance: 120 } });
     expect(result.players[1].tank.lastHitBy).toBeUndefined();
     expect(result.players[1].tank.lastDirectAttackerId).toBeUndefined();
     expect(roster[1].tank.shield).toBe(20);
+  });
+
+  it.each([
+    [60, 20, true], [50, 10, true], [60.0000000001, 20, false],
+    [60, 20.0000000001, false], [70, 10, false], [50, 30, false],
+    [101, 20, false], [60, 51, false],
+  ])("checks health %s and shield %s separately without tolerance", (health, shield, accepted) => {
+    const { roster, report } = fixture();
+    roster[1].tank.health = 60;
+    report.players[1].tank.health = health;
+    report.players[1].tank.shield = shield;
+    const before = structuredClone(roster);
+    const result = validateEarnings(report, roster, "a", "MISSILE");
+    expect(result.ok).toBe(accepted);
+    if (!accepted) expect(result).toEqual({ ok: false, reason: "CAP_MISMATCH" });
+    expect(roster).toEqual(before);
+  });
+
+  it.each([
+    ["IDENTITY_MISMATCH", (r: ShotEarningsMessage) => { r.players[1].name = "other"; }],
+    ["INVENTORY_MISMATCH", (r: ShotEarningsMessage) => { r.players[1].inventory.GRENADE = 0; }],
+    ["DEATH_INCONSISTENT", (r: ShotEarningsMessage) => { r.deadSlots[1] = true; }],
+  ] as const)("preserves %s priority over an increase", (reason, mutate) => {
+    const { roster, report } = fixture();
+    report.players[1].tank.shield = 30;
+    mutate(report);
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason });
   });
 
   it.each([

@@ -1,4 +1,4 @@
-import { expertProfileScore } from "../profileScore";
+import { playerProfileScore } from "../profileScore";
 import { describe, expect, it } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { expertTacticalPoints } from "../expertShotEvaluator";
@@ -44,6 +44,13 @@ describe("EXPERT tactical points", () => {
 });
 
 describe("EXPERT threat profile contracts", () => {
+  it.each([
+    ["v1-random", 0.1], ["v2-heuristic", 0.5], ["v3-sniper", 0.8], ["v4-smart", 1], [undefined, 0.5],
+  ] as const)("preserves shared profile score for %s and human tactical score", (aiProfile, score) => {
+    expect(playerProfileScore(makePlayer({ isHuman: false, aiProfile }))).toBe(score);
+    expect(playerProfileScore(makePlayer({ isHuman: true, aiProfile }))).toBe(0.9);
+  });
+
   it("limits SIMPLE to its equipped weapon and uses OK score for an unknown profile", () => {
     const simple = makePlayer({ ...a, isHuman: false, aiProfile: "v1-random",
       inventory: { NUKE: 1, BULLET: 1 },
@@ -51,7 +58,7 @@ describe("EXPERT threat profile contracts", () => {
     expect(possibleExpertThreatWeapons(simple)).toEqual(["BULLET"]);
     const unknown = { ...simple, aiProfile: "unknown" as typeof simple.aiProfile };
     expect(possibleExpertThreatWeapons(unknown)).toEqual(["BULLET"]);
-    expect(expertProfileScore(unknown)).toBe(0.5);
+    expect(playerProfileScore(unknown)).toBe(0.5);
     simple.tank.currentWeapon = "BULLDOZER";
     expect(possibleExpertThreatWeapons(simple)).toEqual([]);
   });

@@ -1,5 +1,5 @@
 import type { Player, PlayerId } from "../../types/player";
-import { expertProfileScore } from "../entities/ai/profileScore";
+import { playerProfileScore } from "../entities/ai/profileScore";
 
 export const ZEUS_ROTATIONS_WITHOUT_EARNINGS = 5;
 
@@ -143,8 +143,8 @@ export function evaluateZeusDeadlock(
   const minimum = Math.min(...candidates.map((p) => p.tank.health + p.tank.shield));
   candidates = candidates.filter((p) => p.tank.health + p.tank.shield === minimum);
   if (ais.length > 0) {
-    const score = Math.min(...candidates.map(expertProfileScore));
-    candidates = candidates.filter((p) => expertProfileScore(p) === score);
+    const score = Math.min(...candidates.map(playerProfileScore));
+    candidates = candidates.filter((p) => playerProfileScore(p) === score);
   }
   const zeus = candidates[candidates.length === 1 ? 0 : normalizedRandomIndex(random(), candidates.length)];
   const appointment: ZeusAppointment = {

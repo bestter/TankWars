@@ -1,4 +1,5 @@
 import type { CombatCatchUpMessage } from "./combatCatchUp";
+import { encodedCombatBytes, MAX_COMBAT_MESSAGE_BYTES, utf8Bytes } from "./combatTransport";
 import { isRoundMap, hasValidSpawnRoster, type RoundMap } from "../round/prepareRound";
 import {
   FIRE_COMMAND_MAX_ANGLE,
@@ -533,7 +534,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
     case "COMBAT_CATCH_UP_BEGIN":
     case "COMBAT_CATCH_UP_FRAGMENT":
     case "COMBAT_CATCH_UP_END":
-      return typeof value.catchUpId === "string" && value.catchUpId.length > 0 && value.catchUpId.length <= 128 && isSafeNonNegativeInteger(value.roundNumber) && isSafeNonNegativeInteger(value.fragmentCount) && value.fragmentCount > 0 && isSafeNonNegativeInteger(value.boundary);
+      return isCombatCatchUpMessage(value);
     case "REQUEST_GAME_START":
       return (
         value.protocolVersion === ONLINE_PROTOCOL_VERSION &&
@@ -809,9 +810,43 @@ export function decodeFireMessage(value: unknown): FireDecodeResult {
 export function parseStrictOnlineMessage(raw: string): StrictOnlineMessage | null {
   try {
     const value: unknown = JSON.parse(raw);
+    if (isRecord(value) && typeof value.type === "string" && value.type.startsWith("COMBAT_CATCH_UP_") &&
+        utf8Bytes(raw) > MAX_COMBAT_MESSAGE_BYTES) return null;
     return isStrictOnlineMessage(value) ? value : null;
   } catch {
     return null;
+  }
+}
+
+function isCombatCatchUpMessage(value: Record<string, unknown>): boolean {
+  if (typeof value.catchUpId !== "string" || value.catchUpId.length === 0 || value.catchUpId.length > 128 ||
+      !isSafeNonNegativeInteger(value.roundNumber) || value.roundNumber === 0 ||
+      !isSafeNonNegativeInteger(value.fragmentCount) || value.fragmentCount === 0 ||
+      !isSafeNonNegativeInteger(value.boundary)) return false;
+  if (value.type !== "COMBAT_CATCH_UP_FRAGMENT") {
+    if ([value.index, value.kind, value.data, value.events, value.firstSequence, value.lastSequence].some((field) => field !== undefined)) return false;
+  } else {
+    if (!isSafeNonNegativeInteger(value.index) || value.index >= value.fragmentCount) return false;
+    if (value.kind === "BASE") {
+      if (typeof value.data !== "string" || value.data.length === 0 || value.events !== undefined ||
+          value.firstSequence !== undefined || value.lastSequence !== undefined) return false;
+    } else if (value.kind === "EVENTS") {
+      if (value.data !== undefined || !Array.isArray(value.events) || value.events.length === 0 ||
+          !isSafeNonNegativeInteger(value.firstSequence) || value.firstSequence === 0 ||
+          !isSafeNonNegativeInteger(value.lastSequence) || value.lastSequence < value.firstSequence ||
+          value.lastSequence > value.boundary || value.events.length !== value.lastSequence - value.firstSequence + 1) return false;
+      const firstSequence = value.firstSequence;
+      const roundNumber = value.roundNumber;
+      if (!value.events.every((event: unknown, index) => isRecord(event) &&
+          typeof event.type === "string" && ["SHOT", "ZEUS_APPOINTED", "ZEUS_STRIKE", "ZEUS_STRIKE_APPLIED"].includes(event.type) &&
+          isStrictOnlineMessage(event) && "eventSequence" in event && "roundNumber" in event &&
+          event.roundNumber === roundNumber && event.eventSequence === firstSequence + index)) return false;
+    } else return false;
+  }
+  try {
+    return encodedCombatBytes(value) <= MAX_COMBAT_MESSAGE_BYTES;
+  } catch {
+    return false;
   }
 }
 

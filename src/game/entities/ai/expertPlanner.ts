@@ -1,4 +1,4 @@
-import { expertProfileScore } from "./profileScore";
+import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
@@ -245,7 +245,7 @@ export function chooseExpertPlan(
   }
   threats.sort((a, b) =>
     nextDelay(state, a.player) - nextDelay(state, b.player) ||
-    expertProfileScore(b.player) - expertProfileScore(a.player) ||
+    playerProfileScore(b.player) - playerProfileScore(a.player) ||
     b.result.profit - a.result.profit ||
     state.players.indexOf(a.player) - state.players.indexOf(b.player));
 
@@ -276,7 +276,7 @@ export function chooseExpertPlan(
       threats: threats.map(({ player, weaponId, result }) => ({
         playerId: player.id,
         weaponId,
-        profileScore: expertProfileScore(player),
+        profileScore: playerProfileScore(player),
         turnsUntilShot: nextDelay(state, player),
         lethalProfit: result.profit,
       })),
@@ -293,7 +293,7 @@ export function chooseExpertPlan(
   };
   let enterSurvival = false;
   if (threat) {
-    const threatScore = expertProfileScore(threat);
+    const threatScore = playerProfileScore(threat);
     if (threatScore === 1) {
       enterSurvival = true;
     } else {
@@ -328,7 +328,7 @@ export function chooseExpertPlan(
           policy: result.policy,
           targetIds: group.map((player) => player.id),
           result,
-          profileScore: expertProfileScore(threat),
+          profileScore: playerProfileScore(threat),
           nextTurnDelay: nextDelay(state, threat),
           nextTurnIndex: state.players.indexOf(threat),
           weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),
@@ -376,7 +376,7 @@ export function chooseExpertPlan(
         policy: result.policy,
         targetIds: group.map((player) => player.id),
         result,
-        profileScore: group.reduce((sum, player) => sum + expertProfileScore(player), 0),
+        profileScore: group.reduce((sum, player) => sum + playerProfileScore(player), 0),
         nextTurnDelay: nextDelay(state, earliest),
         nextTurnIndex: state.players.indexOf(earliest),
         weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),

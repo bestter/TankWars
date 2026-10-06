@@ -1,8 +1,8 @@
 import type { Player } from "../../types/player";
 import type { RoundMap } from "../round/prepareRound";
 import { isStrictOnlineMessage, type ShotMessage, type ZeusAppointedMessage, type ZeusStrikeMessage, type ZeusStrikeAppliedMessage, type ZeusStateMessage, type ShopFinishMessage, type FireRejectedMessage } from "./protocol";
+import { encodedCombatBytes, MAX_COMBAT_MESSAGE_BYTES } from "./combatTransport";
 
-export const MAX_COMBAT_MESSAGE_BYTES = 64 * 1024;
 export type CombatEvent = ShotMessage | ZeusAppointedMessage | ZeusStrikeMessage | ZeusStrikeAppliedMessage;
 export interface ActiveCombatShot extends Omit<ShotMessage, "type"> {
   shooterSettled: boolean;
@@ -28,23 +28,34 @@ export interface CombatSnapshot {
   authorityEpoch: number;
   events: CombatEvent[];
 }
-export interface CombatCatchUpMessage {
-  type: "COMBAT_CATCH_UP_BEGIN" | "COMBAT_CATCH_UP_FRAGMENT" | "COMBAT_CATCH_UP_END";
+interface CombatCatchUpHeader {
   catchUpId: string;
   roundNumber: number;
   fragmentCount: number;
   boundary: number;
-  index?: number;
-  kind?: "BASE" | "EVENTS";
-  data?: string;
-  events?: CombatEvent[];
-  firstSequence?: number;
-  lastSequence?: number;
 }
 
-export function encodedCombatBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+interface CombatCatchUpBaseFragment extends CombatCatchUpHeader {
+  type: "COMBAT_CATCH_UP_FRAGMENT";
+  index: number;
+  kind: "BASE";
+  data: string;
 }
+
+interface CombatCatchUpEventsFragment extends CombatCatchUpHeader {
+  type: "COMBAT_CATCH_UP_FRAGMENT";
+  index: number;
+  kind: "EVENTS";
+  events: CombatEvent[];
+  firstSequence: number;
+  lastSequence: number;
+}
+
+type CombatCatchUpFragment = CombatCatchUpBaseFragment | CombatCatchUpEventsFragment;
+export type CombatCatchUpMessage =
+  | (CombatCatchUpHeader & { type: "COMBAT_CATCH_UP_BEGIN" })
+  | (CombatCatchUpHeader & { type: "COMBAT_CATCH_UP_END" })
+  | CombatCatchUpFragment;
 
 export function isCombatEvent(value: unknown): value is CombatEvent {
   return isStrictOnlineMessage(value) && (value.type === "SHOT" || value.type === "ZEUS_APPOINTED" || value.type === "ZEUS_STRIKE" || value.type === "ZEUS_STRIKE_APPLIED");
@@ -96,8 +107,9 @@ export function fragmentCombat(snapshot: CombatSnapshot, catchUpId: string): Com
   const { events, ...base } = structuredClone(snapshot);
   const header = { catchUpId, roundNumber: snapshot.roundNumber, fragmentCount: Number.MAX_SAFE_INTEGER,
     boundary: events.at(-1)?.eventSequence ?? 0 };
-  const fragments: CombatCatchUpMessage[] = [];
-  const push = (body: Partial<CombatCatchUpMessage>) => fragments.push({ ...header,
+  const fragments: CombatCatchUpFragment[] = [];
+  const push = (body: Pick<CombatCatchUpBaseFragment, "kind" | "data"> |
+    Pick<CombatCatchUpEventsFragment, "kind" | "events" | "firstSequence" | "lastSequence">) => fragments.push({ ...header,
     type: "COMBAT_CATCH_UP_FRAGMENT", index: fragments.length, ...body });
   const data = JSON.stringify(base);
   // JSON string escaping can expand a UTF-16 code unit to six bytes.
@@ -127,7 +139,7 @@ export function fragmentCombat(snapshot: CombatSnapshot, catchUpId: string): Com
 /** Incomplete/contradictory batches never expose a partial scene. */
 export class CombatCatchUpAssembler {
   private header: CombatCatchUpMessage | null = null;
-  private readonly parts = new Map<number, CombatCatchUpMessage>();
+  private readonly parts = new Map<number, CombatCatchUpFragment>();
   private ended = false;
   private completed = new Set<string>();
 

@@ -1470,10 +1470,14 @@ export class GameRoom extends DurableObject {
     const shotId = isSafeNonNegativeInteger(record.shotId) ? record.shotId : null;
     const authorityEpoch = isSafeNonNegativeInteger(record.authorityEpoch) ? record.authorityEpoch : null;
     const previous = shotId === null ? undefined : this.state.earningsResults[String(shotId)];
-    if (previous) { this.broadcast(previous); return; }
     const reject = (reason: EarningsRejectedReason): void => this.sendToSlot(slot, {
       type: "EARNINGS_REJECTED", shotId, authorityEpoch, reason,
     });
+    if (previous) {
+      if (slot !== this.state.earningsAuthoritySlot) { reject("STALE_AUTHORITY"); return; }
+      this.broadcast(previous);
+      return;
+    }
     if (!isStrictOnlineMessage(raw) || raw.type !== "SHOT_EARNINGS") { reject("MALFORMED"); return; }
     const message = raw;
     if (slot !== this.state.earningsAuthoritySlot || authorityEpoch !== this.state.authorityEpoch) { reject("STALE_AUTHORITY"); return; }

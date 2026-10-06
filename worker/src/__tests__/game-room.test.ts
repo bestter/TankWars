@@ -145,19 +145,81 @@ describe('Zeus v3 durable settlement', () => {
     room.getRoster()!.roundEnded = true;
     await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
     const before = structuredClone(room.getRoster());
+    const observerCount = sockets[0].sent.length;
     await send(1, { type: 'SHOT_EARNINGS', shotId: first.shotId, authorityEpoch: 'invalid', players: 'invalid' });
+    expect(sockets[1].getLastMessage()).toEqual({ type: 'EARNINGS_REJECTED', shotId: first.shotId, authorityEpoch: null, reason: 'STALE_AUTHORITY' });
+    expect(sockets[0].sent).toHaveLength(observerCount);
+    await send(0, { type: 'SHOT_EARNINGS', shotId: first.shotId, authorityEpoch: 0, players: 'invalid' });
     expect(sockets[0].getLastMessage()).toEqual(result);
     expect(room.getRoster()).toEqual(before);
     const restored = await restart();
     const handle = Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+    const restoredBefore = structuredClone(restored.getRoster());
+    const countBefore = sockets[0].sent.length;
     await handle.call(restored, 1, JSON.stringify({ type: 'SHOT_EARNINGS', shotId: first.shotId }));
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'STALE_AUTHORITY' });
+    expect(sockets[0].sent).toHaveLength(countBefore);
+    await handle.call(restored, 0, JSON.stringify({ type: 'SHOT_EARNINGS', shotId: first.shotId }));
     expect(sockets[1].getLastMessage()).toEqual(result);
+    expect(restored.getRoster()).toEqual(restoredBefore);
     expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(30);
     for (const slot of [0, 1]) await handle.call(restored, slot, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: `ready-${slot}` }));
     expect(restored.getRoster()!.earningsResults).toEqual({});
     expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(0);
     await handle.call(restored, 0, JSON.stringify({ ...report(first.shotId), authorityEpoch: restored.getRoster()!.authorityEpoch, players: reportPlayers(restored) }));
     expect(sockets[0].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
+  });
+
+  it.each(['health', 'shield'] as const)('rejects increasing %s without any combat/economic mutation or broadcast', async (field) => {
+    const { room, setup, sockets, send, fire, report } = await boot();
+    const state = room.getRoster()!;
+    state.players[1].tank.health = 50;
+    state.players[1].tank.maxShield = 50;
+    state.players[1].tank.shield = 20;
+    state.zeusState.shotsWithoutEarnings = 9;
+    const shot = await fire();
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+    const bad = report(shot.shotId, 10);
+    bad.players[0].tank.position.x += 10;
+    bad.players[1].tank[field] += 0.000000001;
+    const before = structuredClone(state);
+    const storageBefore = structuredClone(setup.mockStorage.storageData);
+    const observerCount = sockets[1].sent.length;
+    await send(0, bad);
+    expect(sockets[0].getLastMessage()).toEqual({ type: 'EARNINGS_REJECTED', shotId: shot.shotId, authorityEpoch: 1, reason: 'CAP_MISMATCH' });
+    expect(sockets[1].sent).toHaveLength(observerCount);
+    expect(room.getRoster()).toEqual(before);
+    expect(setup.mockStorage.storageData).toEqual(storageBefore);
+    await send(0, report(shot.shotId, 10));
+    expect(state.players[0].money).toBe(before.players[0].money + 10);
+    expect(state.currentPlayerIndex).toBe(1);
+  });
+
+  it('restricts acquired retries to the current authority after transfer and persistent recovery', async () => {
+    const { room, sockets, send, fire, report, restart } = await boot(3);
+    const shot = await fire();
+    await send(0, report(shot.shotId, 10));
+    const result = sockets[0].getAllMessages<{ type: string }>().find((m) => m.type === 'SHOT_EARNINGS_APPLIED');
+    expect(result).toBeDefined();
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false, false] });
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+    await disconnect.call(room, 0, sockets[0] as unknown as WebSocket);
+    const connections = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+    connections.set(0, sockets[0] as unknown as WebSocket);
+    await (Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>).call(room, 0, 'Human 0');
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+    const restored = await restart();
+    const before = structuredClone(restored.getRoster());
+    const storageSend = (slot: number, message: object) => (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored, slot, JSON.stringify(message));
+    for (const slot of [0, 2]) {
+      const counts = sockets.map((socket) => socket.sent.length);
+      await storageSend(slot, { type: 'SHOT_EARNINGS', shotId: shot.shotId, authorityEpoch: 1, awards: 'invalid' });
+      expect(sockets[slot].getLastMessage()).toEqual({ type: 'EARNINGS_REJECTED', shotId: shot.shotId, authorityEpoch: 1, reason: 'STALE_AUTHORITY' });
+      sockets.forEach((socket, index) => expect(socket.sent.length).toBe(counts[index] + Number(index === slot)));
+    }
+    await storageSend(1, { type: 'SHOT_EARNINGS', shotId: shot.shotId, authorityEpoch: 1, awards: 'invalid' });
+    sockets.forEach((socket) => expect(socket.getLastMessage()).toEqual(result));
+    expect(restored.getRoster()).toEqual(before);
   });
 
   it.each([1, 2, 3])('resumes only missing settlement stages after durable checkpoint %i', async (checkpoint) => {
