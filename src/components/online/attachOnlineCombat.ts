@@ -454,6 +454,7 @@ export function attachOnlineCombat(
       applyShopStateMessage(item.message);
       return;
     }
+    if (item.message.shopEpoch <= opts.lastAppliedShopEpochRef.current) return;
     opts.applyShopFinish(
       item.message.players,
       item.message.shopEpoch,

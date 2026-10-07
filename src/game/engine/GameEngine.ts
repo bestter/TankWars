@@ -2044,6 +2044,7 @@ export class GameEngine {
     this.restoreRoundTerrain(map);
     this.turnManager.setRoundNumber(map.roundNumber);
     this.turnManager.lockForCatchUp();
+    this.turnManager.setupInputListeners();
   }
 
   /** Combat recovery keeps damaged terrain and existing positions; it never spawns. */

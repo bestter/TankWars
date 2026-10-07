@@ -32,6 +32,29 @@ describe("deterministic v3 scene reconstruction", () => {
     return { map: engine.getCombatMap(1), players: structuredClone(engine.getTankManager().getPlayers()) };
   }
 
+  it("restores one keyboard listener while keeping reconstruction locked", () => {
+    const keyboard = new EventTarget();
+    vi.stubGlobal("window", keyboard);
+    const { engine, players } = setup();
+    const tm = engine.getTurnManager();
+    const pressRight = () => {
+      const event = new Event("keydown", { cancelable: true });
+      Object.defineProperty(event, "key", { value: "ArrowRight" });
+      keyboard.dispatchEvent(event);
+    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      engine.reconstructCombat(makeRoundMap(), players);
+      const tank = engine.getTankManager().getPlayers()[0].tank;
+      const angle = tank.angle;
+      pressRight();
+      expect(tank.angle).toBe(angle);
+      tm.unlockAfterCatchUp();
+      pressRight();
+      expect(tank.angle).toBe(angle + 1);
+    }
+    tm.removeInputListeners();
+  });
+
   it.each(["CLUSTER", "GRENADE", "THERMONUCLEAR"] as const)("reconstructs %s impacts and health from the same shot seed", (weapon) => {
     const live = setup(), rebuilt = setup();
     const resolved = vi.fn(); rebuilt.engine.onShotResolved = resolved;

@@ -485,6 +485,40 @@ describe("useGameSession FIRE reconnect", () => {
     );
   });
 
+  it.each([false, true])("preserves the replay sequence after duplicate SHOP_FINISH (during replay: %s)", (duringReplay) => {
+    const players = createPlayers();
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(TurnManager.prototype, "executeRemoteFire")
+      .mockImplementation(() => undefined);
+    render(<Harness players={players} ws={ws as unknown as WebSocket} sessionRef={sessionRef}
+      resumeCanvas={createResumeCanvas(players, { gamePhase: "SHOP", currentManche: 2,
+        shopPlayers: players, lastCompletedRoundNumber: 1 })} />);
+    const shot: ShotMessage = {
+      type: "SHOT", physicsSeed: 1, eventSequence: 1, actionId: "replayed-round-two",
+      shotId: 6, roundNumber: 2, shotNumberInRound: 1, isFirstShotOfRound: true,
+      slot: 0, ownerId: "player-1", command: { angle: 47, power: 63, weaponId: "MISSILE" },
+    };
+    act(() => ws.receiveCatchUp(players, { type: "SHOT_CATCH_UP", roundNumber: 2,
+      activeShotId: null, shots: [shot], lastFireResult: null }));
+    const tm = executeRemoteFire.mock.instances.at(-1) as TurnManager;
+    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+    const duplicate = { type: "SHOP_FINISH", map: makeRoundMap(2), shopEpoch: 1,
+      completedRoundNumber: 1, nextRoundNumber: 2, players };
+    act(() => {
+      if (duringReplay) ws.receive(duplicate);
+      tm.onAuthoritativeShotSettled?.(6, "CATCH_UP");
+      if (!duringReplay) ws.receive(duplicate);
+      ws.receive({ ...shot, actionId: "next-live-shot", shotId: 7, eventSequence: 2,
+        shotNumberInRound: 2, isFirstShotOfRound: false });
+    });
+    expect(sessionRef.current?.state.networkError).toBeNull();
+    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
+    expect(executeRemoteFire).toHaveBeenLastCalledWith(shot.command,
+      expect.objectContaining({ identity: expect.objectContaining({ shotId: 7 }) }));
+  });
+
   it("rebuilds the current combat and ignores stale shop states from the previous round", () => {
     const players = createPlayers();
     const resumeCanvas = createResumeCanvas(players, {
@@ -1037,6 +1071,37 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
     expect(sessionRef.current?.state.currentManche).toBe(2);
     expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+  });
+
+  it("accepts sequence one again after a new shop epoch", () => {
+    const players = createPlayers();
+    const ws = new MockCombatWebSocket();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    const executeRemoteFire = vi.spyOn(TurnManager.prototype, "executeRemoteFire")
+      .mockImplementation(() => undefined);
+    render(<Harness players={players} ws={ws as unknown as WebSocket}
+      sessionRef={sessionRef} resumeCanvas={createResumeCanvas(players)} />);
+    const shot: ShotMessage = {
+      type: "SHOT", physicsSeed: 1, eventSequence: 1, actionId: "round-one",
+      shotId: 1, roundNumber: 1, shotNumberInRound: 1, isFirstShotOfRound: true,
+      slot: 0, ownerId: "player-1", command: { angle: 47, power: 63, weaponId: "MISSILE" },
+    };
+    act(() => ws.receive(shot));
+    const tm = executeRemoteFire.mock.instances.at(-1) as TurnManager;
+    act(() => {
+      ws.receive({ type: "ROUND_END", players, roundWinnerId: "player-1", isDraw: false, roundNumber: 1 });
+      ws.receive({ type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, readySlots: [0],
+        players, purchasesByPlayerId: {}, aiShopApplied: true });
+      ws.receive({ type: "SHOP_FINISH", map: makeRoundMap(2), shopEpoch: 1,
+        completedRoundNumber: 1, nextRoundNumber: 2, players });
+      tm.onAuthoritativeShotSettled?.(1, "LIVE_LOCAL");
+    });
+    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+    act(() => ws.receive({ ...shot, actionId: "round-two", shotId: 2, roundNumber: 2 }));
+    expect(sessionRef.current?.state.networkError ?? null).toBeNull();
+    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
+    expect(executeRemoteFire).toHaveBeenLastCalledWith(shot.command,
+      expect.objectContaining({ identity: expect.objectContaining({ shotId: 2 }) }));
   });
 
   it("does not reopen SHOP when a late SHOP_STATE follows SHOP_FINISH during replay", () => {
