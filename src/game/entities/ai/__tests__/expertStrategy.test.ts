@@ -298,7 +298,7 @@ describe("EXPERT #267 consequences", () => {
       [forecastDamage({ shieldLostMilli: Number.MAX_SAFE_INTEGER })], [])).toThrow(RangeError);
   });
 
-  it("keeps safety and one unit of profit before consequences and profile scores", () => {
+  it("keeps profit then safety before consequences and profile scores", () => {
     const f = fixture();
     const ai = makePlayer({ id: "ai", isHuman: false, aiProfile: "v2-heuristic" });
     f.state.players.push(ai);
@@ -321,7 +321,7 @@ describe("EXPERT #267 consequences", () => {
     expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate)?.primaryTargetId).toBe("enemy");
     humanProfit = 99;
     aiSuicide = true;
-    expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate)?.primaryTargetId).toBe("enemy");
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate)?.primaryTargetId).toBe("ai");
   });
 
   it("does not privilege a mixed group whose AI primary target hides human collateral", () => {
@@ -662,9 +662,11 @@ describe("EXPERT decision and fallback", () => {
     const f = fixture();
     f.self.inventory.NUKE = 1;
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
-    const plan = chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state));
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetId: "enemy", currentTargetAttempts: 1, lastRoundNumber: 1 }, 1));
     expect(plan).not.toBeNull();
     const strategy = new AISmartStrategy();
+    await strategy.executeTurn("self", f.state, f.terrain);
     const shot = await strategy.executeTurn("self", f.state, f.terrain);
     expect(shot.weaponId).toBe(plan?.weaponId);
     expect(f.self.tank.currentWeapon).toBe(shot.weaponId);
@@ -676,7 +678,10 @@ describe("EXPERT decision and fallback", () => {
     f.self.inventory.NUKE = 1;
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
-    const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+    const strategy = new AISmartStrategy();
+    await strategy.executeTurn("self", f.state, f.terrain);
+    log.mockClear();
+    const shot = await strategy.executeTurn("self", f.state, f.terrain);
     const entry = log.mock.calls.find(([label]) => label === "[AI EXPERT] Décision")?.[1];
     expect(typeof entry).toBe("string");
     const decision = JSON.parse(String(entry)) as {
@@ -696,13 +701,13 @@ describe("EXPERT decision and fallback", () => {
       realAim: {
         weaponId: shot.weaponId,
         targetId: "enemy",
-        attemptsOnTarget: 1,
+        attemptsOnTarget: 2,
         gaffeOccurred: false,
         finalCommand: { angle: shot.angle, power: shot.power },
       },
     });
     expect(["SURVIE", "OPTIMISER_PROFIT"]).toContain(decision.phase);
-    expect(decision.realAim.horizontalOffset).toBeGreaterThanOrEqual(45);
+    expect(Math.abs(decision.realAim.horizontalOffset)).toBeLessThanOrEqual(12);
   });
 
   it("validates fallback physics without economics instead of imposing ordinary BULLDOZER", async () => {
@@ -732,7 +737,8 @@ describe("EXPERT decision and fallback", () => {
     f.state.localShotContext = { playerCountAtMatchStart: 4, isFirstShotOfRound: false };
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const start = performance.now();
-    const plan = chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state));
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain,
+      createExpertDecisionAim({ currentTargetId: "enemy", currentTargetAttempts: 1, lastRoundNumber: 1 }, 1));
     const elapsedMs = performance.now() - start;
     expect(plan).not.toBeNull();
     expect(elapsedMs).toBeLessThan(10_000);
@@ -920,7 +926,7 @@ describe("EXPERT survival and profit ordering", () => {
       .toBe("MISSILE");
   });
 
-  it("ranks safety before profit, then historical pair scores and roster turns when consequences are equal", () => {
+  it("ranks profit before safety, then historical pair scores and roster turns when consequences are equal", () => {
     const f = threePlayers();
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
       targets, requireKill) => {
@@ -938,6 +944,6 @@ describe("EXPERT survival and profit ordering", () => {
       }
       return evaluate(...args);
     };
-    expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), suicidal)?.point.x).toBe(200);
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), suicidal)?.point.x).toBe(300);
   });
 });
