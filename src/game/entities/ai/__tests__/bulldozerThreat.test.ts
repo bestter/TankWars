@@ -327,24 +327,24 @@ describe("SURVIE integration", () => {
 
   it.each([
     { criterion: "BULLDOZER survival", missileProfit: 100, missileSuicide: true,
-      nukeProfit: 200, nukeSuicide: true, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
+      grenadeProfit: 200, grenadeSuicide: true, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
     { criterion: "ordinary survival", missileProfit: -100, missileSuicide: false,
-      nukeProfit: 200, nukeSuicide: true, bulldozerSuicide: true, expected: "MISSILE", profit: -100 },
+      grenadeProfit: 200, grenadeSuicide: true, bulldozerSuicide: true, expected: "MISSILE", profit: -100 },
     { criterion: "later ordinary survival", missileProfit: 200, missileSuicide: true,
-      nukeProfit: -100, nukeSuicide: false, bulldozerSuicide: true, expected: "NUKE", profit: -100 },
+      grenadeProfit: -100, grenadeSuicide: false, bulldozerSuicide: true, expected: "GRENADE", profit: -100 },
     { criterion: "BULLDOZER profit", missileProfit: -2, missileSuicide: false,
-      nukeProfit: -1, nukeSuicide: false, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
+      grenadeProfit: -1, grenadeSuicide: false, bulldozerSuicide: false, expected: "BULLDOZER", profit: 0 },
     { criterion: "later ordinary profit", missileProfit: 1, missileSuicide: false,
-      nukeProfit: 2, nukeSuicide: false, bulldozerSuicide: false, expected: "NUKE", profit: 2 },
+      grenadeProfit: 2, grenadeSuicide: false, bulldozerSuicide: false, expected: "GRENADE", profit: 2 },
     { criterion: "stable ordinary ties", missileProfit: 1, missileSuicide: false,
-      nukeProfit: 1, nukeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 1 },
+      grenadeProfit: 1, grenadeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 1 },
     { criterion: "stable BULLDOZER tie", missileProfit: 0, missileSuicide: false,
-      nukeProfit: 0, nukeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 0 },
+      grenadeProfit: 0, grenadeSuicide: false, bulldozerSuicide: false, expected: "MISSILE", profit: 0 },
     { criterion: "stable later ordinary/BULLDOZER tie", missileProfit: -1, missileSuicide: false,
-      nukeProfit: 0, nukeSuicide: false, bulldozerSuicide: false, expected: "NUKE", profit: 0 },
+      grenadeProfit: 0, grenadeSuicide: false, bulldozerSuicide: false, expected: "GRENADE", profit: 0 },
   ])("traces the winning weapon under $criterion without changing the plan or RNG", (scenario) => {
     const f = fixture();
-    f.shooter.inventory.NUKE = 1;
+    f.shooter.inventory = { BULLDOZER: 2, GRENADE: 1, NUKE: 3, THERMONUCLEAR: 4 };
     const cache = createExpertForecastCache();
     const bulldozer = evaluateBulldozerThreat(f.state, f.terrain, f.shooter, f.self, cache);
     if (!bulldozer.best) throw new Error("fixture must demonstrate a lethal BULLDOZER threat");
@@ -353,13 +353,14 @@ describe("SURVIE integration", () => {
       best: { ...bulldozer.best, shooterDestroyed: scenario.bulldozerSuicide } });
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon) => {
       if (shooter.id === f.self.id) return invalid;
-      const suicide = weapon === "MISSILE" ? scenario.missileSuicide : scenario.nukeSuicide;
+      expect(["NUKE", "THERMONUCLEAR"]).not.toContain(weapon);
+      const suicide = weapon === "MISSILE" ? scenario.missileSuicide : scenario.grenadeSuicide;
       return {
         kind: "evaluated", primaryTargetId: "self", attempts: 0, offset: 0,
         requestedPoint: { x: 780, y: 300 }, policy: { variant: "full", penalizeProximity: true },
         rawCommand: { angle: 45, power: 50 }, command: { angle: 45, power: 50 },
         destination: { x: 780, y: 300, kind: "tank" },
-        profit: baseProfit + (weapon === "MISSILE" ? scenario.missileProfit : scenario.nukeProfit),
+        profit: baseProfit + (weapon === "MISSILE" ? scenario.missileProfit : scenario.grenadeProfit),
         destroyedIds: new Set(suicide ? ["self", "shooter"] : ["self"]),
         shooterDestroyed: suicide, pointOrder: 0,
         humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 1, aiDamageMilli: 100000,

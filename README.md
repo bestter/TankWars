@@ -179,7 +179,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.9.5** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.9.6** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
@@ -258,7 +258,9 @@ Les tests vérifient les gaffes sur deux tentatives consécutives (un seul jet, 
 
 Le solveur commun privilégie les trajectoires complètes avant leur erreur de visée, dans la recherche de puissance et les deux balayages d'angles. Seule une solution complète peut déclencher l'arrêt anticipé. Si aucune trajectoire ne se résout dans la limite existante, la meilleure approximation demeure disponible avec `complete: false`; la commande de secours porte aussi ce statut. Ce classement conserve les paramètres des profils et les contrats de visée faillible de #212, sans tirage RNG supplémentaire.
 
-### Décision EXPERT locale (#229, #267, #271)
+### Décision EXPERT locale (#229, #267, #271, #287)
+
+Exception permanente au stock adverse connu : NUKE et THERMONUCLEAR sont exclues des menaces d’EXPERT local, pour les humains et tous les profils IA, même après sélection ou tir. SIMPLE et les profils absents/inconnus équipés d’une arme nucléaire ne produisent aucune menace de remplacement. Les autres armes restent évaluées selon leur profil et leur stock, avec le chemin distinct de BULLDOZER. EXPERT conserve l’évaluation et l’utilisation de ses propres armes nucléaires en SURVIE et OPTIMISER_PROFIT. Les inventaires réels, les achats et la consommation ne changent pas; les traces DEBUG gardent le roster et son stock nucléaire complet sous `import.meta.env.DEV`, sans révélation tactique ni mémoire ajoutée.
 
 EXPERT prévoit les conséquences d'un tir complet sur une copie des tanks, du terrain et de ses matériaux. Pour ses tirs propres, il cherche vers `(point.x + offset, point.y)`, sans borner X ni recalculer Y; le sens de tir vient du X décalé, avec le sens gauche à égalité avec le tireur. Les arcs `full/low/high` conservent leur sens d'élévation dans cette direction. La commande du solveur #212 est bornée et arrondie, puis les projectiles, chutes et ensevelissements sont simulés à pas fixe. Seuls les tirs complets qui affectent réellement un adversaire et satisfont le point tactique sont retenus. Pour un point terrain ou une paire, au moins un impact doit être à distance euclidienne inclusive `max(24, blastRadius)` du point original, sans déplacer ni agrandir ce filtre pour compenser l'offset. Pour un point tank, la touche directe, les dégâts physiques appliqués ou la destruction attribuée de ce tank restent nécessaires. Le gain entier attribué au tireur par `calculateShotRewards`, moins une munition (MISSILE : 0), donne le profit net. Les quotas de propositions, bornes de recherche et budgets physiques demeurent déterministes; une prévision incomplète est rejetée.
 

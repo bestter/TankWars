@@ -161,7 +161,9 @@ describe("EXPERT real decision budgets after offset", () => {
     const first = await run();
     f.self.tank.currentWeapon = before.players[0].tank.currentWeapon;
     expect(await run()).toEqual(first);
-    expect(rng).toHaveBeenCalledTimes(economics ? 8 : 6); // Economic threats add one SURVIE roll per decision.
+    // The only lethal threats here were nuclear: no SURVIE roll remains (#287).
+    // Each decision still draws amplitude, side and the ordinary gaffe check.
+    expect(rng).toHaveBeenCalledTimes(6);
     f.self.tank.currentWeapon = before.players[0].tank.currentWeapon;
     expect(f.state).toEqual(before);
     expect([...f.terrain.getHeightmap()]).toEqual(heights);
