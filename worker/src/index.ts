@@ -5,7 +5,7 @@
  *
  * Usage:
  * - Client creates room via POST /api/rooms
- * - Joins via WS to /api/rooms/:roomId/ws?slot=0&token=xxx
+ * - Joins via WS to /api/rooms/:roomId/ws?slot=0&token=<token>
  * - No external deps beyond Cloudflare runtime (fetch, WebSocket, DurableObject).
  */
 
