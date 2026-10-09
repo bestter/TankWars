@@ -624,6 +624,79 @@ describe('Authoritative safe round preparation', () => {
 });
 
 describe('GameRoom Durable Object', () => {
+  describe('fetchCreate payload validation', () => {
+    let mockEnv: any;
+    let createRoom2: () => any;
+
+    beforeEach(() => {
+      mockEnv = {};
+      createRoom2 = () => {
+        const { ctx, mockStorage } = createMockCtx();
+        const r = new GameRoom(ctx as unknown as DurableObjectState, mockEnv);
+        r.ctx = ctx as any;
+        return { room: r, storage: mockStorage };
+      };
+    });
+
+    it('rejects invalid or missing roomId', async () => {
+      const { room } = createRoom2();
+      const req = new Request('http://localhost/create', {
+        method: 'POST',
+        body: JSON.stringify({ numPlayers: 2, slotConfigs: [{ type: 'human' }, { type: 'human' }] })
+      });
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid create payload', detail: 'Missing or invalid roomId' });
+    });
+
+    it('rejects length mismatch', async () => {
+      const { room } = createRoom2();
+      const req = new Request('http://localhost/create', {
+        method: 'POST',
+        body: JSON.stringify({ roomId: 'r1', numPlayers: 3, slotConfigs: [{ type: 'human' }, { type: 'human' }] })
+      });
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid create payload', detail: 'slotConfigs length does not match numPlayers' });
+    });
+
+    it('rejects invalid aiProfile', async () => {
+      const { room } = createRoom2();
+      const req = new Request('http://localhost/create', {
+        method: 'POST',
+        body: JSON.stringify({ roomId: 'r1', numPlayers: 2, slotConfigs: [{ type: 'human' }, { type: 'ai', aiProfile: 'v9-unknown' }] })
+      });
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid create payload', detail: 'Invalid aiProfile' });
+    });
+
+    it('rejects invalid slot element type', async () => {
+      const { room } = createRoom2();
+      const req = new Request('http://localhost/create', {
+        method: 'POST',
+        body: JSON.stringify({ roomId: 'r1', numPlayers: 2, slotConfigs: [null, { type: 'human' }] })
+      });
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid create payload', detail: 'Invalid slot element' });
+    });
+
+    it('cleans up extra properties and human aiProfile', async () => {
+      const { room } = createRoom2();
+      const req = new Request('http://localhost/create', {
+        method: 'POST',
+        body: JSON.stringify({ roomId: 'r1', numPlayers: 2, slotConfigs: [{ type: 'human', aiProfile: 'v1-random', injected: 'bad' }, { type: 'ai', aiProfile: 'v1-random', injected2: 'bad' }] })
+      });
+      const res = await room.fetchCreate(req);
+      expect(res.status).toBe(200);
+      expect(room.getRoster()!.slotConfigs).toEqual([
+        { type: 'human' },
+        { type: 'ai', aiProfile: 'v1-random' }
+      ]);
+    });
+  });
+
   let room: GameRoom;
   let mockCtx: ReturnType<typeof createMockCtx>['ctx'];
 
