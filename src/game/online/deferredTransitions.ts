@@ -33,9 +33,7 @@ export class DeferredTransitionBuffer {
       return;
     }
     const finishEpoch = this.pendingShopFinish?.message.shopEpoch;
-    if (finishEpoch !== undefined && item.message.shopEpoch <= finishEpoch) {
-      return;
-    }
+    if (finishEpoch !== undefined && item.message.shopEpoch <= finishEpoch) return;
     this.pendingShopState = item;
   }
 
