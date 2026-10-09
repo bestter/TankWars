@@ -9,6 +9,7 @@ import {
 import { TerrainManager } from "../../../engine/Terrain";
 import { simulateShot } from "../BallisticsSimulator";
 import { makeGameState, makePlayer, makeTank, flatTerrain } from "../../../__tests__/helpers";
+import { finalizeAdvancedAim } from "../aimCorruption";
 import * as random from "../../../../utils/random";
 import type { GameState } from "../../../../types/game";
 import type { Player } from "../../../../types/player";
@@ -438,9 +439,17 @@ describe("AI fallibility contracts", () => {
     );
     const before = { ...gameState.players[0].inventory };
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(["MISSILE", "BULLET", "DRILLER"]).toContain(shot.weaponId);
+    const weaponId = shot.weaponId;
+    if (weaponId === "BULLET" || weaponId === "DRILLER") {
+      expect(before[weaponId]).toBeGreaterThan(0);
+    } else {
+      expect(weaponId).toBe("MISSILE");
+    }
+    expect({ angle: shot.angle, power: shot.power }).toEqual(
+      finalizeAdvancedAim({ angle: shot.angle, power: shot.power }),
+    );
     expect(gameState.players[0].inventory).toEqual(before);
-    expect(gameState.players[0].tank.currentWeapon).toBe(shot.weaponId);
+    expect(gameState.players[0].tank.currentWeapon).toBe(weaponId);
   });
 
   it("smart fallback prefers a healthy AI over a wounded human", async () => {

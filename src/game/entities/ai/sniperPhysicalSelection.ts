@@ -390,16 +390,16 @@ export function chooseSniperPhysicalShot(
     let ordinary: SearchResult | undefined;
     let used = 0;
     const points = localMaterialPoints(self, target, "MISSILE", terrain);
-    for (const point of points) {
+    missileArcs: for (const point of points) {
       for (const variant of ARCS) {
-        if (useful || used >= SNIPER_SEARCH_LIMITS.missile || searches >= SNIPER_SEARCH_LIMITS.total) break;
+        if (used >= SNIPER_SEARCH_LIMITS.missile || searches >= SNIPER_SEARCH_LIMITS.total) break missileArcs;
         used += 1;
         const found = searchOne(point, "MISSILE", variant);
         if (point.kind === "tank" && variant === "full") ordinary = found;
         if (!found.forecast) continue;
         if (missileUseful(found.forecast, self, target)) {
           useful = found;
-          break;
+          break missileArcs;
         }
         if (!surviving && missileSurviving(found.forecast, self)) surviving = found;
         else if (found.forecast.complete && !found.forecast.survivors.includes(self.id)) {
@@ -412,8 +412,8 @@ export function chooseSniperPhysicalShot(
     if (tracing && surviving && selected !== surviving) {
       note("MISSILE", surviving.point, surviving.variant, "survivant écarté", surviving.command, surviving.forecast);
     }
-    if (selected === useful) selectionReason = "repli utile";
-    else if (selected === surviving) selectionReason = "repli survivant";
+    if (useful && selected === useful) selectionReason = "repli utile";
+    else if (surviving && selected === surviving) selectionReason = "repli survivant";
     else if (selected) selectionReason = "secours ordinaire";
     else selectionReason = "secours synthétique";
     if (tracing && selected === useful && surviving) runnerUp = summarize("MISSILE", surviving);

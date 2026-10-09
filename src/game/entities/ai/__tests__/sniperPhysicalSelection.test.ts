@@ -297,6 +297,27 @@ describe("SNIPER ranking, fallback and bounds", () => {
     expect(resolve.mock.calls.some((call) => call[3] === "DRILLER")).toBe(false);
   });
 
+  it("fires the synthetic missile when no tactical point is returned", () => {
+    const f = fixture();
+    f.target.tank.position.x = -1000;
+    expect(localMaterialPoints(f.self, f.target, "BULLET", f.terrain)).toEqual([]);
+    expect(localMaterialPoints(f.self, f.target, "DRILLER", f.terrain)).toEqual([]);
+    expect(localMaterialPoints(f.self, f.target, "MISSILE", f.terrain)).toEqual([]);
+    const solve = vi.fn<MaterialSolver>();
+    const choice = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solve);
+    expect(choice).toMatchObject({
+      weaponId: "MISSILE",
+      certified: false,
+      reason: "missile-ordinary",
+      rawCommand: { angle: 45, power: 50 },
+      command: { angle: 45, power: 50 },
+    });
+    expect(choice.trace.selectionReason).toBe("secours synthétique");
+    expect(choice.trace.searches).toBe(0);
+    expect(choice.trace.forecasts).toBe(0);
+    expect(solve).not.toHaveBeenCalled();
+  });
+
   it("caps a long point list at 2/4/4 searches and reuses one forecast per normalized command", () => {
     const f = fixture();
     vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(
