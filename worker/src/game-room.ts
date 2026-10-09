@@ -589,10 +589,55 @@ export class GameRoom extends DurableObject {
 
     const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
-    const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+
+    let slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: string }> | undefined = undefined;
+
+    let errorDetail = '';
+
+    if (!roomId) {
+      errorDetail = 'Missing or invalid roomId';
+    } else if (!numPlayers || !isInitialPlayerCount(numPlayers)) {
+      errorDetail = 'Missing or invalid numPlayers';
+    } else if (!Array.isArray(body.slotConfigs)) {
+      errorDetail = 'slotConfigs must be an array';
+    } else if (body.slotConfigs.length !== numPlayers) {
+      errorDetail = 'slotConfigs length does not match numPlayers';
+    } else if (body.slotConfigs.length > 4) {
+      errorDetail = 'Too many slots';
+    } else {
+      const parsedConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: string }> = [];
+      const validAiProfiles = ['v1-random', 'v2-heuristic', 'v3-sniper', 'v4-smart'];
+
+      for (const slot of body.slotConfigs) {
+        if (typeof slot !== 'object' || slot === null || Array.isArray(slot)) {
+          errorDetail = 'Invalid slot element';
+          break;
+        }
+        const s = slot as Record<string, unknown>;
+        if (s.type !== 'human' && s.type !== 'ai') {
+          errorDetail = 'Invalid slot type';
+          break;
+        }
+
+        const type = s.type;
+        if (type === 'human') {
+          parsedConfigs.push({ type: 'human' });
+        } else {
+          if (typeof s.aiProfile !== 'string' || !validAiProfiles.includes(s.aiProfile)) {
+            errorDetail = 'Invalid aiProfile';
+            break;
+          }
+          parsedConfigs.push({ type: 'ai', aiProfile: s.aiProfile });
+        }
+      }
+
+      if (!errorDetail) {
+        slotConfigs = parsedConfigs;
+      }
+    }
 
     if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
-      return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
+      return new Response(JSON.stringify({ error: 'Invalid create payload', detail: errorDetail }), { status: 400 });
     }
 
     if (this.state) {
