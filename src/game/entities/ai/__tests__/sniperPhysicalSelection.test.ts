@@ -34,7 +34,17 @@ import {
   chooseSniperPhysicalShot,
   sniperBulletRefusal,
   sniperDrillerRefusal,
+  type SniperSelectionTrace,
 } from "../sniperPhysicalSelection";
+
+const EMPTY_TRACE: SniperSelectionTrace = {
+  selectionReason: "seul candidat",
+  admissible: [],
+  refusals: [],
+  searches: 0,
+  forecasts: 0,
+  cacheHits: 0,
+};
 
 function fixture(partial: { bullet?: number; driller?: number; money?: number } = {}) {
   const terrain = flatTerrain(800, 480);
@@ -239,16 +249,34 @@ describe("SNIPER ranking, fallback and bounds", () => {
       ? forecast({ hits: [hit("MISSILE", "target")], damage: [damage("MISSILE")] })
       : forecast());
     expect(useful.choice).toMatchObject({ weaponId: "MISSILE", reason: "missile-useful", certified: true, variant: "full" });
+    expect(useful.choice.trace.selectionReason).toBe("repli utile");
     expect(useful.solve.mock.calls.filter((call) => call[1] === "MISSILE")).toHaveLength(1);
 
     const surviving = choose(f, () => forecast());
     expect(surviving.choice).toMatchObject({ reason: "missile-surviving", certified: true, variant: "full" });
+    expect(surviving.choice.trace.selectionReason).toBe("repli survivant");
 
     const ordinary = choose(f, () => forecast({ survivors: ["target"] }), 0, solver(false));
     const ordinaryIndex = SNIPER_SEARCH_LIMITS.bullet + SNIPER_SEARCH_LIMITS.driller;
     expect(ordinary.choice).toMatchObject({ reason: "missile-ordinary", certified: false, variant: "full", point: { kind: "tank" } });
     expect(ordinary.solve).toHaveBeenCalledTimes(SNIPER_SEARCH_LIMITS.total);
     expect(ordinary.choice.rawCommand).toEqual(ordinary.solve.mock.results[ordinaryIndex]?.value.command);
+    expect(ordinary.choice.trace.selectionReason).toBe("secours ordinaire");
+  });
+
+  it("records a surviving missile replaced by a later useful one", () => {
+    const f = fixture({ bullet: 0, driller: 0 });
+    let missiles = 0;
+    const { choice } = choose(f, (weapon) => {
+      if (weapon !== "MISSILE") return forecast();
+      missiles += 1;
+      return missiles === 1
+        ? forecast()
+        : forecast({ hits: [hit("MISSILE", "target")], damage: [damage("MISSILE")] });
+    });
+    expect(choice.trace.selectionReason).toBe("repli utile");
+    expect(choice.trace.runnerUp).toMatchObject({ weaponId: "MISSILE", variant: "full" });
+    expect(choice.trace.refusals.some((entry) => entry.refusal === "survivant écarté" && entry.command)).toBe(true);
   });
 
   it("does not promote SOFT excavation and vetoes ROCK without a DRILLER search", () => {
@@ -317,18 +345,27 @@ describe("SNIPER ranking, fallback and bounds", () => {
     expect(reward).not.toHaveBeenCalled();
   });
 
-  it("logs the decision in development and keeps the same choice when the trace is disabled", () => {
+  it("keeps the same choice when the trace is disabled and leaves logging to the strategy", async () => {
     const f = fixture();
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(bulletProof());
     const solve = solver();
     const traced = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solve);
-    expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(import.meta.env.DEV);
+    expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(false);
+    expect(traced.trace.admissible.length).toBeGreaterThan(0);
+    const shot = await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
+    const line = info.mock.calls.find((call) => call[0] === "[AI SNIPER] Décision");
+    expect(typeof line?.[1]).toBe("string");
+    const payload = JSON.parse(String(line?.[1])) as { choice: { finalCommand: { angle: number; power: number }; weaponId: string } };
+    expect(payload.choice.finalCommand).toEqual({ angle: shot.angle, power: shot.power });
+    expect(payload.choice.weaponId).toBe(shot.weaponId);
     info.mockClear();
     vi.stubEnv("DEV", false);
     const silent = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solver());
     expect(silent.weaponId).toBe(traced.weaponId);
     expect(silent.reason).toBe(traced.reason);
+    await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
+    expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(import.meta.env.DEV);
   });
 });
 
@@ -343,7 +380,7 @@ describe("SNIPER turn wiring", () => {
     selection.mockReturnValue({
       weaponId: "BULLET", point: { x: 400, y: 330, kind: "tank" }, variant: "high",
       rawCommand: { angle: 45.04, power: 50.2 }, command: { angle: 45, power: 50 },
-      certified: true, reason: "bullet",
+      certified: true, reason: "bullet", trace: EMPTY_TRACE,
     });
     const offset = vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(12);
     const record = vi.spyOn(aimMemory, "recordAimAttempt");
@@ -364,10 +401,11 @@ describe("SNIPER turn wiring", () => {
     const normalized = finalizeAdvancedAim(raw);
     vi.spyOn(sniperSelection, "chooseSniperPhysicalShot").mockReturnValue({
       weaponId: "DRILLER", point: { x: 381, y: 336, kind: "terrain" }, variant: "full",
-      rawCommand: raw, command: normalized, certified: true, reason: "driller",
+      rawCommand: raw, command: normalized, certified: true, reason: "driller", trace: EMPTY_TRACE,
     });
     vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(3);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const calm = await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
     expect(calm).toEqual({ ...normalized, weaponId: "DRILLER" });
 
@@ -384,6 +422,14 @@ describe("SNIPER turn wiring", () => {
     };
     expect(shot).toEqual({ ...finalizeAdvancedAim(reacted), weaponId: "DRILLER" });
     expect(f.self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+    const line = info.mock.calls.filter((call) => call[0] === "[AI SNIPER] Décision").at(-1);
+    const payload = JSON.parse(String(line?.[1])) as {
+      choice: { finalCommand: { angle: number; power: number }; gaffeOccurred: boolean; reactionIntensity: number; rawCommand: { angle: number; power: number } };
+    };
+    expect(payload.choice.finalCommand).toEqual({ angle: shot.angle, power: shot.power });
+    expect(payload.choice.gaffeOccurred).toBe(true);
+    expect(payload.choice.reactionIntensity).toBe(intensity);
+    expect(payload.choice.rawCommand).toEqual(raw);
   });
 
   it.each([1, 5, 12] as const)("shares one signed offset for round %s across attempts, including a target change", async (round) => {
@@ -414,6 +460,22 @@ describe("SNIPER turn wiring", () => {
     offset.mockClear();
     await strategy.executeTurn("self", f.state, f.terrain);
     expect(offset).toHaveBeenCalledWith(1, "v3-sniper", round, expect.any(Number));
+  });
+
+  it("logs a JSON fallback when no enemy remains and does not search", async () => {
+    const f = fixture();
+    f.state.players = [f.self];
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const search = vi.spyOn(sniperAim, "solveSniperAim");
+    const shot = await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
+    expect(shot).toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
+    expect(search).not.toHaveBeenCalled();
+    const payload = JSON.parse(String(info.mock.calls.find((call) => call[0] === "[AI SNIPER] Décision")?.[1])) as {
+      finalReason: string;
+      choice: { finalCommand: { angle: number; power: number } };
+    };
+    expect(payload.finalReason).toBe("aucun adversaire vivant");
+    expect(payload.choice.finalCommand).toEqual({ angle: 45, power: 50 });
   });
 });
 
@@ -476,16 +538,11 @@ describe("SNIPER physical corpus", () => {
         solveSniperAim(f.self, point.x, point.y, f.state.windForce, f.state.gravity, f.terrain, weapon, variant));
       const again = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, spec.offset, (point, weapon, variant) =>
         solveSniperAim(f.self, point.x, point.y, f.state.windForce, f.state.gravity, f.terrain, weapon, variant));
-      const trace = info.mock.calls.map((call) => call[1]).find((payload) =>
-        payload && typeof payload === "object" && "refusals" in payload) as {
-        searches: number; forecasts: number;
-        refusals: { weaponId: string; refusal: string }[];
-        admissible: { weaponId: string; kind: string; variant: string; destroyed: boolean; loss: number }[];
-      } | undefined;
+      const trace = choice.trace;
+      expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(false);
       expect(again).toEqual(choice);
-      expect(trace).toBeDefined();
-      expect(trace?.searches).toBeLessThanOrEqual(SNIPER_SEARCH_LIMITS.total);
-      expect(trace?.forecasts).toBeLessThanOrEqual(trace?.searches ?? 0);
+      expect(trace.searches).toBeLessThanOrEqual(SNIPER_SEARCH_LIMITS.total);
+      expect(trace.forecasts).toBeLessThanOrEqual(trace.searches);
       expect(reward).not.toHaveBeenCalled();
       expect(f.self.inventory).toEqual(before.inventory);
       expect(f.self.money).toBe(before.money);
@@ -506,7 +563,7 @@ describe("SNIPER physical corpus", () => {
         expect(seen.destruction).toEqual(forecastValue.destruction);
       }
       const counts = new Map<string, number>();
-      for (const refusal of trace?.refusals ?? []) {
+      for (const refusal of trace.refusals) {
         const key = `${refusal.weaponId}:${refusal.refusal}`;
         counts.set(key, (counts.get(key) ?? 0) + 1);
       }
@@ -515,8 +572,10 @@ describe("SNIPER physical corpus", () => {
       reward.mockRestore();
       return {
         name: spec.name, weapon: choice.weaponId, reason: choice.reason, certified: choice.certified,
-        searches: trace?.searches, forecasts: trace?.forecasts,
-        admissible: trace?.admissible ?? [],
+        searches: trace.searches, forecasts: trace.forecasts,
+        admissible: trace.admissible.map(({ weaponId, kind, variant, destroyed, loss }) => ({
+          weaponId, kind, variant, destroyed, loss,
+        })),
         refusals: [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])),
       };
     });
@@ -539,6 +598,7 @@ describe("SNIPER physical corpus", () => {
           ["DRILLER:impact direct", 1],
           ["DRILLER:sans perte de support", 3],
           ["MISSILE:sans effet", 1],
+          ["MISSILE:survivant écarté", 1],
         ],
       },
       {

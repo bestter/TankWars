@@ -41,6 +41,7 @@ export type SniperRefusal =
   | "interception"
   | "absorption seule"
   | "sans effet"
+  | "survivant écarté"
   | "impact direct"
   | "pas d'impact terrain"
   | "sans perte de support"
@@ -51,6 +52,54 @@ export type SniperRefusal =
   | "hors carte"
   | "attribution étrangère";
 
+export type SniperSelectionReason =
+  | "seul candidat"
+  | "destruction de la cible"
+  | "perte réelle supérieure"
+  | "BULLET à égalité"
+  | "point ou arc antérieur"
+  | "repli utile"
+  | "repli survivant"
+  | "secours ordinaire"
+  | "secours synthétique";
+
+export interface SniperCandidateSummary {
+  readonly weaponId: WeaponId;
+  readonly kind: TacticalPoint["kind"];
+  readonly variant: AimVariant;
+  readonly x: number;
+  readonly y: number;
+  readonly command: AimCommand;
+  readonly destroyed: boolean;
+  readonly loss: number;
+  readonly cause?: string;
+}
+
+export interface SniperRefusalTrace {
+  readonly weaponId: WeaponId;
+  readonly kind: TacticalPoint["kind"];
+  readonly variant: AimVariant;
+  readonly x: number;
+  readonly y: number;
+  readonly refusal: SniperRefusal;
+  readonly command?: AimCommand;
+  readonly directTargetId?: string;
+  readonly supportBefore?: number;
+  readonly supportAfter?: number;
+  readonly loss?: number;
+  readonly cause?: string;
+}
+
+export interface SniperSelectionTrace {
+  readonly selectionReason: SniperSelectionReason;
+  readonly runnerUp?: SniperCandidateSummary;
+  readonly admissible: readonly SniperCandidateSummary[];
+  readonly refusals: readonly SniperRefusalTrace[];
+  readonly searches: number;
+  readonly forecasts: number;
+  readonly cacheHits: number;
+}
+
 export interface SniperPhysicalChoice {
   readonly weaponId: WeaponId;
   readonly point: TacticalPoint;
@@ -59,6 +108,7 @@ export interface SniperPhysicalChoice {
   readonly command: AimCommand;
   readonly certified: boolean;
   readonly reason: SniperChoiceReason;
+  readonly trace: SniperSelectionTrace;
 }
 
 interface SearchResult {
@@ -73,13 +123,6 @@ interface RankedCandidate extends SearchResult {
   readonly weaponId: "BULLET" | "DRILLER";
   readonly destroyed: boolean;
   readonly loss: number;
-}
-
-interface SniperTrace {
-  readonly weaponId: WeaponId;
-  readonly kind: TacticalPoint["kind"];
-  readonly variant: AimVariant;
-  readonly refusal: SniperRefusal;
 }
 
 function stock(self: Player, weapon: WeaponId): number {
@@ -179,6 +222,28 @@ function prefer(candidate: RankedCandidate, current: RankedCandidate): boolean {
   return false;
 }
 
+function pickBest(ranked: readonly RankedCandidate[]): { best: RankedCandidate; runner?: RankedCandidate } {
+  let best = ranked[0];
+  let runner: RankedCandidate | undefined;
+  for (const candidate of ranked.slice(1)) {
+    if (prefer(candidate, best)) {
+      if (!runner || prefer(best, runner)) runner = best;
+      best = candidate;
+    } else if (!runner || prefer(candidate, runner)) {
+      runner = candidate;
+    }
+  }
+  return { best, runner };
+}
+
+function rankedReason(best: RankedCandidate, runner: RankedCandidate | undefined): SniperSelectionReason {
+  if (!runner) return "seul candidat";
+  if (best.destroyed !== runner.destroyed) return "destruction de la cible";
+  if (best.loss !== runner.loss) return "perte réelle supérieure";
+  if (best.weaponId !== runner.weaponId) return "BULLET à égalité";
+  return "point ou arc antérieur";
+}
+
 function ordinaryTankPoint(target: Player): TacticalPoint {
   return { x: target.tank.position.x, y: target.tank.position.y - 6, kind: "tank" };
 }
@@ -204,13 +269,50 @@ export function chooseSniperPhysicalShot(
   offset: number,
   solve: MaterialSolver,
 ): SniperPhysicalChoice {
+  const tracing = import.meta.env.DEV;
   const cache = new Map<string, PhysicalResolution>();
-  const refusals: SniperTrace[] = [];
+  const refusals: SniperRefusalTrace[] = [];
   let searches = 0;
   let forecasts = 0;
-  const note = (weaponId: WeaponId, point: TacticalPoint, variant: AimVariant, refusal: SniperRefusal) => {
-    if (!import.meta.env.DEV) return;
-    refusals.push({ weaponId, kind: point.kind, variant, refusal });
+  let cacheHits = 0;
+  const proofOf = (
+    forecast: PhysicalResolution | null | undefined, weapon: WeaponId,
+  ): Pick<SniperRefusalTrace, "directTargetId" | "supportBefore" | "supportAfter" | "loss" | "cause"> => {
+    if (!forecast?.complete) return {};
+    const direct = forecast.hits.find((hit) => hit.shotId === FORECAST_SHOT_ID && hit.weaponId === weapon &&
+      hit.directTargetId !== undefined);
+    const support = forecast.support.find((entry) => entry.playerId === target.id);
+    const cause = forecast.destruction.find((event) => event.victimId === target.id)?.cause;
+    return {
+      ...(direct?.directTargetId ? { directTargetId: direct.directTargetId } : {}),
+      ...(support ? { supportBefore: support.before, supportAfter: support.after } : {}),
+      loss: targetLoss(forecast, self, target, weapon),
+      ...(cause ? { cause } : {}),
+    };
+  };
+  const note = (
+    weaponId: WeaponId, point: TacticalPoint, variant: AimVariant, refusal: SniperRefusal,
+    command?: AimCommand, forecast?: PhysicalResolution | null,
+  ) => {
+    if (!tracing) return;
+    refusals.push({
+      weaponId, kind: point.kind, variant, x: point.x, y: point.y, refusal,
+      ...(command ? { command } : {}),
+      ...proofOf(forecast, weaponId),
+    });
+  };
+  const summarize = (weaponId: WeaponId, found: SearchResult): SniperCandidateSummary => {
+    const forecast = found.forecast;
+    const cause = forecast?.complete
+      ? forecast.destruction.find((event) => attributed(event, self, target, weaponId))?.cause
+      : undefined;
+    return {
+      weaponId, kind: found.point.kind, variant: found.variant, x: found.point.x, y: found.point.y,
+      command: found.command,
+      destroyed: forecast ? targetDestroyed(forecast, self, target, weaponId) : false,
+      loss: forecast ? targetLoss(forecast, self, target, weaponId) : 0,
+      ...(cause ? { cause } : {}),
+    };
   };
   const searchOne = (point: TacticalPoint, weapon: WeaponId, variant: AimVariant): SearchResult => {
     searches += 1;
@@ -218,17 +320,18 @@ export function chooseSniperPhysicalShot(
     const rawCommand = solution.command;
     const command = finalizeAdvancedAim(rawCommand);
     if (!solution.complete) {
-      note(weapon, point, variant, "recherche incomplète");
+      note(weapon, point, variant, "recherche incomplète", command);
       return { point, variant, rawCommand, command, forecast: null };
     }
     const key = JSON.stringify([weapon, command.angle, command.power]);
     let forecast = cache.get(key);
-    if (!forecast) {
+    if (forecast) cacheHits += 1;
+    else {
       forecasts += 1;
       forecast = resolvePhysicalShot(state, terrain, self, weapon, command);
       cache.set(key, forecast);
     }
-    if (!forecast.complete) note(weapon, point, variant, "prévision incomplète");
+    if (!forecast.complete) note(weapon, point, variant, "prévision incomplète", command, forecast);
     return { point, variant, rawCommand, command, forecast };
   };
   const ranked: RankedCandidate[] = [];
@@ -243,7 +346,7 @@ export function chooseSniperPhysicalShot(
         if (!forecast || !forecast.complete) continue;
         const refusal = refusalOf(forecast);
         if (refusal) {
-          note(weapon, point, variant, refusal);
+          note(weapon, point, variant, refusal, found.command, forecast);
           continue;
         }
         ranked.push({
@@ -264,12 +367,14 @@ export function chooseSniperPhysicalShot(
   else if (material === TERRAIN_MATERIAL.ROCK) note("DRILLER", ordinaryTankPoint(target), "full", "veto ROCK");
   else consider("DRILLER", SNIPER_SEARCH_LIMITS.driller, (forecast) => sniperDrillerRefusal(forecast, self, target));
 
-  let choice: SniperPhysicalChoice | undefined;
+  let choice: Omit<SniperPhysicalChoice, "trace"> | undefined;
+  let selectionReason: SniperSelectionReason;
+  let runnerUp: SniperCandidateSummary | undefined;
   if (ranked.length > 0) {
-    let best = ranked[0];
-    for (const candidate of ranked.slice(1)) {
-      if (prefer(candidate, best)) best = candidate;
-    }
+    const picked = pickBest(ranked);
+    const best = picked.best;
+    selectionReason = rankedReason(best, picked.runner);
+    if (tracing && picked.runner) runnerUp = summarize(picked.runner.weaponId, picked.runner);
     choice = {
       weaponId: best.weaponId,
       point: best.point,
@@ -298,12 +403,20 @@ export function chooseSniperPhysicalShot(
         }
         if (!surviving && missileSurviving(found.forecast, self)) surviving = found;
         else if (found.forecast.complete && !found.forecast.survivors.includes(self.id)) {
-          note("MISSILE", point, variant, "tireur détruit");
-        } else if (found.forecast.complete) note("MISSILE", point, variant, "sans effet");
+          note("MISSILE", point, variant, "tireur détruit", found.command, found.forecast);
+        } else if (found.forecast.complete) note("MISSILE", point, variant, "sans effet", found.command, found.forecast);
       }
     }
     const selected = useful ?? surviving ?? ordinary;
     const tank = ordinaryTankPoint(target);
+    if (tracing && surviving && selected !== surviving) {
+      note("MISSILE", surviving.point, surviving.variant, "survivant écarté", surviving.command, surviving.forecast);
+    }
+    if (selected === useful) selectionReason = "repli utile";
+    else if (selected === surviving) selectionReason = "repli survivant";
+    else if (selected) selectionReason = "secours ordinaire";
+    else selectionReason = "secours synthétique";
+    if (tracing && selected === useful && surviving) runnerUp = summarize("MISSILE", surviving);
     choice = selected
       ? {
         weaponId: "MISSILE",
@@ -325,29 +438,16 @@ export function chooseSniperPhysicalShot(
       };
   }
 
-  if (import.meta.env.DEV) {
-    console.info("[AI SNIPER] Décision", {
-      shooterId: self.id,
-      targetId: target.id,
-      offset,
+  return {
+    ...choice,
+    trace: {
+      selectionReason,
+      ...(runnerUp ? { runnerUp } : {}),
+      admissible: tracing ? ranked.map((candidate) => summarize(candidate.weaponId, candidate)) : [],
+      refusals,
       searches,
       forecasts,
-      refusals,
-      admissible: ranked.map((candidate) => ({
-        weaponId: candidate.weaponId,
-        kind: candidate.point.kind,
-        variant: candidate.variant,
-        destroyed: candidate.destroyed,
-        loss: candidate.loss,
-      })),
-      choice: {
-        weaponId: choice.weaponId,
-        reason: choice.reason,
-        certified: choice.certified,
-        kind: choice.point.kind,
-        variant: choice.variant,
-      },
-    });
-  }
-  return choice;
+      cacheHits,
+    },
+  };
 }

@@ -15,11 +15,71 @@ import {
   resetAimMemoryForRound,
 } from "./aimMemory";
 import { solveSniperAim } from "./sniperAim";
-import { chooseSniperPhysicalShot } from "./sniperPhysicalSelection";
+import { chooseSniperPhysicalShot, type SniperPhysicalChoice } from "./sniperPhysicalSelection";
 import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 
 type SniperMemory = AimMemory;
+type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible";
+
+const FALLBACK_SHOT = { angle: 45, power: 50, weaponId: "MISSILE" as const };
+
+function logSniperDecision(payload: object): void {
+  if (!import.meta.env.DEV) return;
+  console.info("[AI SNIPER] Décision", JSON.stringify(payload));
+}
+
+function sniperDecisionPayload(
+  self: Player,
+  target: Player,
+  targetRule: TargetRule,
+  gameState: GameState,
+  terrain: TerrainManager,
+  attempts: number,
+  offsetDirection: number,
+  offset: number,
+  choice: SniperPhysicalChoice,
+  reactionIntensity: number,
+  gaffeOccurred: boolean,
+  finalCommand: { angle: number; power: number },
+): object {
+  return {
+    choice: {
+      weaponId: choice.weaponId,
+      reason: choice.reason,
+      certified: choice.certified,
+      kind: choice.point.kind,
+      variant: choice.variant,
+      point: { x: choice.point.x, y: choice.point.y },
+      aimedPoint: { x: choice.point.x + offset, y: choice.point.y },
+      rawCommand: choice.rawCommand,
+      predictedCommand: choice.command,
+      reactionIntensity,
+      gaffeOccurred,
+      finalCommand,
+    },
+    selectionReason: choice.trace.selectionReason,
+    runnerUp: choice.trace.runnerUp,
+    shooterId: self.id,
+    targetId: target.id,
+    targetRule,
+    round: gameState.roundNumber,
+    turn: gameState.turn,
+    windForce: gameState.windForce,
+    gravity: gameState.gravity,
+    attempts,
+    offsetDirection,
+    offset,
+    material: terrain.getMaterialAt(target.tank.position.x),
+    bulletStock: self.inventory.BULLET ?? 0,
+    drillerStock: self.inventory.DRILLER ?? 0,
+    admissible: choice.trace.admissible,
+    refusals: choice.trace.refusals,
+    searches: choice.trace.searches,
+    forecasts: choice.trace.forecasts,
+    cacheHits: choice.trace.cacheHits,
+  };
+}
 
 export class AISniperStrategy implements AIEngine {
   private memories = new Map<string, SniperMemory>();
@@ -40,7 +100,14 @@ export class AISniperStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      logSniperDecision({
+        choice: { weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 } },
+        finalReason: "tireur absent ou mort",
+        shooterId: self?.id,
+        round: gameState.roundNumber,
+        turn: gameState.turn,
+      });
+      return FALLBACK_SHOT;
     }
 
     const memory = this.getMem(self.id);
@@ -50,24 +117,35 @@ export class AISniperStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      logSniperDecision({
+        choice: { weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 } },
+        finalReason: "aucun adversaire vivant",
+        shooterId: self.id,
+        round: gameState.roundNumber,
+        turn: gameState.turn,
+        windForce: gameState.windForce,
+        gravity: gameState.gravity,
+      });
+      return FALLBACK_SHOT;
     }
 
-    let target: Player | undefined;
-    if (memory.currentTargetId) {
-      target = enemies.find((enemy) => enemy.id === memory.currentTargetId);
-    }
-    if (!target) {
+    const remembered = memory.currentTargetId
+      ? enemies.find((enemy) => enemy.id === memory.currentTargetId)
+      : undefined;
+    let targetRule: TargetRule;
+    let target: Player;
+    if (remembered) {
+      target = remembered;
+      targetRule = "mémoire";
+    } else {
       const aiEnemies = enemies.filter((enemy) => !enemy.isHuman);
       const candidates = aiEnemies.length > 0 ? aiEnemies : enemies;
+      targetRule = aiEnemies.length > 0 ? "ia la plus faible" : "humain le plus faible";
       target = candidates.toSorted((left, right) => {
         const healthDifference = left.tank.health - right.tank.health;
         if (healthDifference !== 0) return healthDifference;
         return Number(left.isHuman) - Number(right.isHuman);
       })[0];
-    }
-    if (!target) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
     const attempts = recordAimAttempt(memory, target.id);
@@ -110,7 +188,8 @@ export class AISniperStrategy implements AIEngine {
       );
       perturbed = true;
     }
-    if (maybeGaffe(gaffe.chance)) {
+    const gaffeOccurred = maybeGaffe(gaffe.chance);
+    if (gaffeOccurred) {
       command = applySignedCorruption(
         command,
         gaffe.angleAmplitude,
@@ -121,6 +200,10 @@ export class AISniperStrategy implements AIEngine {
 
     consumeHitReaction(self.tank.hitReaction);
     const fired = perturbed ? finalizeAdvancedAim(command) : choice.command;
+    logSniperDecision(sniperDecisionPayload(
+      self, target, targetRule, gameState, terrainManager, attempts, offsetDirection, offset, choice,
+      reactionIntensity, gaffeOccurred, fired,
+    ));
     return { ...fired, weaponId };
   }
 
