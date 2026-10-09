@@ -114,8 +114,7 @@ export class AISmartStrategy implements AIEngine {
       ? finalizeAdvancedAim(command) : choice.command;
     if (import.meta.env.DEV) {
       const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
-      const conservationReason = !plan && weaponId === "MISSILE" && rejectedUnprofitableShots?.length
-        ? "MISSILE gratuit : conservation des munitions payantes déficitaires" : undefined;
+      const conservationReason = fallback?.conservationReason;
       console.info("[AI EXPERT] Décision", JSON.stringify({
         shooterId: self.id,
         round: gameState.roundNumber,
@@ -123,7 +122,7 @@ export class AISmartStrategy implements AIEngine {
         // Keep the economic explanation ahead of roster and large forecast tables.
         rejectedUnprofitableShots,
         conservationReason,
-        fallbackSelectionReason: fallback && (conservationReason ?? fallback.selectionReason),
+        fallbackSelectionReason: fallback?.selectionReason,
         currentPlayerIndex: gameState.currentPlayerIndex,
         windForce: gameState.windForce,
         gravity: gameState.gravity,
@@ -139,7 +138,7 @@ export class AISmartStrategy implements AIEngine {
           inventory: { ...player.inventory },
         })),
         ...decisionTrace,
-        selectionReason: plan ? decisionTrace?.selectionReason : conservationReason ?? fallback?.selectionReason,
+        selectionReason: plan ? decisionTrace?.selectionReason : fallback?.selectionReason,
         realAim: {
           weaponId,
           choiceKind: choice.kind,

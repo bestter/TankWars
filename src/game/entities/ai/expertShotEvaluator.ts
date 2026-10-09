@@ -312,6 +312,7 @@ interface ExpertFallbackBase {
   readonly point: ExpertPoint;
   readonly useful: boolean;
   readonly selectionReason?: string;
+  readonly conservationReason?: string;
 }
 export type ExpertFallbackChoice = (ExpertFallbackBase & ExpertEvaluatedAim & {
   readonly forecast: Extract<DecisionForecast, { complete: true }>;
@@ -331,7 +332,7 @@ export function chooseExpertFallback(
   aim: ExpertTargetAim,
 ): ExpertFallbackChoice {
   const economic = state.localShotContext !== undefined;
-  const choices: Extract<ExpertFallbackChoice, { kind: "evaluated" }>[] = [];
+  const choices: (Extract<ExpertFallbackChoice, { kind: "evaluated" }> & { insertionIndex: number })[] = [];
   const seenCommands = new Set<string>();
   const victims = new Set(state.players.filter((player) => player.id !== self.id).map((player) => player.id));
   for (const weaponId of [...new Set([ordinary, "MISSILE" as const])]) {
@@ -356,7 +357,7 @@ export function chooseExpertFallback(
       const commandKey = JSON.stringify([weaponId, proposal.command.angle, proposal.command.power]);
       if (seenCommands.has(commandKey)) continue;
       seenCommands.add(commandKey);
-      choices.push({ ...proposal, weaponId, point, useful, forecast });
+      choices.push({ ...proposal, weaponId, point, useful, forecast, insertionIndex: choices.length });
     }
   }
   choices.sort((a, b) => {
@@ -365,9 +366,14 @@ export function chooseExpertFallback(
     return (economic && left.profit !== null && right.profit !== null
       ? right.profit - left.profit ||
         Number(!forecastSurvives(left, self.id, cache)) - Number(!forecastSurvives(right, self.id, cache))
-      : Number(b.useful) - Number(a.useful)) || compareExpertConsequences(left, right);
+      : Number(b.useful) - Number(a.useful)) || compareExpertConsequences(left, right) || a.insertionIndex - b.insertionIndex;
   });
   const best = choices[0];
+  const conservationReason = import.meta.env.DEV && economic &&
+    cache.diagnostics?.rejectedUnprofitableShots.length &&
+    !choices.some((choice) => choice.weaponId !== "MISSILE") &&
+    (!best || best.forecast.profit === 0 && !best.useful)
+    ? "MISSILE gratuit : conservation des munitions payantes déficitaires" : undefined;
   if (best) {
     const next = choices[1];
     const selectionReason = !import.meta.env.DEV ? undefined : !next ? "seul candidat admissible" :
@@ -377,7 +383,7 @@ export function chooseExpertFallback(
       !economic && best.useful !== next.useful ? "effet adverse utile" :
       compareExpertConsequences(best.forecast, next.forecast) !== 0
         ? "conséquences physiques préférées" : "ordre stable des armes, des points ou des arcs";
-    return { ...best, selectionReason };
+    return { ...best, selectionReason, conservationReason };
   }
   const point: ExpertPoint = {
     x: target.tank.position.x, y: target.tank.position.y - 6, kind: "tank",
@@ -389,5 +395,6 @@ export function chooseExpertFallback(
   return { ...aim, kind: "ordinary", weaponId: "MISSILE", point, requestedPoint,
     policy: ORDINARY_AIM_POLICY, useful: false, rawCommand: solution.command,
     command: finalizeAdvancedAim(solution.command), searchComplete: solution.complete,
-    selectionReason: "dernier MISSILE ordinaire non certifié" };
+    conservationReason,
+    selectionReason: import.meta.env.DEV ? "dernier MISSILE ordinaire non certifié" : undefined };
 }

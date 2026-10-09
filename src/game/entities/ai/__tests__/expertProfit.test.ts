@@ -180,13 +180,15 @@ describe("EXPERT economic fallback #288", () => {
       expect(sole.choose()).toMatchObject({ kind: "evaluated", weaponId: weapon, forecast: { profit: 0 } });
     });
 
-  it("keeps the last ordinary MISSILE bounded and uncertified if every complete paid shot loses money", () => {
+  it.each([false, true])("keeps the last ordinary MISSILE bounded and uncertified (DEV %s)", (dev) => {
+    vi.stubEnv("DEV", dev);
     const f = fallbackFixture("GRENADE", -1, true, 0, false);
     vi.mocked(ballistics.searchBallisticSolution).mockReturnValue({ angle: 200, power: 1000, err: 99, complete: true });
     const choice = f.choose();
     expect(choice).toMatchObject({ kind: "ordinary", weaponId: "MISSILE", command: { angle: 174, power: 95 },
       policy: ORDINARY_AIM_POLICY });
     expect(choice.forecast).toBeUndefined();
+    expect(choice.selectionReason).toBe(dev ? "dernier MISSILE ordinaire non certifié" : undefined);
   });
 
   it("without economic context preserves physical safety and unknown profit", () => {
@@ -222,6 +224,30 @@ describe("EXPERT economic fallback #288", () => {
       expect(trace).toMatchObject({ selectionReason: "profit net supérieur", fallbackSelectionReason: "profit net supérieur" });
       expect(trace).not.toHaveProperty("conservationReason");
     } else expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { profit: 0, suicide: false, missileProfit: 80, humanDamage: 0, reason: "profit net supérieur" },
+    { profit: 0, suicide: true, missileProfit: 0, humanDamage: 0, reason: "EXPERT survit, contrairement au suivant" },
+    { profit: 0, suicide: false, missileProfit: 0, humanDamage: 1000, reason: "conséquences physiques préférées" },
+    { profit: -1, suicide: false, missileProfit: 80, humanDamage: 0, reason: "seul candidat admissible" },
+  ])("preserves the MISSILE fallback reason after rejected losses: $reason ($profit)", async (scenario) => {
+    const f = fallbackFixture("GRENADE", scenario.profit, scenario.suicide, scenario.missileProfit);
+    const height = f.terrain.getHeightAt.bind(f.terrain);
+    vi.spyOn(f.terrain, "getHeightAt").mockImplementation((x) => x > 150 && x < 350 ? 50 : height(x));
+    const resolve = vi.mocked(physical.resolvePhysicalShot).getMockImplementation()!;
+    vi.mocked(physical.resolvePhysicalShot).mockImplementation((...args) => ({
+      ...resolve(...args), humanDamageMilli: args[3] === "GRENADE" ? scenario.humanDamage : 0,
+    }));
+    vi.spyOn(evaluator, "evaluateExpertShot").mockImplementation((_s, _t, shooter, weapon) =>
+      shooter.id === "self" && weapon === "NUKE" ? valid(-340) : invalid);
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    expect(await new AISmartStrategy().executeTurn("self", f.state, f.terrain))
+      .toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
+    const trace: unknown = JSON.parse(String(log.mock.calls[0][1]));
+    expect(trace).toMatchObject({ selectionReason: scenario.reason, fallbackSelectionReason: scenario.reason });
+    expect(trace).not.toHaveProperty("conservationReason");
   });
 
   it.each([false, true])("preserves the production choice and compact conservation trace (DEV %s)", async (dev) => {
