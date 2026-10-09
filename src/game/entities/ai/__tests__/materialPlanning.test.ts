@@ -141,7 +141,7 @@ describe("enforced local proposal budgets", () => {
     return Array.from({ length: 20 }, (_, index) => ({ x: 400 + index, y: 330, kind: "tank" as const }));
   }
 
-  it.each(["v2-heuristic", "v3-sniper"] as const)("bounds %s independently of DEV, completeness and command deduplication", (profile) => {
+  it("bounds OK independently of DEV, completeness and command deduplication", () => {
     vi.stubEnv("DEV", false);
     const f = fixture();
     vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
@@ -151,7 +151,7 @@ describe("enforced local proposal budgets", () => {
       let index = 0;
       const solve = vi.fn<MaterialSolver>(() => ({ command: { angle: mode === "unique" ? 30 + index++ : 45, power: 50 },
         complete: mode !== "incomplete" }));
-      expect(chooseLocalMaterialShot(profile, f.self, f.target, f.state, f.terrain, "MISSILE", 2, solve))
+      expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solve))
         .toMatchObject({ weaponId: "MISSILE", reason: mode === "incomplete" ? "ordinary" : "surviving" });
       expect(solve).toHaveBeenCalledTimes(12);
       expect(resolve).toHaveBeenCalledTimes(mode === "unique" ? 12 : mode === "duplicate" ? 1 : 0);
@@ -165,13 +165,14 @@ describe("enforced local proposal budgets", () => {
     vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
     const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [damage()] }));
     const solve = solver();
-    expect(chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "MISSILE", 2, solve).reason)
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solve).reason)
       .toBe("useful");
     expect(solve).toHaveBeenCalledTimes(1);
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 
-  it.each([AIHeuristicStrategy, AISniperStrategy])("bounds the complete %s turn to 12 ideal searches and one final search", async (Strategy) => {
+  it("bounds the complete OK turn to 12 ideal searches and one final search", async () => {
+    const Strategy = AIHeuristicStrategy;
     const f = fixture();
     f.self.inventory = {};
     vi.spyOn(candidates, "localMaterialPoints").mockReturnValue(longList());
@@ -357,10 +358,10 @@ describe("selected material aim is transported once to the real shot", () => {
     expect(offset).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { profile: "v2-heuristic", create: () => new AIHeuristicStrategy(), aMin: 52, aMax: 82 },
-    { profile: "v3-sniper", create: () => new AISniperStrategy(), aMin: 50, aMax: 85 },
-  ])("$profile keeps point Y, high arc, one offset and one memory attempt", async ({ create, aMin, aMax }) => {
+  it("OK keeps point Y, high arc, one offset and one memory attempt", async () => {
+    const create = () => new AIHeuristicStrategy();
+    const aMin = 52;
+    const aMax = 82;
     const f = fixture();
     const selection = vi.spyOn(localPlanner, "chooseLocalMaterialShot").mockReturnValue({
       weaponId: "MISSILE", point: { x: 350, y: 300, kind: "terrain" }, variant: "high", reason: "useful",
@@ -410,24 +411,23 @@ describe("selected material aim is transported once to the real shot", () => {
     expect(selection.mock.calls[0][5]).toBe("NUKE");
   });
 
-  it("SNIPER consumes the existing BULLET roll only once after the first attempt", async () => {
+  it("SNIPER no longer draws a BULLET selection roll on attempt 1 or 2", async () => {
     const f = fixture();
     f.self.inventory = { BULLET: 1, DRILLER: 1 };
+    f.self.aiProfile = "v3-sniper";
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.1);
     vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
-    const selection = vi.spyOn(localPlanner, "chooseLocalMaterialShot");
     const strategy = new AISniperStrategy();
     await strategy.executeTurn("self", f.state, f.terrain);
-    expect(rng).not.toHaveBeenCalled();
     await strategy.executeTurn("self", f.state, f.terrain);
-    expect(rng).toHaveBeenCalledTimes(1);
-    expect(selection.mock.calls.map((call) => call[5])).toEqual(["MISSILE", "BULLET"]);
+    // Removing the 50% roll shifts the global sequence; these turns draw neither it nor a substitute.
+    expect(rng).not.toHaveBeenCalled();
   });
 });
 
-describe("OK/SNIPER useful, safe, fixed-order selection", () => {
+describe("OK useful, safe, fixed-order selection", () => {
   it.each([
     { safe: true, useful: true, support: true, expected: "DRILLER" },
     { safe: true, useful: false, support: true, expected: "MISSILE" },
@@ -440,35 +440,23 @@ describe("OK/SNIPER useful, safe, fixed-order selection", () => {
       forecast({ survivors: weapon === "DRILLER" && !safe ? ["target"] : ["self", "target"],
         damage: useful || weapon === "MISSILE" ? [damage()] : [],
         support: [{ playerId: "target", x: 400, before: 336, after: support ? 390 : 336 }] }));
-    const choice = chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", 1, solver());
+    const choice = chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solver());
     expect(choice.weaponId).toBe(expected);
   });
 
-  it("rejects DRILLER/ROCK before any forecast for either profile", () => {
+  it("rejects DRILLER on ROCK before any forecast", () => {
     const f = fixture();
     f.terrain.setMaterialRange(400, 400, TERRAIN_MATERIAL.ROCK);
     const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
-    for (const profile of ["v2-heuristic", "v3-sniper"] as const) {
-      chooseLocalMaterialShot(profile, f.self, f.target, f.state, f.terrain, "DRILLER", 2, solver());
-    }
+    chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "DRILLER", solver());
     expect(resolve.mock.calls.every((call) => call[3] === "MISSILE")).toBe(true);
-  });
-
-  it("keeps first-attempt SNIPER MISSILE only on SOFT", () => {
-    const f = fixture();
-    f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.SOFT);
-    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
-    const solve = solver();
-    chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "MISSILE", 1, solve);
-    expect(solve.mock.calls.every((call) => call[1] === "MISSILE")).toBe(true);
-    expect(solve).toHaveBeenCalledTimes(4);
   });
 
   it("takes the first useful safe candidate rather than maximizing damage or profit", () => {
     const f = fixture();
     const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [damage()] }));
     const reward = vi.spyOn(economics, "calculateShotRewards");
-    const choice = chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", 1, solver());
+    const choice = chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", solver());
     expect(choice).toMatchObject({ weaponId: "GRENADE", variant: "full", reason: "useful" });
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(reward).not.toHaveBeenCalled();
@@ -479,46 +467,25 @@ describe("OK/SNIPER useful, safe, fixed-order selection", () => {
     vi.spyOn(physical, "resolvePhysicalShot")
       .mockReturnValueOnce(forecast({ damage: [damage("collateral")] }))
       .mockReturnValue(forecast({ damage: [damage()] }));
-    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", 1, solver()))
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solver()))
       .toMatchObject({ variant: "high", reason: "useful" });
-  });
-
-  it("BULLET utility requires the retained target's direct hit", () => {
-    const f = fixture();
-    vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_s, _t, _p, weapon) => forecast({
-      damage: [damage()], hits: weapon === "DRILLER" ? [{ shotId: 1, munitionId: 0,
-        x: 400, y: 330, weaponId: weapon, directTargetId: "target" }] : [],
-    }));
-    expect(chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "BULLET", 2, solver()))
-      .toMatchObject({ weaponId: "DRILLER", reason: "useful" });
-  });
-
-  it("does not introduce BULLET, NUKE or GRENADE when the ordinary choice did not select them", () => {
-    const f = fixture();
-    f.self.inventory.NUKE = 1;
-    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
-    const solve = solver();
-    chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "DRILLER", 2, solve);
-    expect([...new Set(solve.mock.calls.map((call) => call[1]))]).toEqual(["DRILLER", "MISSILE"]);
   });
 
   it("returns the first safe useless candidate only after exploring the full list", () => {
     const f = fixture();
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
     const solve = solver();
-    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", 1, solve))
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", solve))
       .toMatchObject({ weaponId: "GRENADE", reason: "surviving", variant: "full" });
     expect(solve).toHaveBeenCalledTimes(8);
   });
 
-  it("never treats incomplete physics as safe and preserves ordinary SNIPER DRILLER", () => {
+  it("never treats incomplete physics as safe", () => {
     const f = fixture();
+    f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.SOFT);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue({ complete: false, survivors: ["self"],
       hits: [], damage: [], destruction: [], support: [], steps: 2400 });
-    expect(chooseLocalMaterialShot("v3-sniper", f.self, f.target, f.state, f.terrain, "DRILLER", 2, solver()))
-      .toMatchObject({ weaponId: "DRILLER", reason: "ordinary", variant: "full" });
-    f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.SOFT);
-    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", 1, solver()))
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solver()))
       .toMatchObject({ weaponId: "MISSILE", reason: "ordinary" });
   });
 
@@ -527,7 +494,7 @@ describe("OK/SNIPER useful, safe, fixed-order selection", () => {
     const rng = vi.spyOn(random, "secureRandom");
     const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
     const solve = vi.fn<MaterialSolver>().mockReturnValue({ command: { angle: 40.04, power: 50.2 }, complete: true });
-    chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", 1, solve);
+    chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "MISSILE", solve);
     expect(solve).toHaveBeenCalledTimes(4);
     expect(resolve).toHaveBeenCalledExactlyOnceWith(f.state, f.terrain, f.self, "MISSILE", { angle: 40, power: 50 });
     expect(rng).not.toHaveBeenCalled();
@@ -538,7 +505,7 @@ describe("OK/SNIPER useful, safe, fixed-order selection", () => {
     f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.SOFT);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
     const solve = solver();
-    chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", 1, solve);
+    chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "GRENADE", solve);
     expect(solve).toHaveBeenCalledTimes(LOCAL_MATERIAL_MAX_PROPOSALS);
     expect(solve.mock.calls.map((call) => [call[1], call[0].kind, call[2]])).toEqual(
       ["GRENADE", "DRILLER", "MISSILE"].flatMap((weapon) => ["tank", "terrain"].flatMap((kind) =>

@@ -96,10 +96,9 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
-    const virtualAttempts = memory.currentTargetId === target.id ? memory.currentTargetAttempts + 1 : 1;
     const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
     const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
-      ordinaryWeapon, virtualAttempts, (point, weapon, variant) => solveHeuristicAim(
+      ordinaryWeapon, (point, weapon, variant) => solveHeuristicAim(
         self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
       ));
     const attempts = recordAimAttempt(memory, target.id);

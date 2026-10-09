@@ -9,7 +9,9 @@ import {
 import { TerrainManager } from "../../../engine/Terrain";
 import { simulateShot } from "../BallisticsSimulator";
 import { makeGameState, makePlayer, makeTank, flatTerrain } from "../../../__tests__/helpers";
+import { finalizeAdvancedAim } from "../aimCorruption";
 import * as random from "../../../../utils/random";
+import * as fallible from "../fallibleAim";
 import type { GameState } from "../../../../types/game";
 import type { Player } from "../../../../types/player";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
@@ -248,7 +250,7 @@ describe("AI weapon gates", () => {
     expect(shot.weaponId).toBe("DRILLER");
   });
 
-  it("sniper drops DRILLER on ROCK after the first MISSILE shot", async () => {
+  it("sniper never fires DRILLER when the target rests on ROCK", async () => {
     const terrain = flatTerrain(800, 480);
     terrain.setMaterialRange(480, 520, TERRAIN_MATERIAL.ROCK);
     const strategy = new AISniperStrategy();
@@ -270,8 +272,8 @@ describe("AI weapon gates", () => {
       "v3-sniper",
     );
     const first = await strategy.executeTurn("shooter-tank", gs, terrain);
-    expect(first.weaponId).toBe("MISSILE");
     const second = await strategy.executeTurn("shooter-tank", gs, terrain);
+    expect(first.weaponId).not.toBe("DRILLER");
     expect(second.weaponId).not.toBe("DRILLER");
   });
 
@@ -416,39 +418,42 @@ describe("AI fallibility contracts", () => {
     vi.restoreAllMocks();
   });
 
-  it("sniper first shot uses MISSILE and lands a safe miss (≥50px)", async () => {
+  it.each([
+    { bulletStock: 4, expectedWeapon: "BULLET" as const },
+    { bulletStock: 0, expectedWeapon: "DRILLER" as const },
+  ])("sniper first attempt selects $expectedWeapon with BULLET stock $bulletStock and does not spend ammo", async ({ bulletStock, expectedWeapon }) => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISniperStrategy();
     const shooter = makePlayer({
       id: "ai",
       isHuman: false,
       aiProfile: "v3-sniper",
-      tank: makeTank("shooter-tank", 80, 336),
-      inventory: { BULLET: 4, DRILLER: 1 },
+      tank: makeTank("shooter-tank", 100, 336),
+      inventory: { BULLET: bulletStock, DRILLER: 1 },
     });
     const enemy = makePlayer({
       id: "enemy",
-      tank: makeTank("enemy-tank", 500, 336),
+      tank: makeTank("enemy-tank", 400, 336),
     });
-    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    // Isolate first-attempt selection while keeping the solver and physics real.
+    const offset = vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     const gameState = makeGameState(
       { ...shooter, aiProfile: "v3-sniper" },
       enemy,
       "v3-sniper",
     );
+    const before = { ...gameState.players[0].inventory };
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shot.weaponId).toBe("MISSILE");
-
-    const impact = simulateShot(
-      80,
-      336,
-      shot.angle,
-      shot.power,
-      gameState.windForce,
-      gameState.gravity,
-      terrain,
+    expect(offset).toHaveBeenCalledTimes(1);
+    expect(offset.mock.calls[0]?.[0]).toBe(1);
+    expect(shot.weaponId).toBe(expectedWeapon);
+    expect(before[expectedWeapon]).toBeGreaterThan(0);
+    expect({ angle: shot.angle, power: shot.power }).toEqual(
+      finalizeAdvancedAim({ angle: shot.angle, power: shot.power }),
     );
-    expect(Math.abs(impact.landX - 500)).toBeGreaterThanOrEqual(50);
+    expect(gameState.players[0].inventory).toEqual(before);
+    expect(gameState.players[0].tank.currentWeapon).toBe(expectedWeapon);
   });
 
   it("smart fallback prefers a healthy AI over a wounded human", async () => {
