@@ -1,8 +1,7 @@
-import { playerProfileScore } from "../profileScore";
 import { describe, expect, it } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { expertTacticalPoints } from "../expertShotEvaluator";
-import { ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
+import { expertProfileScore, ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
 
 const terrain = flatTerrain(800, 480);
 const self = makePlayer({ id: "self", isHuman: false, aiProfile: "v4-smart",
@@ -44,38 +43,6 @@ describe("EXPERT tactical points", () => {
 });
 
 describe("EXPERT threat profile contracts", () => {
-  for (const weapon of ["NUKE", "THERMONUCLEAR"] as const) {
-    it.each([
-      [true, undefined, ["MISSILE", "GRENADE", "CLUSTER", "DRILLER", "BULLET"]],
-      [false, "v1-random", []],
-      [false, "v2-heuristic", ["MISSILE", "GRENADE", "CLUSTER", "DRILLER"]],
-      [false, "v3-sniper", ["MISSILE", "BULLET", "DRILLER"]],
-      [false, "v4-smart", ["MISSILE", "GRENADE", "CLUSTER", "DRILLER", "BULLET"]],
-      [false, undefined, []],
-      [false, "unknown", []],
-    ] as const)(`hides selected ${weapon} for human=%s profile=%s without replacing it`,
-      (isHuman, profile, expected) => {
-        const player = makePlayer({ isHuman, aiProfile: profile as typeof a.aiProfile,
-          inventory: { NUKE: 3, THERMONUCLEAR: 5, GRENADE: 1, CLUSTER: 1,
-            DRILLER: 1, BULLET: 1, BULLDOZER: 1 },
-          tank: makeTank("a", 300, 336, { currentWeapon: weapon }) });
-        const before = structuredClone(player);
-        expect(possibleExpertThreatWeapons(player)).toEqual(expected);
-        expect(player).toEqual(before);
-        player.inventory.GRENADE = 0;
-        player.inventory.DRILLER = 0;
-        expect(possibleExpertThreatWeapons(player))
-          .toEqual(expected.filter((id) => id !== "GRENADE" && id !== "DRILLER"));
-      });
-  }
-
-  it.each([
-    ["v1-random", 0.1], ["v2-heuristic", 0.5], ["v3-sniper", 0.8], ["v4-smart", 1], [undefined, 0.5],
-  ] as const)("preserves shared profile score for %s and human tactical score", (aiProfile, score) => {
-    expect(playerProfileScore(makePlayer({ isHuman: false, aiProfile }))).toBe(score);
-    expect(playerProfileScore(makePlayer({ isHuman: true, aiProfile }))).toBe(0.9);
-  });
-
   it("limits SIMPLE to its equipped weapon and uses OK score for an unknown profile", () => {
     const simple = makePlayer({ ...a, isHuman: false, aiProfile: "v1-random",
       inventory: { NUKE: 1, BULLET: 1 },
@@ -83,7 +50,7 @@ describe("EXPERT threat profile contracts", () => {
     expect(possibleExpertThreatWeapons(simple)).toEqual(["BULLET"]);
     const unknown = { ...simple, aiProfile: "unknown" as typeof simple.aiProfile };
     expect(possibleExpertThreatWeapons(unknown)).toEqual(["BULLET"]);
-    expect(playerProfileScore(unknown)).toBe(0.5);
+    expect(expertProfileScore(unknown)).toBe(0.5);
     simple.tank.currentWeapon = "BULLDOZER";
     expect(possibleExpertThreatWeapons(simple)).toEqual([]);
   });
@@ -95,10 +62,10 @@ describe("EXPERT threat profile contracts", () => {
     player.aiProfile = "v3-sniper";
     expect(possibleExpertThreatWeapons(player)).toEqual(["MISSILE", "BULLET", "DRILLER"]);
     player.aiProfile = "v2-heuristic";
-    expect(possibleExpertThreatWeapons(player)).toEqual(["MISSILE", "GRENADE", "CLUSTER", "DRILLER"]);
+    expect(possibleExpertThreatWeapons(player)).toEqual(["MISSILE", "GRENADE", "CLUSTER", "NUKE", "DRILLER"]);
     player.aiProfile = "v4-smart";
     expect(possibleExpertThreatWeapons(player)).not.toContain("BULLDOZER");
-    expect(possibleExpertThreatWeapons(player)).toEqual(["MISSILE", "GRENADE", "CLUSTER", "DRILLER", "BULLET"]);
+    expect(possibleExpertThreatWeapons(player)).toContain("THERMONUCLEAR");
   });
 
   it("preserves the ordinary fallback target and AI/health/roster priority", () => {

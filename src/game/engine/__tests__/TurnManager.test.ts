@@ -29,44 +29,6 @@ describe('TurnManager', () => {
     );
   });
 
-  it('automates a human special turn and preserves its lock across every ordinary release path', () => {
-    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    const a = makePlayer({ id: 'a', isHuman: true });
-    const b = makePlayer({ id: 'b', isHuman: true });
-    mockTankManager.getPlayers = vi.fn(() => [a, b]);
-    const ai = vi.fn(); turnManager.setAIEngine({ executeTurn: ai });
-    const special = vi.fn((player) => player.id === 'a');
-    turnManager.onSpecialTurn = special;
-    turnManager.startFirstTurn();
-    expect(special).toHaveBeenCalledTimes(1);
-    turnManager.setLocalPlayerId('a');
-    turnManager.syncTurn(1);
-    turnManager.unlockAfterCatchUp();
-    turnManager.rejectPendingFireIntent();
-    turnManager.resumeForCombat();
-    turnManager.nextTurn();
-    turnManager.update(20);
-    expect(turnManager.getCurrentPlayer()?.id).toBe('a');
-    expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
-    expect(turnManager.tryFire()).toBe(false);
-    expect(mockFireCallback).not.toHaveBeenCalled();
-    expect(ai).not.toHaveBeenCalled();
-    turnManager.completeSpecialTurn(false);
-    expect(turnManager.getCurrentPlayer()?.id).toBe('b');
-    turnManager.removeInputListeners(); vi.unstubAllGlobals();
-  });
-
-  it.each(['CATCH_UP', 'ACTIVE_RECOVERY'] as const)('replays the last GRENADE as a projectile without changing the post-consumption weapon (%s)', (mode) => {
-    const a = makePlayer({ id: 'a', inventory: { GRENADE: 0 }, isHuman: true });
-    mockTankManager.getPlayers = vi.fn(() => [a]);
-    turnManager.executeRemoteFire({ angle: 45, power: 60, weaponId: 'GRENADE' }, {
-      fromSlot: 0, mode, identity: { shotId: 12, isFirstShotOfRound: false, physicsSeed: 123 },
-    });
-    expect(a.inventory.GRENADE).toBe(0);
-    expect(a.tank.currentWeapon).toBe('MISSILE');
-    expect(mockFireCallback).toHaveBeenCalledWith(a.tank.position, { angle: 45, power: 60, weaponId: 'GRENADE' }, 'a', expect.objectContaining({ physicsSeed: 123 }));
-  });
-
   describe('AI GameState snapshot', () => {
     it('passes currentRoundNumber to the AI GameState snapshot', async () => {
       const onlyAi = makePlayer({

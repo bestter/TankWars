@@ -1,5 +1,3 @@
-import type { CombatCatchUpMessage } from "./combatCatchUp";
-import { encodedCombatBytes, MAX_COMBAT_MESSAGE_BYTES, utf8Bytes } from "./combatTransport";
 import { isRoundMap, hasValidSpawnRoster, type RoundMap } from "../round/prepareRound";
 import {
   FIRE_COMMAND_MAX_ANGLE,
@@ -18,8 +16,8 @@ import type {
 } from "../shop/shopTransaction";
 import { isValidActionId } from "./actionId";
 
-export const ONLINE_PROTOCOL_VERSION = 3 as const;
-export const MINIMUM_CLIENT_PROTOCOL_VERSION = 3 as const;
+export const ONLINE_PROTOCOL_VERSION = 2 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 2 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
@@ -82,8 +80,6 @@ export interface ShotMessage {
   roundNumber: number;
   shotNumberInRound: number;
   isFirstShotOfRound: boolean;
-  physicsSeed: number;
-  eventSequence: number;
   slot: number;
   ownerId: string;
   command: FireCommand;
@@ -127,7 +123,6 @@ export interface ShopFinishMessage {
 export type FireRejectedReason =
   | "MALFORMED"
   | "NOT_YOUR_TURN"
-  | "ZEUS_TURN"
   | "SHOT_IN_FLIGHT"
   | "ROUND_ENDED"
   | FireInventoryDenial;
@@ -138,6 +133,14 @@ export interface FireRejectedMessage {
   reason: FireRejectedReason;
   inventory: Partial<Record<WeaponId, number>>;
   currentWeapon: WeaponId;
+}
+
+export interface ShotCatchUpMessage {
+  type: "SHOT_CATCH_UP";
+  roundNumber: number;
+  activeShotId: number | null;
+  shots: ShotMessage[];
+  lastFireResult: ShotMessage | FireRejectedMessage | null;
 }
 
 export interface ShotSettledMessage {
@@ -153,17 +156,7 @@ export interface RoundOutcomeWire {
   roundWinnerId: string | null;
 }
 
-export const EARNINGS_REJECTED_REASONS = ["MALFORMED", "MISSING_PLAYER", "DUPLICATE_PLAYER", "DEATH_INCONSISTENT", "RESURRECTION", "STALE_AUTHORITY", "WRONG_SHOT", "ROUND_MISMATCH", "IDENTITY_MISMATCH", "INVENTORY_MISMATCH", "CAP_MISMATCH", "ILLEGAL_VICTIM"] as const;
-export type EarningsRejectedReason = typeof EARNINGS_REJECTED_REASONS[number];
-export interface EarningsRejectedMessage {
-  type: "EARNINGS_REJECTED";
-  shotId: number | null;
-  authorityEpoch: number | null;
-  reason: EarningsRejectedReason;
-}
-
 export interface ShotEarningsMessage {
-  players: Player[];
   type: "SHOT_EARNINGS";
   shotId: number;
   authorityEpoch: number;
@@ -174,8 +167,6 @@ export interface ShotEarningsMessage {
 }
 
 export interface ShotEarningsAppliedMessage {
-  economicRevision: number;
-  roundEarningsByPlayer: Record<string, number>;
   type: "SHOT_EARNINGS_APPLIED";
   shotId: number;
   awards: Array<{ playerId: string; amount: number }>;
@@ -201,9 +192,6 @@ export interface RoundEndMessage {
 }
 
 export interface ZeusAppointedMessage {
-  roundNumber: number;
-  eventSequence: number;
-  afterShotId: number;
   type: "ZEUS_APPOINTED";
   appointmentId: number;
   zeusId: string;
@@ -212,9 +200,6 @@ export interface ZeusAppointedMessage {
 }
 
 export interface ZeusStrikeMessage {
-  roundNumber: number;
-  eventSequence: number;
-  afterShotId: number;
   type: "ZEUS_STRIKE";
   strikeId: number;
   zeusId: string;
@@ -223,11 +208,6 @@ export interface ZeusStrikeMessage {
 }
 
 export interface ZeusStrikeAppliedMessage {
-  economicRevision: number;
-  roundEarningsByPlayer: Record<string, number>;
-  roundNumber: number;
-  eventSequence: number;
-  afterShotId: number;
   type: "ZEUS_STRIKE_APPLIED";
   strikeId: number;
   zeusId: string;
@@ -240,8 +220,6 @@ export interface ZeusStrikeAppliedMessage {
 }
 
 export interface ZeusStateMessage {
-  roundNumber?: number;
-  eventSequence?: number;
   type: "ZEUS_STATE";
   activeZeusId: string | null;
   currentPlayerIndex: number;
@@ -258,7 +236,6 @@ export interface RoundPreparationFailedMessage {
 }
 
 export type StrictOnlineMessage =
-  | CombatCatchUpMessage
   | RoundPreparationFailedMessage
   | RequestGameStartMessage
   | ProtocolMismatchMessage
@@ -270,7 +247,6 @@ export type StrictOnlineMessage =
   | AuthorityChangedMessage
   | ShotMessage
   | ShotSettledMessage
-  | EarningsRejectedMessage
   | ShotEarningsMessage
   | ShotEarningsAppliedMessage
   | StateUpdateMessage
@@ -279,6 +255,7 @@ export type StrictOnlineMessage =
   | ShopRejectedMessage
   | ShopFinishMessage
   | FireRejectedMessage
+  | ShotCatchUpMessage
   | ZeusAppointedMessage
   | ZeusStrikeMessage
   | ZeusStrikeAppliedMessage
@@ -365,7 +342,6 @@ const FIRE_REJECTION_REASONS: readonly FireRejectedReason[] = [
   "MALFORMED",
   "NOT_YOUR_TURN",
   "SHOT_IN_FLIGHT",
-  "ZEUS_TURN",
   "ROUND_ENDED",
   "NO_AMMO",
   "ILLEGAL_INVENTORY",
@@ -433,18 +409,10 @@ function isShopActionAcknowledgement(
   );
 }
 
-function isCombatIdentity(value: Record<string, unknown>): boolean {
-  return isSafeNonNegativeInteger(value.roundNumber) && isSafeNonNegativeInteger(value.eventSequence) && isSafeNonNegativeInteger(value.afterShotId);
-}
-
-function isEconomicResult(value: Record<string, unknown>): boolean {
-  return isSafeNonNegativeInteger(value.economicRevision) && isRecord(value.roundEarningsByPlayer) && Object.values(value.roundEarningsByPlayer).every(isSafeNonNegativeInteger);
-}
-
 function isZeusStrike(value: unknown): value is ZeusStrikeMessage {
   return (
     isRecord(value) &&
-    value.type === "ZEUS_STRIKE" && isCombatIdentity(value) &&
+    value.type === "ZEUS_STRIKE" &&
     isSafeNonNegativeInteger(value.strikeId) &&
     typeof value.zeusId === "string" &&
     typeof value.targetId === "string" &&
@@ -452,7 +420,7 @@ function isZeusStrike(value: unknown): value is ZeusStrikeMessage {
   );
 }
 
-export function isPlayers(value: unknown, earnings = false): value is Player[] {
+function isPlayers(value: unknown): value is Player[] {
   return (
     Array.isArray(value) &&
     value.every(
@@ -489,19 +457,19 @@ export function isPlayers(value: unknown, earnings = false): value is Player[] {
           Number.isFinite(tank.health) &&
           typeof tank.maxHealth === "number" &&
           Number.isFinite(tank.maxHealth) &&
-          tank.maxHealth >= 0 && (earnings || (tank.health >= 0 && tank.health <= tank.maxHealth)) &&
+          tank.maxHealth >= 0 && tank.health >= 0 && tank.health <= tank.maxHealth &&
           typeof tank.shield === "number" &&
           Number.isFinite(tank.shield) &&
           typeof tank.maxShield === "number" &&
           Number.isFinite(tank.maxShield) &&
-          tank.maxShield >= 0 && (earnings || (tank.shield >= 0 && tank.shield <= tank.maxShield)) &&
+          tank.maxShield >= 0 && tank.shield >= 0 && tank.shield <= tank.maxShield &&
           typeof tank.isDead === "boolean" &&
           typeof tank.color === "string" &&
           Object.values(VGA_PALETTE).some((color) => color === tank.color) &&
-          (entry.aiProfile === undefined || entry.aiProfile === null || (typeof entry.aiProfile === "string" && ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"].includes(entry.aiProfile))) &&
-          (tank.lastHitBy === undefined || (typeof tank.lastHitBy === "string" && tank.lastHitBy.length > 0)) &&
-          (tank.lastDirectAttackerId === undefined || (typeof tank.lastDirectAttackerId === "string" && tank.lastDirectAttackerId.length > 0)) &&
-          (tank.hitReaction === undefined || tank.hitReaction === null || (isRecord(tank.hitReaction) &&
+          (entry.aiProfile === undefined || (typeof entry.aiProfile === "string" && ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"].includes(entry.aiProfile))) &&
+          (tank.lastHitBy === undefined || typeof tank.lastHitBy === "string") &&
+          (tank.lastDirectAttackerId === undefined || typeof tank.lastDirectAttackerId === "string") &&
+          (tank.hitReaction === undefined || (isRecord(tank.hitReaction) &&
             typeof tank.hitReaction.wasDirectHit === "boolean" &&
             typeof tank.hitReaction.fallDistance === "number" && Number.isFinite(tank.hitReaction.fallDistance) && tank.hitReaction.fallDistance >= 0)) &&
           isWeaponId(tank.currentWeapon)
@@ -519,8 +487,6 @@ function isShotMessage(value: unknown): value is ShotMessage {
     isSafeNonNegativeInteger(value.shotId) &&
     isSafeNonNegativeInteger(value.roundNumber) &&
     isSafeNonNegativeInteger(value.shotNumberInRound) &&
-    isSafeNonNegativeInteger(value.physicsSeed) && value.physicsSeed <= 0xffffffff &&
-    isSafeNonNegativeInteger(value.eventSequence) &&
     typeof value.isFirstShotOfRound === "boolean" &&
     isSafeNonNegativeInteger(value.slot) &&
     typeof value.ownerId === "string" &&
@@ -531,10 +497,6 @@ function isShotMessage(value: unknown): value is ShotMessage {
 export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMessage {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   switch (value.type) {
-    case "COMBAT_CATCH_UP_BEGIN":
-    case "COMBAT_CATCH_UP_FRAGMENT":
-    case "COMBAT_CATCH_UP_END":
-      return isCombatCatchUpMessage(value);
     case "REQUEST_GAME_START":
       return (
         value.protocolVersion === ONLINE_PROTOCOL_VERSION &&
@@ -581,12 +543,8 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isSafeNonNegativeInteger(value.slot) &&
         isDeadSlots(value.deadSlots)
       );
-    case "EARNINGS_REJECTED":
-      return isNullableSlot(value.shotId) && isNullableSlot(value.authorityEpoch) &&
-        EARNINGS_REJECTED_REASONS.some((reason) => reason === value.reason);
     case "SHOT_EARNINGS":
       return (
-        isPlayers(value.players, true) &&
         isSafeNonNegativeInteger(value.shotId) &&
         isSafeNonNegativeInteger(value.authorityEpoch) &&
         isAwards(value.awards) &&
@@ -596,7 +554,6 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       );
     case "SHOT_EARNINGS_APPLIED":
       return (
-        isEconomicResult(value) &&
         isSafeNonNegativeInteger(value.shotId) &&
         isAwards(value.awards) &&
         isBalances(value.balances) &&
@@ -658,9 +615,24 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isInventory(value.inventory) &&
         isWeaponId(value.currentWeapon)
       );
+    case "SHOT_CATCH_UP":
+      return (
+        isSafeNonNegativeInteger(value.roundNumber) &&
+        isNullableSlot(value.activeShotId) &&
+        Array.isArray(value.shots) &&
+        value.shots.every(isShotMessage) &&
+        (value.lastFireResult === null ||
+          isShotMessage(value.lastFireResult) ||
+          (isRecord(value.lastFireResult) &&
+            value.lastFireResult.type === "FIRE_REJECTED" &&
+            (value.lastFireResult.actionId === undefined ||
+              isValidActionId(value.lastFireResult.actionId)) &&
+            isFireRejectedReason(value.lastFireResult.reason) &&
+            isInventory(value.lastFireResult.inventory) &&
+            isWeaponId(value.lastFireResult.currentWeapon)))
+      );
     case "ZEUS_APPOINTED":
       return (
-        isCombatIdentity(value) &&
         isSafeNonNegativeInteger(value.appointmentId) &&
         typeof value.zeusId === "string" &&
         isSafeNonNegativeInteger(value.zeusSlot) &&
@@ -670,7 +642,6 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       return isZeusStrike(value);
     case "ZEUS_STRIKE_APPLIED":
       return (
-        isCombatIdentity(value) && isEconomicResult(value) &&
         isSafeNonNegativeInteger(value.strikeId) &&
         typeof value.zeusId === "string" &&
         typeof value.targetId === "string" &&
@@ -810,43 +781,9 @@ export function decodeFireMessage(value: unknown): FireDecodeResult {
 export function parseStrictOnlineMessage(raw: string): StrictOnlineMessage | null {
   try {
     const value: unknown = JSON.parse(raw);
-    if (isRecord(value) && typeof value.type === "string" && value.type.startsWith("COMBAT_CATCH_UP_") &&
-        utf8Bytes(raw) > MAX_COMBAT_MESSAGE_BYTES) return null;
     return isStrictOnlineMessage(value) ? value : null;
   } catch {
     return null;
-  }
-}
-
-function isCombatCatchUpMessage(value: Record<string, unknown>): boolean {
-  if (typeof value.catchUpId !== "string" || value.catchUpId.length === 0 || value.catchUpId.length > 128 ||
-      !isSafeNonNegativeInteger(value.roundNumber) || value.roundNumber === 0 ||
-      !isSafeNonNegativeInteger(value.fragmentCount) || value.fragmentCount === 0 ||
-      !isSafeNonNegativeInteger(value.boundary)) return false;
-  if (value.type !== "COMBAT_CATCH_UP_FRAGMENT") {
-    if ([value.index, value.kind, value.data, value.events, value.firstSequence, value.lastSequence].some((field) => field !== undefined)) return false;
-  } else {
-    if (!isSafeNonNegativeInteger(value.index) || value.index >= value.fragmentCount) return false;
-    if (value.kind === "BASE") {
-      if (typeof value.data !== "string" || value.data.length === 0 || value.events !== undefined ||
-          value.firstSequence !== undefined || value.lastSequence !== undefined) return false;
-    } else if (value.kind === "EVENTS") {
-      if (value.data !== undefined || !Array.isArray(value.events) || value.events.length === 0 ||
-          !isSafeNonNegativeInteger(value.firstSequence) || value.firstSequence === 0 ||
-          !isSafeNonNegativeInteger(value.lastSequence) || value.lastSequence < value.firstSequence ||
-          value.lastSequence > value.boundary || value.events.length !== value.lastSequence - value.firstSequence + 1) return false;
-      const firstSequence = value.firstSequence;
-      const roundNumber = value.roundNumber;
-      if (!value.events.every((event: unknown, index) => isRecord(event) &&
-          typeof event.type === "string" && ["SHOT", "ZEUS_APPOINTED", "ZEUS_STRIKE", "ZEUS_STRIKE_APPLIED"].includes(event.type) &&
-          isStrictOnlineMessage(event) && "eventSequence" in event && "roundNumber" in event &&
-          event.roundNumber === roundNumber && event.eventSequence === firstSequence + index)) return false;
-    } else return false;
-  }
-  try {
-    return encodedCombatBytes(value) <= MAX_COMBAT_MESSAGE_BYTES;
-  } catch {
-    return false;
   }
 }
 

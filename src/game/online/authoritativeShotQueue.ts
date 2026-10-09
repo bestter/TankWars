@@ -1,15 +1,13 @@
-import type { CombatEvent } from "./combatCatchUp";
 import type { GamePhase } from "../../types/game";
 import type { AuthoritativeReplayMode } from "../engine/TurnManager";
 import type { ShotMessage } from "./protocol";
 
 export interface QueuedAuthoritativeShot {
-  readonly message: CombatEvent;
+  readonly message: ShotMessage;
   readonly mode: AuthoritativeReplayMode;
 }
 
 export interface AuthoritativeShotQueueHost {
-  readonly executeCombatEvent?: (message: Exclude<CombatEvent, ShotMessage>, mode: AuthoritativeReplayMode, done: () => void) => void;
   readonly getGamePhase: () => GamePhase;
   readonly isInterRoundPaused: () => boolean;
   readonly lastSeenShotId: () => number;
@@ -27,62 +25,10 @@ export interface AuthoritativeShotQueueHost {
 export class AuthoritativeShotQueue {
   private readonly queued: QueuedAuthoritativeShot[] = [];
   private readonly queuedShotIds = new Set<number>();
-  private readonly economicShotIds = new Set<number>();
   private readonly replayedShotIds = new Set<number>();
   private replayActive = false;
   private activeShotId: number | null = null;
   private catchUpShotId: number | null = null;
-
-  private receivingCatchUp = false;
-  private generation = 0;
-  private readonly eventIds = new Map<number, string>();
-  private lastEventSequence = 0;
-  private activeEventSequence: number | null = null;
-
-  public get processedEventSequence(): number { return this.lastEventSequence; }
-  private activeZeusId: number | null = null;
-
-  public resetForNextRound(): void {
-    this.eventIds.clear(); this.economicShotIds.clear(); this.lastEventSequence = 0;
-  }
-
-  public beginReconstruction(): void {
-    this.generation++;
-    this.lastEventSequence = 0; this.activeEventSequence = null;
-    this.queued.length = 0;
-    this.queuedShotIds.clear(); this.replayedShotIds.clear(); this.eventIds.clear();
-    this.replayActive = false; this.activeShotId = null; this.activeZeusId = null;
-    this.catchUpShotId = null; this.receivingCatchUp = true;
-    this.host.lockForCatchUp();
-  }
-
-  public finishReceiving(): void {
-    this.receivingCatchUp = false;
-    this.drain();
-  }
-
-  public get isReceivingCatchUp(): boolean { return this.receivingCatchUp; }
-
-  public enqueueCombat(events: readonly CombatEvent[], mode: AuthoritativeReplayMode | ((event: CombatEvent) => AuthoritativeReplayMode)): void {
-    for (const message of events) {
-      const previous = this.eventIds.get(message.eventSequence);
-      const serialized = JSON.stringify(message);
-      if (previous && previous !== serialized) throw new Error("Contradictory combat event");
-      if (previous) continue;
-      this.eventIds.set(message.eventSequence, serialized);
-      const resolvedMode = typeof mode === "function" ? mode(message) : mode;
-      if (message.type === "ZEUS_STRIKE_APPLIED" && this.activeZeusId === message.strikeId) {
-        const generation = this.generation;
-        this.host.executeCombatEvent?.(message, resolvedMode, () => {
-          if (generation !== this.generation) return;
-          this.lastEventSequence = message.eventSequence;
-          this.activeZeusId = null; this.replayActive = false; this.drain();
-        });
-      } else this.queued.push({ message, mode: resolvedMode });
-    }
-    this.queued.sort((a, b) => a.message.eventSequence - b.message.eventSequence);
-    this.drain();
-  }
 
   private readonly host: AuthoritativeShotQueueHost;
 
@@ -91,7 +37,7 @@ export class AuthoritativeShotQueue {
   }
 
   get replayActiveNow(): boolean {
-    return this.replayActive || this.receivingCatchUp;
+    return this.replayActive;
   }
 
   get pendingCount(): number {
@@ -115,7 +61,6 @@ export class AuthoritativeShotQueue {
   }
 
   noteCatchUpShotApplied(shotId: number): void {
-    this.economicShotIds.add(shotId);
     if (this.catchUpShotId !== shotId) return;
     this.catchUpShotId = null;
     if (!this.replayActive && this.queued.length === 0) {
@@ -158,7 +103,7 @@ export class AuthoritativeShotQueue {
         shouldLockForCatchUp = true;
       }
     }
-    this.queued.sort((a, b) => a.message.eventSequence - b.message.eventSequence);
+    this.queued.sort((a, b) => a.message.shotId - b.message.shotId);
     if (shouldLockForCatchUp) this.host.lockForCatchUp();
     this.drain();
   }
@@ -167,7 +112,7 @@ export class AuthoritativeShotQueue {
     const retained: QueuedAuthoritativeShot[] = [];
     for (const queued of this.queued) {
       if (queued.message.roundNumber <= completedRoundNumber) {
-        if (queued.message.type === "SHOT") this.acknowledgeWithoutReplay(queued.message);
+        this.acknowledgeWithoutReplay(queued.message);
       } else {
         retained.push(queued);
       }
@@ -181,7 +126,7 @@ export class AuthoritativeShotQueue {
   }
 
   drain(): void {
-    if (this.replayActive || this.receivingCatchUp) return;
+    if (this.replayActive) return;
 
     const next = this.queued[0];
     if (!next) {
@@ -196,33 +141,7 @@ export class AuthoritativeShotQueue {
       return;
     }
 
-    if (this.eventIds.has(next.message.eventSequence) && next.message.eventSequence !== this.lastEventSequence + 1) throw new Error("Discontinuous combat journal");
     this.queued.shift();
-    if (next.message.type !== "SHOT") {
-      const message = next.message;
-      this.lastEventSequence = message.eventSequence;
-      const generation = this.generation;
-      if (message.type === "ZEUS_STRIKE") {
-        this.replayActive = true; this.activeZeusId = message.strikeId;
-        this.host.executeCombatEvent?.(message, next.mode, () => {});
-        const result = this.queued.findIndex((e) => e.message.type === "ZEUS_STRIKE_APPLIED" && e.message.strikeId === message.strikeId);
-        if (result >= 0) {
-          const applied = this.queued.splice(result, 1)[0];
-          if (applied.message.type === "ZEUS_STRIKE_APPLIED") this.host.executeCombatEvent?.(applied.message, applied.mode, () => {
-            if (generation !== this.generation) return;
-            this.lastEventSequence = applied.message.eventSequence;
-            this.activeZeusId = null; this.replayActive = false; this.drain();
-          });
-        }
-      } else {
-        this.replayActive = true;
-        this.host.executeCombatEvent?.(message, next.mode, () => {
-          if (generation !== this.generation) return;
-          this.replayActive = false; this.drain();
-        });
-      }
-      return;
-    }
     this.queuedShotIds.delete(next.message.shotId);
     if (
       this.replayedShotIds.has(next.message.shotId) ||
@@ -235,20 +154,12 @@ export class AuthoritativeShotQueue {
 
     this.replayActive = true;
     this.activeShotId = next.message.shotId;
-    this.activeEventSequence = next.message.eventSequence;
     this.host.acknowledgePendingFire(next.message);
     this.host.executeRemoteFire(next.message, next.mode);
   }
 
   onShotSettled(shotId: number): void {
-    if (this.activeShotId !== shotId) return;
     this.replayActive = false;
-    if (this.economicShotIds.has(shotId)) {
-      this.activeShotId = null;
-      if (this.catchUpShotId === shotId) this.catchUpShotId = null;
-    }
-    if (this.activeEventSequence !== null) this.lastEventSequence = this.activeEventSequence;
-    this.activeEventSequence = null;
     this.replayedShotIds.add(shotId);
     this.host.markSeen(shotId);
     this.drain();

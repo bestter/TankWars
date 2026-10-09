@@ -13,7 +13,7 @@ export function flushDeferredTransitions(
   buffer: DeferredTransitionBuffer,
   apply: (item: DeferredAuthoritativeTransition) => void,
 ): void {
-  if (shotQueue.replayActiveNow || shotQueue.pendingCount > 0) return;
+  if (shotQueue.replayActiveNow) return;
   const items = buffer.drain();
   for (const item of items) {
     if (item.kind === "ROUND_END" && shotQueue.pendingCount > 0) {

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { GamePhase } from "../../../types/game";
 import type { AuthoritativeReplayMode } from "../../engine/TurnManager";
 import type { ShotMessage } from "../protocol";
-import type { CombatEvent } from "../combatCatchUp";
 import {
   AuthoritativeShotQueue,
   type AuthoritativeShotQueueHost,
@@ -13,7 +12,6 @@ const command = { angle: 45, power: 50, weaponId: "MISSILE" as const };
 function shot(id: number, roundNumber = 1): ShotMessage {
   return {
     type: "SHOT",
-    physicsSeed: 1, eventSequence: id,
     actionId: `fire-${id}`,
     shotId: id,
     roundNumber,
@@ -64,43 +62,6 @@ function createHost(
 }
 
 describe("AuthoritativeShotQueue", () => {
-  it("orders multiple Zeus pairs around shots and lets each result finish its occupied action", () => {
-    const host = createHost();
-    const order: string[] = [];
-    let finishStrike: (() => void) | null = null;
-    const executeCombatEvent: NonNullable<AuthoritativeShotQueueHost["executeCombatEvent"]> = (event, _mode, done) => {
-      order.push(event.type);
-      if (event.type === "ZEUS_STRIKE_APPLIED") finishStrike = done;
-      else if (event.type === "ZEUS_APPOINTED") done();
-    };
-    const queue = new AuthoritativeShotQueue({ ...host, executeCombatEvent });
-    const result = (id: number, eventSequence: number, afterShotId: number): CombatEvent => ({ type: "ZEUS_STRIKE_APPLIED", roundNumber: 1,
-      eventSequence, afterShotId, strikeId: id, zeusId: "p1", targetId: "p2", nextPlayerIndex: 1,
-      economicRevision: id, roundEarningsByPlayer: { p1: id * 100, p2: 0 }, award: { playerId: "p1", amount: 100 },
-      balances: [{ playerId: "p1", money: 1000 }], deadSlots: [false, true], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } });
-    const events: CombatEvent[] = [shot(1), { type: "ZEUS_APPOINTED", roundNumber: 1, eventSequence: 2, afterShotId: 1,
-      appointmentId: 1, zeusId: "p1", zeusSlot: 0, rotationSlots: [0, 1] },
-      { type: "ZEUS_STRIKE", roundNumber: 1, eventSequence: 3, afterShotId: 1, strikeId: 1, zeusId: "p1", targetId: "p2", resolveAt: 700 },
-      result(1, 4, 1), { ...shot(2), eventSequence: 5 },
-      { type: "ZEUS_STRIKE", roundNumber: 1, eventSequence: 6, afterShotId: 2, strikeId: 2, zeusId: "p1", targetId: "p2", resolveAt: 1400 }, result(2, 7, 2)];
-    queue.beginReconstruction(); queue.enqueueCombat(events, "CATCH_UP");
-    expect(host.executed).toEqual([]);
-    queue.finishReceiving();
-    expect(host.executed).toEqual([{ shotId: 1, mode: "CATCH_UP" }]);
-    queue.onShotSettled(1);
-    expect(order).toEqual(["ZEUS_APPOINTED", "ZEUS_STRIKE", "ZEUS_STRIKE_APPLIED"]);
-    expect(queue.replayActiveNow).toBe(true);
-    expect(host.executed).toHaveLength(1);
-    (finishStrike as (() => void) | null)?.();
-    expect(host.executed.at(-1)?.shotId).toBe(2);
-    queue.onShotSettled(2);
-    (finishStrike as (() => void) | null)?.();
-    expect(order).toEqual(["ZEUS_APPOINTED", "ZEUS_STRIKE", "ZEUS_STRIKE_APPLIED", "ZEUS_STRIKE", "ZEUS_STRIKE_APPLIED"]);
-    expect(queue.pendingCount).toBe(0);
-    expect(queue.replayActiveNow).toBe(false);
-    queue.enqueueCombat(events, "CATCH_UP");
-    expect(host.executed).toHaveLength(2);
-  });
   it("calls onIdle once when drained empty", () => {
     const host = createHost();
     const queue = new AuthoritativeShotQueue(host);

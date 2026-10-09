@@ -16,7 +16,6 @@ import { secureRandom } from "../../utils/random";
 
 import { TerrainManager } from "./Terrain";
 import { PhysicsEngine } from "./PhysicsEngine";
-import { launchFromBarrel } from "./projectileMotion";
 import { TankManager } from "../entities/TankManager";
 import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
@@ -312,7 +311,7 @@ export class GameEngine {
         nextPlayerId: appointment?.zeusId,
       };
     };
-    this.turnManager.onResolvedRoundEnd = () => { if (this.localMatch) this.completeResolvedRound(); };
+    this.turnManager.onResolvedRoundEnd = () => this.completeResolvedRound();
     this.turnManager.onSpecialTurn = (player) => this.beginLocalZeusTurn(player.id);
 
     // Transmet les mises à jour HUD du TurnManager vers l'extérieur (React)
@@ -432,7 +431,6 @@ export class GameEngine {
       shotId: number;
       isFirstShotOfRound: boolean;
       suppressEconomyReport?: boolean;
-      physicsSeed?: number;
     },
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
@@ -445,7 +443,6 @@ export class GameEngine {
       return;
     }
 
-    this.physicsEngine.setShotSeed(identity?.physicsSeed);
     this.currentFirerId = ownerId;
     this.shotNumberInRound++;
     const shotId = identity?.shotId ?? this.nextShotId++;
@@ -469,7 +466,11 @@ export class GameEngine {
 
     // Calculate barrel tip position so the projectile starts at the end of the barrel
     // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
-    const { x: launchX, y: launchY } = launchFromBarrel(from.x, from.y, command.angle);
+    const barrelLength = 20;
+    const angleRad = (command.angle * Math.PI) / 180;
+    const barrelStartY = from.y - 13;
+    const launchX = from.x + Math.cos(angleRad) * barrelLength;
+    const launchY = barrelStartY - Math.sin(angleRad) * barrelLength; // moving up = subtracting Y
 
     console.log(
       `[SHOT] weapon=${command.weaponId} angle=${command.angle} power=${command.power} (owner and coordinates redacted)`,
@@ -711,7 +712,6 @@ export class GameEngine {
         : [...this.zeusState.appointedPlayerIds, appointment.zeusId],
       nextAppointmentId: appointment.appointmentId + 1,
     };
-    this.turnManager.lockSpecialTurn();
     this.playZeusAppointmentSound();
     this.onZeusAppointed?.(appointment);
   }
@@ -724,7 +724,6 @@ export class GameEngine {
   public startRemoteZeusStrike(strike: ZeusStrike, resolveAt = Date.now() + 700): void {
     if (strike.strikeId <= this.lastAppliedZeusStrikeId) return;
     if (this.activeZeusVisual?.strike.strikeId === strike.strikeId) return;
-    this.turnManager.lockSpecialTurn();
     this.activeZeusVisual = {
       strike,
       elapsedSeconds: Math.max(0, (Date.now() - (resolveAt - 700)) / 1_000),
@@ -741,14 +740,13 @@ export class GameEngine {
     if (target && !target.tank.isDead) {
       this.tankManager.applyZeusStrike(result.zeusId, result.targetId);
     }
-    if (this.localMatch) this.applyZeusBalances(result.balances);
+    this.applyZeusBalances(result.balances);
     this.lastAppliedZeusStrikeId = result.strikeId;
     this.zeusFlashLife = 8;
     if (this.activeZeusVisual?.strike.strikeId === result.strikeId) {
       this.activeZeusVisual.impactApplied = true;
       this.activeZeusVisual.result = result;
     }
-    this.turnManager.releaseSpecialTurn();
     this.onZeusStrikeApplied?.(result);
     if (result.roundOutcome.isRoundEnd) this.pendingSpecialRoundOutcome = result.roundOutcome;
     return true;
@@ -2019,33 +2017,6 @@ export class GameEngine {
   private initialRoundMap: RoundMap | null = null;
 
   public getInitialRoundMap(): RoundMap | null { return this.initialRoundMap; }
-
-  public invalidateCombatSimulation(): void {
-    this.turnManager.reset();
-    this.physicsEngine.clear(false);
-    this.activeShotLedger = null; this.pendingShotResult = null;
-    this.pendingZeusAppointment = null; this.pendingSpecialRoundOutcome = null;
-    this.clearZeusVisuals();
-    this.turnManager.lockForCatchUp();
-  }
-
-  /** Discard transient simulation and callbacks; retain economic acknowledgements. */
-  public reconstructCombat(map: RoundMap, initialPlayers: readonly Player[]): void {
-    this.invalidateCombatSimulation();
-    this.activeShotLedger = null; this.pendingShotResult = null;
-    this.currentFirerId = null; this.pendingSpecialRoundOutcome = null;
-    this.pendingZeusAppointment = null;
-    this.zeusState = createZeusState(); this.lastAppliedZeusStrikeId = 0;
-    this.clearZeusVisuals(); this.clearRoundCelebration();
-    this.gameOver = false; this.winner = null; this.roundCombatActive = true;
-    this.shotNumberInRound = 0; this.previousProjectileCount = 0;
-    this.lastSlideTimes.clear();
-    this.tankManager.setPlayers(structuredClone([...initialPlayers]));
-    this.restoreRoundTerrain(map);
-    this.turnManager.setRoundNumber(map.roundNumber);
-    this.turnManager.lockForCatchUp();
-    this.turnManager.setupInputListeners();
-  }
 
   /** Combat recovery keeps damaged terrain and existing positions; it never spawns. */
   public restoreRoundTerrain(map: RoundMap, initialMap: RoundMap = map): void {

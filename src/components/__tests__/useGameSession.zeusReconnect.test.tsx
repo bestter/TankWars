@@ -151,7 +151,6 @@ describe("useGameSession Zeus reconnect", () => {
 
     const activeStrike = {
       type: "ZEUS_STRIKE",
-      roundNumber: 1, eventSequence: 2, afterShotId: 0,
       strikeId: 7,
       zeusId: "player-2",
       targetId: "player-3",
@@ -159,8 +158,6 @@ describe("useGameSession Zeus reconnect", () => {
     };
     const appliedStrike = {
       type: "ZEUS_STRIKE_APPLIED",
-      economicRevision: 1, roundEarningsByPlayer: { "player-2": 88 },
-      roundNumber: 1, eventSequence: 3, afterShotId: 0,
       strikeId: 7,
       zeusId: "player-2",
       targetId: "player-3",
@@ -176,7 +173,6 @@ describe("useGameSession Zeus reconnect", () => {
     };
     const zeusState = {
       type: "ZEUS_STATE",
-      eventSequence: 1, roundNumber: 1,
       activeZeusId: "player-2",
       currentPlayerIndex: 1,
       rotationSlots: [1, 2, 0],
@@ -186,7 +182,6 @@ describe("useGameSession Zeus reconnect", () => {
     };
 
     act(() => {
-      ws.receive({ type: "ZEUS_APPOINTED", appointmentId: 1, roundNumber: 1, eventSequence: 1, afterShotId: 0, zeusId: "player-2", zeusSlot: 1, rotationSlots: [1, 2, 0] });
       ws.receive(zeusState);
       ws.receive(activeStrike);
       ws.receive(appliedStrike);

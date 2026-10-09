@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 import {
   allocateZeusStrike,
@@ -19,55 +19,6 @@ function ai(id: string) {
 }
 
 describe("Zeus deadlock domain", () => {
-  it("excludes weaker humans, ranks real health before profile and consumes no unique-candidate draw", () => {
-    const human = makePlayer({ id: "human", isHuman: true });
-    human.tank.health = 1;
-    const simple = ai("simple"); simple.aiProfile = "v1-random"; simple.tank.health = 20;
-    const expert = ai("expert"); expert.aiProfile = "v4-smart"; expert.tank.health = 19.99;
-    const random = vi.fn(() => 0.99);
-    const result = evaluateZeusDeadlock({ ...createZeusState(), shotsWithoutEarnings: 14 }, [human, simple, expert], false, random);
-    expect(result.appointment?.zeusId).toBe("expert");
-    expect(random).not.toHaveBeenCalled();
-    expert.tank.health = 20;
-    expect(evaluateZeusDeadlock({ ...createZeusState(), shotsWithoutEarnings: 14 }, [human, expert, simple], false, random).appointment?.zeusId).toBe("simple");
-    expect(random).not.toHaveBeenCalled();
-  });
-
-  it.each(["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"] as const)("ranks %s after history, including the unknown/absent OK fallback", (profile) => {
-    const candidate = ai("candidate"); candidate.aiProfile = profile;
-    const absent = ai("absent");
-    const result = evaluateZeusDeadlock({ ...createZeusState(), shotsWithoutEarnings: 9 }, [candidate, absent], false, () => 0.99);
-    expect(result.appointment?.zeusId).toBe(profile === "v1-random" ? "candidate" : "absent");
-  });
-
-  it.each([true, false])("renews only the exhausted living pool (human pool: %s)", (humanPool) => {
-    const a = ai("a"), b = ai("b"), dead = ai("dead");
-    a.isHuman = humanPool; b.isHuman = humanPool;
-    dead.tank.isDead = true; dead.tank.health = 0;
-    const outsider = makePlayer({ id: "outsider", isHuman: true });
-    outsider.tank.isDead = humanPool; outsider.tank.health = humanPool ? 0 : 1;
-    a.tank.health = 10; b.tank.health = 30;
-    const state = { ...createZeusState(), shotsWithoutEarnings: humanPool ? 9 : 14, appointedPlayerIds: ["a", "b", "dead", "outsider"] };
-    const result = evaluateZeusDeadlock(state, [a, b, dead, outsider], false, () => 0.99);
-    expect(result.appointment?.zeusId).toBe("a");
-    expect(result.state.appointedPlayerIds).toEqual(["dead", "outsider", "a"]);
-    const next = evaluateZeusDeadlock({ ...resetZeusRound(result.state), shotsWithoutEarnings: humanPool ? 9 : 14 }, [a, b, dead, outsider], false, () => 0);
-    expect(next.appointment?.zeusId).toBe("b");
-  });
-
-  it("appoints humans automatically and draws exactly once only for a complete final tie", () => {
-    const a = makePlayer({ id: "a", isHuman: true });
-    const b = makePlayer({ id: "b", isHuman: true });
-    const random = vi.fn(() => 0.99);
-    expect(evaluateZeusDeadlock({ ...createZeusState(), shotsWithoutEarnings: 8 }, [a, b], false, random).appointment).toBeNull();
-    expect(random).not.toHaveBeenCalled();
-    const result = evaluateZeusDeadlock({ ...createZeusState(), shotsWithoutEarnings: 9 }, [a, b], false, random);
-    expect(result.appointment?.zeusId).toBe("b");
-    expect(random).toHaveBeenCalledTimes(1);
-    evaluateZeusDeadlock(result.state, [a, b], true, random);
-    evaluateZeusDeadlock(createZeusState(), [a], false, random);
-    expect(random).toHaveBeenCalledTimes(1);
-  });
   it.each([
     [2, 10],
     [3, 15],
@@ -83,7 +34,7 @@ describe("Zeus deadlock domain", () => {
     }
   });
 
-  it("counts human shots and resets only on earnings; dead humans are spectators", () => {
+  it("resets on earnings or a living human and allows dead human spectators", () => {
     const players = [ai("ai-1"), ai("ai-2")];
     let state = { ...createZeusState(), shotsWithoutEarnings: 8 };
     state = evaluateZeusDeadlock(state, players, true, () => 0).state;
@@ -92,7 +43,7 @@ describe("Zeus deadlock domain", () => {
     const human = makePlayer({ id: "human", isHuman: true });
     state = { ...state, shotsWithoutEarnings: 8 };
     state = evaluateZeusDeadlock(state, [...players, human], false, () => 0).state;
-    expect(state.shotsWithoutEarnings).toBe(9);
+    expect(state.shotsWithoutEarnings).toBe(0);
 
     human.tank.isDead = true;
     human.tank.health = 0;

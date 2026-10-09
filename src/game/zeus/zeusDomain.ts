@@ -1,5 +1,4 @@
 import type { Player, PlayerId } from "../../types/player";
-import { playerProfileScore } from "../entities/ai/profileScore";
 
 export const ZEUS_ROTATIONS_WITHOUT_EARNINGS = 5;
 
@@ -104,7 +103,7 @@ export function evaluateZeusDeadlock(
     };
   }
 
-  if (alive.length < 2) {
+  if (alive.length < 2 || alive.some((player) => player.isHuman)) {
     return {
       state: { ...state, shotsWithoutEarnings: 0 },
       appointment: null,
@@ -131,22 +130,13 @@ export function evaluateZeusDeadlock(
   }
 
   let appointedPlayerIds = [...state.appointedPlayerIds];
-  const ais = alive.filter((player) => !player.isHuman);
-  const pool = ais.length > 0 ? ais : alive;
   const appointedPlayerIdSet = new Set(appointedPlayerIds);
-  let candidates = pool.filter((player) => !appointedPlayerIdSet.has(player.id));
+  let candidates = alive.filter((player) => !appointedPlayerIdSet.has(player.id));
   if (candidates.length === 0) {
-    const poolIds = new Set(pool.map((player) => player.id));
-    appointedPlayerIds = appointedPlayerIds.filter((id) => !poolIds.has(id));
-    candidates = pool;
+    appointedPlayerIds = [];
+    candidates = alive;
   }
-  const minimum = Math.min(...candidates.map((p) => p.tank.health + p.tank.shield));
-  candidates = candidates.filter((p) => p.tank.health + p.tank.shield === minimum);
-  if (ais.length > 0) {
-    const score = Math.min(...candidates.map(playerProfileScore));
-    candidates = candidates.filter((p) => playerProfileScore(p) === score);
-  }
-  const zeus = candidates[candidates.length === 1 ? 0 : normalizedRandomIndex(random(), candidates.length)];
+  const zeus = candidates[normalizedRandomIndex(random(), candidates.length)];
   const appointment: ZeusAppointment = {
     appointmentId: state.nextAppointmentId,
     zeusId: zeus.id,

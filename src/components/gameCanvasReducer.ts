@@ -74,7 +74,6 @@ export function createEmptyShopSession(): ShopClientSessionState {
 }
 
 export interface GameCanvasState {
-  networkError?: string | null;
   roundPreparationError?: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null;
   gamePhase: GamePhase;
   wind: number;
@@ -102,8 +101,6 @@ export interface GameCanvasState {
 }
 
 export type GameCanvasAction =
-  | { type: "RESET_COMBAT_PROGRESS"; roundNumber: number }
-  | { type: "SET_NETWORK_ERROR"; key: string | null }
   | { type: "SET_ROUND_PREPARATION_ERROR"; reason: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null }
   | { type: "SET_CURRENT_MANCHE"; roundNumber: number }
   | { type: "SET_WIND"; wind: number }
@@ -377,10 +374,6 @@ export function gameCanvasReducer(
       };
     case "SET_FIRE_PENDING":
       return { ...state, pendingFireIntent: action.intent };
-    case "RESET_COMBAT_PROGRESS":
-      return { ...state, gamePhase: "COMBAT", currentManche: action.roundNumber, lastSeenShotId: 0 };
-    case "SET_NETWORK_ERROR":
-      return { ...state, networkError: action.key };
     case "SET_FIRE_REJECTION":
       return { ...state, fireRejection: action.reason };
     case "SET_PROTOCOL_MISMATCH":

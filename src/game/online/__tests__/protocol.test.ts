@@ -13,7 +13,6 @@ describe("strict online protocol", () => {
   it("accepts a complete SHOT identity", () => {
     expect(isStrictOnlineMessage({
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "fire-4",
       shotId: 4,
       roundNumber: 2,
@@ -34,7 +33,6 @@ describe("strict online protocol", () => {
   it("accepts strict Zeus events and rejects Zeus as a FireCommand weapon", () => {
     expect(isStrictOnlineMessage({
       type: "ZEUS_APPOINTED",
-      roundNumber: 1, eventSequence: 1, afterShotId: 0,
       appointmentId: 1,
       zeusId: "p2",
       zeusSlot: 1,
@@ -42,7 +40,6 @@ describe("strict online protocol", () => {
     })).toBe(true);
     expect(isStrictOnlineMessage({
       type: "ZEUS_STRIKE",
-      roundNumber: 1, eventSequence: 2, afterShotId: 0,
       strikeId: 4,
       zeusId: "p2",
       targetId: "p1",
@@ -50,8 +47,6 @@ describe("strict online protocol", () => {
     })).toBe(true);
     expect(isStrictOnlineMessage({
       type: "ZEUS_STRIKE_APPLIED",
-      economicRevision: 1, roundEarningsByPlayer: { "player-2": 88 },
-      roundNumber: 1, eventSequence: 3, afterShotId: 0,
       strikeId: 4,
       zeusId: "p2",
       targetId: "p1",
@@ -72,7 +67,6 @@ describe("strict online protocol", () => {
     })).toBe(true);
     expect(isStrictOnlineMessage({
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "fire-1",
       shotId: 1,
       roundNumber: 1,
@@ -125,7 +119,7 @@ describe("strict online protocol", () => {
     });
   });
 
-  it("valide FIRE et SHOP_STATE et refuse l’ancien rattrapage partiel", () => {
+  it("valide FIRE, SHOP_STATE et SHOT_CATCH_UP avec identités strictes", () => {
     expect(
       decodeFireMessage({
         type: "FIRE",
@@ -160,7 +154,7 @@ describe("strict online protocol", () => {
         shots: [],
         lastFireResult: null,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("borne la puissance des FIRE stricts et accepte les limites inclusives", () => {
@@ -212,7 +206,6 @@ describe("strict online protocol", () => {
   it("applique les bornes partagées aux SHOT autoritaires", () => {
     const makeShot = (angle: number, power: number) => ({
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "fire-bounds",
       shotId: 9,
       roundNumber: 2,
@@ -269,7 +262,6 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
         actionId: `ai-${crypto.randomUUID()}`,
         shotId: 8,
         roundNumber: 1,
@@ -321,7 +313,7 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "REQUEST_GAME_START",
-        protocolVersion: 3,
+        protocolVersion: 2,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -337,14 +329,14 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "GAME_START",
-        protocolVersion: 3,
+        protocolVersion: 2,
         currentPlayerIndex: 0,
       }),
     ).toBe(false);
     expect(readProtocolVersion({ type: "GAME_START" })).toBeNull();
     expect(
-      readProtocolVersion({ type: "GAME_START", protocolVersion: 3 }),
-    ).toBe(3);
+      readProtocolVersion({ type: "GAME_START", protocolVersion: 2 }),
+    ).toBe(2);
   });
 
 

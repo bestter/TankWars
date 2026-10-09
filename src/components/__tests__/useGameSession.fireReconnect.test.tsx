@@ -1,5 +1,3 @@
-import { fragmentCombat } from "../../game/online/combatCatchUp";
-import type { ShotMessage } from "../../game/online/protocol";
 import { makeRoundMap } from "../../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { useEffect } from "react";
@@ -32,23 +30,6 @@ class MockCombatWebSocket {
   public onmessage: ((event: MessageEvent) => void) | null = null;
   public onerror: ((event: Event) => void) | null = null;
   public onclose: ((event: CloseEvent) => void) | null = null;
-
-  public receiveCatchUp(players: Player[], payload: { type: string; roundNumber: number; activeShotId: number | null; shots: ReadonlyArray<ShotMessage>; lastFireResult: import("../../game/online/protocol").FireRejectedMessage | null }): void {
-    const round = payload.roundNumber;
-    const initialPlayers = structuredClone(players).map((p) => ({ ...p, tank: { ...p.tank, isDead: false, health: p.tank.maxHealth } }));
-    const messages = fragmentCombat({ roundNumber: round, map: makeRoundMap(round), initialPlayers, players,
-      currentPlayerIndex: payload.shots.at(-1)?.slot ?? 0,
-      economicRevision: 1, roundEarningsByPlayer: Object.fromEntries(players.map((p) => [p.id, 0])), activeShotId: payload.activeShotId,
-      activeShot: payload.activeShotId === null ? null : { ...payload.shots.find((shot) => shot.shotId === payload.activeShotId)!, physicsSeed: 1,
-        eventSequence: payload.shots.findIndex((shot) => shot.shotId === payload.activeShotId) + 1,
-        shooterSettled: false, earningsApplied: false, zeusEvaluated: false, releaseAt: null, appointment: null },
-      authoritySlot: 0, authorityEpoch: 1, lastFireResult: payload.lastFireResult,
-      completedShop: round > 1 ? { type: "SHOP_FINISH", shopEpoch: round - 1, completedRoundNumber: round - 1, nextRoundNumber: round, players: initialPlayers, map: makeRoundMap(round) } : null,
-      zeus: { type: "ZEUS_STATE", activeZeusId: null, currentPlayerIndex: 0, rotationSlots: [], deadSlots: players.map((p) => p.tank.isDead), activeStrike: null, lastAppliedStrikeId: 0 },
-      events: payload.shots.map((shot, index) => ({ ...shot, physicsSeed: 1, eventSequence: index + 1 })),
-    }, crypto.randomUUID());
-    for (const message of messages) this.receive(message);
-  }
 
   public receive(message: object): void {
     this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
@@ -199,7 +180,7 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.fireRejection).toBeNull();
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 1,
         activeShotId: null,
@@ -282,7 +263,6 @@ describe("useGameSession FIRE reconnect", () => {
     const players = createPlayers();
     const completedShot = {
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "completed-round-one-shot",
       shotId: 5,
       roundNumber: 1,
@@ -330,7 +310,7 @@ describe("useGameSession FIRE reconnect", () => {
     ).toEqual([{ type: "SHOP_ENTER", roundNumber: 1 }]);
     expect(recoveryMessages).toContainEqual({
       type: "REQUEST_GAME_START",
-      protocolVersion: 3,
+      protocolVersion: 2,
       roundNumber: 2,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -340,7 +320,7 @@ describe("useGameSession FIRE reconnect", () => {
     );
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 1,
         activeShotId: null,
@@ -358,11 +338,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
-    const historicalManager = executeRemoteFire.mock.instances.at(-1)!;
-    act(() => {
-      (Reflect.get(historicalManager, "finishShotResolution") as () => void).call(historicalManager);
-    });
+    expect(executeRemoteFire).not.toHaveBeenCalled();
     expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
     expect(sessionRef.current?.state.lastSeenShotId).toBe(5);
     expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
@@ -386,7 +362,6 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
         actionId: "round-two-shot",
         shotId: 6,
         roundNumber: 2,
@@ -398,7 +373,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
+    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
     expect(executeRemoteFire).toHaveBeenCalledWith(
       expect.objectContaining({ weaponId: "GRENADE" }),
       expect.objectContaining({
@@ -431,7 +406,6 @@ describe("useGameSession FIRE reconnect", () => {
     );
     const nextRoundShot = {
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "active-round-two-shot",
       shotId: 6,
       roundNumber: 2,
@@ -452,7 +426,7 @@ describe("useGameSession FIRE reconnect", () => {
     );
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 2,
         activeShotId: nextRoundShot.shotId,
@@ -461,7 +435,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
+    expect(executeRemoteFire).not.toHaveBeenCalled();
 
     act(() => {
       ws.receive({
@@ -485,41 +459,7 @@ describe("useGameSession FIRE reconnect", () => {
     );
   });
 
-  it.each([false, true])("preserves the replay sequence after duplicate SHOP_FINISH (during replay: %s)", (duringReplay) => {
-    const players = createPlayers();
-    const ws = new MockCombatWebSocket();
-    const sessionRef: { current: SessionApi | null } = { current: null };
-    const executeRemoteFire = vi.spyOn(TurnManager.prototype, "executeRemoteFire")
-      .mockImplementation(() => undefined);
-    render(<Harness players={players} ws={ws as unknown as WebSocket} sessionRef={sessionRef}
-      resumeCanvas={createResumeCanvas(players, { gamePhase: "SHOP", currentManche: 2,
-        shopPlayers: players, lastCompletedRoundNumber: 1 })} />);
-    const shot: ShotMessage = {
-      type: "SHOT", physicsSeed: 1, eventSequence: 1, actionId: "replayed-round-two",
-      shotId: 6, roundNumber: 2, shotNumberInRound: 1, isFirstShotOfRound: true,
-      slot: 0, ownerId: "player-1", command: { angle: 47, power: 63, weaponId: "MISSILE" },
-    };
-    act(() => ws.receiveCatchUp(players, { type: "SHOT_CATCH_UP", roundNumber: 2,
-      activeShotId: null, shots: [shot], lastFireResult: null }));
-    const tm = executeRemoteFire.mock.instances.at(-1) as TurnManager;
-    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
-    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
-    const duplicate = { type: "SHOP_FINISH", map: makeRoundMap(2), shopEpoch: 1,
-      completedRoundNumber: 1, nextRoundNumber: 2, players };
-    act(() => {
-      if (duringReplay) ws.receive(duplicate);
-      tm.onAuthoritativeShotSettled?.(6, "CATCH_UP");
-      if (!duringReplay) ws.receive(duplicate);
-      ws.receive({ ...shot, actionId: "next-live-shot", shotId: 7, eventSequence: 2,
-        shotNumberInRound: 2, isFirstShotOfRound: false });
-    });
-    expect(sessionRef.current?.state.networkError).toBeNull();
-    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
-    expect(executeRemoteFire).toHaveBeenLastCalledWith(shot.command,
-      expect.objectContaining({ identity: expect.objectContaining({ shotId: 7 }) }));
-  });
-
-  it("rebuilds the current combat and ignores stale shop states from the previous round", () => {
+  it("applies SHOP_STATE while a next-round catch-up shot is queued outside combat", () => {
     const players = createPlayers();
     const resumeCanvas = createResumeCanvas(players, {
       gamePhase: "SHOP",
@@ -541,7 +481,6 @@ describe("useGameSession FIRE reconnect", () => {
     );
     const nextRoundShot = {
       type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
       actionId: "queued-round-two-shot",
       shotId: 6,
       roundNumber: 2,
@@ -562,7 +501,7 @@ describe("useGameSession FIRE reconnect", () => {
     );
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 2,
         activeShotId: nextRoundShot.shotId,
@@ -580,9 +519,11 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
-    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
-    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
+    expect(executeRemoteFire).not.toHaveBeenCalled();
+    expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
+    expect(sessionRef.current?.state.shopSession.authoritativeReceived).toBe(
+      true,
+    );
   });
 
   it("keeps a pending shop intent until its correlated rejection arrives", () => {
@@ -776,7 +717,7 @@ describe("useGameSession FIRE reconnect", () => {
     ws.send.mockClear();
     act(() => sessionRef.current?.retryRoundPreparation());
     expect(getSentMessages(ws)).toContainEqual(pendingReady ? ready : {
-      type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 2,
+      type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 2,
       lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     // The server succeeds, but its SHOP_FINISH is lost. Reconnect with the saved SHOP state.
@@ -788,7 +729,7 @@ describe("useGameSession FIRE reconnect", () => {
     render(<Harness players={players} resumeCanvas={saved}
       ws={reconnected as unknown as WebSocket} sessionRef={sessionRef} />);
     expect(getSentMessages(reconnected)).toContainEqual({
-      type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 2,
+      type: 'REQUEST_GAME_START', protocolVersion: 2, roundNumber: 2,
       lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     if (pendingReady) expect(getSentMessages(reconnected)).toContainEqual(ready);
@@ -820,9 +761,7 @@ describe("useGameSession FIRE reconnect", () => {
 
   it("recovers the local active shot and emits settlement plus earnings", () => {
     const players = createPlayers();
-    players[0].inventory.GRENADE = 0;
-    players[0].tank.currentWeapon = "MISSILE";
-    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 999, lastAppliedShotId: 7 });
+    const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 7 });
     const ws = new MockCombatWebSocket();
     const sessionRef: { current: SessionApi | null } = { current: null };
     const executeRemoteFire = vi.spyOn(
@@ -841,14 +780,13 @@ describe("useGameSession FIRE reconnect", () => {
     ws.send.mockClear();
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 1,
         activeShotId: 7,
         shots: [
           {
             type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
             actionId: "active-local-recovery",
             shotId: 7,
             roundNumber: 1,
@@ -867,10 +805,7 @@ describe("useGameSession FIRE reconnect", () => {
       expect.anything(),
       expect.objectContaining({ mode: "ACTIVE_RECOVERY", fromSlot: 0 }),
     );
-    expect(sessionRef.current?.state.uiPlayers[0].inventory.GRENADE).toBe(0);
-    act(() => ws.receive({ type: "SHOT_EARNINGS_APPLIED", shotId: 7, economicRevision: 1,
-      roundEarningsByPlayer: { "player-1": 0, "player-2": 0 }, balances: players.map((p) => ({ playerId: p.id, money: p.money })),
-      awards: [], hasEarnings: false, blockDurationMs: 0, roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } }));
+    expect(sessionRef.current?.state.uiPlayers[0].inventory.GRENADE).toBe(1);
     const manager = executeRemoteFire.mock.instances.at(-1);
     if (!manager) throw new Error("TurnManager de reprise introuvable.");
     const finishShotResolution = Reflect.get(
@@ -879,11 +814,7 @@ describe("useGameSession FIRE reconnect", () => {
     ) as () => void;
     act(() => finishShotResolution.call(manager));
 
-    expect(sessionRef.current?.state.lastSeenShotId).toBe(7);
     const sentMessages = getSentMessages(ws);
-    const report = sentMessages.find((message) => message.type === "SHOT_EARNINGS") as { players: Player[] } | undefined;
-    expect(report?.players[0].inventory.GRENADE).toBe(0);
-    expect(report?.players[0].tank.currentWeapon).toBe("MISSILE");
     expect(sentMessages).toContainEqual(
       expect.objectContaining({ type: "SHOT_SETTLED", shotId: 7 }),
     );
@@ -913,14 +844,13 @@ describe("useGameSession FIRE reconnect", () => {
     ws.send.mockClear();
 
     act(() => {
-      ws.receiveCatchUp(players, {
+      ws.receive({
         type: "SHOT_CATCH_UP",
         roundNumber: 1,
         activeShotId: 8,
         shots: [
           {
             type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
             actionId: "active-authority-recovery",
             shotId: 8,
             roundNumber: 1,
@@ -976,7 +906,7 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "PROTOCOL_MISMATCH",
-        requiredVersion: 3,
+        requiredVersion: 2,
         receivedVersion: null,
       });
       ws.onclose?.({
@@ -990,7 +920,7 @@ describe("useGameSession FIRE reconnect", () => {
     });
 
     expect(sessionRef.current?.state.protocolMismatch).toEqual({
-      requiredVersion: 3,
+      requiredVersion: 2,
       receivedVersion: null,
     });
     expect(wsCtor).not.toHaveBeenCalled();
@@ -1017,7 +947,6 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
         actionId: "live-round-one",
         shotId: 5,
         roundNumber: 1,
@@ -1073,37 +1002,6 @@ describe("useGameSession FIRE reconnect", () => {
     expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
   });
 
-  it("accepts sequence one again after a new shop epoch", () => {
-    const players = createPlayers();
-    const ws = new MockCombatWebSocket();
-    const sessionRef: { current: SessionApi | null } = { current: null };
-    const executeRemoteFire = vi.spyOn(TurnManager.prototype, "executeRemoteFire")
-      .mockImplementation(() => undefined);
-    render(<Harness players={players} ws={ws as unknown as WebSocket}
-      sessionRef={sessionRef} resumeCanvas={createResumeCanvas(players)} />);
-    const shot: ShotMessage = {
-      type: "SHOT", physicsSeed: 1, eventSequence: 1, actionId: "round-one",
-      shotId: 1, roundNumber: 1, shotNumberInRound: 1, isFirstShotOfRound: true,
-      slot: 0, ownerId: "player-1", command: { angle: 47, power: 63, weaponId: "MISSILE" },
-    };
-    act(() => ws.receive(shot));
-    const tm = executeRemoteFire.mock.instances.at(-1) as TurnManager;
-    act(() => {
-      ws.receive({ type: "ROUND_END", players, roundWinnerId: "player-1", isDraw: false, roundNumber: 1 });
-      ws.receive({ type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, readySlots: [0],
-        players, purchasesByPlayerId: {}, aiShopApplied: true });
-      ws.receive({ type: "SHOP_FINISH", map: makeRoundMap(2), shopEpoch: 1,
-        completedRoundNumber: 1, nextRoundNumber: 2, players });
-      tm.onAuthoritativeShotSettled?.(1, "LIVE_LOCAL");
-    });
-    expect(sessionRef.current?.state.lastAppliedShopEpoch).toBe(1);
-    act(() => ws.receive({ ...shot, actionId: "round-two", shotId: 2, roundNumber: 2 }));
-    expect(sessionRef.current?.state.networkError ?? null).toBeNull();
-    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
-    expect(executeRemoteFire).toHaveBeenLastCalledWith(shot.command,
-      expect.objectContaining({ identity: expect.objectContaining({ shotId: 2 }) }));
-  });
-
   it("does not reopen SHOP when a late SHOP_STATE follows SHOP_FINISH during replay", () => {
     const players = createPlayers();
     const resumeCanvas = createResumeCanvas(players, { lastSeenShotId: 4 });
@@ -1125,7 +1023,6 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "SHOT",
-      physicsSeed: 1, eventSequence: 1,
         actionId: "live-round-one",
         shotId: 5,
         roundNumber: 1,

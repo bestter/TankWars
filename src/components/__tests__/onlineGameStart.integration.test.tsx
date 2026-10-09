@@ -127,7 +127,7 @@ describe("Online GAME_START with materials integration", () => {
           makePlayer({ id: "player-1", name: "Player 1", isHuman: true, tank: makeTank("tank-1", 120, heights[120]) }),
           makePlayer({ id: "player-2", name: "Player 2", isHuman: true, tank: makeTank("tank-2", 600, heights[600]) }),
         ],
-        protocolVersion: 3,
+        protocolVersion: 2,
         map: { ...makeRoundMap(), heights, materials, wind: 8 },
         currentPlayerIndex: 0,
       };

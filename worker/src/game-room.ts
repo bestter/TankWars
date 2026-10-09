@@ -1,7 +1,5 @@
-import { fragmentCombat, type ActiveCombatShot, type CombatEvent } from "../../src/game/online/combatCatchUp";
-import { validateEarnings } from "../../src/game/online/earningsValidation";
 import { prepareRound, isRoundMap, ROUND_WIDTH, ROUND_HEIGHT, type RoundMap } from '../../src/game/round/prepareRound';
-import { createSeededRNG, seedFromRoomRound, seedFromRoomShot } from '../../src/utils/random';
+import { createSeededRNG, seedFromRoomRound } from '../../src/utils/random';
 /**
  * GameRoom Durable Object (worker/src/game-room.ts)
  *
@@ -60,7 +58,7 @@ import {
   type ShopStateMessage,
   type ShotEarningsAppliedMessage,
   type ShotEarningsMessage,
-  type EarningsRejectedReason,
+  type ShotCatchUpMessage,
   type ShotMessage,
   type ZeusAppointedMessage,
   type ZeusStateMessage,
@@ -92,7 +90,11 @@ import {
 } from '../../src/game/zeus/zeusDomain';
 import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
-type PersistedActiveShot = ActiveCombatShot;
+interface PersistedActiveShot extends Omit<ShotMessage, 'type'> {
+  shooterSettled: boolean;
+  earningsApplied: boolean;
+  releaseAt: number | null;
+}
 
 interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   deadSlots: boolean[];
@@ -141,13 +143,6 @@ interface LegacyPersistedFireAction {
 
 // Very small serializable state for MVP (will be enriched with real engine state later)
 interface RoomState {
-  combatSchemaVersion: number;
-  economicRevision: number;
-  roundEarningsByPlayer: Record<string, number>;
-  combatJournal: CombatEvent[];
-  earningsResults: Record<string, PersistedEarningsResult>;
-  nextEventSequence: number;
-  lastResolvedShotId: number;
   roomId: string;
   numPlayers: InitialPlayerCount;
   slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
@@ -282,7 +277,6 @@ function migrateAcceptedFireActions(
 
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
-  private committedState: RoomState | null = null;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
   private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -315,28 +309,6 @@ export class GameRoom extends DurableObject {
       const stored = await ctx.storage.get<RoomState>("state");
       if (stored) {
         this.state = stored;
-        this.state.combatJournal = [];
-        this.state.earningsResults = {};
-        this.state.shotHistory = [];
-        this.state.processedFireActionsBySlot = {};
-        this.state.processedShopActions = {};
-        for (const [key, value] of await ctx.storage.list({ prefix: "combat:" })) {
-          const entry = value as { kind: string; key: string; slot?: number; value: unknown };
-          if (entry.kind === "event") this.state.combatJournal.push(entry.value as CombatEvent);
-          if (entry.kind === "earnings") this.state.earningsResults[entry.key] = entry.value as PersistedEarningsResult;
-          if (entry.kind === "fire" && entry.slot !== undefined) {
-            this.state.processedFireActionsBySlot[entry.slot] ??= {};
-            this.state.processedFireActionsBySlot[entry.slot][entry.key] = entry.value as PersistedFireAction;
-          }
-          if (entry.kind === "shop") this.state.processedShopActions[entry.key] = entry.value as PersistedShopAction;
-          void key;
-        }
-        this.state.combatJournal.sort((a, b) => a.eventSequence - b.eventSequence);
-        this.state.shotHistory = this.state.combatJournal.filter((e): e is ShotMessage => e.type === "SHOT");
-        this.state.economicRevision ??= 0;
-        this.state.roundEarningsByPlayer ??= {};
-        this.state.nextEventSequence ??= 1;
-        this.state.lastResolvedShotId ??= 0;
         let shouldPersistMigration = false;
         this.state.map ??= null;
         this.state.initialRoundPlayers ??= [];
@@ -406,76 +378,20 @@ export class GameRoom extends DurableObject {
             if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
           });
         }
-        this.committedState = structuredClone(this.state);
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
-        if (this.state.combatSchemaVersion === 3 && this.buildGameStartMessage()) {
-          if (this.state.activeShot) {
-            if (!this.state.activeShot.shooterSettled && this.state.slotConfigs[this.state.activeShot.slot]?.type === "human") {
-              const shotId = this.state.activeShot.shotId;
-              const recovery = new Promise<void>((resolve) => {
-                this.shotSettledTimeout = setTimeout(() => {
-                  this.shotSettledTimeout = null;
-                  if (this.state?.activeShot?.shotId !== shotId) { resolve(); return; }
-                  this.state.activeShot.shooterSettled = true;
-                  this.saveState().then(() => this.maybeCompleteActiveShot()).then(resolve).catch((error: unknown) => {
-                    console.error("[GameRoom] Shot recovery failed", String(error)); resolve();
-                  });
-                }, 8000);
-              });
-              this.ctx.waitUntil(recovery);
-            }
-            await this.maybeCompleteActiveShot();
-          }
-          else this.maybeRunAIServerTurn();
-        }
         if (shouldPersistMigration) {
-          await this.saveState();
+          await ctx.storage.put("state", this.state);
         }
       }
     });
   }
 
   private async saveState(): Promise<void> {
-    if (!this.state) return;
-    const snapshot = structuredClone(this.state);
-    const { combatJournal, earningsResults, shotHistory: _shots,
-      processedFireActionsBySlot, processedShopActions, ...main } = snapshot;
-    const entries = new Map<string, unknown>();
-    const prefix = `combat:${snapshot.roundNumber}:`;
-    for (const event of combatJournal) entries.set(`${prefix}event:${event.eventSequence}`, { kind: "event", key: String(event.eventSequence), value: event });
-    for (const [key, value] of Object.entries(earningsResults)) entries.set(`${prefix}earnings:${key}`, { kind: "earnings", key, value });
-    for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
-      for (const [key, value] of Object.entries(actions)) entries.set(`${prefix}fire:${slot}:${key}`, { kind: "fire", slot: Number(slot), key, value });
+    if (this.state) {
+      await this.ctx.storage.put("state", this.state);
     }
-    for (const [key, value] of Object.entries(processedShopActions)) entries.set(`${prefix}shop:${key}`, { kind: "shop", key, value });
-    try {
-      await this.ctx.storage.transaction(async (txn) => {
-        const stored = await txn.list({ prefix: "combat:" });
-        const obsolete = [...stored.keys()].filter((key) => !entries.has(key));
-        const changed: Array<[string, unknown]> = [["state", main], ...[...entries].filter(([key, value]) => JSON.stringify(stored.get(key)) !== JSON.stringify(value))];
-        // Durable Objects batch put/delete accept at most 128 keys. All operations
-        // belong to this transaction and complete before any broadcast.
-        const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
-        const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
-        await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
-      });
-      this.committedState = snapshot;
-    } catch (error) {
-      // Discard unpublished mutations; reload the durable state on the next activation.
-      this.state = this.committedState ? structuredClone(this.committedState) : null;
-      this.shotInFlight = this.state?.activeShot !== null;
-      this.awaitingShotFromSlot = this.state?.activeShot?.slot ?? null;
-      throw error;
-    }
-  }
-
-  private appendCombatEvent<T extends CombatEvent>(event: T): T {
-    if (!this.state) throw new Error("Room unavailable");
-    event.eventSequence = this.state.nextEventSequence++;
-    this.state.combatJournal.push(event);
-    return event;
   }
 
   private clearShotSettledTimeout(): void {
@@ -510,19 +426,46 @@ export class GameRoom extends DurableObject {
     this.sendGameStartToSocket(ws);
     if (!this.state?.started || !this.buildGameStartMessage()) return;
 
-    const snapshot = {
-      roundNumber: this.state.roundNumber, map: this.state.map!,
-      initialPlayers: this.state.initialRoundPlayers, players: this.state.players,
-      economicRevision: this.state.economicRevision, roundEarningsByPlayer: this.state.roundEarningsByPlayer,
-      currentPlayerIndex: this.state.currentPlayerIndex, zeus: this.buildZeusStateMessage(),
-      activeShotId: this.state.activeShot?.shotId ?? null, activeShot: this.state.activeShot,
-      completedShop: this.state.lastCompletedShop,
-      lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
-      authoritySlot: this.state.earningsAuthoritySlot, authorityEpoch: this.state.authorityEpoch,
-      events: this.state.combatJournal,
+    // Always push authoritative turn index (GAME_START already has it; belt-and-suspenders).
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'STATE_UPDATE',
+          currentPlayerIndex: this.state.currentPlayerIndex,
+          roundEnded: this.state.roundEnded,
+          players: this.state.players,
+        }),
+      );
+    } catch {
+      // ignore stale
+    }
+
+    const authority: AuthorityChangedMessage = {
+      type: 'AUTHORITY_CHANGED',
+      authoritySlot: this.state.earningsAuthoritySlot,
+      authorityEpoch: this.state.authorityEpoch,
     };
     try {
-      for (const message of fragmentCombat(snapshot, crypto.randomUUID())) ws.send(JSON.stringify(message));
+      ws.send(JSON.stringify(authority));
+    } catch {
+      // ignore stale
+    }
+
+    try {
+      const catchUp: ShotCatchUpMessage = {
+        type: 'SHOT_CATCH_UP',
+        roundNumber: this.state.roundNumber,
+        activeShotId: this.state.activeShot?.shotId ?? null,
+        shots: this.state.shotHistory
+          .filter(
+            (shot) =>
+              shot.shotId > request.lastSeenShotId ||
+              shot.shotId === this.state?.activeShot?.shotId,
+          )
+          .sort((left, right) => left.shotId - right.shotId),
+        lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
+      };
+      ws.send(JSON.stringify(catchUp));
       if (this.state.shopSession) {
         ws.send(JSON.stringify(this.buildShopStateMessage()));
       } else if (
@@ -531,9 +474,20 @@ export class GameRoom extends DurableObject {
       ) {
         ws.send(JSON.stringify(this.state.lastCompletedShop));
       }
+      if (this.state.lastAppliedEarnings) {
+        ws.send(JSON.stringify(this.state.lastAppliedEarnings));
+      }
+      ws.send(JSON.stringify(this.buildZeusStateMessage()));
+      if (this.state.activeZeusStrike) {
+        ws.send(JSON.stringify(this.state.activeZeusStrike));
+      }
+      if (this.state.lastAppliedZeusStrike) {
+        ws.send(JSON.stringify(this.state.lastAppliedZeusStrike));
+      }
       if (this.state.roundEnded) {
-        const alive = this.state.players.filter((p) => !p.tank.isDead && p.tank.health > 0);
-        const lastOutcome = { roundWinnerId: alive.length === 1 ? alive[0].id : null, isDraw: alive.length === 0 };
+        const lastOutcome =
+          this.state.lastAppliedZeusStrike?.roundOutcome ??
+          this.state.lastAppliedEarnings?.roundOutcome;
         const roundEnd: RoundEndMessage = {
           type: 'ROUND_END',
           players: this.state.players,
@@ -552,7 +506,6 @@ export class GameRoom extends DurableObject {
     if (!this.state) {
       return {
         type: 'ZEUS_STATE',
-        roundNumber: 0, eventSequence: 0,
         activeZeusId: null,
         currentPlayerIndex: 0,
         rotationSlots: [],
@@ -563,7 +516,6 @@ export class GameRoom extends DurableObject {
     }
     return {
       type: 'ZEUS_STATE',
-      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1,
       activeZeusId: this.state.zeusState.activeZeusId,
       currentPlayerIndex: this.state.currentPlayerIndex,
       rotationSlots: [...this.state.zeusRotationSlots],
@@ -605,8 +557,6 @@ export class GameRoom extends DurableObject {
     }
 
     this.state = {
-      combatSchemaVersion: 3, economicRevision: 0, roundEarningsByPlayer: {},
-      combatJournal: [], earningsResults: {}, nextEventSequence: 1, lastResolvedShotId: 0,
       roomId,
       numPlayers,
       slotConfigs,
@@ -893,8 +843,8 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (msg?.type === 'SHOT_EARNINGS') {
-      await this.applyAuthoritativeEarnings(slot, msg);
+    if (strictMessage?.type === 'SHOT_EARNINGS') {
+      await this.applyAuthoritativeEarnings(slot, strictMessage);
       return;
     }
 
@@ -1028,7 +978,6 @@ export class GameRoom extends DurableObject {
   }
 
   private buildGameStartMessage(): GameStartMessage | null {
-    if (this.state?.started && this.state.combatSchemaVersion !== 3) return null;
     if (!this.state?.started || !isRoundMap(this.state.map) ||
       this.state.map.roundNumber !== this.state.roundNumber) return null;
     const message = {
@@ -1143,8 +1092,6 @@ export class GameRoom extends DurableObject {
     this.state.map = prepared.map;
     this.state.currentPlayerIndex = 0;
     this.state.started = true;
-    this.state.combatSchemaVersion = 3;
-    this.state.roundEarningsByPlayer = Object.fromEntries(this.state.players.map((p) => [p.id, 0]));
     this.state.startAt = Date.now();
     this.state.authorityOrder = [...humanSlots].sort((left, right) => {
       const leftJoin = this.state!.joinedHumans[left]?.joinOrdinal ?? Number.MAX_SAFE_INTEGER;
@@ -1294,10 +1241,6 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (this.state.activeZeusStrike || this.state.players[this.state.currentPlayerIndex]?.id === this.state.zeusState.activeZeusId) {
-      await rejectRequester("ZEUS_TURN");
-      return;
-    }
     // Defense in depth: AI timer + human FIRE path both funnel here.
     if (this.shotInFlight || this.state.activeShot) {
       console.warn(
@@ -1332,7 +1275,6 @@ export class GameRoom extends DurableObject {
 
     // Toutes les validations sont terminées avant la première mutation autoritaire.
     this.state.players[fromSlot] = consumed.player;
-    this.state.economicRevision++;
     this.clearShotSettledTimeout();
     this.shotInFlight = true;
     this.shotEpoch++;
@@ -1342,8 +1284,6 @@ export class GameRoom extends DurableObject {
     this.lastShot = { slot: fromSlot, command, ownerId };
     this.state.activeShot = {
       shotId,
-      physicsSeed: seedFromRoomShot(this.state.roomId, this.state.roundNumber, shotId),
-      eventSequence: this.state.nextEventSequence,
       roundNumber: this.state.roundNumber,
       shotNumberInRound: this.state.shotNumberInRound,
       isFirstShotOfRound: this.state.shotNumberInRound === 1,
@@ -1354,14 +1294,11 @@ export class GameRoom extends DurableObject {
       shooterSettled: false,
       earningsApplied: false,
       releaseAt: null,
-      zeusEvaluated: false, appointment: null,
     };
     const shotEvent: ShotMessage = {
       type: 'SHOT',
       actionId,
       shotId,
-      physicsSeed: seedFromRoomShot(this.state.roomId, this.state.roundNumber, shotId),
-      eventSequence: this.state.nextEventSequence,
       roundNumber: this.state.roundNumber,
       shotNumberInRound: this.state.shotNumberInRound,
       isFirstShotOfRound: this.state.shotNumberInRound === 1,
@@ -1369,7 +1306,6 @@ export class GameRoom extends DurableObject {
       command,
       ownerId,
     };
-    this.appendCombatEvent(shotEvent);
     this.state.shotHistory.push(shotEvent);
     this.state.processedFireActionsBySlot[fromSlot] ??= {};
     this.state.processedFireActionsBySlot[fromSlot][actionId] = {
@@ -1453,69 +1389,103 @@ export class GameRoom extends DurableObject {
     // Turn coordination only — clients simulate shots locally until headless authoritative sim is wired.
     const update = {
       type: 'STATE_UPDATE',
-      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
       currentPlayerIndex: this.state.currentPlayerIndex,
       roundEnded: false,
     };
     this.broadcast(update);
-    this.broadcast(this.buildZeusStateMessage());
 
     // If next is AI, let server drive it immediately (demo)
     this.maybeRunAIServerTurn();
   }
 
-  private async applyAuthoritativeEarnings(slot: number, raw: unknown): Promise<void> {
+  private async applyAuthoritativeEarnings(
+    slot: number,
+    message: ShotEarningsMessage,
+  ): Promise<void> {
     if (!this.state) return;
-    const record = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-    const shotId = isSafeNonNegativeInteger(record.shotId) ? record.shotId : null;
-    const authorityEpoch = isSafeNonNegativeInteger(record.authorityEpoch) ? record.authorityEpoch : null;
-    const previous = shotId === null ? undefined : this.state.earningsResults[String(shotId)];
-    const reject = (reason: EarningsRejectedReason): void => this.sendToSlot(slot, {
-      type: "EARNINGS_REJECTED", shotId, authorityEpoch, reason,
-    });
-    if (previous) {
-      if (slot !== this.state.earningsAuthoritySlot) { reject("STALE_AUTHORITY"); return; }
-      this.broadcast(previous);
+    const previous = this.state.lastAppliedEarnings;
+    if (previous?.shotId === message.shotId) {
+      const isIdentical =
+        JSON.stringify(previous.awards) === JSON.stringify(message.awards) &&
+        JSON.stringify(previous.deadSlots) === JSON.stringify(message.deadSlots) &&
+        JSON.stringify(previous.roundOutcome) === JSON.stringify(message.roundOutcome) &&
+        JSON.stringify(previous.directHitVictimIds) === JSON.stringify(message.directHitVictimIds);
+      if (isIdentical) this.broadcast(previous);
       return;
     }
-    if (!isStrictOnlineMessage(raw) || raw.type !== "SHOT_EARNINGS") { reject("MALFORMED"); return; }
-    const message = raw;
-    if (slot !== this.state.earningsAuthoritySlot || authorityEpoch !== this.state.authorityEpoch) { reject("STALE_AUTHORITY"); return; }
-    const active = this.state.activeShot;
-    if (!active || shotId !== active.shotId) { reject("WRONG_SHOT"); return; }
-    const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId);
-    if (!validated.ok) { reject(validated.reason); return; }
-    const totals = { ...this.state.roundEarningsByPlayer };
-    for (const award of message.awards) {
-      const total = (totals[award.playerId] ?? 0) + award.amount;
-      if (!Number.isSafeInteger(total)) { reject("MALFORMED"); return; }
-      totals[award.playerId] = total;
+    if (
+      slot !== this.state.earningsAuthoritySlot ||
+      message.authorityEpoch !== this.state.authorityEpoch ||
+      message.shotId !== this.state.activeShot?.shotId
+    ) {
+      console.warn(`[GameRoom] Rejected unauthorized or stale SHOT_EARNINGS from slot ${slot}`);
+      return;
     }
-    const players = validated.players;
-    const awardsByPlayer = new Map(message.awards.map((award) => [award.playerId, award.amount]));
-    const directVictims = new Set(message.directHitVictimIds);
-    for (const player of players) {
-      player.money += awardsByPlayer.get(player.id) ?? 0;
-      if (directVictims.has(player.id)) {
-        player.tank.lastDirectAttackerId = active.ownerId;
-        this.state.lastDirectAttackerByPlayerId[player.id] = active.ownerId;
+    if (message.deadSlots.length !== this.state.numPlayers) return;
+
+    const knownPlayers = new Map(this.state.players.map((player) => [player.id, player]));
+    const seen = new Set<string>();
+    for (const award of message.awards) {
+      if (seen.has(award.playerId) || !knownPlayers.has(award.playerId)) return;
+      if (!Number.isSafeInteger(award.amount) || award.amount < 0) return;
+      seen.add(award.playerId);
+    }
+
+    const directVictims = new Set<string>();
+    for (const victimId of message.directHitVictimIds) {
+      if (directVictims.has(victimId) || !knownPlayers.has(victimId)) return;
+      directVictims.add(victimId);
+    }
+    const activeShooterId = this.state.activeShot?.ownerId;
+    const activeWeaponId = this.state.activeShot?.command.weaponId;
+    if (activeWeaponId === 'BULLDOZER' && directVictims.size > 0) return;
+    if (activeShooterId && directVictims.has(activeShooterId)) return;
+    if (activeShooterId && activeWeaponId !== 'BULLDOZER') {
+      for (const victimId of directVictims) {
+        this.state.lastDirectAttackerByPlayerId[victimId] = activeShooterId;
+        const victim = knownPlayers.get(victimId);
+        if (victim) victim.tank.lastDirectAttackerId = activeShooterId;
       }
     }
-    this.state.players = players;
-    this.state.roundEarningsByPlayer = totals;
+
+    const balances = this.state.players.map((player) => {
+      const delta = message.awards.find((award) => award.playerId === player.id)?.amount ?? 0;
+      const money = player.money + delta;
+      if (!Number.isSafeInteger(money) || money < 0) {
+        throw new RangeError('Authoritative balance exceeds safe integer range.');
+      }
+      return { playerId: player.id, money };
+    });
+    for (const balance of balances) {
+      const player = knownPlayers.get(balance.playerId);
+      if (player) player.money = balance.money;
+    }
+    message.deadSlots.forEach((isDead, index) => {
+      const tank = this.state?.players[index]?.tank;
+      if (tank) tank.isDead = isDead;
+    });
+
+    const hasEarnings = message.awards.some((award) => award.amount > 0);
     const applied: PersistedEarningsResult = {
-      type: "SHOT_EARNINGS_APPLIED", shotId: active.shotId,
-      economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...totals },
-      awards: message.awards, balances: players.map((p) => ({ playerId: p.id, money: p.money })),
-      hasEarnings: message.awards.some((a) => a.amount > 0), blockDurationMs: 0,
-      roundOutcome: validated.roundOutcome, deadSlots: message.deadSlots,
-      authorityEpoch: message.authorityEpoch, directHitVictimIds: message.directHitVictimIds,
+      type: 'SHOT_EARNINGS_APPLIED',
+      shotId: message.shotId,
+      awards: message.awards,
+      balances,
+      hasEarnings,
+      blockDurationMs: 0,
+      roundOutcome: message.roundOutcome,
+      deadSlots: message.deadSlots,
+      authorityEpoch: message.authorityEpoch,
+      directHitVictimIds: [...message.directHitVictimIds],
     };
     this.state.lastAppliedEarnings = applied;
-    this.state.earningsResults[String(active.shotId)] = applied;
-    active.earningsApplied = true;
-    active.releaseAt = Date.now();
-    if (this.state.slotConfigs[active.slot]?.type === "ai") active.shooterSettled = true;
+    if (this.state.activeShot) {
+      this.state.activeShot.earningsApplied = true;
+      this.state.activeShot.releaseAt = Date.now();
+      if (this.state.slotConfigs[this.state.activeShot.slot]?.type === 'ai') {
+        this.state.activeShot.shooterSettled = true;
+      }
+    }
     await this.saveState();
     this.broadcast(applied);
     await this.maybeCompleteActiveShot();
@@ -1542,16 +1512,14 @@ export class GameRoom extends DurableObject {
     }
 
     const outcome = this.state.lastAppliedEarnings.roundOutcome;
-    if (!active.zeusEvaluated) {
-      const evaluation = evaluateZeusDeadlock(this.state.zeusState, this.state.players,
-        this.state.lastAppliedEarnings.hasEarnings, () => this.nextZeusRandom());
-      this.state.zeusState = evaluation.state;
-      if (evaluation.zeusRevoked) this.state.zeusRotationSlots = [];
-      active.appointment = evaluation.appointment;
-      active.zeusEvaluated = true;
-      this.state.lastResolvedShotId = active.shotId;
-      await this.saveState();
-    }
+    const evaluation = evaluateZeusDeadlock(
+      this.state.zeusState,
+      this.state.players,
+      this.state.lastAppliedEarnings.hasEarnings,
+      () => this.nextZeusRandom(),
+    );
+    this.state.zeusState = evaluation.state;
+    if (evaluation.zeusRevoked) this.state.zeusRotationSlots = [];
     if (outcome.isRoundEnd) {
       this.clearShotSettledTimeout();
       this.shotInFlight = false;
@@ -1571,8 +1539,8 @@ export class GameRoom extends DurableObject {
       this.broadcast(roundEnd);
       return;
     }
-    if (active.appointment) {
-      await this.applyZeusAppointment(active.appointment);
+    if (evaluation.appointment) {
+      await this.applyZeusAppointment(evaluation.appointment);
       return;
     }
     await this.advanceTurnAndNotify();
@@ -1607,22 +1575,19 @@ export class GameRoom extends DurableObject {
       if (slot >= 0) rotationSlots.push(slot);
     }
     this.state.zeusRotationSlots = rotationSlots;
+    await this.saveState();
 
     const message: ZeusAppointedMessage = {
       type: 'ZEUS_APPOINTED',
-      roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
       appointmentId: appointment.appointmentId,
       zeusId: appointment.zeusId,
       zeusSlot,
       rotationSlots: [...this.state.zeusRotationSlots],
     };
-    this.appendCombatEvent(message);
-    await this.saveState();
     this.broadcast(message);
     this.broadcast(this.buildZeusStateMessage());
     this.broadcast({
       type: 'STATE_UPDATE',
-      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
       currentPlayerIndex: zeusSlot,
       roundEnded: false,
     });
@@ -1647,11 +1612,9 @@ export class GameRoom extends DurableObject {
     this.state.zeusState = allocation.state;
     const strike: ZeusStrikeMessage = {
       type: 'ZEUS_STRIKE',
-      roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
       ...allocation.strike,
       resolveAt: Date.now() + 700,
     };
-    this.appendCombatEvent(strike);
     this.state.activeZeusStrike = strike;
     await this.saveState();
     this.broadcast(strike);
@@ -1688,19 +1651,22 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    const survivors = this.state.players.filter((player) => player.id !== target.id && !player.tank.isDead && player.tank.health > 0);
-    const reward = calculateZeusStrikeReward(zeus.id, this.state.numPlayers, survivors.map((player) => player.id));
+    target.tank.health = 0;
+    target.tank.shield = 0;
+    target.tank.isDead = true;
+    const survivors = this.state.players.filter((player) => !player.tank.isDead);
+    const reward = calculateZeusStrikeReward(
+      zeus.id,
+      this.state.numPlayers,
+      survivors.map((player) => player.id),
+    );
     const balances = this.state.players.map((player) => {
       const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
       const money = player.money + amount;
-      if (!Number.isSafeInteger(money)) throw new RangeError("Zeus balance overflow.");
+      if (!Number.isSafeInteger(money)) throw new RangeError('Zeus balance overflow.');
+      player.money = money;
       return { playerId: player.id, money };
     });
-    const total = (this.state.roundEarningsByPlayer[reward.award.playerId] ?? 0) + reward.award.amount;
-    if (!Number.isSafeInteger(total)) throw new RangeError("Zeus round earnings overflow.");
-    target.tank.health = 0; target.tank.shield = 0; target.tank.isDead = true;
-    for (const [index, player] of this.state.players.entries()) player.money = balances[index].money;
-    this.state.roundEarningsByPlayer[reward.award.playerId] = total;
     const nextPlayerIndex = reward.roundOutcome.isRoundEnd
       ? null
       : nextLivingPlayerIndex(
@@ -1710,8 +1676,6 @@ export class GameRoom extends DurableObject {
         );
     const result: ZeusStrikeAppliedMessage = {
       type: 'ZEUS_STRIKE_APPLIED',
-      roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
-      economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...this.state.roundEarningsByPlayer },
       strikeId,
       zeusId: strike.zeusId,
       targetId: strike.targetId,
@@ -1722,7 +1686,6 @@ export class GameRoom extends DurableObject {
       nextPlayerIndex,
     };
     this.state.activeZeusStrike = null;
-    this.appendCombatEvent(result);
     this.state.lastAppliedZeusStrike = result;
     if (reward.roundOutcome.isRoundEnd) {
       this.state.roundEnded = true;
@@ -1747,7 +1710,6 @@ export class GameRoom extends DurableObject {
     }
     this.broadcast({
       type: 'STATE_UPDATE',
-      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
       currentPlayerIndex: this.state.currentPlayerIndex,
       roundEnded: false,
     });
@@ -1769,7 +1731,7 @@ export class GameRoom extends DurableObject {
     if (this.shotInFlight || this.state.activeZeusStrike) return;
     const idx = this.state.currentPlayerIndex;
     const cfg = this.state.slotConfigs[idx];
-
+    if (cfg?.type !== 'ai') return;
 
     // Skip dead AI slots (authoritative roster may lag mid-combat; still safe).
     if (this.state.players[idx]?.tank?.isDead) {
@@ -1784,8 +1746,6 @@ export class GameRoom extends DurableObject {
       this.ctx.waitUntil(zeusTurnPromise);
       return;
     }
-
-    if (cfg?.type !== 'ai') return;
 
     // In later step we will call the real AI strategy here (headless) and then executeFire.
     // For skeleton: pick a safe-ish random shot so the round can progress in a multi-tab test.
@@ -1917,7 +1877,6 @@ export class GameRoom extends DurableObject {
       counters = autoBuy.counters;
     }
     this.state.players = players;
-    this.state.economicRevision++;
     this.state.shopSession = {
       shopEpoch: this.state.shopEpoch,
       roundNumber: this.state.roundNumber,
@@ -2019,7 +1978,6 @@ export class GameRoom extends DurableObject {
       }, 'BUY_SELL');
       return;
     }
-    this.state.economicRevision++;
     this.state.players = this.state.players.map((candidate, index) =>
       index === slot ? result.player : candidate,
     );
@@ -2143,7 +2101,6 @@ export class GameRoom extends DurableObject {
       }
     }
     this.state.players = nextPlayers;
-    this.state.economicRevision++;
     this.state.initialRoundPlayers = structuredClone(nextPlayers);
     this.state.map = prepared.map;
     this.state.shopSession = null;
@@ -2152,11 +2109,6 @@ export class GameRoom extends DurableObject {
     this.state.roundNumber = nextRoundNumber;
     this.state.shotNumberInRound = 0;
     this.state.shotHistory = [];
-    this.state.combatJournal = [];
-    this.state.earningsResults = {};
-    this.state.nextEventSequence = 1;
-    this.state.lastResolvedShotId = 0;
-    this.state.roundEarningsByPlayer = Object.fromEntries(this.state.players.map((p) => [p.id, 0]));
     this.state.lastAppliedEarnings = null;
     this.state.lastAppliedZeusStrike = null;
     this.state.processedFireActionsBySlot = {};
@@ -2168,7 +2120,6 @@ export class GameRoom extends DurableObject {
     this.broadcast(finish);
     this.broadcast({
       type: 'STATE_UPDATE',
-      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
       currentPlayerIndex: 0,
       roundEnded: false,
       players: this.state.players,

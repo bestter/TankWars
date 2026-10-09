@@ -17,7 +17,6 @@ import type { GameCanvasState } from "./gameCanvasReducer";
 import type { WeaponId } from "../types/weapon";
 
 const FIRE_REJECTION_KEYS = {
-  ZEUS_TURN: "fire_rejected_zeus_turn",
   MALFORMED: "fire_rejected_malformed",
   NOT_YOUR_TURN: "fire_rejected_not_your_turn",
   SHOT_IN_FLIGHT: "fire_rejected_shot_in_flight",
@@ -279,7 +278,6 @@ export function GameCanvas({
         gap: 8,
       }}
     >
-      {state.networkError && <div role="alert">{t(state.networkError, { defaultValue: state.networkError })} <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button></div>}
       {state.roundPreparationError && (
         <div role="alert">
           {t(state.roundPreparationError === "NEW_GAME_REQUIRED" ? "round_new_game_required" : "round_preparation_failed")}
