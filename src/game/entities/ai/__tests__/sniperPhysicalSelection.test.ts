@@ -615,6 +615,7 @@ describe("SNIPER physical corpus", () => {
         expect(forecasted).toBeDefined();
         if (!forecasted) return;
         const seen = witness(f.state, f.terrain, f.self, choice.weaponId, choice.command);
+        expect(seen.complete).toBe(true);
         const forecastValue = resolve.mock.results[resolve.mock.calls.indexOf(forecasted)]?.value as physical.PhysicalResolution | undefined;
         expect(forecastValue?.complete).toBe(true);
         if (!forecastValue?.complete) return;
