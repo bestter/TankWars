@@ -338,6 +338,22 @@ describe('onlineSession', () => {
     expect(store.has('tankwars-online-session-v2')).toBe(false);
   });
 
+
+  it('swallows errors on clearOnlineSession', () => {
+    vi.stubGlobal('sessionStorage', {
+      removeItem: () => {
+        throw new Error('Access Denied');
+      },
+      getItem: () => null,
+      setItem: () => undefined,
+      clear: () => undefined,
+      key: () => null,
+      length: 0,
+    });
+
+    expect(() => clearOnlineSession()).not.toThrow();
+  });
+
   it('swallows sessionStorage quota errors on persist', () => {
     vi.stubGlobal('sessionStorage', {
       setItem: () => {
