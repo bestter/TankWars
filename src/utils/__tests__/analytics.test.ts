@@ -80,4 +80,27 @@ describe('analytics utility', () => {
       'Zaraz network failure'
     );
   });
+
+  it('should catch and log non-Error instances if window.zaraz.track throws a string', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const trackMock = vi.fn().mockImplementation(() => {
+      throw 'Zaraz string error';
+    });
+
+    globalRef.window = {
+      zaraz: {
+        track: trackMock
+      }
+    };
+
+    expect(() => {
+      trackEvent('test_event', { test: true });
+    }).not.toThrow();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[Analytics] Failed to track event via Zaraz:',
+      'test_event',
+      'Zaraz string error'
+    );
+  });
 });
