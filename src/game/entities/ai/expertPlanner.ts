@@ -6,7 +6,7 @@ import { secureRandom } from "../../../utils/random";
 import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
-import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
+import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, recordUnprofitableExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
 import type { ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
@@ -136,10 +136,10 @@ function selectionReason(
   phase: ExpertDecisionTrace["phase"], winner: RankedPlan, runnerUp: RankedPlan | undefined,
 ): string {
   if (!runnerUp) return "seul candidat admissible";
+  if (winner.result.profit !== runnerUp.result.profit) return "profit net supérieur";
   if (winner.result.shooterDestroyed !== runnerUp.result.shooterDestroyed) {
     return "EXPERT survit, contrairement au suivant";
   }
-  if (winner.result.profit !== runnerUp.result.profit) return "profit net supérieur";
   if (winner.result.humanDestroyedCount !== runnerUp.result.humanDestroyedCount) return "moins d'humains détruits";
   if (winner.result.humanDamageMilli !== runnerUp.result.humanDamageMilli) return "moins de dégâts aux humains";
   if (winner.result.aiDestroyedCount !== runnerUp.result.aiDestroyedCount) return "davantage d'IA détruites";
@@ -314,7 +314,7 @@ export function chooseExpertPlan(
       for (const group of groups) {
         const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
         const result = evaluate(state, terrain, self, weapon, group, true,
-          state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
+          state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim, selectionPolicy: "SURVIE" });
         if (!isValidExpertShot(result) || result.shooterDestroyed) {
           order++;
           continue;
@@ -366,7 +366,14 @@ export function chooseExpertPlan(
       state.players.indexOf(a) - state.players.indexOf(b))[0];
     for (const weapon of shooterWeapons) {
       const result = evaluate(state, terrain, self, weapon, group, false,
-        state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
+        state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim, selectionPolicy: "OPTIMISER_PROFIT" });
+      if (isValidExpertShot(result) && weapon !== "MISSILE" && result.profit < 0) {
+        if (cache.diagnostics) recordUnprofitableExpertShot(cache, {
+          weaponId: weapon, targetIds: group.map((player) => player.id),
+          profit: result.profit, shooterDestroyed: result.shooterDestroyed,
+        });
+        continue;
+      }
       if (isValidExpertShot(result)) candidates.push({
         kind: "evaluated", ...targetAim,
         requestedPoint: result.requestedPoint,
@@ -386,8 +393,8 @@ export function chooseExpertPlan(
     }
   }
   candidates.sort((a, b) =>
-    Number(a.result.shooterDestroyed) - Number(b.result.shooterDestroyed) ||
     b.result.profit - a.result.profit ||
+    Number(a.result.shooterDestroyed) - Number(b.result.shooterDestroyed) ||
     compareExpertConsequences(a.result, b.result) ||
     b.profileScore - a.profileScore ||
     a.nextTurnDelay - b.nextTurnDelay ||

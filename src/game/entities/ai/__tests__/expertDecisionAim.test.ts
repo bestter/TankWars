@@ -110,7 +110,8 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
         return shooter.id === "target" ? valid(["self"]) : invalid;
       }
       expect(rng).toHaveBeenCalledTimes(3);
-      expect(context).toEqual({ mode: "own", aim: { primaryTargetId: targets.length === 2 || targets[0].id === "other" ? "other" : "target",
+      expect(context).toEqual({ mode: "own", selectionPolicy: requireKill ? "SURVIE" : "OPTIMISER_PROFIT",
+        aim: { primaryTargetId: targets.length === 2 || targets[0].id === "other" ? "other" : "target",
         attempts: targets.length === 2 || targets[0].id === "other" ? 2 : 1,
         offset: targets.length === 2 || targets[0].id === "other" ? 12 : 48 } });
       // Mandatory victim remains the threat, independently of the primary target.
@@ -201,7 +202,8 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     expect(fallback.mock.calls[0][6]).toEqual({ primaryTargetId: "target", attempts: 1, offset: 48 });
     if (economics) {
       expect(evaluate.mock.calls.filter((args) => args[8]?.mode === "own").map((args) => args[8]))
-        .toEqual(Array(2).fill({ mode: "own", aim: { primaryTargetId: "target", attempts: 1, offset: 48 } }));
+        .toEqual(["SURVIE", "OPTIMISER_PROFIT"].map((selectionPolicy) => ({ mode: "own", selectionPolicy,
+          aim: { primaryTargetId: "target", attempts: 1, offset: 48 } })));
     } else expect(evaluate).not.toHaveBeenCalled();
     expect(search.mock.lastCall?.[0]).toMatchObject({ tx: 448, ty: 330, aMin: 15, aMax: 85 });
     expect(search.mock.calls.filter(([config]) => config.selfHarmPenalty)).toHaveLength(1);
@@ -219,10 +221,15 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     f.self.inventory.NUKE = 1;
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
     const log = vi.mocked(console.info);
+    const strategy = new AISmartStrategy();
+    // Let the first free shot establish aim memory; the second has a useful main forecast.
+    await strategy.executeTurn("self", f.state, f.terrain);
+    rng.mockClear();
+    log.mockClear();
     const search = vi.spyOn(ballistics, "searchBallisticSolution");
     const choose = vi.spyOn(planner, "chooseExpertPlan");
     const record = vi.spyOn(aimMemory, "recordAimAttempt");
-    const shot = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+    const shot = await strategy.executeTurn("self", f.state, f.terrain);
     const plan = choose.mock.results[0].value as planner.ExpertPlan;
     expect(plan.kind).toBe("evaluated");
     expect(shot).toEqual({ ...plan.command, weaponId: plan.weaponId });

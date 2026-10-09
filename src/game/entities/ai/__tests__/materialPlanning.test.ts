@@ -604,18 +604,18 @@ describe("physical parity and EXPERT fallback ranking", () => {
     },
   );
 
-  it("prioritizes useful safe shots over more profitable useless shots", () => {
+  it("prioritizes economic profit over utility in fallback", () => {
     const f = fixture();
     vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
     vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_s, _t, _p, weapon) =>
       forecast({ damage: weapon === "GRENADE" ? [damage()] : [] }));
-    // A deliberately higher economic score must never move a useless shot into the useful category.
+    // Economic fallback keeps the profitable free shot despite its lack of physical utility.
     const realReward = economics.calculateShotRewards;
     vi.spyOn(economics, "calculateShotRewards").mockImplementation((input) => ({ ...realReward(input),
       awards: [{ playerId: "self", amount: input.weaponId === "MISSILE" ? 10000 : 1, components: [] }],
     }));
     expect(chooseIdealExpertFallback(f.state, f.terrain, f.self, f.target, "GRENADE", createExpertForecastCache()))
-      .toMatchObject({ weaponId: "GRENADE", useful: true });
+      .toMatchObject({ weaponId: "MISSILE", useful: false });
   });
 
   it("uses net profit inside the same fallback category", () => {
