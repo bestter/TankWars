@@ -636,7 +636,7 @@ export class GameRoom extends DurableObject {
       }
     }
 
-    if (errorDetail) {
+    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload', detail: errorDetail }), { status: 400 });
     }
 

@@ -633,7 +633,7 @@ describe('GameRoom Durable Object', () => {
       createRoom2 = () => {
         const { ctx, mockStorage } = createMockCtx();
         const r = new GameRoom(ctx as unknown as DurableObjectState, mockEnv);
-        r.ctx = ctx as any;
+        Object.defineProperty(r, 'ctx', { value: ctx });
         return { room: r, storage: mockStorage };
       };
     });
