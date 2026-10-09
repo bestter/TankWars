@@ -589,7 +589,21 @@ export class GameRoom extends DurableObject {
 
     const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
-    const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+
+    // Explicitly validate slotConfigs array elements
+    let slotConfigs: Array<{ type: 'human' | 'ai'; aiProfile?: string }> | undefined = undefined;
+    if (Array.isArray(body.slotConfigs)) {
+      const valid = body.slotConfigs.every((slot: unknown) => {
+        if (typeof slot !== 'object' || slot === null || Array.isArray(slot)) return false;
+        const s = slot as Record<string, unknown>;
+        if (s.type !== 'human' && s.type !== 'ai') return false;
+        if (s.aiProfile !== undefined && typeof s.aiProfile !== 'string') return false;
+        return true;
+      });
+      if (valid) {
+        slotConfigs = body.slotConfigs as Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
+      }
+    }
 
     if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
