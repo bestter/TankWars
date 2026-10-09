@@ -364,8 +364,14 @@ describe("SNIPER ranking, fallback and bounds", () => {
     const silent = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solver());
     expect(silent.weaponId).toBe(traced.weaponId);
     expect(silent.reason).toBe(traced.reason);
+    expect(silent.trace.admissible).toEqual([]);
+    expect(silent.trace.refusals).toEqual([]);
+    expect(silent.trace.runnerUp).toBeUndefined();
+    expect(silent.trace.selectionReason).toBe(traced.trace.selectionReason);
+    expect(silent.trace.searches).toBe(traced.trace.searches);
+    expect(silent.trace.forecasts).toBe(traced.trace.forecasts);
     await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
-    expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(import.meta.env.DEV);
+    expect(info.mock.calls.some((call) => call[0] === "[AI SNIPER] Décision")).toBe(false);
   });
 });
 
@@ -476,6 +482,39 @@ describe("SNIPER turn wiring", () => {
     };
     expect(payload.finalReason).toBe("aucun adversaire vivant");
     expect(payload.choice.finalCommand).toEqual({ angle: 45, power: 50 });
+  });
+
+  it("logs a JSON fallback when the shooter is missing or dead and does not search", async () => {
+    const f = fixture();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const search = vi.spyOn(sniperAim, "solveSniperAim");
+    const selection = vi.spyOn(sniperSelection, "chooseSniperPhysicalShot");
+    const missing = await new AISniperStrategy().executeTurn("absent", f.state, f.terrain);
+    expect(missing).toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
+    const missingPayload = JSON.parse(String(info.mock.calls.find((call) => call[0] === "[AI SNIPER] Décision")?.[1])) as {
+      finalReason: string;
+      shooterId?: string;
+      choice: { finalCommand: { angle: number; power: number }; weaponId: string };
+    };
+    expect(missingPayload.finalReason).toBe("tireur absent ou mort");
+    expect(missingPayload.shooterId).toBeUndefined();
+    expect(missingPayload.choice).toEqual({
+      weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 },
+    });
+
+    info.mockClear();
+    f.self.tank.isDead = true;
+    const dead = await new AISniperStrategy().executeTurn(f.self.tank.id, f.state, f.terrain);
+    expect(dead).toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
+    const deadPayload = JSON.parse(String(info.mock.calls.find((call) => call[0] === "[AI SNIPER] Décision")?.[1])) as {
+      finalReason: string;
+      shooterId?: string;
+    };
+    expect(deadPayload.finalReason).toBe("tireur absent ou mort");
+    expect(deadPayload.shooterId).toBe(f.self.id);
+    expect(search).not.toHaveBeenCalled();
+    expect(selection).not.toHaveBeenCalled();
+    expect(f.self.inventory).toEqual({ BULLET: 2, DRILLER: 1 });
   });
 });
 

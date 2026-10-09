@@ -24,9 +24,9 @@ type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible";
 
 const FALLBACK_SHOT = { angle: 45, power: 50, weaponId: "MISSILE" as const };
 
-function logSniperDecision(payload: object): void {
+function logSniperDecision(build: () => object): void {
   if (!import.meta.env.DEV) return;
-  console.info("[AI SNIPER] Décision", JSON.stringify(payload));
+  console.info("[AI SNIPER] Décision", JSON.stringify(build()));
 }
 
 function sniperDecisionPayload(
@@ -100,13 +100,13 @@ export class AISniperStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      logSniperDecision({
+      logSniperDecision(() => ({
         choice: { weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 } },
         finalReason: "tireur absent ou mort",
         shooterId: self?.id,
         round: gameState.roundNumber,
         turn: gameState.turn,
-      });
+      }));
       return FALLBACK_SHOT;
     }
 
@@ -117,7 +117,7 @@ export class AISniperStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      logSniperDecision({
+      logSniperDecision(() => ({
         choice: { weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 } },
         finalReason: "aucun adversaire vivant",
         shooterId: self.id,
@@ -125,7 +125,7 @@ export class AISniperStrategy implements AIEngine {
         turn: gameState.turn,
         windForce: gameState.windForce,
         gravity: gameState.gravity,
-      });
+      }));
       return FALLBACK_SHOT;
     }
 
@@ -200,7 +200,7 @@ export class AISniperStrategy implements AIEngine {
 
     consumeHitReaction(self.tank.hitReaction);
     const fired = perturbed ? finalizeAdvancedAim(command) : choice.command;
-    logSniperDecision(sniperDecisionPayload(
+    logSniperDecision(() => sniperDecisionPayload(
       self, target, targetRule, gameState, terrainManager, attempts, offsetDirection, offset, choice,
       reactionIntensity, gaffeOccurred, fired,
     ));
