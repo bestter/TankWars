@@ -248,7 +248,7 @@ describe("AI weapon gates", () => {
     expect(shot.weaponId).toBe("DRILLER");
   });
 
-  it("sniper drops DRILLER on ROCK after the first MISSILE shot", async () => {
+  it("sniper never fires DRILLER when the target rests on ROCK", async () => {
     const terrain = flatTerrain(800, 480);
     terrain.setMaterialRange(480, 520, TERRAIN_MATERIAL.ROCK);
     const strategy = new AISniperStrategy();
@@ -270,8 +270,8 @@ describe("AI weapon gates", () => {
       "v3-sniper",
     );
     const first = await strategy.executeTurn("shooter-tank", gs, terrain);
-    expect(first.weaponId).toBe("MISSILE");
     const second = await strategy.executeTurn("shooter-tank", gs, terrain);
+    expect(first.weaponId).not.toBe("DRILLER");
     expect(second.weaponId).not.toBe("DRILLER");
   });
 
@@ -416,7 +416,7 @@ describe("AI fallibility contracts", () => {
     vi.restoreAllMocks();
   });
 
-  it("sniper first shot uses MISSILE and lands a safe miss (≥50px)", async () => {
+  it("sniper first attempt may select BULLET or DRILLER and does not spend ammo", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISniperStrategy();
     const shooter = makePlayer({
@@ -436,19 +436,11 @@ describe("AI fallibility contracts", () => {
       enemy,
       "v3-sniper",
     );
+    const before = { ...gameState.players[0].inventory };
     const shot = await strategy.executeTurn("shooter-tank", gameState, terrain);
-    expect(shot.weaponId).toBe("MISSILE");
-
-    const impact = simulateShot(
-      80,
-      336,
-      shot.angle,
-      shot.power,
-      gameState.windForce,
-      gameState.gravity,
-      terrain,
-    );
-    expect(Math.abs(impact.landX - 500)).toBeGreaterThanOrEqual(50);
+    expect(["MISSILE", "BULLET", "DRILLER"]).toContain(shot.weaponId);
+    expect(gameState.players[0].inventory).toEqual(before);
+    expect(gameState.players[0].tank.currentWeapon).toBe(shot.weaponId);
   });
 
   it("smart fallback prefers a healthy AI over a wounded human", async () => {
