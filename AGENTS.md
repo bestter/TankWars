@@ -89,6 +89,7 @@ Si l’interface ou le moteur change, vérifier manuellement le parcours concern
 
 ### IA et boutique
 
+- Le stock adverse de NUKE et THERMONUCLEAR reste toujours inconnu de l’IA locale, même après sélection ou tir, pour les humains et tous les profils IA, y compris les replis. Les exclure des menaces sans arme de remplacement ni mémoire de révélation. Préserver les armes propres, les autres menaces (dont BULLDOZER), les inventaires réels et les traces complètes protégées par `import.meta.env.DEV`.
 - Toute stratégie locale implémente `src/game/entities/ai/AIEngine.ts` et passe par `AIByProfileStrategy`, branché dans `GameCanvas.tsx`. `AIStrategy` est un contrat legacy non utilisé au runtime. Ne pas placer de stratégie dans `TankManager` ou `GameEngine`.
 - Profils : `v1-random` → `AISimpleStrategy`; `v2-heuristic` → `AIHeuristicStrategy`; `v3-sniper` → `AISniperStrategy`; `v4-smart` → `AISmartStrategy`.
 - Conserver le chargement à la demande de v2–v4 et du solveur SIMPLE, après le court-circuit de grosse gaffe. Une nouvelle IA doit être intégrée au routeur et à la configuration des profils concernés.

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { AISmartStrategy } from "../AISmartStrategy";
-import { chooseExpertPlan } from "../expertPlanner";
+import { chooseExpertPlan, type ExpertDecisionTrace } from "../expertPlanner";
 import { createExpertForecastCache, evaluateExpertShot, expertTacticalPoints, forecastPhysicalShot } from "../expertShotEvaluator";
 import type { ExpertEvaluatedAim, ExpertShotResult, ValidExpertShotResult } from "../expertShotEvaluator";
 import { aggregateExpertConsequences, type ExpertConsequences } from "../expertConsequences";
@@ -17,6 +17,7 @@ import { WEAPON_REGISTRY } from "../../../../types/weapon";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 import { TerrainManager } from "../../../engine/Terrain";
 import { createExpertDecisionAim } from "../expertDecisionAim";
+import * as shotEvaluator from "../expertShotEvaluator";
 
 function fixture() {
   const terrain = flatTerrain(800, 480);
@@ -67,6 +68,77 @@ function forecastDestruction(overrides: Partial<CombatDestructionEvent> = {}): C
   return { shotId: 1, shooterId: "self", victimId: "enemy", weaponId: "CLUSTER",
     cause: "health-zero", ...overrides };
 }
+
+describe("EXPERT nuclear knowledge", () => {
+  it.each([
+    [true, undefined], [false, "v1-random"], [false, "v2-heuristic"],
+    [false, "v3-sniper"], [false, "v4-smart"], [false, undefined], [false, "unknown"],
+  ] as const)("keeps real commands, targets, phases and threats independent of stock for human=%s profile=%s",
+    async (isHuman, profile) => {
+      const rng = vi.spyOn(random, "secureRandom");
+      const log = vi.spyOn(console, "info").mockImplementation(() => {});
+      const evaluate = vi.spyOn(shotEvaluator, "evaluateExpertShot");
+      const outcomes = [];
+      for (const inventory of [{}, { NUKE: 1 }, { NUKE: 7 }, { THERMONUCLEAR: 1 },
+        { THERMONUCLEAR: 9 }, { NUKE: 3, THERMONUCLEAR: 5 }]) {
+        const f = fixture();
+        f.enemy.isHuman = isHuman;
+        f.enemy.aiProfile = profile as typeof f.enemy.aiProfile;
+        f.enemy.inventory = inventory;
+        const before = structuredClone(f.state.players.map((player) => player.inventory));
+        rng.mockReset().mockReturnValueOnce(0.42).mockReturnValueOnce(0.75).mockReturnValue(0.99);
+        log.mockClear();
+        const command = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
+        const entry = log.mock.calls.find(([label]) => label === "[AI EXPERT] Décision")?.[1];
+        const decision: unknown = JSON.parse(String(entry));
+        expect(decision).toMatchObject({ roster: expect.arrayContaining([
+          expect.objectContaining({ id: "enemy", inventory }),
+        ]) });
+        // Omit only the deliberately different DEBUG inventory; compare all tactical fields.
+        const { roster: _roster, ...tactical } = decision as ExpertDecisionTrace & { roster: unknown };
+        void _roster;
+        outcomes.push({ command, tactical, draws: rng.mock.calls.length });
+        expect(f.state.players.map((player) => player.inventory)).toEqual(before);
+      }
+      for (const outcome of outcomes) expect(outcome).toEqual(outcomes[0]);
+      expect(evaluate.mock.calls.some((call) => call[2].id === "enemy" &&
+        (call[3] === "NUKE" || call[3] === "THERMONUCLEAR"))).toBe(false);
+    });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)("does not reveal %s after a resolved turn leaving ammunition", async (weapon) => {
+    const withStock = fixture();
+    const withoutStock = fixture();
+    withStock.enemy.inventory[weapon] = 3;
+    for (const f of [withStock, withoutStock]) f.enemy.tank.currentWeapon = weapon;
+    const strategies = [new AISmartStrategy(), new AISmartStrategy()];
+    const rng = vi.spyOn(random, "secureRandom");
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const evaluate = vi.spyOn(shotEvaluator, "evaluateExpertShot");
+    for (let turn = 0; turn < 2; turn++) {
+      const commands = [];
+      for (const [index, f] of [withStock, withoutStock].entries()) {
+        rng.mockReset().mockReturnValue(0.99);
+        commands.push(await strategies[index].executeTurn("self", f.state, f.terrain));
+      }
+      expect(commands[0]).toEqual(commands[1]);
+      if (turn === 0) {
+        // Resolve a real nuclear forecast, then model the next decision with remaining stock.
+        const shot = forecastPhysicalShot(withStock.state, withStock.terrain, withStock.enemy,
+          weapon, { angle: 45, power: 100 }, false);
+        expect(shot.complete).toBe(true);
+        withStock.enemy.inventory[weapon]!--;
+        for (const f of [withStock, withoutStock]) {
+          f.state.turn += 2;
+          f.state.localShotContext!.isFirstShotOfRound = false;
+        }
+      }
+    }
+    expect(withStock.enemy.inventory[weapon]).toBe(2);
+    expect(evaluate.mock.calls.some((call) => call[2].id === "enemy" &&
+      (call[3] === "NUKE" || call[3] === "THERMONUCLEAR"))).toBe(false);
+    expect(log).toHaveBeenCalledTimes(4);
+  });
+});
 
 describe("EXPERT #267 consequences", () => {
   it("retains the real later ground forecast that avoids collateral human fall damage at equal profit", () => {
@@ -690,8 +762,61 @@ describe("EXPERT survival and profit ordering", () => {
     return { ...f, later };
   }
 
+  for (const weapon of ["NUKE", "THERMONUCLEAR"] as const) {
+    it.each([
+      [true, undefined], [false, "v1-random"], [false, "v2-heuristic"],
+      [false, "v3-sniper"], [false, "v4-smart"], [false, undefined], [false, "unknown"],
+    ] as const)(`never simulates selected adverse ${weapon} or rolls survival for human=%s profile=%s`,
+      (isHuman, profile) => {
+        const f = fixture();
+        f.enemy.isHuman = isHuman;
+        f.enemy.aiProfile = profile as typeof f.enemy.aiProfile;
+        f.enemy.inventory = { NUKE: 3, THERMONUCLEAR: 5 };
+        f.enemy.tank.currentWeapon = weapon;
+        const before = structuredClone(f.state.players);
+        const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
+        const evaluate = vi.fn<typeof evaluateExpertShot>((_state, _terrain, shooter, id) => {
+          if (shooter.id === "self") return valid(400, 10, [], shooter.id);
+          return id === "NUKE" || id === "THERMONUCLEAR"
+            ? valid(100, 999, ["self"], shooter.id) : invalid;
+        });
+        const trace = vi.fn<(trace: ExpertDecisionTrace) => void>();
+        expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate, trace))
+          .toMatchObject({ weaponId: "MISSILE", primaryTargetId: "enemy" });
+        expect(evaluate.mock.calls.some((call) => call[2].id === "enemy" &&
+          (call[3] === "NUKE" || call[3] === "THERMONUCLEAR"))).toBe(false);
+        expect(trace.mock.calls[0][0]).toMatchObject({
+          phase: "OPTIMISER_PROFIT", threats: [], survivalRoll: undefined,
+        });
+        expect(rng).toHaveBeenCalledTimes(2);
+        expect(f.state.players).toEqual(before);
+      });
+
+    it.each(["SURVIE", "OPTIMISER_PROFIT"] as const)(`still evaluates and selects own ${weapon} in %s`, (phase) => {
+      const f = fixture();
+      f.self.inventory[weapon] = 2;
+      f.enemy.inventory = { NUKE: 3, THERMONUCLEAR: 4 };
+      const before = structuredClone(f.state.players);
+      vi.spyOn(random, "secureRandom").mockReturnValue(0);
+      const evaluate = vi.fn<typeof evaluateExpertShot>((_state, _terrain, shooter, id) => {
+        if (shooter.id === "enemy") return phase === "SURVIE" && id === "MISSILE"
+          ? valid(100, 1, ["self"], shooter.id) : invalid;
+        return id === weapon ? valid(400, 100, ["enemy"], shooter.id) : invalid;
+      });
+      const trace = vi.fn<(trace: ExpertDecisionTrace) => void>();
+      expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate, trace)?.weaponId)
+        .toBe(weapon);
+      expect(evaluate.mock.calls.some((call) => call[2].id === "self" && call[3] === weapon &&
+        call[8]?.mode === "own")).toBe(true);
+      expect(trace.mock.calls[0][0].phase).toBe(phase);
+      expect(f.state.players).toEqual(before);
+    });
+  }
+
   it("chooses the next living threat before a stronger profile and rolls once", () => {
     const f = threePlayers();
+    f.enemy.inventory = { NUKE: 5, THERMONUCLEAR: 5 };
+    f.later.inventory = { NUKE: 5, THERMONUCLEAR: 5 };
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
       targets, requireKill, firstShot) => {

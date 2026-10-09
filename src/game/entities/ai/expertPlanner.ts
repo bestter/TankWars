@@ -164,7 +164,8 @@ export function possibleExpertThreatWeapons(player: Player): WeaponId[] {
   } else {
     ids = [player.tank.currentWeapon || "MISSILE"];
   }
-  return ids.filter((id) => id !== "BULLDOZER" &&
+  // Nuclear stock stays unknown even after an opponent selects or fires it.
+  return ids.filter((id) => id !== "BULLDOZER" && id !== "NUKE" && id !== "THERMONUCLEAR" &&
     (id === "MISSILE" || (player.inventory[id] ?? 0) > 0));
 }
 
