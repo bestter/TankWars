@@ -1,4 +1,4 @@
-import { TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT, THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../combatConstants";
+import { TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT, insideTankHitbox, BOTTOM_SUPPORT_MARGIN, THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../combatConstants";
 import { secureRandom } from "../../utils/random";
 /**
  * TankWars - TankManager
@@ -22,9 +22,6 @@ import type {
 } from "../economy/shotRewards";
 import { drawTankSprite } from "../rendering/tankSprite";
 import { selectSpawnPositions } from "../round/spawnPlacement";
-
-/** Surface Y at or below this offset from canvas bottom = no support (tank sinks). */
-const BOTTOM_SUPPORT_MARGIN = 14;
 
 /** Falling damage constants: pixels of downward travel per 1 HP of damage. */
 const FALL_DAMAGE_LEVEL_HEIGHT_NORMAL = 2; // normal/slope fall
@@ -551,21 +548,12 @@ export class TankManager {
     y: number,
     ignoreOwnerId?: string,
   ): Player | null {
-    const tankWidth = TANK_HITBOX_WIDTH;
-    const tankHeight = TANK_HITBOX_HEIGHT;
-
     for (const player of this.players) {
       const tank = player.tank;
       if (tank.isDead) continue;
       if (ignoreOwnerId && player.id === ignoreOwnerId) continue;
 
-      const { x: tx, y: ty } = tank.position;
-      if (
-        x >= tx - tankWidth / 2 &&
-        x <= tx + tankWidth / 2 &&
-        y >= ty - tankHeight &&
-        y <= ty
-      ) {
+      if (insideTankHitbox(x, y, tank.position)) {
         return player;
       }
     }

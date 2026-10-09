@@ -480,6 +480,8 @@ export function useGameSession({
       dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
     }
 
+    if (gameMode === "online") tm.lockForCatchUp();
+
     const playerStats = players.reduce(
       (acc, p) => {
         if (p.isHuman) {
@@ -717,7 +719,7 @@ export function useGameSession({
       if (pending?.kind === "READY") {
         sendCombatMessage({ type: "SHOP_READY", shopEpoch: pending.shopEpoch, actionId: pending.actionId });
       } else {
-        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: 2,
+        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: 3,
           roundNumber: currentMancheRef.current, lastSeenShotId: lastSeenShotIdRef.current,
           lastAppliedShopEpoch: lastAppliedShopEpochRef.current });
       }
