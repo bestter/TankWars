@@ -21,7 +21,7 @@ import {
 } from "../../../__tests__/helpers";
 import * as random from "../../../../utils/random";
 import type { AiProfile, Player } from "../../../../types/player";
-import * as sniperAim from "../sniperAim";
+import type { TerrainManager } from "../../../engine/Terrain";
 
 type AimStrategy =
   | AISimpleStrategy
@@ -31,6 +31,17 @@ type AimStrategy =
 
 interface InspectableStrategy {
   memories: Map<string, AimMemory>;
+}
+
+interface SniperTestDouble {
+  computePrecisionShot: (
+    self: Player,
+    targetX: number,
+    targetY: number,
+    wind: number,
+    gravity: number,
+    terrain: TerrainManager,
+  ) => { angle: number; power: number };
 }
 
 const strategyFactories: ReadonlyArray<{
@@ -355,14 +366,17 @@ describe("contrats de séquence des stratégies IA", () => {
   it("SNIPER inverse seulement le côté de la tentative 2 et garde celui de la tentative 3+", async () => {
     const terrain = flatTerrain(800, 480);
     const strategy = new AISniperStrategy();
-    const solve = vi.spyOn(sniperAim, "solveSniperAim");
+    const precisionSpy = vi
+      .spyOn(
+        strategy as unknown as SniperTestDouble,
+        "computePrecisionShot",
+      )
+      .mockReturnValue({ angle: 45, power: 50 });
     const self = makeShooter("v3-sniper");
     const target = makeTarget("target", 500);
     vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
 
-    const aimedX: number[] = [];
     for (let turn = 1; turn <= 4; turn += 1) {
-      const before = solve.mock.calls.length;
       await strategy.executeTurn(
         "self-tank",
         {
@@ -372,12 +386,14 @@ describe("contrats de séquence des stratégies IA", () => {
         },
         terrain,
       );
-      const tankAim = solve.mock.calls.slice(before).find((call) => call[2] === 330);
-      expect(tankAim).toBeDefined();
-      aimedX.push(tankAim?.[1] ?? 0);
     }
 
-    expect(aimedX).toEqual([438.05, 539.975, 482, 482]);
+    expect(precisionSpy.mock.calls.map((call) => call[1])).toEqual([
+      438.05,
+      539.975,
+      482,
+      482,
+    ]);
   });
 
   it.each(advancedStrategyFactories)(
