@@ -138,15 +138,17 @@ Production uses a controlled Worker-first publication. First, [disable automatic
 
 On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
-1. runs `npm run lint` → `npm run build` → `npm run test`;
+1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking warning` → `git diff --check`;
 2. deploys the Worker with the repository's local Wrangler;
-3. polls the uncached `/api/health` for at most 60 seconds and requires protocol version `2` with minimum client version `2`;
+3. polls the uncached `/api/health` without following redirects for at most 60 seconds, requires `ok: true` and service `tankwars-api`, and checks both numeric versions against the literal constants in `src/game/online/protocol.ts` (currently `3`/`3`);
 4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
 5. deploys `dist` to the `tankwars` Pages project on `main`.
 
-Set the `WORKER_API_URL` environment variable when workers.dev URL auto-detection is not suitable. A failed Worker deploy or health gate prevents any Pages publication. The script restores its working directory and Vite environment variables on every exit.
+The script requires a unique production URL in Wrangler's deployment output. Optionally set `WORKER_API_URL` to require that it matches the deployed origin. Only HTTPS origins of the form `tankwars-api.<account>.workers.dev` on port 443 are accepted, without credentials, paths other than `/`, query parameters or fragments. Invalid configured URLs are rejected before deployment. The script runs from its own directory, uses explicit local Wrangler/configuration/artifact paths, and restores its working directory and Vite environment variables on every exit. A failed validation, Worker deploy or health gate prevents any Pages publication.
 
-For the private staging machine, run `.\deploy-staging.ps1`. It performs the same validations, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
+With the private script present, run `pwsh -NoProfile -File Scripts/test-deploy-cloudflare.ps1` to test deployment guards locally. This harness replaces native commands and the HTTP transport, shortens the probe budget, and never publishes or connects to a remote service.
+
+For the private staging machine, run `.\deploy-staging.ps1`. It runs lint, build and tests, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
 
 The repository also contains a separate [GitHub Pages workflow](./.github/workflows/deploy.yml), triggered by pushes to `main`. It builds and publishes the client to GitHub Pages; it does not deploy the Worker or perform the Cloudflare Worker-first health gate. Disabling automatic Cloudflare Pages deployments does not disable this GitHub Actions workflow.
 
