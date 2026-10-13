@@ -13,6 +13,10 @@
 
 ## Features
 
+- **Local Shot Advisor (0.9.9)** — During a stable living human turn, **Suggest a shot** uses EXPERT’s shared candidate search and physical/economic forecasts in a dedicated browser Web Worker. **SURVIVAL** is the default for each human, retained between rounds and reset for a new match. It first attempts a safe destruction of the priority lethal threat, accepting a loss: neutralization ranks opponent destructions and real HP/shield losses rather than profit. Otherwise it maximizes profit among safe shots. **MAXIMIZE_PROFIT** directly maximizes immediate net earnings, allowing a more profitable suicidal shot and preferring survival at equal profit. Outside neutralization, negative-profit paid ammunition is excluded; zero-profit shots remain admissible. Ties use opponent destructions, real losses, turn order and stable search order, without human/AI preference. EXPERT’s automatic policies and randomness remain unchanged.
+  - The result shows weapon, angle, power, targets, objective, HP/shield losses, predicted deaths (including the shooter), earnings, ammunition cost and net profit in production. **Apply aim** voluntarily replaces weapon/angle/power together; it never fires or consumes ammunition. Manual aiming stays available during calculation and does not expire advice.
+  - The advisor snapshots the full situation, uses ideal zero-offset aim and private forecast randomness, and never changes game state, AI memory or the real RNG. Only one calculation runs at a time. Changing objectives cancels it; firing, changing turns/rounds/sessions, terrain, positions, HP/shields, stock, economics or environment invalidates it. Results are checked again on arrival and application, and workers are terminated on cancellation or unmount.
+  - This is a forecast over the shared bounded search, not the best of every possible shot or a guarantee of future survival. GRENADE/CLUSTER forecasts do not predict real physical random draws. Enemy nuclear stocks remain unknown; the shooter’s own nuclear ammunition remains available. BULLDOZER is fallback-only, DRILLER keeps its ROCK veto, and incomplete forecasts or the uncertified last MISSILE are never suggested. The advisor is unavailable online, during AI/Zeus turns, falls, resolution, shops, menus or round transitions. Missing/invalid economics produces an error rather than invented profit.
 - **Destructible Heightmap Terrain & Diverse Topography** — Procedurally generated diverse terrain using multi-octaves layered sine waves, localized tactical hollows (shelters for tanks), and steep hills/ridges. Distinct terrain materials:
   - `DIRT` (Standard earth & grass with classic destruction)
   - `ROCK` (Indestructible stone wall: side blasts stop at the rock; exploding on top reflects the blast for +50% damage with unchanged radius)
@@ -180,7 +184,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.9.8** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.9.9** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 

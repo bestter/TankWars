@@ -89,6 +89,7 @@ Si l’interface ou le moteur change, vérifier manuellement le parcours concern
 
 ### IA et boutique
 
+- Conseiller local #273 : partager le planificateur, les points/arcs, les prévisions et le repli d’EXPERT avec des politiques explicites. Ne jamais appeler `AISmartStrategy.executeTurn` pour conseiller. Visée canonique à offset nul, sans mémoire, réaction, gaffe ni RNG réel. SURVIE neutralise une menace par un tir sûr, même déficitaire, puis départage sans profit par destructions/pertes adverses; sinon optimiser le profit parmi les tirs sûrs. OPTIMISER_PROFIT accepte le suicide plus rentable. Filtrer et départager dès les points/arcs; préserver les préférences et tirages d’EXPERT automatique. Le Web Worker du navigateur calcule sur copies; aucun lien avec l’IA serveur Cloudflare. Vérifier la situation à réception et application; appliquer arme/angle/puissance atomiquement sans tirer. Préférences par humain et par partie, invalidation à tout changement pertinent sauf visée manuelle, rejet des prévisions incomplètes et du dernier MISSILE non certifié.
 - Le stock adverse de NUKE et THERMONUCLEAR reste toujours inconnu de l’IA locale, même après sélection ou tir, pour les humains et tous les profils IA, y compris les replis. Les exclure des menaces sans arme de remplacement ni mémoire de révélation. Préserver les armes propres, les autres menaces (dont BULLDOZER), les inventaires réels et les traces complètes protégées par `import.meta.env.DEV`.
 - Toute stratégie locale implémente `src/game/entities/ai/AIEngine.ts` et passe par `AIByProfileStrategy`, branché dans `GameCanvas.tsx`. `AIStrategy` est un contrat legacy non utilisé au runtime. Ne pas placer de stratégie dans `TankManager` ou `GameEngine`.
 - Profils : `v1-random` → `AISimpleStrategy`; `v2-heuristic` → `AIHeuristicStrategy`; `v3-sniper` → `AISniperStrategy`; `v4-smart` → `AISmartStrategy`.
@@ -133,6 +134,7 @@ Les chemins ci-dessous sont relatifs à la racine du dépôt. Chercher les tests
 | Physique, tours, terrain, audio | `src/game/engine/` (`GameEngine.ts`, `PhysicsEngine.ts`, `projectileMotion.ts`, `bulldozerImpact.ts`, `TurnManager.ts`, `Terrain.ts`), `src/game/entities/TankManager.ts` |
 | Armes, matériaux, rendu | `src/types/weapon.ts`, `src/types/terrain.ts`, `src/game/combatConstants.ts`, `src/game/rendering/tankSprite.ts` |
 | IA, visée et achats IA | `src/game/entities/ai/` (stratégies, tactiques, `BallisticsSimulator.ts`, `bulldozerThreat.ts`, `physicalShotForecast.ts`, `aiShopHelper.ts` et tests) |
+| Conseiller de tir local | `src/game/entities/ai/shotAdvisor.ts`, `shotAdvisor.worker.ts`, `expertPolicy.ts`, `src/components/advisor/`, `TurnManager.captureAdvisorState` / `applyAdvisorCommand` |
 | Boutique et gains | `src/game/shop/`, `src/components/shop/`, `src/game/economy/`, `src/components/ShotEarningsOverlay.tsx`, `src/components/RoundSummary.tsx` |
 | Menu, noms, traduction | `src/components/MainMenu.tsx`, `src/components/playerNameUi.ts`, `src/components/playerControllerUi.ts`, `src/components/usePlayerNameValidation.ts`, `src/locales/` |
 | Lobby | `src/components/OnlineLobby.tsx`, `src/components/useOnlineLobby.ts`, `worker/src/index.ts` |

@@ -1,3 +1,4 @@
+import { ShotAdvisorPanel } from "./advisor/ShotAdvisorPanel";
 import { type RoundMap } from "../game/round/prepareRound";
 import { useTranslation } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
@@ -238,6 +239,7 @@ export function GameCanvas({
   const { t } = useTranslation();
 
   const {
+    advisor,
     canvasRef,
     state,
     CANVAS_WIDTH,
@@ -328,6 +330,9 @@ export function GameCanvas({
           onCycleWeapon={handleCycleWeapon}
           onFire={handleFire}
         />
+
+        {gameMode !== "online" && gamePhase === "COMBAT" &&
+          (!turnInfo || turnInfo.isHuman && !turnInfo.isInputLocked && !turnInfo.tanksAreFalling) && <ShotAdvisorPanel {...advisor} />}
 
         <RoundPhaseOverlay
           state={state}

@@ -1,3 +1,4 @@
+import { finalizeAdvancedAim } from "../entities/ai/aimCorruption";
 /**
  * TankWars - TurnManager
  *
@@ -484,6 +485,7 @@ export class TurnManager {
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
+    if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("button, select, input, textarea")) return;
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return;
 
@@ -757,6 +759,38 @@ export class TurnManager {
     // Arm recovery watchdog in case the settlement event is missed for any reason
     // (prevents permanent "RESOLVING..." after human shots, especially vs AI)
     this.armTurnLockSafetyWatchdog();
+  }
+
+  /** Deep, canonical human snapshot; manual aim is irrelevant to the proposal. */
+  public captureAdvisorState(): GameState | null {
+    const player = this.getCurrentPlayer();
+    if (!player?.isHuman || player.tank.isDead || player.tank.health <= 0 ||
+        this.isInputLocked || this.interRoundPaused || this.specialTurnLocked ||
+        this.catchUpLocked || this.isMatchEnded() || !this.isLocalHumanTurn() ||
+        this.tankManager.anyTankIsFalling()) return null;
+    const state: GameState = structuredClone({
+      phase: "COMBAT", players: [...this.tankManager.getPlayers()],
+      currentPlayerIndex: this.currentPlayerIndex, turn: this.turnNumber,
+      windForce: this.currentWindForce, gravity: this.currentGravity,
+      roundNumber: this.currentRoundNumber, localShotContext: this.localShotContextProvider?.(),
+    });
+    const tank = state.players[state.currentPlayerIndex].tank;
+    tank.angle = 45;
+    tank.power = 50;
+    tank.currentWeapon = "MISSILE";
+    return state;
+  }
+
+  /** Validate everything before changing anything; selecting the current weapon succeeds. */
+  public applyAdvisorCommand(command: FireCommand): boolean {
+    if (!this.captureAdvisorState() || !ALL_WEAPON_IDS.includes(command.weaponId) ||
+        !Number.isFinite(command.angle) || finalizeAdvancedAim(command).angle !== command.angle ||
+        !Number.isInteger(command.power) || command.power < 1 || command.power > 99) return false;
+    const player = this.getCurrentPlayer();
+    if (!player || (command.weaponId !== "MISSILE" && (player.inventory[command.weaponId] ?? 0) <= 0)) return false;
+    Object.assign(player.tank, { angle: command.angle, power: command.power, currentWeapon: command.weaponId });
+    this.notifyHudUpdate();
+    return true;
   }
 
   /** Sélectionne une arme pour le joueur humain courant (si munitions disponibles; MISSILE always selectable). */
