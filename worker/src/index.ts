@@ -88,6 +88,27 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
+
+      // IP-based rate limiting to prevent DoS via mass room creation
+      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      const ipRateLimitKey = `rate_limit_${ip}`;
+      const ipRateLimitId = env.GAME_ROOM.idFromName(ipRateLimitKey);
+      const ipRateLimitStub = env.GAME_ROOM.get(ipRateLimitId);
+
+      // Check rate limit via DO
+      const rateLimitResp = await ipRateLimitStub.fetch('https://internal/rate-limit', {
+        method: 'POST',
+      });
+
+      if (!rateLimitResp.ok) {
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+          status: 429,
+          headers: {
+            'content-type': 'application/json',
+            'Retry-After': '60'
+          },
+        }));
+      }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // Normalize the external payload before forwarding the room configuration to the DO.
       let body: Record<string, unknown> = {};

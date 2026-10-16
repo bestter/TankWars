@@ -174,3 +174,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** Weak token generation for game invite links in `worker/src/game-room.ts`. The custom `makeToken()` function used a 32-character alphabet and 6 bytes of entropy, resulting in a predictable sequence.
 **Learning:** This function was used as the secret for users to join a game room slot, effectively providing authorization for a participant. Short, weak tokens are susceptible to brute force attacks where a malicious actor could intercept or guess an active game room's invitation token.
 **Prevention:** Ensure functions acting as secrets, invite links, and authorization tokens use secure standard methods for generating identifiers, such as standard UUIDv4 by utilizing `crypto.randomUUID()`. Do not reinvent custom cryptographically-weak generators for authorization.
+
+## 2026-10-18 - [DoS via Missing Rate Limiting on Room Creation]
+**Vulnerability:** The `/api/rooms` endpoint in `worker/src/index.ts` allowed unauthenticated users to create an unlimited number of game rooms, each backed by a stateful Durable Object.
+**Learning:** Cloudflare Workers do not have built-in rate limiting unless explicitly configured. Exposing an endpoint that provisions stateful, paid resources (like Durable Objects) without rate limiting makes the application highly susceptible to Denial of Service (DoS) and resource exhaustion attacks.
+**Prevention:** Always implement rate limiting on endpoints that provision resources or perform expensive operations. In a Cloudflare Worker environment, this can be achieved using an IP-based identifier to map requests to a dedicated Durable Object namespace to track and limit request frequency.
