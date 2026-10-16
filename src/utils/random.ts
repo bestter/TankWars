@@ -67,3 +67,12 @@ export function seedFromRoomRound(roomId: string, roundNumber: number): number {
   }
   return acc >>> 0;
 }
+
+/** Pure per-shot seed; never consumes global or Zeus randomness. */
+export function seedFromRoomShot(roomId: string, roundNumber: number, shotId: number): number {
+  let seed = 2166136261;
+  for (const character of JSON.stringify([roomId, roundNumber, shotId])) {
+    seed = Math.imul(seed ^ character.charCodeAt(0), 16777619);
+  }
+  return seed >>> 0;
+}

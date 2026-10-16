@@ -1,3 +1,4 @@
+import { isCombatEvent } from "../../game/online/combatCatchUp";
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine, ResolvedShotPreview } from "../../game/engine/GameEngine";
 import type { AuthoritativeShotQueue } from "../../game/online/authoritativeShotQueue";
@@ -7,9 +8,7 @@ import {
   ONLINE_PROTOCOL_VERSION,
   readProtocolVersion,
   type FireRejectedMessage,
-  type ShotMessage,
 } from "../../game/online/protocol";
-import type { ZeusStrikeResult } from "../../game/zeus/zeusDomain";
 import type { GamePhase } from "../../types/game";
 import type { Player } from "../../types/player";
 import type {
@@ -35,6 +34,8 @@ export interface CombatMessageContext {
   readonly applyFireRejection: (message: FireRejectedMessage) => void;
   readonly scheduleTransition: (item: DeferredAuthoritativeTransition) => void;
   readonly submitShotEarnings: (preview: ResolvedShotPreview) => void;
+  readonly applyEconomicResult?: (message: { economicRevision: number; roundEarningsByPlayer: Record<string, number>; balances: Array<{ playerId: string; money: number }> }) => void;
+  readonly deferControl?: (message: unknown) => void;
   readonly syncWireEconomy: (value: unknown) => void;
   readonly buildOverlayAwards: (
     awards: ReadonlyArray<{ playerId: string; amount: number }>,
@@ -63,6 +64,10 @@ export function dispatchCombatMessage(
     });
   };
 
+  if (strictMessage && (strictMessage.type === "STATE_UPDATE" || strictMessage.type === "ZEUS_STATE") && typeof msg.roundNumber === "number" && msg.roundNumber !== engine.getInitialRoundMap()?.roundNumber) return;
+
+  if (strictMessage && (strictMessage.type === "STATE_UPDATE" || strictMessage.type === "ZEUS_STATE" || strictMessage.type === "GAME_START") && typeof msg.eventSequence === "number" && msg.eventSequence < shotQueue.processedEventSequence) return;
+
   if (strictMessage?.type === "PROTOCOL_MISMATCH") {
     applyProtocolMismatch(strictMessage.receivedVersion);
     return;
@@ -87,38 +92,21 @@ export function dispatchCombatMessage(
     console.log(
       `[Game] Received GAME_START: currentPlayerIndex=${strictMessage.currentPlayerIndex}`,
     );
-    tm.syncTurn(strictMessage.currentPlayerIndex);
-    engine.setWindForce(strictMessage.map.wind);
-    ctx.syncWireEconomy(msg.players);
+
   }
 
-  if (strictMessage?.type === "SHOT") {
-    shotQueue.enqueue(
-      [strictMessage],
-      strictMessage.slot === ctx.localSlotNum ? "LIVE_LOCAL" : "LIVE_REMOTE",
-    );
+  if (isCombatEvent(strictMessage)) {
+    shotQueue.enqueueCombat([strictMessage], strictMessage.type === "SHOT" && strictMessage.slot === ctx.localSlotNum ? "LIVE_LOCAL" : "LIVE_REMOTE");
+    return;
   }
-
-  if (strictMessage?.type === "SHOT_CATCH_UP") {
-    shotQueue.setCatchUpActiveShotId(strictMessage.activeShotId);
-    const catchUpMode = (message: ShotMessage) =>
-      message.shotId === strictMessage.activeShotId
-        ? ("ACTIVE_RECOVERY" as const)
-        : ("CATCH_UP" as const);
-    shotQueue.enqueue(strictMessage.shots, catchUpMode);
-    if (strictMessage.lastFireResult?.type === "FIRE_REJECTED") {
-      ctx.applyFireRejection(strictMessage.lastFireResult);
-    } else if (strictMessage.lastFireResult?.type === "SHOT") {
-      shotQueue.enqueue([strictMessage.lastFireResult], catchUpMode);
-    }
-    if (
-      strictMessage.shots.length === 0 &&
-      strictMessage.activeShotId === null
-    ) {
-      tm.unlockAfterCatchUp();
-    }
+  if (strictMessage?.type === "EARNINGS_REJECTED") {
+    ctx.dispatch({ type: "SET_NETWORK_ERROR", key: `earnings_rejected_${strictMessage.reason.toLowerCase()}` });
+    return;
   }
-
+  if (strictMessage && (strictMessage.type === "STATE_UPDATE" || strictMessage.type === "ZEUS_STATE" || strictMessage.type === "GAME_START") && (shotQueue.replayActiveNow || shotQueue.pendingCount > 0)) {
+    ctx.deferControl?.(strictMessage);
+    return;
+  }
   if (strictMessage?.type === "FIRE_REJECTED") {
     ctx.applyFireRejection(strictMessage);
   }
@@ -137,17 +125,16 @@ export function dispatchCombatMessage(
     }
   }
 
-  if (
-    strictMessage?.type === "SHOT_EARNINGS_APPLIED" &&
-    strictMessage.shotId > ctx.lastAppliedShotIdRef.current
-  ) {
-    engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
-    ctx.lastAppliedShotIdRef.current = strictMessage.shotId;
-    if (shotQueue.activeServerShotId === strictMessage.shotId) {
+  if (strictMessage?.type === "SHOT_EARNINGS_APPLIED") {
+    if (ctx.applyEconomicResult) ctx.applyEconomicResult(strictMessage);
+    else engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
+    if (shotQueue.activeServerShotId === strictMessage.shotId && !shotQueue.replayActiveNow) {
       shotQueue.clearActiveServerShotId();
     }
     shotQueue.noteCatchUpShotApplied(strictMessage.shotId);
     ctx.pendingShotPreviewsRef.current.delete(strictMessage.shotId);
+    if (strictMessage.shotId <= ctx.lastAppliedShotIdRef.current) return;
+    ctx.lastAppliedShotIdRef.current = strictMessage.shotId;
     const roster = [...engine.getTankManager().getPlayers()];
     ctx.dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = ctx.buildOverlayAwards(strictMessage.awards, roster);
@@ -160,41 +147,6 @@ export function dispatchCombatMessage(
           displayedAt: Date.now(),
         },
       });
-    }
-  }
-
-  if (strictMessage?.type === "ZEUS_APPOINTED") {
-    const roster = engine.getTankManager().getPlayers();
-    const rotationPlayerIds = strictMessage.rotationSlots
-      .map((rotationSlot) => roster[rotationSlot]?.id)
-      .filter((playerId): playerId is string => typeof playerId === "string");
-    engine.applyRemoteZeusAppointment({
-      appointmentId: strictMessage.appointmentId,
-      zeusId: strictMessage.zeusId,
-      rotationPlayerIds,
-    });
-    tm.syncTurn(strictMessage.zeusSlot);
-  }
-
-  if (strictMessage?.type === "ZEUS_STRIKE") {
-    engine.startRemoteZeusStrike(strictMessage, strictMessage.resolveAt);
-  }
-
-  if (strictMessage?.type === "ZEUS_STRIKE_APPLIED") {
-    const result: ZeusStrikeResult = {
-      strikeId: strictMessage.strikeId,
-      zeusId: strictMessage.zeusId,
-      targetId: strictMessage.targetId,
-      award: strictMessage.award,
-      balances: strictMessage.balances,
-      roundOutcome: strictMessage.roundOutcome,
-    };
-    engine.applyRemoteZeusStrikeResult(result);
-    if (
-      strictMessage.nextPlayerIndex !== null &&
-      ctx.gamePhaseRef.current === "COMBAT"
-    ) {
-      tm.syncTurn(strictMessage.nextPlayerIndex);
     }
   }
 
@@ -213,14 +165,10 @@ export function dispatchCombatMessage(
         player.tank.isDead = true;
       }
     }
-    if (strictMessage.activeStrike) {
-      engine.startRemoteZeusStrike(
-        strictMessage.activeStrike,
-        strictMessage.activeStrike.resolveAt,
-      );
-    }
     if (ctx.gamePhaseRef.current === "COMBAT" && !isReplayingShots) {
+      tm.releaseSpecialTurn();
       tm.syncTurn(strictMessage.currentPlayerIndex);
+      if (strictMessage.activeStrike || roster[strictMessage.currentPlayerIndex]?.id === strictMessage.activeZeusId) tm.lockSpecialTurn();
     }
     ctx.dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
   }
@@ -234,6 +182,7 @@ export function dispatchCombatMessage(
       !tm.isInterRoundPaused()
     ) {
       tm.syncTurn(strictMessage.currentPlayerIndex);
+      if (engine.getTankManager().getPlayers()[strictMessage.currentPlayerIndex]?.id === engine.getActiveZeusId()) tm.lockSpecialTurn();
       if (strictMessage.players) ctx.syncWireEconomy(strictMessage.players);
       if (typeof msg.wind === "number" && Number.isFinite(msg.wind)) {
         engine.setWindForce(msg.wind);
@@ -242,7 +191,6 @@ export function dispatchCombatMessage(
   }
 
   if (strictMessage?.type === "SHOP_STATE") {
-    shotQueue.purgeCompletedRound(strictMessage.roundNumber);
     ctx.scheduleTransition({
       kind: "SHOP_STATE",
       message: strictMessage,
@@ -270,7 +218,6 @@ export function dispatchCombatMessage(
   }
 
   if (strictMessage?.type === "SHOP_FINISH") {
-    shotQueue.purgeCompletedRound(strictMessage.completedRoundNumber);
     ctx.scheduleTransition({
       kind: "SHOP_FINISH",
       message: strictMessage,

@@ -1,6 +1,5 @@
 import { secureRandom } from "../../../utils/random";
 import type { GameState } from "../../../types/game";
-import type { Player } from "../../../types/player";
 import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
@@ -19,7 +18,7 @@ import { chooseExpertPlan, ordinaryExpertTarget, type ExpertDecisionTrace } from
 import { createExpertDecisionAim } from "./expertDecisionAim";
 import { maybeGaffe } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
-import { shouldPickBulldozer } from "./bulldozerTactics";
+import { chooseExpertTacticalWeapon } from "./expertTacticalWeapon";
 import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 
 type SmartMemory = AimMemory;
@@ -69,7 +68,7 @@ export class AISmartStrategy implements AIEngine {
 
     const fallback = plan ? undefined : chooseExpertFallback(
       gameState, terrainManager, self, target, adjustWeaponForMaterial(
-        this.chooseTacticalWeapon(self, target, terrainManager, gameState),
+        chooseExpertTacticalWeapon(self, target, terrainManager, gameState),
         terrainManager.getMaterialAt(target.tank.position.x),
         (id) => (self.inventory[id] ?? 0) > 0,
       ), cache, aim.forTarget(target.id),
@@ -113,10 +112,16 @@ export class AISmartStrategy implements AIEngine {
     const finalAim = reactionIntensity > 0 || gaffeOccurred
       ? finalizeAdvancedAim(command) : choice.command;
     if (import.meta.env.DEV) {
+      const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
+      const conservationReason = fallback?.conservationReason;
       console.info("[AI EXPERT] Décision", JSON.stringify({
         shooterId: self.id,
         round: gameState.roundNumber,
         turn: gameState.turn,
+        // Keep the economic explanation ahead of roster and large forecast tables.
+        rejectedUnprofitableShots,
+        conservationReason,
+        fallbackSelectionReason: fallback?.selectionReason,
         currentPlayerIndex: gameState.currentPlayerIndex,
         windForce: gameState.windForce,
         gravity: gameState.gravity,
@@ -132,6 +137,7 @@ export class AISmartStrategy implements AIEngine {
           inventory: { ...player.inventory },
         })),
         ...decisionTrace,
+        selectionReason: plan ? decisionTrace?.selectionReason : fallback?.selectionReason,
         realAim: {
           weaponId,
           choiceKind: choice.kind,
@@ -139,7 +145,9 @@ export class AISmartStrategy implements AIEngine {
           tacticalPoint: point,
           policy,
           materialFallback: fallback && { useful: fallback.useful, profit: fallback.forecast?.profit },
-          searches: cache.search.size, physicalForecasts: cache.physics.size, ...cache.diagnostics,
+          searches: cache.search.size, physicalForecasts: cache.physics.size,
+          ownProposals: cache.diagnostics?.ownProposals, adverseProposals: cache.diagnostics?.adverseProposals,
+          drillerRockRejections: cache.diagnostics?.drillerRockRejections,
           pointOrigin: "origin" in point ? point.origin : "historical",
           predictedImpactMaterials: decisionTrace?.selected?.predictedImpacts?.map((hit) => ({
             x: hit.x, material: terrainManager.getMaterialAt(hit.x),
@@ -166,41 +174,6 @@ export class AISmartStrategy implements AIEngine {
     }
     consumeHitReaction(self.tank.hitReaction);
     return { ...finalAim, weaponId };
-  }
-
-  private chooseTacticalWeapon(
-    self: Player,
-    target: Player,
-    terrain: TerrainManager,
-    gameState: GameState,
-  ): WeaponId {
-    const has = (id: WeaponId) => (self.inventory[id] ?? 0) > 0;
-    const sx = self.tank.position.x;
-    const tx = target.tank.position.x;
-    const startX = Math.min(sx, tx);
-    const endX = Math.max(sx, tx);
-    const step = (endX - startX) / 10;
-    let maximumTerrainHeight = 0;
-    for (let index = 1; index < 10; index += 1) {
-      const height = terrain.getHeightAt(startX + index * step);
-      maximumTerrainHeight = Math.max(maximumTerrainHeight, terrain.height - height);
-    }
-    const selfHeight = terrain.height - self.tank.position.y;
-    const targetHeight = terrain.height - target.tank.position.y;
-    const isHidden =
-      maximumTerrainHeight > Math.max(selfHeight, targetHeight) + 35;
-    if (isHidden && has("GRENADE")) return "GRENADE";
-
-    const neighbors = gameState.players.filter(
-      (player) =>
-        player.id !== self.id &&
-        !player.tank.isDead &&
-        Math.abs(player.tank.position.x - tx) < 80,
-    ).length;
-    if (neighbors >= 2 && has("CLUSTER")) return "CLUSTER";
-    if (isHidden && has("DRILLER")) return "DRILLER";
-    if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
-    return "MISSILE";
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {

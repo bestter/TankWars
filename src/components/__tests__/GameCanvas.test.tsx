@@ -9,21 +9,30 @@ import type { Player } from "../../types/player";
 import type { WeaponId } from "../../types/weapon";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
 import { createEmptyShopSession } from "../gameCanvasReducer";
+import fr from "../../locales/fr.json";
+import en from "../../locales/en.json";
+
+const language = vi.hoisted(() => ({ current: "fr" }));
 
 // Mock react-i18next
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) => {
-      if (options && options.name !== undefined) {
-        return `${key}_${options.name}`;
-      }
-      return key;
-    },
-  }),
-  Trans: ({ i18nKey, values }: { i18nKey: string; values?: Record<string, unknown> }) => (
-    <span data-testid="trans-component">{i18nKey} {values ? JSON.stringify(values) : ""}</span>
-  ),
-}));
+vi.mock("react-i18next", async () => {
+  const fr = (await import("../../locales/fr.json")).default;
+  const en = (await import("../../locales/en.json")).default;
+  return {
+    useTranslation: () => ({
+      t: (key: string, options?: Record<string, unknown>) => {
+        if (key === "round_new_game_required") return (language.current === "fr" ? fr : en).round_new_game_required;
+        if (options && options.name !== undefined) {
+          return `${key}_${options.name}`;
+        }
+        return key;
+      },
+    }),
+    Trans: ({ i18nKey, values }: { i18nKey: string; values?: Record<string, unknown> }) => (
+      <span data-testid="trans-component">{i18nKey} {values ? JSON.stringify(values) : ""}</span>
+    ),
+  };
+});
 
 // Mock useGameSession to control state & handlers cleanly
 vi.mock("../useGameSession", () => ({
@@ -102,6 +111,7 @@ describe("GameCanvas component", () => {
   let originalMatchMedia: typeof window.matchMedia;
 
   beforeEach(() => {
+    language.current = "fr";
     vi.clearAllMocks();
     cleanup();
 
@@ -132,6 +142,7 @@ describe("GameCanvas component", () => {
     };
 
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: defaultSessionState,
       CANVAS_WIDTH: 800,
@@ -159,6 +170,7 @@ describe("GameCanvas component", () => {
 
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -228,6 +240,7 @@ describe("GameCanvas component", () => {
 
   it("renders RoundSummary during SUMMARY phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -256,6 +269,7 @@ describe("GameCanvas component", () => {
 
   it("renders Celebration banner during CELEBRATION phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -275,6 +289,7 @@ describe("GameCanvas component", () => {
 
   it("renders WeaponShop when human player is shopping in SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -296,6 +311,7 @@ describe("GameCanvas component", () => {
 
   it("renders AI shopping overlay when AI is shopping in local SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -317,6 +333,7 @@ describe("GameCanvas component", () => {
 
   it("waits for the authoritative shop state online", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, gamePhase: "SHOP" },
       CANVAS_WIDTH: 800,
@@ -333,6 +350,7 @@ describe("GameCanvas component", () => {
 
   it("renders the local player's authoritative shop online", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -359,6 +377,7 @@ describe("GameCanvas component", () => {
     [true, "shop_waiting_others"],
   ])("renders the online waiting state when localShopDone is %s", (localShopDone, expected) => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -382,6 +401,7 @@ describe("GameCanvas component", () => {
 
   it("renders GameOverOverlay during GAME_OVER phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -403,6 +423,7 @@ describe("GameCanvas component", () => {
 
   it("renders New Game button when showNewGameButton is true and handles click", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -431,6 +452,7 @@ describe("GameCanvas component", () => {
 
   it("renders fireRejection alert toast during COMBAT phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -454,6 +476,7 @@ describe("GameCanvas component", () => {
 
   it("renders a blocking protocol mismatch overlay", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -474,5 +497,34 @@ describe("GameCanvas component", () => {
     expect(
       screen.getByRole("button", { name: "protocol_mismatch_refresh" }),
     ).toBeDefined();
+  });
+
+  it.each(["fr", "en"])("shows the incompatible game format in %s and returns to menu", (locale) => {
+    language.current = locale;
+    const onReturnToMenu = vi.fn();
+    vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      canvasRef: { current: null },
+      state: { ...defaultSessionState, roundPreparationError: "NEW_GAME_REQUIRED" },
+      CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
+      shopDisplayPlayer: null, localShopDone: false, ...mockHandlers,
+    });
+    render(<GameCanvas onReturnToMenu={onReturnToMenu} />);
+    expect(screen.getByRole("alert").textContent).toBe((locale === "fr" ? fr : en).round_new_game_required);
+    expect(screen.queryByRole("button", { name: "btn_retry" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "btn_menu" }));
+    expect(onReturnToMenu).toHaveBeenCalledOnce();
+  });
+
+  it("keeps complete catch-up retry available on a network error", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      canvasRef: { current: null }, state: { ...defaultSessionState, networkError: "round_preparation_failed" },
+      CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
+      shopDisplayPlayer: null, localShopDone: false, ...mockHandlers,
+    });
+    render(<GameCanvas />);
+    fireEvent.click(screen.getByRole("button", { name: "btn_retry" }));
+    expect(mockHandlers.retryRoundPreparation).toHaveBeenCalledOnce();
   });
 });
