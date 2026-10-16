@@ -361,6 +361,7 @@ export class TerrainManager {
   /**
    * Creuse un cratère dans le terrain :
    * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au rayon nominal (1.0x) lorsque canCarveRock est actif.
+   *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
    * - Multiplie le creusement par SOFT_TERRAIN_DESTRUCTION_MULTIPLIER sur les colonnes SOFT.
    * - Creuse normalement sur les colonnes DIRT.
    */
@@ -676,6 +677,7 @@ export class TerrainManager {
   /**
    * Creuse un cratère avec transition progressive entre matériaux :
    * - ROCK : préservé intact par défaut, ou creusé au rayon nominal (1.0x) si canCarveRock est vrai.
+   *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
    * - SOFT / DIRT : la friabilité s'interpole en douceur (comme si la terre était mêlée à du sable),
    *   produisant un cratère organique et continu sans falaise artificielle.
    */

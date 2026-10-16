@@ -639,10 +639,10 @@ export class TankManager {
 
   /**
    * Contrat local NUKE / THERMONUCLEAR (#302), uniquement lorsque localMatch === true.
-   * Qualifie le coup direct sur la hitbox 24×15, puis applique une seule fois
-   * les dégâts de projectile aux positions d'impact, sur le terrain déjà creusé.
-   * Les chutes des survivants viennent ensuite. Un tank déjà mort ne reçoit pas
-   * d'impulsion. Un survivant qualifié garde le diviseur 4 pour ses PV de chute.
+   * Qualifie d'abord le coup direct (hitbox 24×15), puis applique une seule fois
+   * les dégâts de projectile sur le terrain déjà creusé, avant toute chute.
+   * Les chutes viennent ensuite. Un tank déjà mort de l'explosion ne reçoit pas
+   * d'impulsion. Un survivant qualifié conserve le diviseur 4 pour ses PV de chute.
    */
   public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
     const {
