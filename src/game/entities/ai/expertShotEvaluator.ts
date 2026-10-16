@@ -1,3 +1,4 @@
+import { advisorAdmissible, compareAdvisorOutcomes, type AdvisorPolicy } from "./expertPolicy";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
@@ -192,7 +193,7 @@ const INVALID: ExpertShotResult = {
 export type ExpertEvaluationMode = "own" | "adverse";
 export type ExpertEvaluationContext = { readonly mode: "adverse" } |
   { readonly mode: "own"; readonly aim: ExpertTargetAim;
-    readonly selectionPolicy?: "SURVIE" | "OPTIMISER_PROFIT" };
+    readonly selectionPolicy?: "SURVIE" | "OPTIMISER_PROFIT"; readonly advisor?: AdvisorPolicy };
 
 /** Search and physical caches belong to one decision, including its ordinary fallback. */
 function* expertProposals(
@@ -295,12 +296,15 @@ export function evaluateExpertShot(
       pointOrder,
       forecast,
     };
+    const advisor = context.mode === "own" ? context.advisor : undefined;
+    if (advisor && !advisorAdmissible(advisor, weaponId, candidate.profit, candidate.shooterDestroyed)) continue;
     const optimizeProfit = context.mode === "own" && context.selectionPolicy === "OPTIMISER_PROFIT";
     const survivalComparison = Number(candidate.shooterDestroyed) - Number(best.shooterDestroyed);
     const profitComparison = best.profit - candidate.profit;
     if (!isValidExpertShot(best) ||
-        ((optimizeProfit ? profitComparison || survivalComparison : survivalComparison || profitComparison) ||
-          compareExpertConsequences(candidate, best) || candidate.pointOrder - best.pointOrder) < 0) {
+        ((advisor ? compareAdvisorOutcomes(candidate, best, advisor) :
+          (optimizeProfit ? profitComparison || survivalComparison : survivalComparison || profitComparison) ||
+          compareExpertConsequences(candidate, best)) || candidate.pointOrder - best.pointOrder) < 0) {
       best = candidate;
     }
   }
@@ -330,6 +334,7 @@ export function chooseExpertFallback(
   state: GameState, terrain: TerrainManager, self: Player, target: Player,
   ordinary: WeaponId, cache: ExpertForecastCache,
   aim: ExpertTargetAim,
+  advisor?: AdvisorPolicy,
 ): ExpertFallbackChoice {
   const economic = state.localShotContext !== undefined;
   const choices: (Extract<ExpertFallbackChoice, { kind: "evaluated" }> & { insertionIndex: number })[] = [];
@@ -339,12 +344,13 @@ export function chooseExpertFallback(
     if ((weaponId !== "MISSILE" && (self.inventory[weaponId] ?? 0) <= 0) ||
       (weaponId === "DRILLER" && terrain.getMaterialAt(target.tank.position.x) === TERRAIN_MATERIAL.ROCK)) continue;
     for (const proposal of expertProposals(
-      state, terrain, self, weaponId, [target], state.localShotContext?.isFirstShotOfRound ?? false, cache, { mode: "own", aim },
+      state, terrain, self, weaponId, [target], state.localShotContext?.isFirstShotOfRound ?? false, cache, { mode: "own", aim, advisor },
     )) {
       const { point, forecast } = proposal;
       if (!forecast.complete) continue;
       const shooterDestroyed = !forecastSurvives(forecast, self.id, cache);
       const useful = hasPhysicalEffect(forecast, self, victims);
+      if (advisor && (forecast.profit === null || !advisorAdmissible(advisor, weaponId, forecast.profit, shooterDestroyed))) continue;
       if (economic) {
         if (forecast.profit === null) continue;
         if (weaponId !== "MISSILE" && forecast.profit < 0) {
@@ -363,6 +369,10 @@ export function chooseExpertFallback(
   choices.sort((a, b) => {
     const left = a.forecast;
     const right = b.forecast;
+    if (advisor && left.profit !== null && right.profit !== null) return compareAdvisorOutcomes(
+      { ...left, profit: left.profit, shooterDestroyed: !forecastSurvives(left, self.id, cache) },
+      { ...right, profit: right.profit, shooterDestroyed: !forecastSurvives(right, self.id, cache) }, advisor,
+    ) || a.insertionIndex - b.insertionIndex;
     return (economic && left.profit !== null && right.profit !== null
       ? right.profit - left.profit ||
         Number(!forecastSurvives(left, self.id, cache)) - Number(!forecastSurvives(right, self.id, cache))

@@ -1,7 +1,7 @@
 {
   "name": "bestters-tankwars",
   "private": true,
-  "version": "0.9.7",
+  "version": "0.9.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -52,7 +52,7 @@
   },
   "allowScripts": {
     "msgpackr-extract@3.0.4": true,
-    "esbuild@0.28.1": true,
-    "workerd@1.20261006.1": true
+    "workerd@1.20261006.1": true,
+    "esbuild@0.28.2": true
   }
 }

@@ -1,3 +1,4 @@
+import { useShotAdvisor } from "./advisor/useShotAdvisor";
 import { type RoundMap } from "../game/round/prepareRound";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
@@ -193,6 +194,8 @@ export function useGameSession({
     () => requireInitialPlayerCount(matchStartRoster(initialPlayers).length),
   );
   const initialPlayerCountRef = useRef(initialPlayerCount);
+
+  const advisor = useShotAdvisor(engineRef, gamePhaseRef, gameMode, initialPlayerCountRef);
 
   // Timer for round celebration fireworks (10s auto-advance or skip with SPACE)
   const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -652,6 +655,7 @@ export function useGameSession({
   };
 
   const handleNewGameFromSummary = (): void => {
+    advisor.reset();
     if (gameMode === "online") {
       startShopPhase(shopRoundHost);
       return;
@@ -690,6 +694,7 @@ export function useGameSession({
   });
 
   const handleNewGame = () => {
+    advisor.reset();
     const engine = engineRef.current;
     if (!engine) return;
 
@@ -766,6 +771,7 @@ export function useGameSession({
   };
 
   return {
+    advisor,
     canvasRef,
     state,
     CANVAS_WIDTH,

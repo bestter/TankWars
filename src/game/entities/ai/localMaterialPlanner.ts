@@ -33,19 +33,17 @@ export function hasPhysicalEffect(forecast: PhysicalResolution, shooter: Player,
     event.victimId !== shooter.id && victimIds.has(event.victimId)));
 }
 
-/** Fixed-order local tactics; no rewards, memory mutation, or live RNG. */
+/** Fixed-order OK tactics. SNIPER uses chooseSniperPhysicalShot instead. */
 export function chooseLocalMaterialShot(
-  profile: "v2-heuristic" | "v3-sniper", self: Player, target: Player, state: GameState,
-  terrain: TerrainManager, ordinaryWeapon: WeaponId, attempts: number, solve: MaterialSolver,
+  profile: "v2-heuristic", self: Player, target: Player, state: GameState,
+  terrain: TerrainManager, ordinaryWeapon: WeaponId, solve: MaterialSolver,
 ): LocalMaterialChoice {
   const material = terrain.getMaterialAt(target.tank.position.x);
   const has = (weapon: WeaponId) => weapon === "MISSILE" || (self.inventory[weapon] ?? 0) > 0;
   const ordinary = ordinaryWeapon === "DRILLER" && material === TERRAIN_MATERIAL.ROCK ? "MISSILE" : ordinaryWeapon;
-  const firstSniper = profile === "v3-sniper" && attempts === 1;
-  const promote = !firstSniper && ordinary === "MISSILE" && material === TERRAIN_MATERIAL.SOFT && has("DRILLER");
-  const weapons: WeaponId[] = firstSniper ? ["MISSILE"] : [ordinary];
-  if (!firstSniper && has("DRILLER") && (profile === "v3-sniper"
-    ? material !== TERRAIN_MATERIAL.ROCK : material === TERRAIN_MATERIAL.SOFT)) {
+  const promote = ordinary === "MISSILE" && material === TERRAIN_MATERIAL.SOFT && has("DRILLER");
+  const weapons: WeaponId[] = [ordinary];
+  if (has("DRILLER") && material === TERRAIN_MATERIAL.SOFT) {
     if (promote) weapons.unshift("DRILLER");
     else weapons.push("DRILLER");
   }
