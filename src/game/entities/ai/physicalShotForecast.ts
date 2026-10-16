@@ -68,10 +68,12 @@ function finishResolution(
 export function resolvePhysicalShot(
   state: GameState, terrain: TerrainManager, shooter: Player, weaponId: WeaponId,
   command: { angle: number; power: number },
+  options?: { localMatch?: boolean },
 ): PhysicalResolution {
   const resolution = createResolution(state, terrain, shooter, weaponId);
   const { tanks, copiedTerrain, hits } = resolution;
   const physics = new PhysicsEngine(() => 0.5, false);
+  physics.setLocalMatch(options?.localMatch ?? true);
   physics.onProjectileHit = (event) => hits.push(event);
   const launch = launchFromBarrel(shooter.tank.position.x, shooter.tank.position.y, command.angle);
   physics.launchProjectile(launch.x, launch.y, command.angle, command.power, weaponId,
@@ -83,7 +85,11 @@ export function resolvePhysicalShot(
     physics.updateProjectiles(PHYSICS_DT, state.gravity, state.windForce, copiedTerrain, tanks);
     tanks.applyGravity(PHYSICS_DT, copiedTerrain);
     tanks.checkTankBurial(copiedTerrain);
-    if (!physics.hasActiveProjectiles() && !tanks.anyTankIsFalling()) {
+    if (
+      !physics.hasActiveProjectiles() &&
+      !tanks.anyTankIsFalling() &&
+      !tanks.hasPendingDeferredBlasts()
+    ) {
       complete = true;
       break;
     }

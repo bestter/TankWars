@@ -57,6 +57,8 @@ export interface ExplosionDamageOptions {
   terrain?: TerrainManager;
   shotId?: number;
   munitionId?: number;
+  canCarveRock?: boolean;
+  directHitTankIds?: ReadonlySet<string>;
 }
 
 /** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
@@ -84,6 +86,9 @@ export class TankManager {
 
   /** Provenance du tir actif utilisée pour attribuer les chutes et morts différées. */
   private fallAttributions: Map<string, FallAttribution> = new Map();
+
+  /** Souffles nucléaires locaux différés jusqu'à la fin des chutes et enterrements (#302). */
+  private pendingDeferredBlasts: ExplosionDamageOptions[] = [];
 
   /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
    *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
@@ -270,10 +275,31 @@ export class TankManager {
     for (const attribution of this.fallAttributions.values()) {
       if (attribution.shotId === previousShotId) attribution.shotId = shotId;
     }
+    for (const pending of this.pendingDeferredBlasts) {
+      if (pending.shotId === previousShotId) pending.shotId = shotId;
+    }
   }
 
   public clearShotAttribution(): void {
     this.fallAttributions.clear();
+    this.pendingDeferredBlasts.length = 0;
+  }
+
+  public hasPendingDeferredBlasts(): boolean {
+    return this.pendingDeferredBlasts.length > 0;
+  }
+
+  private flushPendingDeferredBlastsIfStable(terrain: TerrainManager): void {
+    if (this.pendingDeferredBlasts.length === 0 || this.anyTankIsFalling()) {
+      return;
+    }
+    const pending = this.pendingDeferredBlasts.splice(0, this.pendingDeferredBlasts.length);
+    for (const blast of pending) {
+      this.applyExplosionDamage({
+        ...blast,
+        terrain: blast.terrain ?? terrain,
+      });
+    }
   }
 
   private emitFallDamage(playerId: string, healthDamage: number): void {
@@ -479,6 +505,8 @@ export class TankManager {
         this.isVoidFall.set(id, false);
       }
     }
+
+    this.flushPendingDeferredBlastsIfStable(terrain);
   }
 
   /**
@@ -523,6 +551,8 @@ export class TankManager {
         this.emitAttributedDestruction(player.id, cause);
       }
     }
+
+    this.flushPendingDeferredBlastsIfStable(terrain);
   }
 
   /**
@@ -636,6 +666,111 @@ export class TankManager {
   }
 
   /**
+   * Contrat local NUKE / THERMONUCLEAR (#302) :
+   * - Fige la qualification d'impact direct sur les boîtes 24×15 avant toute chute (9A, 10A).
+   * - Pour NUKE en impact direct : tue immédiatement sur place par explosion (absorption bouclier 2:1)
+   *   sans impulsion de chute, dégât de chute, enterrement ni souffle différé sur cette victime.
+   * - Pour THERMONUCLEAR en impact direct : 0 dégât de PV avant chute, conserve la qualification
+   *   pour le souffle différé après stabilisation.
+   * - Met en file d'attente le souffle différé post-stabilisation (8B.5).
+   */
+  public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
+    const {
+      explosionX,
+      explosionY,
+      shooterId,
+      weaponId,
+      isDirectHit,
+      shotId,
+      munitionId,
+    } = options;
+    const directHitTankIds = new Set<string>();
+
+    if (isDirectHit) {
+      const tankWidth = TANK_HITBOX_WIDTH;
+      const tankHeight = TANK_HITBOX_HEIGHT;
+      for (const player of this.players) {
+        const tank = player.tank;
+        if (tank.isDead) continue;
+
+        const pos = tank.position;
+        const isDirectHitOnThisTank =
+          explosionX >= pos.x - tankWidth / 2 &&
+          explosionX <= pos.x + tankWidth / 2 &&
+          explosionY >= pos.y - tankHeight &&
+          explosionY <= pos.y;
+        if (!isDirectHitOnThisTank) continue;
+
+        directHitTankIds.add(player.id);
+        this.markDirectlyAffected(player.id, munitionId);
+        tank.hitReaction = tank.hitReaction ?? {
+          wasDirectHit: false,
+          fallDistance: 0,
+        };
+        tank.hitReaction.wasDirectHit = true;
+        if (shooterId && shooterId !== player.id) {
+          tank.lastDirectAttackerId = shooterId;
+        }
+
+        if (weaponId === "NUKE") {
+          const healthBefore = tank.health;
+          const shieldBefore = tank.shield;
+          const shieldAbsorbed = Math.ceil(shieldBefore / 2);
+          tank.shield = 0;
+          tank.health = 0;
+          const healthDamage = healthBefore;
+
+          if (
+            shooterId &&
+            shotId !== undefined &&
+            munitionId !== undefined &&
+            (shieldAbsorbed > 0 || healthDamage > 0)
+          ) {
+            this.onDamageApplied?.({
+              shotId,
+              munitionId,
+              shooterId,
+              victimId: player.id,
+              weaponId,
+              source: "projectile",
+              classification: "direct",
+              shieldAbsorbedMilli: normalizeDamageToMilli(shieldAbsorbed),
+              shieldLostMilli: normalizeDamageToMilli(shieldBefore),
+              healthDamageMilli: normalizeDamageToMilli(healthDamage),
+            });
+          }
+
+          if (healthBefore > 0 && shooterId) {
+            tank.lastHitBy = shooterId;
+          }
+
+          if (healthBefore > 0) {
+            tank.isDead = true;
+            this.invalidateAliveCache();
+            const details = `explosion by ${shooterId ?? "unknown"} (damage=${(shieldAbsorbed + healthDamage).toFixed(1)})`;
+            this.onPlayerDied?.(player.id, "explosion", details, shooterId);
+            if (shooterId && shotId !== undefined) {
+              this.onTankDestroyed?.({
+                shotId,
+                shooterId,
+                victimId: player.id,
+                weaponId,
+                cause: "health-zero",
+              });
+            }
+          }
+        }
+      }
+    }
+
+    this.pendingDeferredBlasts.push({
+      ...options,
+      canCarveRock: true,
+      directHitTankIds,
+    });
+  }
+
+  /**
    * Applique des dégâts d'explosion avec atténuation linéaire selon la distance.
    * Les dégâts sont d'abord absorbés par le bouclier, puis par la vie.
    * Special cases:
@@ -659,6 +794,8 @@ export class TankManager {
       terrain,
       shotId,
       munitionId,
+      canCarveRock = false,
+      directHitTankIds,
     } = options;
     let killsThisExplosion = 0;
 
@@ -674,7 +811,9 @@ export class TankManager {
       let damage: number;
       let isDirectHitOnThisTank = false;
 
-      if (isDirectHit) {
+      if (directHitTankIds !== undefined) {
+        isDirectHitOnThisTank = directHitTankIds.has(player.id);
+      } else if (isDirectHit) {
         const tankWidth = TANK_HITBOX_WIDTH;
         const tankHeight = TANK_HITBOX_HEIGHT;
         isDirectHitOnThisTank =
@@ -701,7 +840,9 @@ export class TankManager {
       const blastBlockedByRock =
         !!terrain &&
         !isDirectHitOnThisTank &&
-        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y);
+        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y, {
+          canCarveRock,
+        });
       if (blastBlockedByRock) continue;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct

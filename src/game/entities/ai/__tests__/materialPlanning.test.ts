@@ -758,4 +758,77 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
     expect(calls[1]).toBe(calls[0]);
     expect(calls[2]).toBe(calls[0]);
   });
+
+  it.each(
+    Object.values(TERRAIN_MATERIAL).flatMap((material) =>
+      (["NUKE", "THERMONUCLEAR"] as const).map((weapon) => ({ material, weapon })),
+    ),
+  )(
+    "matches local engine ROCK carving and deferred blast for $weapon on $material without live mutations or RNG (#302)",
+    ({ material, weapon }) => {
+      const f = fixture();
+      f.terrain.setMaterialRange(0, 799, material);
+      const before = structuredClone(f.state);
+      const heights = [...f.terrain.getHeightmap()];
+      const materials = [...f.terrain.getMaterials()];
+      const command = { angle: 35, power: 55 };
+      const rng = vi.spyOn(random, "secureRandom");
+
+      const result = physical.resolvePhysicalShot(f.state, f.terrain, f.self, weapon, command);
+
+      const terrain = new TerrainManager(800, 480);
+      terrain.loadHeights(heights, materials);
+      const tanks = new TankManager();
+      tanks.setPlayers(structuredClone(f.state.players));
+      tanks.beginShotAttribution(1, "self", weapon);
+      const engine = new PhysicsEngine(() => 0.5, false);
+      engine.setLocalMatch(true);
+      const hits: ProjectileHitEvent[] = [];
+      const damageEvents: CombatDamageEvent[] = [];
+      const destruction: CombatDestructionEvent[] = [];
+      engine.onProjectileHit = (hit) => hits.push(hit);
+      tanks.onDamageApplied = (event) => damageEvents.push(event);
+      tanks.onTankDestroyed = (event) => destruction.push(event);
+      const radians = (command.angle * Math.PI) / 180;
+      engine.launchProjectile(
+        100 + Math.cos(radians) * 20,
+        336 - 13 - Math.sin(radians) * 20,
+        command.angle,
+        command.power,
+        weapon,
+        "self",
+        f.self.tank.color,
+        { shotId: 1, munitionId: 0 },
+      );
+      let steps = 0;
+      while (steps < 2400) {
+        steps++;
+        engine.updateProjectiles(1 / 120, 260, 0, terrain, tanks);
+        tanks.applyGravity(1 / 120, terrain);
+        tanks.checkTankBurial(terrain);
+        if (
+          !engine.hasActiveProjectiles() &&
+          !tanks.anyTankIsFalling() &&
+          !tanks.hasPendingDeferredBlasts()
+        ) {
+          break;
+        }
+      }
+
+      expect(result.complete).toBe(true);
+      expect(result.steps).toBe(steps);
+      expect(result.hits).toEqual(hits);
+      expect(result.damage).toEqual(damageEvents);
+      expect(result.destruction).toEqual(destruction);
+      expect(result.survivors).toEqual(tanks.getAlivePlayers().map((player) => player.id));
+      if (material === TERRAIN_MATERIAL.ROCK && hits.length > 0) {
+        const hitX = Math.round(hits[0].x);
+        expect(terrain.getHeightAt(hitX)).toBeGreaterThan(heights[hitX]);
+      }
+      expect(f.state).toEqual(before);
+      expect(f.terrain.getHeightmap()).toEqual(heights);
+      expect(f.terrain.getMaterials()).toEqual(materials);
+      expect(rng).not.toHaveBeenCalled();
+    },
+  );
 });

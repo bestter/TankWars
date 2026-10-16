@@ -395,7 +395,10 @@ export class TurnManager {
     // While this is true, isInputLocked remains set from the shot, preventing any new shots (human or AI).
     // We poll here (called at 120 Hz from GameEngine) so we advance exactly when stable.
     if (this.awaitingTankStabilization) {
-      if (!this.tankManager.anyTankIsFalling()) {
+      if (
+        !this.tankManager.anyTankIsFalling() &&
+        !this.tankManager.hasPendingDeferredBlasts?.()
+      ) {
         this.clearAwaitingStabilization();
         this.clearSettlementSafetyTimeout();
         this.clearTurnLockSafetyTimeout();

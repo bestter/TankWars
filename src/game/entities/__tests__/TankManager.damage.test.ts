@@ -660,3 +660,221 @@ describe("TankManager.applyGravity and burial", () => {
     expect(tank.lastDirectAttackerId).toBe("attacker-b");
   });
 });
+
+describe("Local nuclear impact order and deferred blast (#302)", () => {
+  it("kills a direct-hit NUKE victim immediately on the spot without fall or burial while deferring blast for falling bystanders", () => {
+    const terrain = new TerrainManager(300, 300);
+    terrain.loadHeights(Array.from({ length: 300 }, () => 120));
+    terrain.setMaterialRange(0, 299, "ROCK");
+
+    const directVictim = makePlayer({
+      id: "direct",
+      tank: makeTank("t-direct", 100, 120, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const fallingBystander = makePlayer({
+      id: "bystander",
+      tank: makeTank("t-bystander", 130, 120, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(directVictim, fallingBystander);
+    const damageEvents: unknown[] = [];
+    const destructionEvents: unknown[] = [];
+    const diedCalls: Array<{ playerId: string; cause: string }> = [];
+    tm.onDamageApplied = (e) => damageEvents.push(e);
+    tm.onTankDestroyed = (e) => destructionEvents.push(e);
+    tm.onPlayerDied = (playerId, cause) => diedCalls.push({ playerId, cause });
+
+    tm.beginShotAttribution(1, "shooter", "NUKE", 0);
+    terrain.destroyTerrain(100, 115, 45, { canCarveRock: true });
+    tm.beginLocalNuclearImpact({
+      explosionX: 100,
+      explosionY: 115,
+      radius: 62,
+      maxDamage: 113, // 75 * 1.5 rounded on ROCK
+      shooterId: "shooter",
+      weaponId: "NUKE",
+      isDirectHit: true,
+      terrain,
+      shotId: 1,
+      munitionId: 0,
+    });
+
+    // Direct victim is dead immediately before updateTankPositions / falls
+    expect(directVictim.tank.isDead).toBe(true);
+    expect(directVictim.tank.health).toBe(0);
+    expect(directVictim.tank.shield).toBe(0);
+    expect(directVictim.tank.hitReaction).toEqual({ wasDirectHit: true, fallDistance: 0 });
+    expect(directVictim.tank.lastDirectAttackerId).toBe("shooter");
+
+    // Bystander has not yet received the deferred blast because it is about to fall into the ROCK crater
+    expect(fallingBystander.tank.shield).toBe(40);
+    expect(fallingBystander.tank.health).toBe(100);
+
+    tm.updateTankPositions(terrain);
+    tm.checkTankBurial(terrain);
+    expect(tm.anyTankIsFalling()).toBe(true);
+    expect(tm.hasPendingDeferredBlasts()).toBe(true);
+
+    for (let step = 0; step < 600 && (tm.anyTankIsFalling() || tm.hasPendingDeferredBlasts()); step++) {
+      tm.applyGravity(1 / 120, terrain);
+      tm.checkTankBurial(terrain);
+    }
+
+    expect(tm.anyTankIsFalling()).toBe(false);
+    expect(tm.hasPendingDeferredBlasts()).toBe(false);
+    // Direct victim never fell and only died once by explosion
+    expect(directVictim.tank.position.y).toBe(120);
+    expect(diedCalls.filter((d) => d.playerId === "direct")).toEqual([
+      { playerId: "direct", cause: "explosion" },
+    ]);
+    expect(
+      damageEvents.filter(
+        (e) => (e as { victimId: string; source: string }).victimId === "direct",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        victimId: "direct",
+        source: "projectile",
+        classification: "direct",
+        shieldAbsorbedMilli: 20_000,
+        shieldLostMilli: 40_000,
+        healthDamageMilli: 100_000,
+      }),
+    ]);
+
+    // Bystander fell first (taking indirect fall damage to HP), then took indirect deferred blast
+    expect(fallingBystander.tank.position.y).toBeGreaterThan(120);
+    expect(fallingBystander.tank.hitReaction?.wasDirectHit).toBe(false);
+    expect(fallingBystander.tank.lastDirectAttackerId).toBeUndefined();
+    const bystanderEvents = damageEvents.filter(
+      (e) => (e as { victimId: string }).victimId === "bystander",
+    ) as Array<{ source: string; classification: string }>;
+    expect(bystanderEvents.length).toBeGreaterThanOrEqual(2);
+    expect(bystanderEvents.slice(0, -1).every((e) => e.source === "fall" && e.classification === "indirect")).toBe(true);
+    expect(bystanderEvents.at(-1)).toMatchObject({
+      source: "projectile",
+      classification: "indirect",
+    });
+    expect(destructionEvents).toHaveLength(directVictim.tank.isDead && fallingBystander.tank.isDead ? 2 : 1);
+  });
+
+  it("freezes THERMONUCLEAR direct-hit qualification before fall, applies direct fall classification, and resolves 2:1 shield on deferred blast", () => {
+    const terrain = new TerrainManager(400, 300);
+    terrain.loadHeights(Array.from({ length: 400 }, () => 100));
+    terrain.setMaterialRange(0, 399, "ROCK");
+
+    const directVictim = makePlayer({
+      id: "direct",
+      tank: makeTank("t-direct", 200, 100, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const indirectFaller = makePlayer({
+      id: "indirect",
+      tank: makeTank("t-indirect", 220, 100, { health: 100, shield: 39, maxShield: 40 }),
+    });
+    const tm = managerWith(directVictim, indirectFaller);
+    const damageEvents: Array<{
+      victimId: string;
+      source: string;
+      classification: string;
+      shieldAbsorbedMilli: number;
+      shieldLostMilli: number;
+      healthDamageMilli: number;
+    }> = [];
+    tm.onDamageApplied = (e) => damageEvents.push(e);
+
+    tm.beginShotAttribution(5, "shooter", "THERMONUCLEAR", 0);
+    // Shallow crater (radius 30) so both tanks survive the fall and land inside the 75px kill zone
+    terrain.destroyTerrain(200, 100, 30, { canCarveRock: true });
+    tm.beginLocalNuclearImpact({
+      explosionX: 200,
+      explosionY: 95,
+      radius: 160,
+      maxDamage: 180,
+      shooterId: "shooter",
+      weaponId: "THERMONUCLEAR",
+      isDirectHit: true,
+      terrain,
+      shotId: 5,
+      munitionId: 0,
+    });
+
+    // Neither tank takes projectile damage before falling
+    expect(directVictim.tank.isDead).toBe(false);
+    expect(directVictim.tank.health).toBe(100);
+    expect(directVictim.tank.shield).toBe(39);
+    expect(directVictim.tank.hitReaction?.wasDirectHit).toBe(true);
+    expect(directVictim.tank.lastDirectAttackerId).toBe("shooter");
+
+    tm.updateTankPositions(terrain);
+    tm.checkTankBurial(terrain);
+    for (let step = 0; step < 600 && (tm.anyTankIsFalling() || tm.hasPendingDeferredBlasts()); step++) {
+      tm.applyGravity(1 / 120, terrain);
+      tm.checkTankBurial(terrain);
+    }
+
+    // Direct victim's fall events are classified as "direct", followed by 2:1 shield absorption on deferred blast
+    const directFall = damageEvents.filter((e) => e.victimId === "direct" && e.source === "fall");
+    expect(directFall.length).toBeGreaterThan(0);
+    expect(directFall.every((e) => e.classification === "direct")).toBe(true);
+    const directBlast = damageEvents.find((e) => e.victimId === "direct" && e.source === "projectile");
+    expect(directBlast).toMatchObject({
+      classification: "direct",
+      shieldAbsorbedMilli: 20_000,
+      shieldLostMilli: 39_000,
+    });
+
+    // Indirect faller's fall events and deferred blast remain "indirect" (1:1 shield absorption, no wasDirectHit)
+    const indirectFall = damageEvents.filter((e) => e.victimId === "indirect" && e.source === "fall");
+    expect(indirectFall.length).toBeGreaterThan(0);
+    expect(indirectFall.every((e) => e.classification === "indirect")).toBe(true);
+    const indirectBlast = damageEvents.find((e) => e.victimId === "indirect" && e.source === "projectile");
+    expect(indirectBlast).toMatchObject({
+      classification: "indirect",
+      shieldAbsorbedMilli: 39_000,
+      shieldLostMilli: 39_000,
+    });
+    expect(indirectFaller.tank.hitReaction?.wasDirectHit).toBe(false);
+    expect(indirectFaller.tank.lastDirectAttackerId).toBeUndefined();
+  });
+
+  it("does not apply deferred blast to a tank that dies during the fall (lava, burial, or fall HP)", () => {
+    const terrain = new TerrainManager(300, 200);
+    // Surface near lava so crater exposes lava
+    terrain.loadHeights(Array.from({ length: 300 }, () => 185));
+    terrain.setMaterialRange(0, 299, "ROCK");
+
+    const victim = makePlayer({
+      id: "lava-victim",
+      tank: makeTank("t-lava", 150, 185, { health: 100, shield: 40, maxShield: 40 }),
+    });
+    const tm = managerWith(victim);
+    const damageEvents: Array<{ source: string }> = [];
+    const destructionEvents: Array<{ cause: string }> = [];
+    tm.onDamageApplied = (e) => damageEvents.push(e);
+    tm.onTankDestroyed = (e) => destructionEvents.push(e);
+
+    tm.beginShotAttribution(2, "shooter", "NUKE", 0);
+    terrain.destroyTerrain(150, 185, 62, { canCarveRock: true });
+    tm.beginLocalNuclearImpact({
+      explosionX: 150,
+      explosionY: 185,
+      radius: 62,
+      maxDamage: 113,
+      shooterId: "shooter",
+      weaponId: "NUKE",
+      isDirectHit: false,
+      terrain,
+      shotId: 2,
+      munitionId: 0,
+    });
+    tm.updateTankPositions(terrain);
+    tm.checkTankBurial(terrain);
+    for (let step = 0; step < 600 && (tm.anyTankIsFalling() || tm.hasPendingDeferredBlasts()); step++) {
+      tm.applyGravity(1 / 120, terrain);
+      tm.checkTankBurial(terrain);
+    }
+
+    expect(victim.tank.isDead).toBe(true);
+    expect(destructionEvents).toHaveLength(1);
+    expect(damageEvents.some((e) => e.source === "projectile")).toBe(false);
+  });
+});
