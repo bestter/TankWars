@@ -85,11 +85,7 @@ export function resolvePhysicalShot(
     physics.updateProjectiles(PHYSICS_DT, state.gravity, state.windForce, copiedTerrain, tanks);
     tanks.applyGravity(PHYSICS_DT, copiedTerrain);
     tanks.checkTankBurial(copiedTerrain);
-    if (
-      !physics.hasActiveProjectiles() &&
-      !tanks.anyTankIsFalling() &&
-      !tanks.hasPendingDeferredBlasts()
-    ) {
+    if (!physics.hasActiveProjectiles() && !tanks.anyTankIsFalling()) {
       complete = true;
       break;
     }

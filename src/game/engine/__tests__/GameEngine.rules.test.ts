@@ -377,19 +377,19 @@ describe("GameEngine match rules", () => {
       startX: 397.5,
       startY: 145,
       classification: "direct" as const,
-      falls: true,
-      fallDivisor: 4n,
+      falls: false,
+      fallDivisor: null,
     },
     {
       weaponId: "THERMONUCLEAR" as const,
-      startX: 367.5,
+      startX: 297.5,
       startY: 150,
       classification: "indirect" as const,
       falls: true,
       fallDivisor: 8n,
     },
   ])(
-    "carves ROCK in local mode with $weaponId ($classification) and applies 9A/10A fall & blast rules",
+    "carves ROCK in local mode with $weaponId ($classification) and applies projectile damage before falls",
     ({ weaponId, startX, startY, falls, fallDivisor }) => {
       const { a, b, c } = threePlayers();
       a.inventory[weaponId] = 1;
@@ -418,10 +418,9 @@ describe("GameEngine match rules", () => {
       expect(terrain.getHeightAt(400)).toBeGreaterThan(150);
 
       if (!falls) {
-        // 9A/10A: NUKE direct hit kills Bob immediately before fall; deferred blast flushes right away
+        // Direct NUKE, or a thermonuclear hit inside 75 px, kills Bob before any fall.
         expect(b.tank.isDead).toBe(true);
         expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
-        expect(engine.getTankManager().hasPendingDeferredBlasts()).toBe(false);
         expect(resolved).toHaveBeenCalledTimes(1);
         const preview = resolved.mock.calls[0]?.[0] as ResolvedShotPreview;
         const award = preview.awards.find((entry) => entry.playerId === a.id);
@@ -431,16 +430,14 @@ describe("GameEngine match rules", () => {
       }
 
       expect(engine.getTankManager().anyTankIsFalling()).toBe(true);
-      expect(engine.getTankManager().hasPendingDeferredBlasts()).toBe(true);
       expect(resolved).not.toHaveBeenCalled();
 
-      // Advance simulation until Bob lands and deferred blast flushes
+      // Advance simulation until Bob lands. Projectile damage was already applied.
       for (let i = 0; i < 1200 && resolved.mock.calls.length === 0; i++) {
         stepSimulation.call(engine, 1 / 120);
       }
 
       expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
-      expect(engine.getTankManager().hasPendingDeferredBlasts()).toBe(false);
       expect(resolved).toHaveBeenCalledTimes(1);
       const preview = resolved.mock.calls[0]?.[0] as ResolvedShotPreview;
       const award = preview.awards.find((entry) => entry.playerId === a.id);

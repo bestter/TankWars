@@ -162,7 +162,6 @@ describe('GameEngine online multiplayer', () => {
       stepSimulation.call(engine, 1 / 120);
 
       expect(terrain.getHeightAt(140)).toBe(120);
-      expect(engine.getTankManager().hasPendingDeferredBlasts()).toBe(false);
       expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
       const liveGuest = engine.getTankManager().getPlayerById('player-2');
       expect(liveGuest?.tank.health).toBeLessThan(liveGuest?.tank.maxHealth ?? 100);

@@ -764,7 +764,7 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
       (["NUKE", "THERMONUCLEAR"] as const).map((weapon) => ({ material, weapon })),
     ),
   )(
-    "matches local engine ROCK carving and deferred blast for $weapon on $material without live mutations or RNG (#302)",
+    "matches local engine ROCK carving and pre-fall blast for $weapon on $material without live mutations or RNG (#302)",
     ({ material, weapon }) => {
       const f = fixture();
       f.terrain.setMaterialRange(0, 799, material);
@@ -806,11 +806,7 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
         engine.updateProjectiles(1 / 120, 260, 0, terrain, tanks);
         tanks.applyGravity(1 / 120, terrain);
         tanks.checkTankBurial(terrain);
-        if (
-          !engine.hasActiveProjectiles() &&
-          !tanks.anyTankIsFalling() &&
-          !tanks.hasPendingDeferredBlasts()
-        ) {
+        if (!engine.hasActiveProjectiles() && !tanks.anyTankIsFalling()) {
           break;
         }
       }

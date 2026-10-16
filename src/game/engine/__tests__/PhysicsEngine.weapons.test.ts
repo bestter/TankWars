@@ -287,7 +287,7 @@ describe("PhysicsEngine weapon behavior", () => {
   );
 
   it.each(["NUKE", "THERMONUCLEAR"] as const)(
-    "enables ROCK carving and deferred blast for %s in local mode while reading pre-carve ROCK bonus",
+    "enables ROCK carving and pre-fall blast for %s in local mode while reading pre-carve ROCK bonus",
     (weaponId) => {
       const enemy = makePlayer({
         id: "enemy",
@@ -329,7 +329,7 @@ describe("PhysicsEngine weapon behavior", () => {
   );
 
   it.each(["MISSILE", "GRENADE", "CLUSTER", "BULLET"] as const)(
-    "never enables ROCK carving or deferred blast for %s even when localMatch is true",
+    "never enables ROCK carving or the local nuclear impact for %s even when localMatch is true",
     (weaponId) => {
       const enemy = makePlayer({
         id: "enemy",

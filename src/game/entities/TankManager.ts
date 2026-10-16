@@ -87,9 +87,6 @@ export class TankManager {
   /** Provenance du tir actif utilisée pour attribuer les chutes et morts différées. */
   private fallAttributions: Map<string, FallAttribution> = new Map();
 
-  /** Souffles nucléaires locaux différés jusqu'à la fin des chutes et enterrements (#302). */
-  private pendingDeferredBlasts: ExplosionDamageOptions[] = [];
-
   /** Transient per-tank recoil state for micro visual kick on fire (Step 4 arcade polish).
    *  Keyed by tank.id. Decayed in physics update; applied only to sprite draw pos.
    */
@@ -275,37 +272,10 @@ export class TankManager {
     for (const attribution of this.fallAttributions.values()) {
       if (attribution.shotId === previousShotId) attribution.shotId = shotId;
     }
-    for (const pending of this.pendingDeferredBlasts) {
-      if (pending.shotId === previousShotId) pending.shotId = shotId;
-    }
   }
 
   public clearShotAttribution(): void {
     this.fallAttributions.clear();
-    this.pendingDeferredBlasts.length = 0;
-  }
-
-  public hasPendingDeferredBlasts(): boolean {
-    return this.pendingDeferredBlasts.length > 0;
-  }
-
-  /**
-   * Souffle nucléaire local différé (#302), uniquement lorsque localMatch === true.
-   * Qualification directe avant les chutes (NUKE = mort immédiate ;
-   * THERMONUCLEAR direct = diviseur 4). Le souffle indirect et la zone de 75 px
-   * s'appliquent une fois les chutes et ensevelissements stabilisés.
-   */
-  private flushPendingDeferredBlastsIfStable(terrain: TerrainManager): void {
-    if (this.pendingDeferredBlasts.length === 0 || this.anyTankIsFalling()) {
-      return;
-    }
-    const pending = this.pendingDeferredBlasts.splice(0, this.pendingDeferredBlasts.length);
-    for (const blast of pending) {
-      this.applyExplosionDamage({
-        ...blast,
-        terrain: blast.terrain ?? terrain,
-      });
-    }
   }
 
   private emitFallDamage(playerId: string, healthDamage: number): void {
@@ -511,8 +481,6 @@ export class TankManager {
         this.isVoidFall.set(id, false);
       }
     }
-
-    this.flushPendingDeferredBlastsIfStable(terrain);
   }
 
   /**
@@ -557,8 +525,6 @@ export class TankManager {
         this.emitAttributedDestruction(player.id, cause);
       }
     }
-
-    this.flushPendingDeferredBlastsIfStable(terrain);
   }
 
   /**
@@ -673,24 +639,17 @@ export class TankManager {
 
   /**
    * Contrat local NUKE / THERMONUCLEAR (#302), uniquement lorsque localMatch === true.
-   * Qualification directe avant les chutes (NUKE = mort immédiate ;
-   * THERMONUCLEAR direct = diviseur 4). Souffle indirect et zone de 75 px
-   * différés jusqu'à la stabilisation complète.
-   * - Fige la qualification d'impact direct sur les boîtes 24×15 avant toute chute (9A, 10A).
-   * - Pour NUKE en impact direct : tue immédiatement sur place par explosion (absorption bouclier 2:1)
-   *   sans impulsion de chute, dégât de chute, enterrement ni souffle différé sur cette victime.
-   * - Pour THERMONUCLEAR en impact direct : 0 dégât de PV avant chute, conserve la qualification
-   *   pour le souffle différé après stabilisation. Les PV de chute se paient au diviseur 4.
-   * - Met en file d'attente le souffle différé post-stabilisation (8B.5).
+   * Qualifie le coup direct sur la hitbox 24×15, puis applique une seule fois
+   * les dégâts de projectile aux positions d'impact, sur le terrain déjà creusé.
+   * Les chutes des survivants viennent ensuite. Un tank déjà mort ne reçoit pas
+   * d'impulsion. Un survivant qualifié garde le diviseur 4 pour ses PV de chute.
    */
   public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
     const {
       explosionX,
       explosionY,
       shooterId,
-      weaponId,
       isDirectHit,
-      shotId,
       munitionId,
     } = options;
     const directHitTankIds = new Set<string>();
@@ -720,59 +679,10 @@ export class TankManager {
         if (shooterId && shooterId !== player.id) {
           tank.lastDirectAttackerId = shooterId;
         }
-
-        if (weaponId === "NUKE") {
-          const healthBefore = tank.health;
-          const shieldBefore = tank.shield;
-          const shieldAbsorbed = Math.ceil(shieldBefore / 2);
-          tank.shield = 0;
-          tank.health = 0;
-          const healthDamage = healthBefore;
-
-          if (
-            shooterId &&
-            shotId !== undefined &&
-            munitionId !== undefined &&
-            (shieldAbsorbed > 0 || healthDamage > 0)
-          ) {
-            this.onDamageApplied?.({
-              shotId,
-              munitionId,
-              shooterId,
-              victimId: player.id,
-              weaponId,
-              source: "projectile",
-              classification: "direct",
-              shieldAbsorbedMilli: normalizeDamageToMilli(shieldAbsorbed),
-              shieldLostMilli: normalizeDamageToMilli(shieldBefore),
-              healthDamageMilli: normalizeDamageToMilli(healthDamage),
-            });
-          }
-
-          if (healthBefore > 0 && shooterId) {
-            tank.lastHitBy = shooterId;
-          }
-
-          if (healthBefore > 0) {
-            tank.isDead = true;
-            this.invalidateAliveCache();
-            const details = `explosion by ${shooterId ?? "unknown"} (damage=${(shieldAbsorbed + healthDamage).toFixed(1)})`;
-            this.onPlayerDied?.(player.id, "explosion", details, shooterId);
-            if (shooterId && shotId !== undefined) {
-              this.onTankDestroyed?.({
-                shotId,
-                shooterId,
-                victimId: player.id,
-                weaponId,
-                cause: "health-zero",
-              });
-            }
-          }
-        }
       }
     }
 
-    this.pendingDeferredBlasts.push({
+    this.applyExplosionDamage({
       ...options,
       canCarveRock: true,
       directHitTankIds,

@@ -262,7 +262,7 @@ describe("local advisor shared policies #273", () => {
   });
 
   it.each(["NUKE", "THERMONUCLEAR"] as const)(
-    "naturally evaluates %s ROCK excavation and deferred blast in local advisor without consuming live RNG (#302)",
+    "naturally evaluates %s ROCK excavation and pre-fall blast in local advisor without consuming live RNG (#302)",
     (weaponId) => {
       const f = advisorFixture();
       f.self.inventory = { [weaponId]: 1 };
