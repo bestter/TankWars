@@ -1,0 +1,16 @@
+🧪 Add tests for resetPlayersForSpawn
+
+🎯 **What:**
+Added unit tests for the previously untested `resetPlayersForSpawn` function in `src/game/round/spawnPlacement.ts`. This core function prepares the roster and tanks for a new round and represents a significant regression risk if left untested.
+
+📊 **Coverage:**
+The tests cover the following scenarios:
+- Preservation of player identities, money, and deeply-copied inventories.
+- Correct restoration of tank health, shield, and `isDead` status.
+- Calculation of a default `maxShield` when one is not explicitly provided.
+- Positioning and orientation (`angle`) of tanks according to horizontal position and terrain width.
+- Clearing of temporary combat state (`lastHitBy`, `lastDirectAttackerId`, `hitReaction`).
+- Default reset to base tank power and current weapon correctly.
+
+✨ **Result:**
+The newly added test suite ensures complete regression safety for the round spawning logic, covering multiple happy paths and proper object mutations before the start of each round.
