@@ -19,7 +19,7 @@
   - This is a forecast over the shared bounded search, not the best of every possible shot or a guarantee of future survival. GRENADE/CLUSTER forecasts do not predict real physical random draws. Enemy nuclear stocks remain unknown; the shooter’s own nuclear ammunition remains available. BULLDOZER is fallback-only, DRILLER keeps its ROCK veto, and incomplete forecasts or the uncertified last MISSILE are never suggested. The advisor is unavailable online, during AI/Zeus turns, falls, resolution, shops, menus or round transitions. Missing/invalid economics produces an error rather than invented profit.
 - **Destructible Heightmap Terrain & Diverse Topography** — Procedurally generated diverse terrain using multi-octaves layered sine waves, localized tactical hollows (shelters for tanks), and steep hills/ridges. Distinct terrain materials:
   - `DIRT` (Standard earth & grass with classic destruction)
-  - `ROCK` (Indestructible stone wall: side blasts stop at the rock; exploding on top reflects the blast for +50% damage with unchanged radius)
+  - `ROCK` (Indestructible against conventional weapons and in online matches: side blasts stop at the rock and exploding on top reflects the blast for +50% damage with unchanged radius. In local play (#302), `NUKE` and `THERMONUCLEAR` carve `ROCK` within their nominal 62 px / 160 px circular radii without sand amplification or rock smoothing; remaining columns stay `ROCK`, direct hits are qualified at the impact position — `NUKE` kills its direct target immediately — and projectile damage, including indirect blast and the 75 px thermonuclear kill zone, is applied once after carving and before any fall, tested against intermediate `ROCK` column rectangles on the carved terrain)
   - `SOFT` (Loose sand/sediment: 2.5× more destructible for massive craters)
   - DRILLER also carves an oriented shaft along the impact velocity with unchanged splash.
 - **Safe Initial Placement** — In local and online play, all 24 px of a tank base must intersect either only ROCK columns or no ROCK columns; wide ROCK plateaus remain allowed and DIRT/SOFT transitions are allowed. Positions retain 13% side margins, 100 px minimum separation, tactical hollows and probabilistic material preferences. If sampling fails, a deterministic search packs the leftmost admissible continuous centers (including fractional positions). A map that cannot fit the entire roster is discarded; preparation tries at most 16 maps total. Exhaustion stops combat, preserves the roster/economy and offers a translated retry. This rule applies to initial placement only; recovery and post-shot falls never respawn tanks.
@@ -29,11 +29,11 @@
   - Missile (balanced, unlimited)
   - Grenade (arcing + bounces ~2× higher on rock; sticks, digs, and explodes in sand)
   - Cluster Bomb (sub-munitions)
-  - Baby Nuke ($420; massive blast; direct hit instakill)
+  - Baby Nuke ($420; massive blast; direct hit instakill; carves `ROCK` in local matches)
   - Driller (oriented shaft + current splash; depth `DRILLER_SHAFT_DEPTH`)
   - Bullet (precision shot, ×3 direct hitbox damage)
   - Bulldozer ($150; 0 HP / 0 blast; direct hit pushes the target and recoils the shooter; falls use existing gravity / lava; does not go through `applyExplosionDamage`)
-  - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; outer tanks fall into the crater; large VFX + deep bomb sound)
+  - Thermonuclear Bomb (destroys ~1/4 of the map with an inner instant-kill zone; carves `ROCK` in local matches; outer tanks fall into the crater; large VFX + deep bomb sound)
 - **Configurable Matches (2–4 Players)** — Retro Main Menu: player count, editable names, and mix of Human / IA SIMPLE / IA OK / IA SNIPER / IA EXPERT. Local AI names default to the short localized profile name (`Simple`, `OK`, `Sniper`, `Expert`). Suffixes preserve profile ordering while skipping every name already used by a human or an AI (`Simple`, `Simple-1`, `Simple-2`). Name comparisons are trimmed, case-insensitive, and locale-independent (`trim()` + `toLowerCase()`), so browser locale cannot change collision results. Manual duplicate names are highlighted after leaving the field or pressing a button and block local match start until corrected. Names are assigned in the active language, remain frozen after language changes, and are never retroactively renumbered. Unique VGA colors include live previews and a mutual-exclusion picker.
 - **Turn-Based Combat** — Full turn system with Human and AI players. Any combination up to 4 participants.
 - **Zeus Lightning Anti-Deadlock** — After `living players × 5` consecutive fully resolved human or AI shots without earnings, Zeus automatically takes the next turn. Only surviving AIs are eligible while any AI lives; otherwise surviving humans are eligible. Fair match history comes first, then the lowest real health + shield, then the AI profile score (SIMPLE → OK → SNIPER → EXPERT). A unique candidate consumes no nomination draw; a complete tie consumes exactly one. An exhausted pool clears only its living members from history. Zeus automatically vaporizes one opponent on each of its turns, preferring its last living direct attacker, until Zeus dies or the round ends. Ordinary commands and watchdogs cannot skip this special turn. `ZEUS_LIGHTNING` remains an internal action with the sole `25X` destruction reward.
@@ -186,14 +186,14 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.9.9** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.10.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
 - Retro `MENU` with 2–4 players, Human + four AI profiles, ColorPicker + TankPreview
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
-- Destructible heightmap, DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
+- Destructible heightmap (including local `NUKE` / `THERMONUCLEAR` `ROCK` carving and pre-fall blast #302), DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
 - Four AI profiles use `fallibleAim` plus target/round memory (first shot remains outside direct aim; locks Simple/OK/Sniper/Expert at 7/5/3/2); SIMPLE avoids revenge/material/BULLDOZER tactics and SNIPER has no post-lock slip; shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio

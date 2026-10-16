@@ -74,6 +74,15 @@ export class PhysicsEngine {
 
   private physicalRandom = (): number => (this.shotRandom ?? this.random)();
   private readonly logExplosions: boolean;
+  private localMatch = false;
+
+  public setLocalMatch(localMatch: boolean): void {
+    this.localMatch = localMatch;
+  }
+
+  public isLocalMatch(): boolean {
+    return this.localMatch;
+  }
 
   constructor(
     random: () => number = secureRandom,
@@ -308,6 +317,10 @@ export class PhysicsEngine {
       );
     }
 
+    const isLocalNuclear =
+      this.localMatch &&
+      (p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR");
+
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
       if (isDirectHit && tankManager && directTargetId !== undefined) {
@@ -323,12 +336,30 @@ export class PhysicsEngine {
         blastRadius,
       );
     } else if (blastRadius > 0) {
-      terrainManager.destroyTerrain(p.x, p.y, blastRadius);
+      terrainManager.destroyTerrain(
+        p.x,
+        p.y,
+        blastRadius,
+        isLocalNuclear ? { canCarveRock: true } : undefined,
+      );
     }
 
-    // 2. Dégâts d'explosion (BULLDOZER : 0 HP, pas de wasDirectHit)
+    // 2. Dégâts d'explosion et mise à jour des positions (chutes)
     if (tankManager) {
-      if (p.weaponId !== "BULLDOZER") {
+      if (isLocalNuclear) {
+        tankManager.beginLocalNuclearImpact({
+          explosionX: p.x,
+          explosionY: p.y,
+          radius: blastRadius,
+          maxDamage,
+          shooterId: p.ownerId,
+          weaponId: p.weaponId,
+          isDirectHit,
+          terrain: terrainManager,
+          shotId: p.shotId,
+          munitionId: p.munitionId,
+        });
+      } else if (p.weaponId !== "BULLDOZER") {
         tankManager.applyExplosionDamage({
           explosionX: p.x,
           explosionY: p.y,
