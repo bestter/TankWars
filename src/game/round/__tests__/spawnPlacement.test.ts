@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resetPlayersForSpawn, SpawnTerrain } from "../spawnPlacement";
+import { resetPlayersForSpawn, type SpawnTerrain } from "../spawnPlacement";
+import { TERRAIN_MATERIAL } from "../../../types/terrain";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 
 describe("resetPlayersForSpawn", () => {
@@ -7,7 +8,7 @@ describe("resetPlayersForSpawn", () => {
     const p1 = makePlayer({ id: "p1", name: "Player 1", money: 500, inventory: { MISSILE: 10 } });
     const p2 = makePlayer({ id: "p2", name: "Player 2", money: 100, inventory: { GRENADE: 5 } });
 
-    const terrain = { width: 800, getHeightAt: () => 100 } as SpawnTerrain;
+    const terrain: SpawnTerrain = { width: 800, getHeightAt: () => 100, getMaterialAt: () => TERRAIN_MATERIAL.DIRT };
 
     const result = resetPlayersForSpawn([p1, p2], [100, 700], terrain);
 
@@ -29,10 +30,11 @@ describe("resetPlayersForSpawn", () => {
     const p1 = makePlayer();
     const p2 = makePlayer();
 
-    const terrain = {
+    const terrain: SpawnTerrain = {
       width: 800,
-      getHeightAt: (x: number) => x === 100 ? 150 : 250
-    } as SpawnTerrain;
+      getHeightAt: (x: number) => x === 100 ? 150 : 250,
+      getMaterialAt: () => TERRAIN_MATERIAL.DIRT
+    };
 
     const result = resetPlayersForSpawn([p1, p2], [100, 700], terrain);
 
@@ -48,7 +50,7 @@ describe("resetPlayersForSpawn", () => {
       tank: makeTank("t1", 0, 0, { health: 10, maxHealth: 100, isDead: true, shield: 0, maxShield: 50 })
     });
 
-    const terrain = { width: 800, getHeightAt: () => 100 } as SpawnTerrain;
+    const terrain: SpawnTerrain = { width: 800, getHeightAt: () => 100, getMaterialAt: () => TERRAIN_MATERIAL.DIRT };
     const result = resetPlayersForSpawn([p1], [100], terrain);
 
     expect(result[0].tank.isDead).toBe(false);
@@ -61,7 +63,7 @@ describe("resetPlayersForSpawn", () => {
       tank: makeTank("t1", 0, 0, { health: 50, maxHealth: 200, maxShield: undefined })
     });
 
-    const terrain = { width: 800, getHeightAt: () => 100 } as SpawnTerrain;
+    const terrain: SpawnTerrain = { width: 800, getHeightAt: () => 100, getMaterialAt: () => TERRAIN_MATERIAL.DIRT };
     const result = resetPlayersForSpawn([p1], [100], terrain);
 
     // Default should be 40% of maxHealth
@@ -76,11 +78,11 @@ describe("resetPlayersForSpawn", () => {
         lastDirectAttackerId: "p2",
         hitReaction: { wasDirectHit: true, fallDistance: 50 },
         power: 100,
-        currentWeapon: "NUKE" as import("../../types/weapon").WeaponId
+        currentWeapon: "NUKE"
       })
     });
 
-    const terrain = { width: 800, getHeightAt: () => 100 } as SpawnTerrain;
+    const terrain: SpawnTerrain = { width: 800, getHeightAt: () => 100, getMaterialAt: () => TERRAIN_MATERIAL.DIRT };
     const result = resetPlayersForSpawn([p1], [100], terrain);
 
     expect(result[0].tank.lastHitBy).toBeUndefined();
