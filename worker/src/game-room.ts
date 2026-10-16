@@ -454,7 +454,14 @@ export class GameRoom extends DurableObject {
       await this.ctx.storage.transaction(async (txn) => {
         const stored = await txn.list({ prefix: "combat:" });
         const obsolete = [...stored.keys()].filter((key) => !entries.has(key));
-        const changed: Array<[string, unknown]> = [["state", main], ...[...entries].filter(([key, value]) => JSON.stringify(stored.get(key)) !== JSON.stringify(value))];
+        const changed: Array<[string, unknown]> = [["state", main]];
+        for (const [key, value] of entries) {
+          const s = stored.get(key);
+          if (s === value) continue;
+          if (s === undefined || JSON.stringify(s) !== JSON.stringify(value)) {
+            changed.push([key, value]);
+          }
+        }
         // Durable Objects batch put/delete accept at most 128 keys. All operations
         // belong to this transaction and complete before any broadcast.
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
