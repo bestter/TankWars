@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
 import { WEAPON_REGISTRY } from "../../../../types/weapon";
+import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 import { calculateShotAdvice, createIdealExpertAim, type AdvisorSnapshot } from "../shotAdvisor";
 import { chooseExpertPlan, ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
 import * as evaluator from "../expertShotEvaluator";
@@ -259,4 +260,30 @@ describe("local advisor shared policies #273", () => {
     expect(f.snapshot).toEqual(before);
     expect(rng).not.toHaveBeenCalled();
   });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "naturally evaluates %s ROCK excavation and pre-fall blast in local advisor without consuming live RNG (#302)",
+    (weaponId) => {
+      const f = advisorFixture();
+      f.self.inventory = { [weaponId]: 1 };
+      f.self.tank.health = 10;
+      f.enemy.tank.health = 100;
+      const snapshot: AdvisorSnapshot = {
+        ...f.snapshot,
+        materials: new Array(800).fill(TERRAIN_MATERIAL.ROCK),
+      };
+      const before = structuredClone(snapshot);
+      const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+        throw new Error("LIVE_RNG_USED");
+      });
+
+      const advice = calculateShotAdvice(snapshot, "SURVIE");
+      expect(advice).not.toBeNull();
+      expect(advice?.command.weaponId).toBe(weaponId);
+      expect(advice?.forecast.complete).toBe(true);
+      expect(advice?.forecast.support.some((s) => s.playerId === "enemy" && s.after > s.before)).toBe(true);
+      expect(snapshot).toEqual(before);
+      expect(rng).not.toHaveBeenCalled();
+    },
+  );
 });
