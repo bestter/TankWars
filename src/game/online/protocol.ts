@@ -438,7 +438,15 @@ function isCombatIdentity(value: Record<string, unknown>): boolean {
 }
 
 function isEconomicResult(value: Record<string, unknown>): boolean {
-  return isSafeNonNegativeInteger(value.economicRevision) && isRecord(value.roundEarningsByPlayer) && Object.values(value.roundEarningsByPlayer).every(isSafeNonNegativeInteger);
+  if (!isSafeNonNegativeInteger(value.economicRevision) || !isRecord(value.roundEarningsByPlayer)) {
+    return false;
+  }
+  for (const key in value.roundEarningsByPlayer) {
+    if (!isSafeNonNegativeInteger(value.roundEarningsByPlayer[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isZeusStrike(value: unknown): value is ZeusStrikeMessage {
