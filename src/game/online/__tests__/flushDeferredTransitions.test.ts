@@ -100,7 +100,7 @@ describe("flushDeferredTransitions", () => {
     expect(applied).toEqual(["SHOP_FINISH"]);
   });
 
-  it("holds ROUND_END while shots are queued but still applies SHOP_STATE", () => {
+  it("holds all scene transitions while combat actions remain queued", () => {
     const buffer = new DeferredTransitionBuffer();
     const applied: string[] = [];
     const queue = { replayActiveNow: false, pendingCount: 1 };
@@ -110,8 +110,8 @@ describe("flushDeferredTransitions", () => {
     buffer.enqueue({ kind: "ROUND_END", message: roundEnd() });
     buffer.enqueue({ kind: "SHOP_STATE", message: shopState(1) });
     flushDeferredTransitions(queue, buffer, apply);
-    expect(applied).toEqual(["SHOP_STATE"]);
-    expect(buffer.drain().map((item) => item.kind)).toEqual(["ROUND_END"]);
+    expect(applied).toEqual([]);
+    expect(buffer.drain().map((item) => item.kind)).toEqual(["ROUND_END", "SHOP_STATE"]);
   });
 
   it("applies ROUND_END when the shot queue is idle and empty", () => {

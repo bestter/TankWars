@@ -1,3 +1,4 @@
+import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
@@ -5,10 +6,11 @@ import { secureRandom } from "../../../utils/random";
 import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
-import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
+import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, recordUnprofitableExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
 import type { ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
+import { evaluateBulldozerThreat } from "./bulldozerThreat";
 
 export interface ExpertPlan extends ExpertEvaluatedAim {
   readonly weaponId: WeaponId;
@@ -62,6 +64,7 @@ export interface ExpertDecisionTrace {
   readonly transitionReason: string;
   readonly threats: readonly {
     playerId: string;
+    weaponId: WeaponId;
     profileScore: number;
     turnsUntilShot: number;
     lethalProfit: number;
@@ -133,10 +136,10 @@ function selectionReason(
   phase: ExpertDecisionTrace["phase"], winner: RankedPlan, runnerUp: RankedPlan | undefined,
 ): string {
   if (!runnerUp) return "seul candidat admissible";
+  if (winner.result.profit !== runnerUp.result.profit) return "profit net supérieur";
   if (winner.result.shooterDestroyed !== runnerUp.result.shooterDestroyed) {
     return "EXPERT survit, contrairement au suivant";
   }
-  if (winner.result.profit !== runnerUp.result.profit) return "profit net supérieur";
   if (winner.result.humanDestroyedCount !== runnerUp.result.humanDestroyedCount) return "moins d'humains détruits";
   if (winner.result.humanDamageMilli !== runnerUp.result.humanDamageMilli) return "moins de dégâts aux humains";
   if (winner.result.aiDestroyedCount !== runnerUp.result.aiDestroyedCount) return "davantage d'IA détruites";
@@ -150,17 +153,6 @@ function selectionReason(
   return "ordre stable des groupes ou des points";
 }
 
-export function expertProfileScore(player: Player): number {
-  if (player.isHuman) return 0.9;
-  switch (player.aiProfile) {
-    case "v4-smart": return 1;
-    case "v3-sniper": return 0.8;
-    case "v2-heuristic": return 0.5;
-    case "v1-random": return 0.1;
-    default: return 0.5;
-  }
-}
-
 export function possibleExpertThreatWeapons(player: Player): WeaponId[] {
   let ids: readonly WeaponId[];
   if (player.isHuman || player.aiProfile === "v4-smart") {
@@ -172,7 +164,8 @@ export function possibleExpertThreatWeapons(player: Player): WeaponId[] {
   } else {
     ids = [player.tank.currentWeapon || "MISSILE"];
   }
-  return ids.filter((id) => id !== "BULLDOZER" &&
+  // Nuclear stock stays unknown even after an opponent selects or fires it.
+  return ids.filter((id) => id !== "BULLDOZER" && id !== "NUKE" && id !== "THERMONUCLEAR" &&
     (id === "MISSILE" || (player.inventory[id] ?? 0) > 0));
 }
 
@@ -229,9 +222,10 @@ export function chooseExpertPlan(
   const shooterWeapons = ALL_WEAPON_IDS.filter((id) => id !== "BULLDOZER" &&
     (id === "MISSILE" || (self.inventory[id] ?? 0) > 0));
 
-  const threats: { player: Player; result: ValidExpertShotResult }[] = [];
+  const threats: { player: Player; weaponId: WeaponId; result: { readonly profit: number; readonly shooterDestroyed: boolean } }[] = [];
   for (const enemy of enemies) {
-    let best: ValidExpertShotResult | null = null;
+    let best: { readonly profit: number; readonly shooterDestroyed: boolean } | null = null;
+    let bestWeapon: WeaponId | undefined;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
       const result = evaluate(state, terrain, enemy, weapon, [self], true, false, cache, { mode: "adverse" });
       if (!isValidExpertShot(result)) continue;
@@ -239,13 +233,20 @@ export function chooseExpertPlan(
           Number(best.shooterDestroyed) > Number(result.shooterDestroyed) ||
           (best.shooterDestroyed === result.shooterDestroyed && result.profit > best.profit)) {
         best = result;
+        bestWeapon = weapon;
       }
     }
-    if (best) threats.push({ player: enemy, result: best });
+    const bulldozer = evaluateBulldozerThreat(state, terrain, enemy, self, cache).best;
+    if (bulldozer && (!best || Number(bulldozer.shooterDestroyed) < Number(best.shooterDestroyed) ||
+      (bulldozer.shooterDestroyed === best.shooterDestroyed && bulldozer.profit > best.profit))) {
+      best = bulldozer;
+      bestWeapon = "BULLDOZER";
+    }
+    if (best && bestWeapon !== undefined) threats.push({ player: enemy, weaponId: bestWeapon, result: best });
   }
   threats.sort((a, b) =>
     nextDelay(state, a.player) - nextDelay(state, b.player) ||
-    expertProfileScore(b.player) - expertProfileScore(a.player) ||
+    playerProfileScore(b.player) - playerProfileScore(a.player) ||
     b.result.profit - a.result.profit ||
     state.players.indexOf(a.player) - state.players.indexOf(b.player));
 
@@ -273,9 +274,10 @@ export function chooseExpertPlan(
     onDecision({
       phase,
       transitionReason,
-      threats: threats.map(({ player, result }) => ({
+      threats: threats.map(({ player, weaponId, result }) => ({
         playerId: player.id,
-        profileScore: expertProfileScore(player),
+        weaponId,
+        profileScore: playerProfileScore(player),
         turnsUntilShot: nextDelay(state, player),
         lethalProfit: result.profit,
       })),
@@ -292,7 +294,7 @@ export function chooseExpertPlan(
   };
   let enterSurvival = false;
   if (threat) {
-    const threatScore = expertProfileScore(threat);
+    const threatScore = playerProfileScore(threat);
     if (threatScore === 1) {
       enterSurvival = true;
     } else {
@@ -312,7 +314,7 @@ export function chooseExpertPlan(
       for (const group of groups) {
         const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
         const result = evaluate(state, terrain, self, weapon, group, true,
-          state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
+          state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim, selectionPolicy: "SURVIE" });
         if (!isValidExpertShot(result) || result.shooterDestroyed) {
           order++;
           continue;
@@ -327,7 +329,7 @@ export function chooseExpertPlan(
           policy: result.policy,
           targetIds: group.map((player) => player.id),
           result,
-          profileScore: expertProfileScore(threat),
+          profileScore: playerProfileScore(threat),
           nextTurnDelay: nextDelay(state, threat),
           nextTurnIndex: state.players.indexOf(threat),
           weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),
@@ -364,7 +366,14 @@ export function chooseExpertPlan(
       state.players.indexOf(a) - state.players.indexOf(b))[0];
     for (const weapon of shooterWeapons) {
       const result = evaluate(state, terrain, self, weapon, group, false,
-        state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim });
+        state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim, selectionPolicy: "OPTIMISER_PROFIT" });
+      if (isValidExpertShot(result) && weapon !== "MISSILE" && result.profit < 0) {
+        if (cache.diagnostics) recordUnprofitableExpertShot(cache, {
+          weaponId: weapon, targetIds: group.map((player) => player.id),
+          profit: result.profit, shooterDestroyed: result.shooterDestroyed,
+        });
+        continue;
+      }
       if (isValidExpertShot(result)) candidates.push({
         kind: "evaluated", ...targetAim,
         requestedPoint: result.requestedPoint,
@@ -375,7 +384,7 @@ export function chooseExpertPlan(
         policy: result.policy,
         targetIds: group.map((player) => player.id),
         result,
-        profileScore: group.reduce((sum, player) => sum + expertProfileScore(player), 0),
+        profileScore: group.reduce((sum, player) => sum + playerProfileScore(player), 0),
         nextTurnDelay: nextDelay(state, earliest),
         nextTurnIndex: state.players.indexOf(earliest),
         weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),
@@ -384,8 +393,8 @@ export function chooseExpertPlan(
     }
   }
   candidates.sort((a, b) =>
-    Number(a.result.shooterDestroyed) - Number(b.result.shooterDestroyed) ||
     b.result.profit - a.result.profit ||
+    Number(a.result.shooterDestroyed) - Number(b.result.shooterDestroyed) ||
     compareExpertConsequences(a.result, b.result) ||
     b.profileScore - a.profileScore ||
     a.nextTurnDelay - b.nextTurnDelay ||

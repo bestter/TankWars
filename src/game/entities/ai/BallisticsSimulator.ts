@@ -7,13 +7,110 @@ import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
 import { GRENADE_MAX_BOUNCES, grenadeBounceParams } from "../../../types/terrain";
 
-const BALLISTICS_BASE_SPEED = 6.0;
-const BALLISTICS_DT = 1 / 120;
-const BALLISTICS_MAX_STEPS = 420;
-const BALLISTICS_DRAG = 0.28;
+import { BALLISTICS_DT, BALLISTICS_DRAG, launchFromBarrel, advanceProjectile, projectileOutOfBounds } from "../../engine/projectileMotion";
+import { insideTankHitbox, TANK_HITBOX_WIDTH, TANK_HITBOX_HEIGHT } from "../../combatConstants";
+import type { Player } from "../../../types/player";
+import { finalizeAdvancedAim, type AimCommand } from "./aimCorruption";
 
-const BARREL_LENGTH = 20;
-const BARREL_START_Y_OFFSET = 13;
+export const BALLISTICS_MAX_STEPS = 420;
+
+export const BULLDOZER_DIRECT_SEARCH_MAX_SIMULATIONS = 512;
+export const BULLDOZER_DIRECT_COARSE_ANGLE_STEP = 5;
+export const BULLDOZER_DIRECT_COARSE_POWER_STEP = 15;
+export const BULLDOZER_DIRECT_FINE_ANGLE_STEP = 1.5;
+export const BULLDOZER_DIRECT_FINE_POWER_STEP = 5;
+export const BULLDOZER_DIRECT_FINE_WINDOW = 4.5;
+export const BULLDOZER_DIRECT_NEAR_DISTANCE = 8;
+
+export interface DirectBulldozerConfig {
+  readonly shooter: Player;
+  readonly target: Player;
+  readonly players: readonly Player[];
+  readonly terrain: TerrainManager;
+  readonly wind: number;
+  readonly gravity: number;
+}
+
+export interface DirectBulldozerTrajectory {
+  readonly terminal: "tank" | "terrain" | "out-of-bounds" | "incomplete";
+  readonly targetId?: string;
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly steps: number;
+  readonly nearDistance: number;
+}
+
+/** Pure first-event trace, with the same owner guard and roster order as combat. */
+export function simulateDirectBulldozerTrajectory(
+  config: DirectBulldozerConfig, command: Readonly<AimCommand>,
+): DirectBulldozerTrajectory {
+  const { shooter, target, players, terrain, wind, gravity } = config;
+  const motion = launchFromBarrel(shooter.tank.position.x, shooter.tank.position.y, command.angle, command.power);
+  let hasLeftOwnerHitbox = false;
+  let nearDistance = Number.POSITIVE_INFINITY;
+  for (let step = 1; step <= BALLISTICS_MAX_STEPS; step++) {
+    advanceProjectile(motion, BALLISTICS_DT, gravity, wind);
+    if (projectileOutOfBounds(motion, terrain.width, terrain.height)) {
+      return { ...motion, terminal: "out-of-bounds", steps: step, nearDistance };
+    }
+    const position = target.tank.position;
+    nearDistance = Math.min(nearDistance, Math.hypot(
+      Math.max(0, Math.abs(motion.x - position.x) - TANK_HITBOX_WIDTH / 2),
+      Math.max(0, position.y - TANK_HITBOX_HEIGHT - motion.y, motion.y - position.y),
+    ));
+    if (!insideTankHitbox(motion.x, motion.y, shooter.tank.position)) hasLeftOwnerHitbox = true;
+    const hit = players.find((player) => !player.tank.isDead &&
+      (player.id !== shooter.id || hasLeftOwnerHitbox) &&
+      insideTankHitbox(motion.x, motion.y, player.tank.position));
+    if (hit) return { ...motion, terminal: "tank", targetId: hit.id, steps: step, nearDistance };
+    if (terrain.checkCollision(motion.x, motion.y)) {
+      return { ...motion, terminal: "terrain", steps: step, nearDistance };
+    }
+  }
+  return { ...motion, terminal: "incomplete", steps: BALLISTICS_MAX_STEPS, nearDistance };
+}
+
+/** Coarse candidates first, then near-AABB seeds in their original traversal order. */
+export function* searchDirectBulldozerSolutions(config: DirectBulldozerConfig): Generator<{
+  command: Readonly<AimCommand>; trajectory: DirectBulldozerTrajectory;
+}> {
+  const right = config.target.tank.position.x > config.shooter.tank.position.x;
+  const minimum = right ? 15 : 95;
+  const maximum = right ? 85 : 165;
+  const seen = new Set<string>();
+  const seeds: AimCommand[] = [];
+  function trial(angle: number, power: number) {
+    const command = finalizeAdvancedAim({
+      angle: Math.max(6, Math.min(174, angle)), power: Math.max(25, Math.min(95, power)),
+    });
+    const key = `${command.angle}:${command.power}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return { command, trajectory: simulateDirectBulldozerTrajectory(config, command) };
+  }
+  for (let angle = minimum; angle <= maximum; angle += BULLDOZER_DIRECT_COARSE_ANGLE_STEP) {
+    for (let power = 20; power <= 95; power += BULLDOZER_DIRECT_COARSE_POWER_STEP) {
+      if (seen.size >= BULLDOZER_DIRECT_SEARCH_MAX_SIMULATIONS) return;
+      const candidate = trial(angle, power);
+      if (!candidate) continue;
+      if (candidate.trajectory.nearDistance <= BULLDOZER_DIRECT_NEAR_DISTANCE) seeds.push({ angle, power });
+      yield candidate;
+    }
+  }
+  for (const seed of seeds) {
+    const from = Math.max(minimum, seed.angle - BULLDOZER_DIRECT_FINE_WINDOW);
+    const to = Math.min(maximum, seed.angle + BULLDOZER_DIRECT_FINE_WINDOW);
+    for (let angle = from; angle <= to; angle += BULLDOZER_DIRECT_FINE_ANGLE_STEP) {
+      for (let power = Math.max(20, seed.power - 15); power <= Math.min(95, seed.power + 15);
+        power += BULLDOZER_DIRECT_FINE_POWER_STEP) {
+        if (seen.size >= BULLDOZER_DIRECT_SEARCH_MAX_SIMULATIONS) return;
+        const candidate = trial(angle, power);
+        if (candidate) yield candidate;
+      }
+    }
+  }
+}
 
 export interface ShotResult {
   landX: number;
@@ -58,24 +155,6 @@ export interface BallisticSearchResult {
   err: number;
   /** False when the chosen trajectory exhausted its step bound or no trial was evaluated. */
   complete?: boolean;
-}
-
-function launchFromBarrel(
-  sx: number,
-  sy: number,
-  angleDeg: number,
-): { x: number; y: number; vx: number; vy: number } {
-  const rad = (angleDeg * Math.PI) / 180;
-  const barrelStartY = sy - BARREL_START_Y_OFFSET;
-  const x = sx + Math.cos(rad) * BARREL_LENGTH;
-  const y = barrelStartY - Math.sin(rad) * BARREL_LENGTH;
-  const speed = BALLISTICS_BASE_SPEED;
-  return {
-    x,
-    y,
-    vx: Math.cos(rad) * speed,
-    vy: -Math.sin(rad) * speed,
-  };
 }
 
 /** Standard projectile trajectory (missile, driller, bullet, etc.). */

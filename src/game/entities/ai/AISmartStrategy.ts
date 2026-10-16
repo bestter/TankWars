@@ -113,10 +113,16 @@ export class AISmartStrategy implements AIEngine {
     const finalAim = reactionIntensity > 0 || gaffeOccurred
       ? finalizeAdvancedAim(command) : choice.command;
     if (import.meta.env.DEV) {
+      const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
+      const conservationReason = fallback?.conservationReason;
       console.info("[AI EXPERT] Décision", JSON.stringify({
         shooterId: self.id,
         round: gameState.roundNumber,
         turn: gameState.turn,
+        // Keep the economic explanation ahead of roster and large forecast tables.
+        rejectedUnprofitableShots,
+        conservationReason,
+        fallbackSelectionReason: fallback?.selectionReason,
         currentPlayerIndex: gameState.currentPlayerIndex,
         windForce: gameState.windForce,
         gravity: gameState.gravity,
@@ -132,6 +138,7 @@ export class AISmartStrategy implements AIEngine {
           inventory: { ...player.inventory },
         })),
         ...decisionTrace,
+        selectionReason: plan ? decisionTrace?.selectionReason : fallback?.selectionReason,
         realAim: {
           weaponId,
           choiceKind: choice.kind,
@@ -139,7 +146,9 @@ export class AISmartStrategy implements AIEngine {
           tacticalPoint: point,
           policy,
           materialFallback: fallback && { useful: fallback.useful, profit: fallback.forecast?.profit },
-          searches: cache.search.size, physicalForecasts: cache.physics.size, ...cache.diagnostics,
+          searches: cache.search.size, physicalForecasts: cache.physics.size,
+          ownProposals: cache.diagnostics?.ownProposals, adverseProposals: cache.diagnostics?.adverseProposals,
+          drillerRockRejections: cache.diagnostics?.drillerRockRejections,
           pointOrigin: "origin" in point ? point.origin : "historical",
           predictedImpactMaterials: decisionTrace?.selected?.predictedImpacts?.map((hit) => ({
             x: hit.x, material: terrainManager.getMaterialAt(hit.x),

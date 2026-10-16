@@ -213,6 +213,34 @@ describe("Bulldozer Weapon & Displacement Mechanics", () => {
   });
 
   describe("PhysicsEngine Bulldozer projectile interaction", () => {
+    it("pushes the detected target when the owner's guarded hitbox overlaps it and the owner is first", () => {
+      const shooter = makePlayer({ id: "shooter", tank: makeTank("t-shoot", 200, 300) });
+      const target = makePlayer({ id: "target", tank: makeTank("t-targ", 210, 300) });
+      const tanks = new TankManager();
+      tanks.setPlayers([shooter, target]);
+      const terrain = mockCustomTerrain(() => 300);
+      const physics = new PhysicsEngine();
+      const onHit = vi.fn();
+      physics.onProjectileHit = onHit;
+      physics.launchProjectile(205, 295, 0, 10, "BULLDOZER", "shooter");
+      const projectile = physics.getProjectiles()[0];
+      projectile.vx = 200;
+      projectile.vy = 0;
+      expect(projectile.hasLeftOwnerHitbox).toBeFalsy();
+
+      physics.updateProjectiles(1 / 120, 0, 0, terrain, tanks);
+
+      expect(onHit).toHaveBeenCalledOnce();
+      expect(onHit).toHaveBeenCalledWith(expect.objectContaining({
+        weaponId: "BULLDOZER", directTargetId: "target",
+      }));
+      const targetPush = target.tank.position.x - 210;
+      const shooterRecoil = 200 - shooter.tank.position.x;
+      expect(targetPush).toBeCloseTo(50, 0);
+      expect(shooterRecoil).toBeCloseTo(targetPush, 5);
+      expect(physics.hasActiveProjectiles()).toBe(false);
+    });
+
     it("applies symmetrical push and recoil on direct tank hit", () => {
       const shooter = makePlayer({ id: "shooter", tank: makeTank("t-shoot", 100, 300) });
       const target = makePlayer({ id: "target", tank: makeTank("t-targ", 300, 300) });
