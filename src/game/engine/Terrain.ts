@@ -583,9 +583,11 @@ export class TerrainManager {
   // ==================== Méthodes privées ====================
 
   /**
-   * Teste si le segment (fromX, fromY) -> (toX, toY) touche ou traverse le rectangle solide
-   * d'une colonne entière c comprise strictement entre floor(fromX) et floor(toX) :
-   * X in [c, c + 1), Y >= surfaceY (contact de frontière inclus).
+   * Colonnes ROCK strictement intermédiaires : rectangle [c, c+1) × [surfaceY, ∞).
+   * Lecture sur photographie des hauteurs avant toute mutation.
+   * Teste si le segment (fromX, fromY) -> (toX, toY) touche ce rectangle
+   * pour une colonne c comprise strictement entre floor(fromX) et floor(toX)
+   * (contact de frontière inclus).
    */
   private segmentHitsRockColumn(
     fromX: number,
@@ -605,9 +607,10 @@ export class TerrainManager {
   }
 
   /**
-   * En mode canCarveRock, vérifie si le creusement d'une colonne cible DIRT/SOFT x est bloqué
-   * par une colonne ROCK située strictement hors du rayon nominal (|c - impactX| > radius)
-   * sur l'instantané des hauteurs pris avant creusement.
+   * Colonnes ROCK strictement intermédiaires : rectangle [c, c+1) × [surfaceY, ∞).
+   * Lecture sur photographie des hauteurs avant toute mutation.
+   * En mode canCarveRock, le creusement d'une colonne DIRT/SOFT est bloqué par une
+   * colonne ROCK strictement hors du rayon nominal (|c - impactX| > radius).
    */
   private isHaloOccludedByOuterRock(
     impactX: number,

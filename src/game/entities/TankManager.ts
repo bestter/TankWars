@@ -289,6 +289,12 @@ export class TankManager {
     return this.pendingDeferredBlasts.length > 0;
   }
 
+  /**
+   * Souffle nucléaire local différé (#302), uniquement lorsque localMatch === true.
+   * Qualification directe avant les chutes (NUKE = mort immédiate ;
+   * THERMONUCLEAR direct = diviseur 4). Le souffle indirect et la zone de 75 px
+   * s'appliquent une fois les chutes et ensevelissements stabilisés.
+   */
   private flushPendingDeferredBlastsIfStable(terrain: TerrainManager): void {
     if (this.pendingDeferredBlasts.length === 0 || this.anyTankIsFalling()) {
       return;
@@ -666,12 +672,15 @@ export class TankManager {
   }
 
   /**
-   * Contrat local NUKE / THERMONUCLEAR (#302) :
+   * Contrat local NUKE / THERMONUCLEAR (#302), uniquement lorsque localMatch === true.
+   * Qualification directe avant les chutes (NUKE = mort immédiate ;
+   * THERMONUCLEAR direct = diviseur 4). Souffle indirect et zone de 75 px
+   * différés jusqu'à la stabilisation complète.
    * - Fige la qualification d'impact direct sur les boîtes 24×15 avant toute chute (9A, 10A).
    * - Pour NUKE en impact direct : tue immédiatement sur place par explosion (absorption bouclier 2:1)
    *   sans impulsion de chute, dégât de chute, enterrement ni souffle différé sur cette victime.
    * - Pour THERMONUCLEAR en impact direct : 0 dégât de PV avant chute, conserve la qualification
-   *   pour le souffle différé après stabilisation.
+   *   pour le souffle différé après stabilisation. Les PV de chute se paient au diviseur 4.
    * - Met en file d'attente le souffle différé post-stabilisation (8B.5).
    */
   public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
