@@ -4,6 +4,7 @@ import type { ResolvedShotPreview } from "../GameEngine";
 import * as random from "../../../utils/random";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 import type { Player } from "../../../types/player";
+import { TERRAIN_MATERIAL } from "../../../types/terrain";
 
 describe("GameEngine match rules", () => {
   let engine: GameEngine;
@@ -353,4 +354,102 @@ describe("GameEngine match rules", () => {
     expect(engine2.getWinner()).toBeNull();
     expect(onDraw).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    {
+      weaponId: "NUKE" as const,
+      startX: 397.5,
+      startY: 145,
+      classification: "direct" as const,
+      falls: false,
+      fallDivisor: null,
+    },
+    {
+      weaponId: "NUKE" as const,
+      startX: 367.5,
+      startY: 150,
+      classification: "indirect" as const,
+      falls: true,
+      fallDivisor: 8n,
+    },
+    {
+      weaponId: "THERMONUCLEAR" as const,
+      startX: 397.5,
+      startY: 145,
+      classification: "direct" as const,
+      falls: false,
+      fallDivisor: null,
+    },
+    {
+      weaponId: "THERMONUCLEAR" as const,
+      startX: 297.5,
+      startY: 150,
+      classification: "indirect" as const,
+      falls: true,
+      fallDivisor: 8n,
+    },
+  ])(
+    "carves ROCK in local mode with $weaponId ($classification) and applies projectile damage before falls",
+    ({ weaponId, startX, startY, falls, fallDivisor }) => {
+      const { a, b, c } = threePlayers();
+      a.inventory[weaponId] = 1;
+      const terrain = engine.getTerrain();
+      terrain.loadHeights(new Array(800).fill(150), new Array(800).fill(TERRAIN_MATERIAL.ROCK));
+      a.tank.position = { x: 80, y: 150 };
+      b.tank.position = { x: 400, y: 150 };
+      c.tank.position = { x: 700, y: 150 };
+      b.tank.health = 250;
+      b.tank.maxHealth = 250;
+
+      a.tank.currentWeapon = weaponId;
+      a.tank.angle = 0;
+      a.tank.power = 50;
+      expect(engine.getTurnManager().tryFire()).toBe(true);
+      const projectile = engine.getActiveProjectiles()[0];
+      projectile.x = startX;
+      projectile.y = startY;
+
+      const resolved = vi.fn();
+      engine.onShotResolved = resolved;
+      const stepSimulation = Reflect.get(engine, "update") as (dt: number) => void;
+
+      // Step 1: projectile advances by +2.5px in X to 400 (direct hitbox) or 370 (indirect terrain)
+      stepSimulation.call(engine, 1 / 120);
+      expect(terrain.getHeightAt(400)).toBeGreaterThan(150);
+
+      if (!falls) {
+        // Direct NUKE, or a thermonuclear hit inside 75 px, kills Bob before any fall.
+        expect(b.tank.isDead).toBe(true);
+        expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
+        expect(resolved).toHaveBeenCalledTimes(1);
+        const preview = resolved.mock.calls[0]?.[0] as ResolvedShotPreview;
+        const award = preview.awards.find((entry) => entry.playerId === a.id);
+        expect(award?.components.some((comp) => comp.kind === "fall-damage")).toBe(false);
+        expect(award?.components.some((comp) => comp.kind === "projectile-damage")).toBe(true);
+        return;
+      }
+
+      expect(engine.getTankManager().anyTankIsFalling()).toBe(true);
+      expect(resolved).not.toHaveBeenCalled();
+
+      // Advance simulation until Bob lands. Projectile damage was already applied.
+      for (let i = 0; i < 1200 && resolved.mock.calls.length === 0; i++) {
+        stepSimulation.call(engine, 1 / 120);
+      }
+
+      expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
+      expect(resolved).toHaveBeenCalledTimes(1);
+      const preview = resolved.mock.calls[0]?.[0] as ResolvedShotPreview;
+      const award = preview.awards.find((entry) => entry.playerId === a.id);
+      expect(award).toBeDefined();
+      expect(award?.amount ?? 0).toBeGreaterThan(0);
+      const fallComps = award?.components.filter((comp) => comp.kind === "fall-damage") ?? [];
+      expect(fallComps.length).toBeGreaterThan(0);
+      // With 3 players at match start, xMilli = 2500 (5/2), MONEY_AND_DAMAGE_SCALE = 1_000_000n.
+      // After GCD reduction, check that the ratio fallComps[0] matches divisor 4 (direct) vs 8 (indirect):
+      // Specifically, for 1 HP fall step (damageMilli = 1000, xMilli = 2500):
+      // unreduced = 2_500_000 / (1_000_000 * divisor) = 5 / (2 * divisor), so denominator is 2 * fallDivisor!
+      expect(BigInt(fallComps[0].value.denominator)).toBe(2n * (fallDivisor ?? 0n));
+    },
+  );
 });
