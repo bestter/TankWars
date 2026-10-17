@@ -283,6 +283,7 @@ function migrateAcceptedFireActions(
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private committedState: RoomState | null = null;
+  private lastCombatStringified = new Map<string, string>();
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
   private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -451,14 +452,18 @@ export class GameRoom extends DurableObject {
     }
     for (const [key, value] of Object.entries(processedShopActions)) entries.set(`${prefix}shop:${key}`, { kind: "shop", key, value });
     try {
+      const stringified = new Map<string, string>();
+      for (const [key, value] of entries) stringified.set(key, JSON.stringify(value));
       await this.ctx.storage.transaction(async (txn) => {
         const stored = await txn.list({ prefix: "combat:" });
         const obsolete = [...stored.keys()].filter((key) => !entries.has(key));
         const changed: Array<[string, unknown]> = [["state", main]];
+        // Wrappers are rebuilt on every saveState call, so reference equality cannot detect unchanged entries.
         for (const [key, value] of entries) {
           const s = stored.get(key);
-          if (s === value) continue;
-          if (s === undefined || JSON.stringify(s) !== JSON.stringify(value)) {
+          const valueStr = stringified.get(key)!;
+          const storedStr = this.lastCombatStringified.get(key) ?? JSON.stringify(s);
+          if (s === undefined || storedStr !== valueStr) {
             changed.push([key, value]);
           }
         }
@@ -468,6 +473,8 @@ export class GameRoom extends DurableObject {
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
       });
+      // Publish only committed serializations; replacing the map also removes obsolete keys.
+      this.lastCombatStringified = stringified;
       this.committedState = snapshot;
     } catch (error) {
       // Discard unpublished mutations; reload the durable state on the next activation.
