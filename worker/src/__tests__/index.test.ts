@@ -19,6 +19,10 @@ describe('Worker Entrypoint', () => {
 
     const env: Env = {
       GAME_ROOM: mockNamespace,
+      RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'rate-limit-id' }),
+        get: vi.fn().mockReturnValue({ fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })) }),
+      } as unknown as DurableObjectNamespace,
     };
 
     return { env, mockStub, mockNamespace };

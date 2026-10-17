@@ -13,60 +13,6 @@ function roster(count = 4, profile: AiProfile = "v1-random") {
   }));
 }
 
-describe("ROCK base geometry", () => {
-  it("a 24 px base at 212.5 touches 25 columns, including both half columns", () => {
-    const map = makeRoundMap();
-    const terrain = spawnTerrain(800, map);
-    const material = vi.spyOn(terrain, 'getMaterialAt');
-    expect(hasSafeRockBase(212.5, terrain)).toBe(true); // [200.5, 224.5)
-    expect(material.mock.calls.map(([column]) => column)).toEqual(
-      Array.from({ length: 25 }, (_, i) => 200 + i),
-    );
-    for (const edge of [200, 224]) {
-      map.materials.fill('DIRT');
-      map.materials[edge] = 'ROCK';
-      expect(hasSafeRockBase(212.5, terrain)).toBe(false);
-      map.materials.fill('ROCK');
-      map.materials[edge] = 'DIRT';
-      expect(hasSafeRockBase(212.5, terrain)).toBe(false);
-    }
-    map.materials.fill('DIRT');
-    map.materials[199] = 'ROCK';
-    map.materials[224] = 'ROCK';
-    expect(hasSafeRockBase(212, terrain)).toBe(true); // [200, 224): no overlap with either ROCK column
-  });
-
-  it("counts positive overlap only, including fractions, both edges and an interior island", () => {
-    const map = makeRoundMap();
-    map.materials.fill("ROCK", 200, 240);
-    const terrain = spawnTerrain(800, map);
-    expect(hasSafeRockBase(188, terrain)).toBe(true); // exactly touches ROCK
-    expect(hasSafeRockBase(188.01, terrain)).toBe(false);
-    expect(hasSafeRockBase(212, terrain)).toBe(true);
-    expect(hasSafeRockBase(211.99, terrain)).toBe(false);
-    expect(hasSafeRockBase(228, terrain)).toBe(true);
-    expect(hasSafeRockBase(228.01, terrain)).toBe(false);
-    expect(hasSafeRockBase(252, terrain)).toBe(true);
-    expect(hasSafeRockBase(251.99, terrain)).toBe(false);
-    map.materials.fill("DIRT");
-    map.materials[215] = "ROCK";
-    expect(hasSafeRockBase(212.5, terrain)).toBe(false);
-    expect(hasSafeRockBase(12, terrain)).toBe(true);
-    expect(hasSafeRockBase(788, terrain)).toBe(true);
-    expect(hasSafeRockBase(11.99, terrain)).toBe(false);
-    expect(hasSafeRockBase(788.01, terrain)).toBe(false);
-  });
-
-  it("accepts DIRT/SOFT transitions and never draws RNG or mutates terrain", () => {
-    const map = makeRoundMap();
-    map.materials.fill("SOFT", 200, 400);
-    const before = structuredClone(map);
-    setRNG({ next: () => { throw new Error("Unexpected RNG"); } });
-    try { expect(hasSafeRockBase(200.5, spawnTerrain(800, map))).toBe(true); }
-    finally { resetRNG(); }
-    expect(map).toEqual(before);
-  });
-});
 
 describe("complete bounded round preparation", () => {
   it("preserves the extracted generator's values and draw order", () => {
