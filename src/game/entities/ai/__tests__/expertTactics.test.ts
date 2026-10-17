@@ -2,6 +2,7 @@ import { playerProfileScore } from "../profileScore";
 import { describe, expect, it } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { expertTacticalPoints } from "../expertShotEvaluator";
+import { materialBoundaryPoints } from "../materialCandidates";
 import { ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
 
 const terrain = flatTerrain(800, 480);
@@ -60,10 +61,10 @@ describe("EXPERT tactical points", () => {
       .toEqual([]);
   });
 
-  it("includes material boundary points in own mode and dedupes points", () => {
-    // Modify terrain to create a boundary near a
-    terrain.setMaterialRange(305, 800, "ROCK");
-    const points = expertTacticalPoints(self, [a], "NUKE", terrain, [self, a], "own");
+  it("includes material boundary points in own mode", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 800, "ROCK");
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a], "own");
     // a = 300. radius = 62.
     // Tank center: 300
     // Ground - radius/2: 269
@@ -76,13 +77,39 @@ describe("EXPERT tactical points", () => {
     expect(points).toContainEqual({ x: 305.5, y: 336, kind: "terrain", origin: "boundary" });
 
     expect(points.length).toBe(5);
+  });
 
-    // Test deduplication: generate multiple duplicate points in a custom context
-    // This is difficult to force via the public API because the boundaries offset by .5, and tank positions are whole numbers.
-    // But we can check that if multiple overlapping points were generated, they would be deduped.
-    // We already achieve 100% branch coverage with these test cases.
+  it("dedupes coincident points from adjacent material boundaries", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 305, "ROCK");
+    const pointsBeforeDedupe = [
+      ...expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a]),
+      ...materialBoundaryPoints([a], "NUKE", localTerrain, [self, a]),
+    ];
+    const duplicate = { x: 305.5, y: 336, kind: "terrain", origin: "boundary" };
+    expect(pointsBeforeDedupe).toHaveLength(7);
+    expect(pointsBeforeDedupe.filter((point) => point.x === duplicate.x && point.y === duplicate.y))
+      .toEqual([duplicate, duplicate]);
 
-    terrain.setMaterialRange(305, 800, "DIRT"); // Reset terrain
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a], "own");
+    expect(points.length).toBeLessThan(pointsBeforeDedupe.length);
+    expect(points).toHaveLength(6);
+    expect(points.filter((point) => point.x === duplicate.x && point.y === duplicate.y))
+      .toEqual([duplicate]);
+    expect(new Set(points.map((point) => JSON.stringify([point.x, point.y]))).size)
+      .toBe(points.length);
+  });
+
+  it("does not add material boundary points in adverse mode by default", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 800, "ROCK");
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a]);
+    expect(points).toEqual([
+      { x: 300, y: 328.5, kind: "tank" },
+      { x: 269, y: 336, kind: "terrain" },
+      { x: 331, y: 336, kind: "terrain" },
+    ]);
+    expect(points.some((point) => point.origin === "boundary")).toBe(false);
   });
 });
 
