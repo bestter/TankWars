@@ -84,6 +84,94 @@ function reportPlayers(room: GameRoom, deadSlots: boolean[] = []): Player[] {
   return players;
 }
 
+describe('GameRoom combat persistence comparisons', () => {
+  async function bootPersistence() {
+    const setup = createMockCtx();
+    const room = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(room, 'ctx', { value: setup.ctx });
+    await room.fetchCreate(new Request('http://localhost/create', {
+      method: 'POST',
+      body: JSON.stringify({ roomId: 'comparison', numPlayers: 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
+    }));
+    const state = room.getRoster()!;
+    const events: ShotMessage[] = [1, 2, 3, 4].map((id) => ({
+      type: 'SHOT', actionId: `action-${id}`, shotId: id, roundNumber: 1,
+      shotNumberInRound: id, isFirstShotOfRound: id === 1, physicsSeed: id,
+      eventSequence: id, slot: 0, ownerId: 'player-0',
+      command: { angle: 45, power: 60, weaponId: 'MISSILE' },
+    }));
+    const key = (id: number) => `combat:1:event:${id}`;
+    const wrap = (event: ShotMessage) => ({ kind: 'event', key: String(event.eventSequence), value: event });
+    for (const event of events) setup.mockStorage.storageData.set(key(event.eventSequence), structuredClone(wrap(event)));
+    state.combatJournal = structuredClone(events.slice(0, 3));
+    state.combatJournal[2] = { ...events[2], command: { ...events[2].command, power: 70 } };
+    state.combatJournal.push({ ...events[3], eventSequence: 5, shotId: 5 });
+    const storage = (setup.ctx as { storage: { put: ReturnType<typeof vi.fn> } }).storage;
+    const writtenKeys = () => storage.put.mock.calls.flatMap(([batch]) => Object.keys(batch as Record<string, unknown>)).sort();
+    const save = () => (Reflect.get(room, 'saveState') as () => Promise<void>).call(room);
+    storage.put.mockClear();
+    return { ...setup, room, storage, writtenKeys, save, key };
+  }
+
+  it('writes only deeply changed or new combat entries, including after a cold start', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(3), setup.key(5), 'state']);
+    expect(setup.mockStorage.storageData.has(setup.key(4))).toBe(false);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual(['state']);
+
+    const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+    await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+    setup.storage.put.mockClear();
+    await (Reflect.get(restored, 'saveState') as () => Promise<void>).call(restored);
+    expect(setup.writtenKeys()).toEqual(['state']);
+  });
+
+  it('retries changed entries after a failed transaction', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const state = setup.room.getRoster()!;
+    const changed = { ...state.combatJournal[0], eventSequence: 6 };
+    state.combatJournal.push(changed);
+    const before = structuredClone(setup.mockStorage.storageData);
+    setup.storage.put.mockRejectedValueOnce(new Error('disk failure'));
+    await expect(setup.save()).rejects.toThrow('disk failure');
+    expect(setup.mockStorage.storageData).toEqual(before);
+    setup.room.getRoster()!.combatJournal.push(changed);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(6), 'state']);
+  });
+
+  it('serializes each current combat entry only once on warm saves', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      await setup.save();
+      expect(stringify).toHaveBeenCalledTimes(4);
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it('writes an identical entry again after it was removed', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const event = setup.room.getRoster()!.combatJournal.shift()!;
+    await setup.save();
+    expect(setup.mockStorage.storageData.has(setup.key(event.eventSequence))).toBe(false);
+    setup.room.getRoster()!.combatJournal.push(event);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(event.eventSequence), 'state']);
+  });
+});
+
 describe('Zeus v3 durable settlement', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
