@@ -12,6 +12,7 @@
 // IMPORTANT: Durable Object classes MUST be re-exported from the entrypoint (the file
 // pointed to by "main" in wrangler.toml). Wrangler validates this at startup.
 export { GameRoom } from './game-room';
+export { RateLimiter } from './rate-limiter';
 
 import {
   MINIMUM_CLIENT_PROTOCOL_VERSION,
@@ -21,6 +22,7 @@ import {
 // Env bindings injected by wrangler (see wrangler.toml)
 export interface Env {
   GAME_ROOM: DurableObjectNamespace;
+  RATE_LIMITER: DurableObjectNamespace;
 }
 
 // Simple REST + WS router. In production you may front this with a custom domain
@@ -89,25 +91,28 @@ export default {
         }));
       }
 
-      // IP-based rate limiting to prevent DoS via mass room creation
+      // Cloudflare supplies this header in production. Local/non-proxied requests
+      // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-      const ipRateLimitKey = `rate_limit_${ip}`;
-      const ipRateLimitId = env.GAME_ROOM.idFromName(ipRateLimitKey);
-      const ipRateLimitStub = env.GAME_ROOM.get(ipRateLimitId);
-
-      // Check rate limit via DO
-      const rateLimitResp = await ipRateLimitStub.fetch('https://internal/rate-limit', {
-        method: 'POST',
-      });
-
-      if (!rateLimitResp.ok) {
-        return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
-          status: 429,
-          headers: {
-            'content-type': 'application/json',
-            'Retry-After': '60'
-          },
-        }));
+      try {
+        const id = env.RATE_LIMITER.idFromName(ip);
+        const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
+          method: 'POST',
+        });
+        const retryAfter = response.headers.get('Retry-After');
+        if (response.status === 429 && retryAfter !== null && /^[1-9]\d*$/.test(retryAfter)) {
+          return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', 'Retry-After': retryAfter },
+          }));
+        }
+        if (response.status !== 204) {
+          throw new Error(`Unexpected rate limiter response: ${response.status}`);
+        }
+      } catch (error: unknown) {
+        // Fail open only for limiter failures; origin validation and room creation
+        // still run normally. Do not log the IP or expose internal errors to clients.
+        console.error('[Worker] Room creation rate limiter unavailable; allowing request', error);
       }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // Normalize the external payload before forwarding the room configuration to the DO.

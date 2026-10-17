@@ -703,27 +703,6 @@ export class GameRoom extends DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === '/internal/rate-limit') {
-      const now = Date.now();
-      const WINDOW_MS = 60 * 1000;
-      const MAX_REQUESTS = 5;
-
-      const requests: number[] = await this.ctx.storage.get('rate_limit_requests') || [];
-      const recentReqs = requests.filter(time => now - time < WINDOW_MS);
-
-      if (recentReqs.length >= MAX_REQUESTS) {
-        return new Response('Too Many Requests', { status: 429 });
-      }
-
-      recentReqs.push(now);
-      await this.ctx.storage.put('rate_limit_requests', recentReqs);
-
-      // Setting an alarm to clean up this DO if it's only used for rate limiting
-      // and hasn't been accessed. But maybe unnecessary since it's just storing a small array.
-
-      return new Response('OK', { status: 200 });
-    }
-
     if (url.pathname === '/internal/create' || url.pathname.endsWith('/create')) {
       return this.fetchCreate(request);
     }

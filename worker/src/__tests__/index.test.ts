@@ -19,6 +19,10 @@ describe('Worker Entrypoint', () => {
 
     const env: Env = {
       GAME_ROOM: mockNamespace,
+      RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'rate-limit-id' }),
+        get: vi.fn().mockReturnValue({ fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })) }),
+      } as unknown as DurableObjectNamespace,
     };
 
     return { env, mockStub, mockNamespace };
@@ -105,7 +109,7 @@ describe('Worker Entrypoint', () => {
       const response = await worker.fetch(request, env);
 
       expect(response.status).toBe(200);
-      const forwardedInit = mockStub.fetch.mock.calls[1]?.[1] as RequestInit;
+      const forwardedInit = mockStub.fetch.mock.calls[0]?.[1] as RequestInit;
       const forwardedBody = JSON.parse(String(forwardedInit.body)) as {
         slotConfigs: Array<{ type: string; aiProfile?: string }>;
       };
@@ -146,10 +150,10 @@ describe('Worker Entrypoint', () => {
       expect((await worker.fetch(defaulted, defaultCase.env)).status).toBe(200);
 
       const explicitBody = JSON.parse(
-        String((explicitCase.mockStub.fetch.mock.calls[1]?.[1] as RequestInit).body),
+        String((explicitCase.mockStub.fetch.mock.calls[0]?.[1] as RequestInit).body),
       ) as { slotConfigs: Array<{ type: string; aiProfile?: string }> };
       const defaultBody = JSON.parse(
-        String((defaultCase.mockStub.fetch.mock.calls[1]?.[1] as RequestInit).body),
+        String((defaultCase.mockStub.fetch.mock.calls[0]?.[1] as RequestInit).body),
       ) as { slotConfigs: Array<{ type: string; aiProfile?: string }> };
 
       expect(explicitBody.slotConfigs).toEqual([

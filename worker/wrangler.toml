@@ -16,7 +16,8 @@ compatibility_date = "2026-06-16"
 # Durable Object binding for per-room game state + WebSocket connections
 [durable_objects]
 bindings = [
-  { name = "GAME_ROOM", class_name = "GameRoom" }
+  { name = "GAME_ROOM", class_name = "GameRoom" },
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
 ]
 
 # Migrations for DO (create the class on first deploy).
@@ -25,6 +26,11 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GameRoom"]
+
+# Separate per-IP room creation limits from game room storage.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimiter"]
 
 # Optional but recommended for better local DX:
 # You can add a worker/package.json later with "@cloudflare/workers-types" for TypeScript.
