@@ -360,7 +360,8 @@ export class TerrainManager {
 
   /**
    * Creuse un cratère dans le terrain :
-   * - Ignore les colonnes ROCK (roche indestructible).
+   * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au rayon nominal (1.0x) lorsque canCarveRock est actif.
+   *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
    * - Multiplie le creusement par SOFT_TERRAIN_DESTRUCTION_MULTIPLIER sur les colonnes SOFT.
    * - Creuse normalement sur les colonnes DIRT.
    */
@@ -368,10 +369,11 @@ export class TerrainManager {
     impactX: number,
     impactY: number,
     radius: number,
+    options?: { canCarveRock?: boolean },
   ): void {
     if (radius <= 0) return;
 
-    this.carveCircle(impactX, impactY, radius);
+    this.carveCircle(impactX, impactY, radius, options?.canCarveRock === true);
 
     const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
     const startX = Math.max(0, Math.floor(impactX - maxReach));
@@ -442,15 +444,32 @@ export class TerrainManager {
   /**
    * Roche = mur pour le souffle. True si le segment (from → to) traverse le
    * volume solide d'une colonne ROCK (y canvas >= surface).
-   * Explosion PAR DESSUS la roche (colonne d'impact ROCK) : pas d'occlusion.
-   * Rayon qui passe dans l'air au-dessus de la surface : pas d'occlusion.
+   * Mode standard (canCarveRock absent/faux) : explosion PAR DESSUS la roche (colonne d'impact ROCK) sans occlusion.
+   * Mode nucléaire local (canCarveRock === true) : teste les colonnes ROCK intermédiaires (rectangle [c, c+1) × [surfaceY, ∞)) même si fromX est sur ROCK.
    */
   public isBlastOccludedByRock(
     fromX: number,
     fromY: number,
     toX: number,
     toY: number,
+    options?: { canCarveRock?: boolean },
   ): boolean {
+    if (options?.canCarveRock === true) {
+      const x0 = Math.floor(fromX);
+      const x1 = Math.floor(toX);
+      if (x0 === x1) return false;
+
+      const cStart = Math.max(0, Math.min(x0, x1) + 1);
+      const cEnd = Math.min(this.width - 1, Math.max(x0, x1) - 1);
+      for (let c = cStart; c <= cEnd; c++) {
+        if (this.materials[c] !== TERRAIN_MATERIAL.ROCK) continue;
+        if (this.segmentHitsRockColumn(fromX, fromY, toX, toY, c, this.heights[c])) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     if (this.getMaterialAt(fromX) === TERRAIN_MATERIAL.ROCK) {
       return false;
     }
@@ -565,6 +584,69 @@ export class TerrainManager {
   // ==================== Méthodes privées ====================
 
   /**
+   * Colonnes ROCK strictement intermédiaires : rectangle [c, c+1) × [surfaceY, ∞).
+   * Lecture sur photographie des hauteurs avant toute mutation.
+   * Teste si le segment (fromX, fromY) -> (toX, toY) touche ce rectangle
+   * pour une colonne c comprise strictement entre floor(fromX) et floor(toX)
+   * (contact de frontière inclus).
+   */
+  private segmentHitsRockColumn(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    c: number,
+    surfaceY: number,
+  ): boolean {
+    const spanX = toX - fromX;
+    if (spanX === 0) return false;
+    const t0 = (c - fromX) / spanX;
+    const t1 = (c + 1 - fromX) / spanX;
+    const y0 = fromY + (toY - fromY) * t0;
+    const y1 = fromY + (toY - fromY) * t1;
+    return Math.max(y0, y1) >= surfaceY;
+  }
+
+  /**
+   * Colonnes ROCK strictement intermédiaires : rectangle [c, c+1) × [surfaceY, ∞).
+   * Lecture sur photographie des hauteurs avant toute mutation.
+   * En mode canCarveRock, le creusement d'une colonne DIRT/SOFT est bloqué par une
+   * colonne ROCK strictement hors du rayon nominal (|c - impactX| > radius).
+   */
+  private isHaloOccludedByOuterRock(
+    impactX: number,
+    impactY: number,
+    targetX: number,
+    targetSurfaceY: number,
+    radius: number,
+    snapshotHeights: ReadonlyArray<number>,
+  ): boolean {
+    const x0 = Math.floor(impactX);
+    const x1 = Math.floor(targetX);
+    if (x0 === x1) return false;
+
+    const cStart = Math.max(0, Math.min(x0, x1) + 1);
+    const cEnd = Math.min(this.width - 1, Math.max(x0, x1) - 1);
+    for (let c = cStart; c <= cEnd; c++) {
+      if (this.materials[c] !== TERRAIN_MATERIAL.ROCK) continue;
+      if (Math.abs(c - impactX) <= radius) continue;
+      if (
+        this.segmentHitsRockColumn(
+          impactX,
+          impactY,
+          targetX,
+          targetSurfaceY,
+          c,
+          snapshotHeights[c],
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Calcule la friabilité/douceur progressive du sol à la colonne x (0 = terre pure, 1 = sable pur).
    * Applique un mélange progressif sur les bordures sable-terre pour un comportement physique naturel.
    */
@@ -594,11 +676,17 @@ export class TerrainManager {
 
   /**
    * Creuse un cratère avec transition progressive entre matériaux :
-   * - ROCK : préservé intact (aucun creusement).
+   * - ROCK : préservé intact par défaut, ou creusé au rayon nominal (1.0x) si canCarveRock est vrai.
+   *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
    * - SOFT / DIRT : la friabilité s'interpole en douceur (comme si la terre était mêlée à du sable),
    *   produisant un cratère organique et continu sans falaise artificielle.
    */
-  private carveCircle(impactX: number, impactY: number, radius: number): void {
+  private carveCircle(
+    impactX: number,
+    impactY: number,
+    radius: number,
+    canCarveRock = false,
+  ): void {
     if (radius <= 0) return;
 
     const r = radius;
@@ -609,6 +697,55 @@ export class TerrainManager {
     const maxSurfaceY = this.height - 1;
 
     const impactSoftness = this.getLocalSoftness(impactX);
+
+    if (canCarveRock) {
+      const snapshotHeights = this.heights.slice();
+      for (let x = startX; x <= endX; x++) {
+        const dx = x - impactX;
+        const absDx = Math.abs(dx);
+
+        if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
+          if (absDx > r) continue;
+          const dy = Math.sqrt(r * r - dx * dx);
+          const craterDepth = impactY + dy;
+          if (craterDepth > snapshotHeights[x]) {
+            this.heights[x] = Math.min(maxSurfaceY, craterDepth);
+          }
+          continue;
+        }
+
+        if (
+          this.isHaloOccludedByOuterRock(
+            impactX,
+            impactY,
+            x,
+            snapshotHeights[x],
+            r,
+            snapshotHeights,
+          )
+        ) {
+          continue;
+        }
+
+        const localSoftness = this.getLocalSoftness(x);
+        const blastSoftness =
+          impactSoftness > 0
+            ? impactSoftness * Math.max(0, 1 - absDx / maxReach)
+            : 0;
+        const effectiveSoftness = Math.max(localSoftness, blastSoftness);
+        const mult = 1.0 + (maxMult - 1.0) * effectiveSoftness;
+        const effectiveR = r * mult;
+
+        if (absDx > effectiveR) continue;
+
+        const dy = Math.sqrt(effectiveR * effectiveR - dx * dx);
+        const craterDepth = impactY + dy;
+        if (craterDepth > snapshotHeights[x]) {
+          this.heights[x] = Math.min(maxSurfaceY, craterDepth);
+        }
+      }
+      return;
+    }
 
     for (let x = startX; x <= endX; x++) {
       if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
