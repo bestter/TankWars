@@ -18,8 +18,8 @@ import type {
 } from "../shop/shopTransaction";
 import { isValidActionId } from "./actionId";
 
-export const ONLINE_PROTOCOL_VERSION = 3 as const;
-export const MINIMUM_CLIENT_PROTOCOL_VERSION = 3 as const;
+export const ONLINE_PROTOCOL_VERSION = 4 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 4 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {

@@ -96,6 +96,13 @@ export class PhysicsEngine {
   private nextFallbackShotId = 1;
 
 
+  private lastImpactMaterial: import("../../types/terrain").TerrainMaterial =
+    TERRAIN_MATERIAL.DIRT;
+
+  public getLastImpactMaterial(): import("../../types/terrain").TerrainMaterial {
+    return this.lastImpactMaterial;
+  }
+
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
 
@@ -306,6 +313,7 @@ export class PhysicsEngine {
     // Explosion PAR DESSUS la roche : souffle réfléchi, +50% de dégâts (portée inchangée).
     // Explosion d'un CÔTÉ : la roche sert de mur (occlusion dans applyExplosionDamage).
     const impactMaterial = terrainManager.getMaterialAt(p.x);
+    this.lastImpactMaterial = impactMaterial;
     const maxDamage =
       impactMaterial === TERRAIN_MATERIAL.ROCK
         ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)

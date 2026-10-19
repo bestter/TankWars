@@ -1,5 +1,6 @@
 import { useShotAdvisor } from "./advisor/useShotAdvisor";
 import { type RoundMap } from "../game/round/prepareRound";
+import { ONLINE_PROTOCOL_VERSION } from "../game/online/protocol";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
@@ -724,7 +725,7 @@ export function useGameSession({
       if (pending?.kind === "READY") {
         sendCombatMessage({ type: "SHOP_READY", shopEpoch: pending.shopEpoch, actionId: pending.actionId });
       } else {
-        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: 3,
+        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: ONLINE_PROTOCOL_VERSION,
           roundNumber: currentMancheRef.current, lastSeenShotId: lastSeenShotIdRef.current,
           lastAppliedShopEpoch: lastAppliedShopEpochRef.current });
       }

@@ -1,6 +1,6 @@
 import type { Player } from "../../types/player";
 import type { RoundMap } from "../round/prepareRound";
-import { isStrictOnlineMessage, type ShotMessage, type ZeusAppointedMessage, type ZeusStrikeMessage, type ZeusStrikeAppliedMessage, type ZeusStateMessage, type ShopFinishMessage, type FireRejectedMessage } from "./protocol";
+import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION, type ShotMessage, type ZeusAppointedMessage, type ZeusStrikeMessage, type ZeusStrikeAppliedMessage, type ZeusStateMessage, type ShopFinishMessage, type FireRejectedMessage } from "./protocol";
 import { encodedCombatBytes, MAX_COMBAT_MESSAGE_BYTES } from "./combatTransport";
 
 export type CombatEvent = ShotMessage | ZeusAppointedMessage | ZeusStrikeMessage | ZeusStrikeAppliedMessage;
@@ -64,7 +64,7 @@ export function isCombatEvent(value: unknown): value is CombatEvent {
 function validateSnapshot(snapshot: CombatSnapshot, roundNumber: number, boundary: number): void {
   const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   if (snapshot.roundNumber !== roundNumber || snapshot.events.length !== boundary ||
-      !isStrictOnlineMessage({ type: "GAME_START", protocolVersion: 3, currentPlayerIndex: snapshot.currentPlayerIndex, players: snapshot.initialPlayers, map: snapshot.map }) ||
+      !isStrictOnlineMessage({ type: "GAME_START", protocolVersion: ONLINE_PROTOCOL_VERSION, currentPlayerIndex: snapshot.currentPlayerIndex, players: snapshot.initialPlayers, map: snapshot.map }) ||
       !isStrictOnlineMessage(snapshot.zeus) ||
       !isStrictOnlineMessage({ type: "STATE_UPDATE", currentPlayerIndex: snapshot.currentPlayerIndex, roundEnded: false, players: snapshot.players }) ||
       !integer(snapshot.economicRevision) || !integer(snapshot.authorityEpoch) ||

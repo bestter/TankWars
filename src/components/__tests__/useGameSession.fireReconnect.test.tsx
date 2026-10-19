@@ -330,7 +330,7 @@ describe("useGameSession FIRE reconnect", () => {
     ).toEqual([{ type: "SHOP_ENTER", roundNumber: 1 }]);
     expect(recoveryMessages).toContainEqual({
       type: "REQUEST_GAME_START",
-      protocolVersion: 3,
+      protocolVersion: 4,
       roundNumber: 2,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -776,7 +776,7 @@ describe("useGameSession FIRE reconnect", () => {
     ws.send.mockClear();
     act(() => sessionRef.current?.retryRoundPreparation());
     expect(getSentMessages(ws)).toContainEqual(pendingReady ? ready : {
-      type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 2,
+      type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 2,
       lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     // The server succeeds, but its SHOP_FINISH is lost. Reconnect with the saved SHOP state.
@@ -788,7 +788,7 @@ describe("useGameSession FIRE reconnect", () => {
     render(<Harness players={players} resumeCanvas={saved}
       ws={reconnected as unknown as WebSocket} sessionRef={sessionRef} />);
     expect(getSentMessages(reconnected)).toContainEqual({
-      type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 2,
+      type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 2,
       lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     if (pendingReady) expect(getSentMessages(reconnected)).toContainEqual(ready);
@@ -976,7 +976,7 @@ describe("useGameSession FIRE reconnect", () => {
     act(() => {
       ws.receive({
         type: "PROTOCOL_MISMATCH",
-        requiredVersion: 3,
+        requiredVersion: 4,
         receivedVersion: null,
       });
       ws.onclose?.({
@@ -990,7 +990,7 @@ describe("useGameSession FIRE reconnect", () => {
     });
 
     expect(sessionRef.current?.state.protocolMismatch).toEqual({
-      requiredVersion: 3,
+      requiredVersion: 4,
       receivedVersion: null,
     });
     expect(wsCtor).not.toHaveBeenCalled();

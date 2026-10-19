@@ -3,7 +3,7 @@ import { makePlayer, makeRoundMap, makeTank } from "../../__tests__/helpers";
 import { isStrictOnlineMessage, type GameStartMessage } from "../protocol";
 
 function start(): GameStartMessage {
-  return { type: "GAME_START", protocolVersion: 3, currentPlayerIndex: 0, map: makeRoundMap(),
+  return { type: "GAME_START", protocolVersion: 4, currentPlayerIndex: 0, map: makeRoundMap(),
     players: [makePlayer({ tank: makeTank("t1", 120, 300) }),
       makePlayer({ id: "p2", tank: makeTank("t2", 620, 300) })] };
 }
@@ -13,6 +13,7 @@ describe("mandatory v2 round maps", () => {
     expect(isStrictOnlineMessage(start())).toBe(true);
     expect(isStrictOnlineMessage({ ...start(), map: undefined })).toBe(false);
     expect(isStrictOnlineMessage({ ...start(), protocolVersion: 1 })).toBe(false);
+    expect(isStrictOnlineMessage({ ...start(), protocolVersion: 3 })).toBe(false);
     expect(isStrictOnlineMessage({ ...start(), players: [] })).toBe(false);
   });
 

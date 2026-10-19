@@ -411,7 +411,7 @@ export class GameRoom extends DurableObject {
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
-        if (this.state.combatSchemaVersion === 3 && this.buildGameStartMessage()) {
+        if (this.state.combatSchemaVersion === ONLINE_PROTOCOL_VERSION && this.buildGameStartMessage()) {
           if (this.state.activeShot) {
             if (!this.state.activeShot.shooterSettled && this.state.slotConfigs[this.state.activeShot.slot]?.type === "human") {
               const shotId = this.state.activeShot.shotId;
@@ -619,7 +619,7 @@ export class GameRoom extends DurableObject {
     }
 
     this.state = {
-      combatSchemaVersion: 3, economicRevision: 0, roundEarningsByPlayer: {},
+      combatSchemaVersion: ONLINE_PROTOCOL_VERSION, economicRevision: 0, roundEarningsByPlayer: {},
       combatJournal: [], earningsResults: {}, nextEventSequence: 1, lastResolvedShotId: 0,
       roomId,
       numPlayers,
@@ -1042,7 +1042,7 @@ export class GameRoom extends DurableObject {
   }
 
   private buildGameStartMessage(): GameStartMessage | null {
-    if (this.state?.started && this.state.combatSchemaVersion !== 3) return null;
+    if (this.state?.started && this.state.combatSchemaVersion !== ONLINE_PROTOCOL_VERSION) return null;
     if (!this.state?.started || !isRoundMap(this.state.map) ||
       this.state.map.roundNumber !== this.state.roundNumber) return null;
     const message = {
@@ -1157,7 +1157,7 @@ export class GameRoom extends DurableObject {
     this.state.map = prepared.map;
     this.state.currentPlayerIndex = 0;
     this.state.started = true;
-    this.state.combatSchemaVersion = 3;
+    this.state.combatSchemaVersion = ONLINE_PROTOCOL_VERSION;
     this.state.roundEarningsByPlayer = Object.fromEntries(this.state.players.map((p) => [p.id, 0]));
     this.state.startAt = Date.now();
     this.state.authorityOrder = [...humanSlots].sort((left, right) => {

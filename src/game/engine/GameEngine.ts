@@ -22,6 +22,7 @@ import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
+import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
 import type { Vector2, FireCommand, RoundResult } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
 import type { AIStrategy } from "../entities/ai/AIStrategy";
@@ -88,6 +89,19 @@ interface ActiveZeusVisual {
   impactApplied: boolean;
   localAuthoritative: boolean;
   result: ZeusStrikeResult | null;
+}
+
+export interface TerrainImpactParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: 1 | 2;
+  color: string;
+  kind: "dust" | "grain" | "shard";
+  material: TerrainMaterial;
 }
 
 type FireworkParticle = {
@@ -181,6 +195,7 @@ export class GameEngine {
     this.roundCombatActive = false;
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
+    this.terrainImpactParticles = [];
     this.clearZeusVisuals();
   }
 
@@ -200,6 +215,10 @@ export class GameEngine {
     color: string;
   }> = [];
   private thermoFlashLife = 0; // short full-screen red flash on thermonuclear impact for "huge" punch
+
+  // Particules VGA dédiées aux impacts terrain/puits (séparées de impactExplosions, jamais de secureRandom/Math.random).
+  private terrainImpactParticles: TerrainImpactParticle[] = [];
+  private terrainVfxSeed = 0x9e3779b9;
 
   // === Registre économique de la manche et de la résolution active ===
   private roundDamageDealt: Record<string, number> = {};
@@ -326,13 +345,14 @@ export class GameEngine {
     this.physicsEngine.onProjectileHit = (hit) => {
       const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
+      const blastRadius = weapon?.blastRadius ?? 28;
 
       this.onProjectileHit?.({
         x: hit.x,
         y: hit.y,
         weaponId: hit.weaponId,
         ownerId: firer,
-        blastRadius: weapon?.blastRadius ?? 28,
+        blastRadius,
       });
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
@@ -341,6 +361,16 @@ export class GameEngine {
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
       if (hit.weaponId === "THERMONUCLEAR") {
         this.spawnThermonuclearExplosion(hit.x, hit.y);
+      } else if (
+        !this.config.headless &&
+        hit.weaponId !== "BULLDOZER" &&
+        (hit.weaponId === "DRILLER" || blastRadius > 0)
+      ) {
+        this.spawnTerrainImpactParticles(
+          hit.x,
+          hit.y,
+          this.physicsEngine.getLastImpactMaterial(),
+        );
       }
     };
 
@@ -895,6 +925,7 @@ export class GameEngine {
   public clearRoundCelebration(): void {
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationCenterX = 0;
     this.celebrationColor = "#FFFFFF";
@@ -946,6 +977,7 @@ export class GameEngine {
     this.physicsEngine.clear(false);
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationWinner = null;
@@ -1217,6 +1249,10 @@ export class GameEngine {
 
     if (this.impactExplosions.length > 0) {
       this.drawImpactExplosions(ctx);
+    }
+
+    if (this.terrainImpactParticles.length > 0) {
+      this.drawTerrainImpactParticles(ctx);
     }
 
     // Petit message de victoire sur le canvas seulement pour fin de match
@@ -1983,6 +2019,152 @@ export class GameEngine {
     ctx.globalAlpha = 1;
   }
 
+  public getTerrainImpactParticles(): ReadonlyArray<TerrainImpactParticle> {
+    return this.terrainImpactParticles;
+  }
+
+  public getImpactExplosions(): ReadonlyArray<{
+    x: number;
+    y: number;
+    life: number;
+    maxLife: number;
+    size: number;
+    color: string;
+  }> {
+    return this.impactExplosions;
+  }
+
+  private nextTerrainVfxRandom(): number {
+    let t = (this.terrainVfxSeed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  /**
+   * Génère le nuage de particules VGA selon le matériau de la colonne d'impact lu avant mutation.
+   * N'appelle jamais secureRandom ni Math.random.
+   */
+  private spawnTerrainImpactParticles(
+    x: number,
+    y: number,
+    material: TerrainMaterial,
+  ): void {
+    if (material === TERRAIN_MATERIAL.DIRT) {
+      const palette = [VGA_PALETTE.BROWN, VGA_PALETTE.GREEN] as const;
+      for (let i = 0; i < 8; i++) {
+        const angle = -Math.PI * (0.15 + 0.7 * (i / 7));
+        const speed = 1.1 + this.nextTerrainVfxRandom() * 1.4;
+        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 16,
+          maxLife: 16,
+          size,
+          color: palette[i % palette.length],
+          kind: "dust",
+          material,
+        });
+      }
+      return;
+    }
+
+    if (material === TERRAIN_MATERIAL.SOFT) {
+      const palette = [VGA_PALETTE.YELLOW, VGA_PALETTE.BROWN] as const;
+      for (let i = 0; i < 12; i++) {
+        const angle = -Math.PI * (0.12 + 0.76 * (i / 11));
+        const speed = 1.2 + this.nextTerrainVfxRandom() * 1.6;
+        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 24,
+          maxLife: 24,
+          size,
+          color: palette[i % palette.length],
+          kind: "dust",
+          material,
+        });
+      }
+      for (let i = 0; i < 6; i++) {
+        const angle = -Math.PI * (0.2 + 0.6 * (i / 5));
+        const speed = 1.5 + this.nextTerrainVfxRandom() * 1.3;
+        const size: 1 | 2 = i % 2 === 0 ? 1 : 2;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 24,
+          maxLife: 24,
+          size,
+          color: palette[i % palette.length],
+          kind: "grain",
+          material,
+        });
+      }
+      return;
+    }
+
+    // ROCK : 6 éclats (life = maxLife = 12 frames rendues, palette DARK_GRAY, GRAY)
+    const palette = [VGA_PALETTE.DARK_GRAY, VGA_PALETTE.GRAY] as const;
+    for (let i = 0; i < 6; i++) {
+      const angle = -Math.PI * (0.18 + 0.64 * (i / 5));
+      const speed = 1.6 + this.nextTerrainVfxRandom() * 1.5;
+      const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+      this.terrainImpactParticles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 12,
+        maxLife: 12,
+        size,
+        color: palette[i % palette.length],
+        kind: "shard",
+        material: TERRAIN_MATERIAL.ROCK,
+      });
+    }
+  }
+
+  /**
+   * Dessine, fait avancer et décrémente les particules d'impact par frame rendue dans render(ctx).
+   * Les grains de sable retombent visuellement sans aucune collision de jeu.
+   */
+  private drawTerrainImpactParticles(ctx: CanvasRenderingContext2D): void {
+    let write = 0;
+    for (let read = 0; read < this.terrainImpactParticles.length; read++) {
+      const p = this.terrainImpactParticles[read];
+      const alpha = Math.max(0.1, p.life / p.maxLife);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.kind === "grain") {
+        p.vy += 0.24;
+      } else if (p.kind === "shard") {
+        p.vy += 0.14;
+      } else {
+        p.vx *= 0.94;
+        p.vy = p.vy * 0.94 + 0.05;
+      }
+      p.life -= 1;
+
+      if (p.life > 0) {
+        this.terrainImpactParticles[write++] = p;
+      }
+    }
+    this.terrainImpactParticles.length = write;
+    ctx.globalAlpha = 1;
+  }
+
   public isGameOver(): boolean {
     return this.gameOver;
   }
@@ -2078,6 +2260,7 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationWinner = null;

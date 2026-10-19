@@ -646,7 +646,7 @@ describe("SNIPER physical corpus", () => {
         admissible: [
           { weaponId: "BULLET", kind: "tank", variant: "full", destroyed: false, loss: 75000 },
           { weaponId: "BULLET", kind: "tank", variant: "high", destroyed: false, loss: 75000 },
-          { weaponId: "DRILLER", kind: "terrain", variant: "full", destroyed: false, loss: 26000 },
+          { weaponId: "DRILLER", kind: "terrain", variant: "full", destroyed: false, loss: 25000 },
           { weaponId: "DRILLER", kind: "terrain", variant: "high", destroyed: false, loss: 49000 },
         ],
         refusals: [["DRILLER:impact direct", 2]],
@@ -673,10 +673,11 @@ describe("SNIPER physical corpus", () => {
       {
         name: "soft-wind", weapon: "BULLET", reason: "bullet", certified: true, searches: 6, forecasts: 6,
         admissible: [
-          { weaponId: "BULLET", kind: "tank", variant: "high", destroyed: false, loss: 92000 },
-          { weaponId: "DRILLER", kind: "tank", variant: "full", destroyed: false, loss: 49532 },
+          // Restored SOFT depth and rounded shoulders change falls, not ranking/search counts.
+          { weaponId: "BULLET", kind: "tank", variant: "high", destroyed: false, loss: 91000 },
+          { weaponId: "DRILLER", kind: "tank", variant: "full", destroyed: false, loss: 48532 },
           { weaponId: "DRILLER", kind: "terrain", variant: "full", destroyed: false, loss: 51000 },
-          { weaponId: "DRILLER", kind: "terrain", variant: "high", destroyed: false, loss: 66000 },
+          { weaponId: "DRILLER", kind: "terrain", variant: "high", destroyed: false, loss: 62000 },
         ],
         refusals: [["BULLET:pas d'impact direct", 1], ["DRILLER:impact direct", 1]],
       },
@@ -691,7 +692,7 @@ describe("SNIPER physical corpus", () => {
       {
         name: "empty-bullet", weapon: "DRILLER", reason: "driller", certified: true, searches: 4, forecasts: 3,
         admissible: [
-          { weaponId: "DRILLER", kind: "terrain", variant: "full", destroyed: false, loss: 26000 },
+          { weaponId: "DRILLER", kind: "terrain", variant: "full", destroyed: false, loss: 25000 },
           { weaponId: "DRILLER", kind: "terrain", variant: "high", destroyed: false, loss: 49000 },
         ],
         refusals: [["BULLET:stock vide", 1], ["DRILLER:impact direct", 2]],
