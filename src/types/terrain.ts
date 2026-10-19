@@ -15,8 +15,23 @@ export const TERRAIN_MATERIAL = {
 export type TerrainMaterial =
   (typeof TERRAIN_MATERIAL)[keyof typeof TERRAIN_MATERIAL];
 
-/** Multiplicateur de destructibilité pour le terrain mou (2 à 3 fois plus destructible). */
-export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5;
+/** Multiplicateur maximal de demi-largeur pour le terrain meuble (1 + 0,45 = 1,45). */
+export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 1.45;
+
+/** Bonus maximal de demi-largeur de cratère sur terrain meuble (+45 %). */
+export const SOFT_TERRAIN_WIDTH_BONUS = 0.45;
+
+/** Bonus maximal de profondeur de cratère au centre sur terrain meuble (+15 %). */
+export const SOFT_TERRAIN_DEPTH_BONUS = 0.15;
+
+/** Seuil de dénivellation (en px) entre colonnes voisines au-delà duquel l'affaissement s'applique. */
+export const TERRAIN_SLUMP_THRESHOLD = 2;
+
+/** Abaissement maximal (en px) par passe élémentaire d'affaissement à friabilité 1. */
+export const TERRAIN_SLUMP_MAX_STEP = 4;
+
+/** Nombre maximal d'aller-retour d'affaissement par appel à destroyTerrain. */
+export const TERRAIN_SLUMP_MAX_PASSES = 6;
 
 /** Multiplicateur de dégâts de souffle d'explosion sur la roche (+50% de dégâts, portée inchangée). */
 export const ROCK_EXPLOSION_DAMAGE_MULTIPLIER = 1.5;

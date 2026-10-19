@@ -526,7 +526,7 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(45)).toBeGreaterThan(FLAT_Y);
     });
 
-    it("blocks a ground-level blast through a rock wall but not over it or on top of it", () => {
+    it("blocks a ground-level blast through intermediate rock columns even when exploding on rock, but not over it or on the same column", () => {
       const terrain = new TerrainManager(WIDTH, HEIGHT);
       terrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
       terrain.setMaterialRange(40, 60, "ROCK");
@@ -535,8 +535,10 @@ describe('TerrainManager', () => {
       expect(terrain.isBlastOccludedByRock(20, FLAT_Y, 80, FLAT_Y)).toBe(true);
       // Same side of the wall
       expect(terrain.isBlastOccludedByRock(20, FLAT_Y, 30, FLAT_Y)).toBe(false);
-      // Exploding on top of the rock: current full blast
-      expect(terrain.isBlastOccludedByRock(50, FLAT_Y, 80, FLAT_Y)).toBe(false);
+      // Exploding on top of the rock at y=FLAT_Y: intermediate rock columns 51..60 touch y=FLAT_Y and occlude
+      expect(terrain.isBlastOccludedByRock(50, FLAT_Y, 80, FLAT_Y)).toBe(true);
+      // Same rock column (no intermediate column) is not occluded
+      expect(terrain.isBlastOccludedByRock(50, FLAT_Y, 50.8, FLAT_Y)).toBe(false);
       // Blast flies over the rock (ray stays in the air)
       expect(terrain.isBlastOccludedByRock(20, 40, 80, 40)).toBe(false);
     });
@@ -571,7 +573,7 @@ describe('TerrainManager', () => {
     const FLAT_Y = 100;
     const RADIUS = 12;
 
-    it("carves deeper and wider on soft terrain than on normal dirt", () => {
+    it("carves deeper (+15%) and wider (+45%) on soft terrain than on normal dirt", () => {
       const dirtTerrain = new TerrainManager(WIDTH, HEIGHT);
       dirtTerrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
       dirtTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
@@ -583,8 +585,10 @@ describe('TerrainManager', () => {
       softTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
       const softDepth = softTerrain.getHeightAt(50) - FLAT_Y;
 
-      expect(softDepth).toBeGreaterThan(dirtDepth * 2.0);
-      expect(softDepth).toBeLessThanOrEqual(dirtDepth * 2.6);
+      expect(softDepth).toBeCloseTo(dirtDepth * 1.15, 6);
+      // Outside nominal radius (dx = 14 > 12), dirt is untouched while soft is carved
+      expect(dirtTerrain.getHeightAt(50 + 14)).toBe(FLAT_Y);
+      expect(softTerrain.getHeightAt(50 + 14)).toBeGreaterThan(FLAT_Y);
     });
 
     it("carves adjacent normal dirt appropriately when explosion occurs in soft terrain", () => {
@@ -707,8 +711,8 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(108)).toBeCloseTo(FLAT_Y + 6, 6);
       // ROCK strictly outside nominal radius (x=111, dx=11 > 10) is untouched despite SOFT impact
       expect(terrain.getHeightAt(111)).toBe(FLAT_Y);
-      // SOFT side beyond nominal radius (x=85, dx=-15) is carved via 2.5x SOFT halo
-      expect(terrain.getHeightAt(85)).toBeGreaterThan(FLAT_Y);
+      // SOFT side beyond nominal radius (x=86, dx=-14) is carved via 1.45x SOFT halo
+      expect(terrain.getHeightAt(86)).toBeGreaterThan(FLAT_Y);
     });
 
     it("allows SOFT halo carving past ROCK columns within nominal radius, but blocks it behind outer ROCK in both directions", () => {
@@ -720,14 +724,14 @@ describe('TerrainManager', () => {
       innerRockRight.setMaterialRange(0, WIDTH - 1, "SOFT");
       innerRockRight.setMaterialRange(105, 108, "ROCK"); // dx in [5, 8] <= 10
       innerRockRight.destroyTerrain(100, FLAT_Y, radius, { canCarveRock: true });
-      expect(innerRockRight.getHeightAt(115)).toBeGreaterThan(FLAT_Y);
+      expect(innerRockRight.getHeightAt(114)).toBeGreaterThan(FLAT_Y);
 
       const innerRockLeft = new TerrainManager(WIDTH, HEIGHT);
       innerRockLeft.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
       innerRockLeft.setMaterialRange(0, WIDTH - 1, "SOFT");
       innerRockLeft.setMaterialRange(92, 95, "ROCK"); // |dx| in [5, 8] <= 10
       innerRockLeft.destroyTerrain(100, FLAT_Y, radius, { canCarveRock: true });
-      expect(innerRockLeft.getHeightAt(85)).toBeGreaterThan(FLAT_Y);
+      expect(innerRockLeft.getHeightAt(86)).toBeGreaterThan(FLAT_Y);
 
       // Case 2: ROCK column strictly outside nominal radius (|c - impactX| > r) blocks SOFT halo behind it
       const outerRockRight = new TerrainManager(WIDTH, HEIGHT);
@@ -737,7 +741,7 @@ describe('TerrainManager', () => {
       outerRockRight.destroyTerrain(100, FLAT_Y, radius, { canCarveRock: true });
       expect(outerRockRight.getHeightAt(111)).toBeGreaterThan(FLAT_Y);
       expect(outerRockRight.getHeightAt(112)).toBe(FLAT_Y);
-      expect(outerRockRight.getHeightAt(115)).toBe(FLAT_Y);
+      expect(outerRockRight.getHeightAt(114)).toBe(FLAT_Y);
 
       const outerRockLeft = new TerrainManager(WIDTH, HEIGHT);
       outerRockLeft.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
@@ -746,10 +750,10 @@ describe('TerrainManager', () => {
       outerRockLeft.destroyTerrain(100, FLAT_Y, radius, { canCarveRock: true });
       expect(outerRockLeft.getHeightAt(89)).toBeGreaterThan(FLAT_Y);
       expect(outerRockLeft.getHeightAt(88)).toBe(FLAT_Y);
-      expect(outerRockLeft.getHeightAt(85)).toBe(FLAT_Y);
+      expect(outerRockLeft.getHeightAt(86)).toBe(FLAT_Y);
     });
 
-    it("evaluates rectangle occlusion (top, left flank, right flank, and air pass) symmetrically with canCarveRock", () => {
+    it("evaluates rectangle occlusion (top, left flank, right flank, and air pass) symmetrically in all modes", () => {
       const terrain = new TerrainManager(WIDTH, HEIGHT);
       const heights = Array.from({ length: WIDTH }, () => 200);
       // Single ROCK column at c = 50 with surfaceY = 100 (solid rectangle [50, 51) x [100, inf))
@@ -757,30 +761,145 @@ describe('TerrainManager', () => {
       terrain.loadHeights(heights);
       terrain.setMaterialAt(50, "ROCK");
 
-      // Even if fromX is on ROCK, intermediate ROCK column 50 still blocks when canCarveRock is true
+      // Even if fromX is on ROCK, intermediate ROCK column 50 still blocks in both modes (#184 8B)
       terrain.setMaterialAt(40, "ROCK");
       terrain.setMaterialAt(60, "ROCK");
 
       // 1. Passes strictly above across [50, 51]: y(50) < 100 and y(51) < 100 -> false
       expect(terrain.isBlastOccludedByRock(40, 99, 60, 99, { canCarveRock: true })).toBe(false);
       expect(terrain.isBlastOccludedByRock(60, 99, 40, 99, { canCarveRock: true })).toBe(false);
+      expect(terrain.isBlastOccludedByRock(40, 99, 60, 99)).toBe(false);
 
       // 2. Touches top surface exactly at y = 100 -> true
       expect(terrain.isBlastOccludedByRock(40, 100, 60, 100, { canCarveRock: true })).toBe(true);
       expect(terrain.isBlastOccludedByRock(60, 100, 40, 100, { canCarveRock: true })).toBe(true);
+      expect(terrain.isBlastOccludedByRock(40, 100, 60, 100)).toBe(true);
 
       // 3. Touches left flank at x = 50 (y(50) == 100, y(51) < 100):
       // From (40, 110) to (60, 90): at x=50, t=0.5 -> y=100; at x=51, t=0.55 -> y=99
       expect(terrain.isBlastOccludedByRock(40, 110, 60, 90, { canCarveRock: true })).toBe(true);
       expect(terrain.isBlastOccludedByRock(60, 90, 40, 110, { canCarveRock: true })).toBe(true);
+      expect(terrain.isBlastOccludedByRock(40, 110, 60, 90)).toBe(true);
 
       // 4. Touches right flank at x = 51 (y(50) < 100, y(51) == 100):
       // From (41, 90) to (61, 110): at x=50, t=9/20 -> y=99; at x=51, t=10/20 -> y=100
       expect(terrain.isBlastOccludedByRock(41, 90, 61, 110, { canCarveRock: true })).toBe(true);
       expect(terrain.isBlastOccludedByRock(61, 110, 41, 90, { canCarveRock: true })).toBe(true);
+      expect(terrain.isBlastOccludedByRock(41, 90, 61, 110)).toBe(true);
 
-      // 5. Default mode (canCarveRock omitted/false) keeps the existing fromX===ROCK exemption
-      expect(terrain.isBlastOccludedByRock(40, 120, 60, 120)).toBe(false);
+      // 5. Default mode also blocks across intermediate ROCK column 50 even when fromX is ROCK (#184 8B)
+      expect(terrain.isBlastOccludedByRock(40, 120, 60, 120)).toBe(true);
+    });
+  });
+
+  describe("Parabolic Craters, Slumping & Standard Rock Occlusion (#184)", () => {
+    const WIDTH = 200;
+    const HEIGHT = 300;
+    const FLAT_Y = 100;
+
+    it("matches exact numerical oracles for pure DIRT, pure SOFT, and GRENADE impacts", () => {
+      // 1. Pure DIRT (f = 0, r = 10) on flat height 100
+      const dirt = new TerrainManager(WIDTH, HEIGHT);
+      dirt.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("DIRT"));
+      dirt.destroyTerrain(100, FLAT_Y, 10);
+      expect(dirt.getHeightAt(100)).toBeCloseTo(110, 9);
+      expect(dirt.getHeightAt(89)).toBe(100);
+      expect(dirt.getHeightAt(111)).toBe(100);
+
+      // 2. Pure SOFT (f = 1, r = 10) on flat height 100
+      const soft = new TerrainManager(WIDTH, HEIGHT);
+      soft.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("SOFT"));
+      soft.destroyTerrain(100, FLAT_Y, 10);
+      expect(soft.getHeightAt(100)).toBeCloseTo(111.5, 9);
+      const expectedSoftRim15 = 100 + ((655.5 / 841) * 0.35) / 3;
+      expect(soft.getHeightAt(85)).toBeCloseTo(expectedSoftRim15, 9);
+      expect(soft.getHeightAt(115)).toBeCloseTo(expectedSoftRim15, 9);
+
+      // 3. GRENADE on pure DIRT (r = 24, impactY = surfaceY - 1.2 = 98.8) on flat height 100
+      const grenadeDirt = new TerrainManager(WIDTH, HEIGHT);
+      grenadeDirt.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("DIRT"));
+      grenadeDirt.destroyTerrain(100, 98.8, 24);
+      expect(grenadeDirt.getHeightAt(100)).toBeCloseTo(122.8, 9);
+      const expectedGrenadeRim24 = 100 + ((47 / 24 - 1.2) * 0.35) / 3;
+      expect(grenadeDirt.getHeightAt(76)).toBeCloseTo(expectedGrenadeRim24, 9);
+      expect(grenadeDirt.getHeightAt(124)).toBeCloseTo(expectedGrenadeRim24, 9);
+    });
+
+    it("resolves slumpHeights deterministically on SOFT steps while leaving DIRT untouched", () => {
+      const terrain = new TerrainManager(10, HEIGHT);
+      terrain.loadHeights([100, 120, 100, 100, 100, 100, 100, 100, 100, 100], new Array(10).fill("SOFT"));
+
+      terrain.slumpHeights(0, 1);
+      expect(terrain.getHeightAt(0)).toBeCloseTo(118, 9);
+      expect(terrain.getHeightAt(1)).toBeCloseTo(120, 9);
+
+      terrain.loadHeights([100, 100, 100, 120, 100, 100, 100, 100, 100, 100], new Array(10).fill("SOFT"));
+      terrain.slumpHeights(0, 3);
+      expect([0, 1, 2, 3].map((x) => terrain.getHeightAt(x))).toEqual([114, 116, 118, 120]);
+
+      // Pure DIRT outside 8-column SOFT blend has softness 0 -> no slumping
+      const dirtTerrain = new TerrainManager(30, HEIGHT);
+      const dirtHeights = new Array(30).fill(100);
+      dirtHeights[15] = 120;
+      dirtTerrain.loadHeights(dirtHeights, new Array(30).fill("DIRT"));
+      dirtTerrain.slumpHeights(14, 15);
+      expect(dirtTerrain.getHeightAt(14)).toBe(100);
+      expect(dirtTerrain.getHeightAt(15)).toBe(120);
+    });
+
+    it("never modifies ROCK or occluded columns during carving, smoothing, or slumping in [bandStart, bandEnd]", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      const initialHeights = new Array(WIDTH).fill(FLAT_Y);
+      const materials = new Array(WIDTH).fill("SOFT" as const);
+      // Single ROCK column at x=104 blocks columns x >= 105 from impact at (100, 100)
+      materials[104] = "ROCK";
+      terrain.loadHeights(initialHeights, materials);
+
+      terrain.destroyTerrain(100, FLAT_Y, 15);
+
+      expect(terrain.getHeightAt(104)).toBe(FLAT_Y);
+      for (let x = 105; x < WIDTH; x++) {
+        expect(terrain.getHeightAt(x)).toBe(FLAT_Y);
+      }
+      // Unoccluded SOFT side (x <= 103) is carved and slumped
+      expect(terrain.getHeightAt(100)).toBeGreaterThan(FLAT_Y);
+      expect(terrain.getHeightAt(103)).toBeGreaterThan(FLAT_Y);
+    });
+
+    it("applies parabolic stamp without smoothing or slumping in destroyTerrainShaft and enforces initial + stamp occlusion", () => {
+      // 1. Parabolic stamp without smoothing/slumping on pure DIRT (depth=10, radius=10 -> travel=0, stamp at y=100)
+      const shaftDirt = new TerrainManager(WIDTH, HEIGHT);
+      shaftDirt.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("DIRT"));
+      shaftDirt.destroyTerrainShaft(100, FLAT_Y, 0, 1, 10, 10);
+      expect(shaftDirt.getHeightAt(100)).toBeCloseTo(110, 9);
+      expect(shaftDirt.getHeightAt(95)).toBeCloseTo(100 + 10 * (1 - 25 / 100), 9);
+      // Column 90 (|dx| = 10 = halfWidth) has candidate = 100, and without smoothing stays 100
+      expect(shaftDirt.getHeightAt(90)).toBe(100);
+      expect(shaftDirt.getHeightAt(110)).toBe(100);
+
+      // 2. Diagonal shaft behind a ROCK column: initial occlusion forbids columns behind ROCK for all stamps
+      const rockBlocked = new TerrainManager(WIDTH, HEIGHT);
+      const heights = new Array(WIDTH).fill(FLAT_Y);
+      const materials = new Array(WIDTH).fill("SOFT" as const);
+      materials[102] = "ROCK";
+      rockBlocked.loadHeights(heights, materials);
+
+      // Impact at (100, 100) drilling diagonally down-right across ROCK column 102
+      rockBlocked.destroyTerrainShaft(100, FLAT_Y, Math.SQRT1_2, Math.SQRT1_2, 40, 12);
+      expect(rockBlocked.getHeightAt(102)).toBe(FLAT_Y);
+      for (let x = 103; x < WIDTH; x++) {
+        expect(rockBlocked.getHeightAt(x)).toBe(FLAT_Y);
+      }
+    });
+
+    it("distinguishes standard shell at surfaceY (occluded by flat ROCK) from GRENADE at surfaceY - 1.2 (passes above)", () => {
+      const terrain = new TerrainManager(WIDTH, HEIGHT);
+      terrain.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("ROCK"));
+
+      // Standard shell exploding at (50, FLAT_Y): ray to (60, FLAT_Y) hits intermediate ROCK columns 51..59
+      expect(terrain.isBlastOccludedByRock(50, FLAT_Y, 60, FLAT_Y)).toBe(true);
+      // GRENADE exploding at (50, FLAT_Y - 1.2): ray to a point at y = FLAT_Y - 0.1 stays strictly above FLAT_Y
+      expect(terrain.isBlastOccludedByRock(50, FLAT_Y - 1.2, 60, FLAT_Y - 0.1)).toBe(false);
     });
   });
 });

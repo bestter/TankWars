@@ -146,9 +146,11 @@ describe("EXPERT #267 consequences", () => {
     f.enemy.isHuman = false;
     f.enemy.tank.health = 1;
     f.state.players.push(makePlayer({ id: "collateral", isHuman: true,
-      tank: makeTank("collateral", 360, 336, { health: 1000 }) }));
+      tank: makeTank("collateral", 360, 333, { health: 1000 }) }));
     f.state.localShotContext!.playerCountAtMatchStart = 3;
-    f.terrain.loadHeights([...f.terrain.getHeightmap()],
+    const heights = [...f.terrain.getHeightmap()];
+    for (let x = 350; x <= 360; x++) heights[x] = 333;
+    f.terrain.loadHeights(heights,
       Array.from({ length: f.terrain.width }, () => TERRAIN_MATERIAL.DIRT));
     const points = expertTacticalPoints(f.self, [f.enemy], "MISSILE", f.terrain, f.state.players);
     const forecasts = points.slice(1).map((point) => forecastPhysicalShot(f.state, f.terrain, f.self, "MISSILE",

@@ -20,6 +20,11 @@ import { VGA_PALETTE } from "../../types/game";
 import {
   TERRAIN_MATERIAL,
   SOFT_TERRAIN_DESTRUCTION_MULTIPLIER,
+  SOFT_TERRAIN_WIDTH_BONUS,
+  SOFT_TERRAIN_DEPTH_BONUS,
+  TERRAIN_SLUMP_THRESHOLD,
+  TERRAIN_SLUMP_MAX_STEP,
+  TERRAIN_SLUMP_MAX_PASSES,
   TERRAIN_SOFT_BLEND_RADIUS,
   TERRAIN_CRATER_SMOOTH_STRENGTH,
   type TerrainMaterial,
@@ -360,10 +365,10 @@ export class TerrainManager {
 
   /**
    * Creuse un cratère dans le terrain :
-   * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au rayon nominal (1.0x) lorsque canCarveRock est actif.
+   * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au rayon circulaire nominal (1.0x) lorsque canCarveRock est actif.
    *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
-   * - Multiplie le creusement par SOFT_TERRAIN_DESTRUCTION_MULTIPLIER sur les colonnes SOFT.
-   * - Creuse normalement sur les colonnes DIRT.
+   * - Applique un profil parabolique sur DIRT/SOFT modulé par la friabilité locale et de souffle (largeur jusqu'à 1.45x, profondeur jusqu'à 1.15x).
+   * - Lisse puis applique l'éboulis local sans éroder les colonnes ROCK ni les colonnes occultées.
    */
   public destroyTerrain(
     impactX: number,
@@ -373,22 +378,93 @@ export class TerrainManager {
   ): void {
     if (radius <= 0) return;
 
-    this.carveCircle(impactX, impactY, radius, options?.canCarveRock === true);
-
+    const canCarveRock = options?.canCarveRock === true;
     const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
     const startX = Math.max(0, Math.floor(impactX - maxReach));
     const endX = Math.min(this.width - 1, Math.floor(impactX + maxReach));
-    const smoothStart = Math.max(0, startX - 3);
-    const smoothEnd = Math.min(this.width - 1, endX + 3);
-    // Smooth crater edges only — never raise the surface (which would undo destruction).
-    this.smoothHeights(TERRAIN_CRATER_SMOOTH_STRENGTH, smoothStart, smoothEnd, true);
-    this.markTerrainDirty(smoothStart, smoothEnd);
+    const bandStart = Math.max(0, startX - 3);
+    const bandEnd = Math.min(this.width - 1, endX + 3);
+
+    // 1. Photographier les hauteurs avant toute écriture et déterminer les colonnes protégées.
+    const snapshotHeights = this.heights.slice();
+    const protectedColumns = new Array<boolean>(this.width).fill(false);
+
+    for (let x = bandStart; x <= bandEnd; x++) {
+      if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
+        protectedColumns[x] = true;
+        continue;
+      }
+      const isOccluded = canCarveRock
+        ? this.isHaloOccludedByOuterRock(
+            impactX,
+            impactY,
+            x,
+            snapshotHeights[x],
+            radius,
+            snapshotHeights,
+          )
+        : this.isSegmentOccludedByRock(
+            impactX,
+            impactY,
+            x,
+            snapshotHeights[x],
+            snapshotHeights,
+          );
+      if (isOccluded) {
+        protectedColumns[x] = true;
+      }
+    }
+
+    // 2. Creuser le cratère sur [startX, endX].
+    this.carveCraterBand(
+      impactX,
+      impactY,
+      radius,
+      startX,
+      endX,
+      snapshotHeights,
+      protectedColumns,
+      canCarveRock,
+    );
+
+    // 3. Lisser la fenêtre [bandStart, bandEnd] en excluant ROCK et colonnes occultées.
+    this.smoothHeights(
+      TERRAIN_CRATER_SMOOTH_STRENGTH,
+      bandStart,
+      bandEnd,
+      true,
+      protectedColumns,
+    );
+
+    // 4. Résoudre l'éboulis local sur [bandStart, bandEnd].
+    this.slumpHeights(
+      bandStart,
+      bandEnd,
+      TERRAIN_SLUMP_MAX_PASSES,
+      protectedColumns,
+    );
+
+    // 5. Garantir la hauteur photographiée des colonnes protégées et des colonnes ROCK non creusées.
+    for (let x = bandStart; x <= bandEnd; x++) {
+      if (!protectedColumns[x]) continue;
+      if (
+        canCarveRock &&
+        this.materials[x] === TERRAIN_MATERIAL.ROCK &&
+        Math.abs(x - impactX) <= radius
+      ) {
+        continue;
+      }
+      this.heights[x] = snapshotHeights[x];
+    }
+
+    // 6. Marquer le terrain sale pour [bandStart, bandEnd].
+    this.markTerrainDirty(bandStart, bandEnd);
   }
 
   /**
    * Puits de forage le long d’une direction (heightmap).
-   * Tamponne carveCircle du point d’impact jusqu’à `depth` le long de (dirX, dirY).
-   * Pas de lissage: les parois restent raides.
+   * Tamponne le profil parabolique du point d’impact jusqu’à `depth` le long de (dirX, dirY).
+   * Ni lissage ni éboulis : le forage conserve des parois franches.
    */
   public destroyTerrainShaft(
     impactX: number,
@@ -407,15 +483,151 @@ export class TerrainManager {
     const travel = Math.max(0, depth - radius);
     const steps = Math.max(1, Math.ceil(travel));
 
-    for (let i = 0; i <= steps; i++) {
-      const t = travel === 0 ? 0 : i / steps;
-      this.carveCircle(impactX + nx * travel * t, impactY + ny * travel * t, radius);
+    const snapshotHeights = this.heights.slice();
+    const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
+    const minX = Math.max(
+      0,
+      Math.floor(Math.min(impactX, impactX + nx * travel) - maxReach),
+    );
+    const maxX = Math.min(
+      this.width - 1,
+      Math.ceil(Math.max(impactX, impactX + nx * travel) + maxReach),
+    );
+
+    const forbiddenForAllStamps = new Array<boolean>(this.width).fill(false);
+    for (let x = minX; x <= maxX; x++) {
+      if (
+        this.materials[x] === TERRAIN_MATERIAL.ROCK ||
+        this.isSegmentOccludedByRock(
+          impactX,
+          impactY,
+          x,
+          snapshotHeights[x],
+          snapshotHeights,
+        )
+      ) {
+        forbiddenForAllStamps[x] = true;
+      }
     }
 
-    const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
-    const minX = Math.min(impactX, impactX + nx * travel) - maxReach;
-    const maxX = Math.max(impactX, impactX + nx * travel) + maxReach;
-    this.markTerrainDirty(Math.floor(minX), Math.ceil(maxX));
+    const maxSurfaceY = this.height - 1;
+
+    for (let i = 0; i <= steps; i++) {
+      const t = travel === 0 ? 0 : i / steps;
+      const stampX = impactX + nx * travel * t;
+      const stampY = impactY + ny * travel * t;
+      const stampStartX = Math.max(0, Math.floor(stampX - maxReach));
+      const stampEndX = Math.min(this.width - 1, Math.floor(stampX + maxReach));
+      const impactSoftness = this.getLocalSoftness(stampX);
+
+      for (let x = stampStartX; x <= stampEndX; x++) {
+        if (forbiddenForAllStamps[x]) continue;
+        if (
+          this.isSegmentOccludedByRock(
+            stampX,
+            stampY,
+            x,
+            snapshotHeights[x],
+            snapshotHeights,
+          )
+        ) {
+          continue;
+        }
+
+        const dx = x - stampX;
+        const absDx = Math.abs(dx);
+        const localSoftness = this.getLocalSoftness(x);
+        const blastSoftness =
+          impactSoftness > 0
+            ? impactSoftness * Math.max(0, 1 - absDx / maxReach)
+            : 0;
+        const f = Math.max(localSoftness, blastSoftness);
+        const halfWidth = radius * (1 + SOFT_TERRAIN_WIDTH_BONUS * f);
+        if (absDx > halfWidth) continue;
+
+        const craterDepth = radius * (1 + SOFT_TERRAIN_DEPTH_BONUS * f);
+        const ratio = dx / halfWidth;
+        const candidate = stampY + craterDepth * (1 - ratio * ratio);
+        if (candidate > this.heights[x]) {
+          this.heights[x] = Math.min(maxSurfaceY, candidate);
+        }
+      }
+    }
+
+    for (let x = minX; x <= maxX; x++) {
+      if (forbiddenForAllStamps[x]) {
+        this.heights[x] = snapshotHeights[x];
+      }
+    }
+
+    this.markTerrainDirty(minX, maxX);
+  }
+
+  /**
+   * Éboulis déterministe local après lissage des cratères.
+   * Relaxe les paires voisines (x, x + 1) en place jusqu'à `maxPasses` aller-retours.
+   * Seule la colonne la plus haute (plus petit Y Canvas) descend; ROCK et les colonnes protégées ne bougent jamais.
+   */
+  public slumpHeights(
+    start?: number,
+    end?: number,
+    maxPasses: number = TERRAIN_SLUMP_MAX_PASSES,
+    protectedColumns?: ReadonlyArray<boolean>,
+  ): void {
+    const s = Math.max(0, start ?? 0);
+    const e = Math.min(this.width - 1, end ?? this.width - 1);
+    if (e - s < 1 || maxPasses <= 0) return;
+
+    const maxSurfaceY = this.height - 1;
+
+    const relaxPair = (x: number): boolean => {
+      const hLeft = this.heights[x];
+      const hRight = this.heights[x + 1];
+      if (hLeft === hRight) return false;
+
+      const highCol = hLeft < hRight ? x : x + 1;
+      const lowCol = highCol === x ? x + 1 : x;
+
+      if (
+        this.materials[highCol] === TERRAIN_MATERIAL.ROCK ||
+        protectedColumns?.[highCol]
+      ) {
+        return false;
+      }
+
+      const diff = this.heights[lowCol] - this.heights[highCol];
+      if (diff <= TERRAIN_SLUMP_THRESHOLD) return false;
+
+      const softness = this.getLocalSoftness(highCol);
+      if (softness <= 0) return false;
+
+      const delta =
+        Math.min(TERRAIN_SLUMP_MAX_STEP, diff - TERRAIN_SLUMP_THRESHOLD) *
+        softness;
+      if (delta <= 0) return false;
+
+      const nextHeight = Math.min(maxSurfaceY, this.heights[highCol] + delta);
+      if (nextHeight > this.heights[highCol]) {
+        this.heights[highCol] = nextHeight;
+        return true;
+      }
+      return false;
+    };
+
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let changed = false;
+      for (let x = s; x < e; x++) {
+        if (relaxPair(x)) {
+          changed = true;
+        }
+      }
+      for (let x = e - 1; x >= s; x--) {
+        if (relaxPair(x)) {
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
   }
 
   /**
@@ -442,10 +654,9 @@ export class TerrainManager {
   }
 
   /**
-   * Roche = mur pour le souffle. True si le segment (from → to) traverse le
-   * volume solide d'une colonne ROCK (y canvas >= surface).
-   * Mode standard (canCarveRock absent/faux) : explosion PAR DESSUS la roche (colonne d'impact ROCK) sans occlusion.
-   * Mode nucléaire local (canCarveRock === true) : teste les colonnes ROCK intermédiaires (rectangle [c, c+1) × [surfaceY, ∞)) même si fromX est sur ROCK.
+   * Roche = mur pour le souffle et le creusement. True si le segment (from → to)
+   * coupe ou frôle le rectangle solide [c, c+1) × [surfaceY, ∞) d'une colonne ROCK
+   * strictement intermédiaire (floor(min) + 1 .. floor(max) - 1), même si fromX est sur ROCK.
    */
   public isBlastOccludedByRock(
     fromX: number,
@@ -454,41 +665,8 @@ export class TerrainManager {
     toY: number,
     options?: { canCarveRock?: boolean },
   ): boolean {
-    if (options?.canCarveRock === true) {
-      const x0 = Math.floor(fromX);
-      const x1 = Math.floor(toX);
-      if (x0 === x1) return false;
-
-      const cStart = Math.max(0, Math.min(x0, x1) + 1);
-      const cEnd = Math.min(this.width - 1, Math.max(x0, x1) - 1);
-      for (let c = cStart; c <= cEnd; c++) {
-        if (this.materials[c] !== TERRAIN_MATERIAL.ROCK) continue;
-        if (this.segmentHitsRockColumn(fromX, fromY, toX, toY, c, this.heights[c])) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    if (this.getMaterialAt(fromX) === TERRAIN_MATERIAL.ROCK) {
-      return false;
-    }
-    const x0 = Math.floor(fromX);
-    const x1 = Math.floor(toX);
-    if (x0 === x1) return false;
-
-    const xStart = Math.min(x0, x1);
-    const xEnd = Math.max(x0, x1);
-    const spanX = toX - fromX;
-    if (spanX === 0) return false;
-
-    for (let x = xStart + 1; x < xEnd; x++) {
-      if (this.materials[x] !== TERRAIN_MATERIAL.ROCK) continue;
-      const t = (x - fromX) / spanX;
-      const rayY = fromY + (toY - fromY) * t;
-      if (rayY >= this.heights[x]) return true;
-    }
-    return false;
+    void options;
+    return this.isSegmentOccludedByRock(fromX, fromY, toX, toY, this.heights);
   }
 
   /** Définit le matériau pour une colonne x */
@@ -585,7 +763,6 @@ export class TerrainManager {
 
   /**
    * Colonnes ROCK strictement intermédiaires : rectangle [c, c+1) × [surfaceY, ∞).
-   * Lecture sur photographie des hauteurs avant toute mutation.
    * Teste si le segment (fromX, fromY) -> (toX, toY) touche ce rectangle
    * pour une colonne c comprise strictement entre floor(fromX) et floor(toX)
    * (contact de frontière inclus).
@@ -605,6 +782,34 @@ export class TerrainManager {
     const y0 = fromY + (toY - fromY) * t0;
     const y1 = fromY + (toY - fromY) * t1;
     return Math.max(y0, y1) >= surfaceY;
+  }
+
+  /**
+   * Teste l'occlusion standard par les colonnes ROCK strictement intermédiaires
+   * en lisant la table de hauteurs fournie (`heightsView`).
+   */
+  private isSegmentOccludedByRock(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    heightsView: ReadonlyArray<number>,
+  ): boolean {
+    const x0 = Math.floor(fromX);
+    const x1 = Math.floor(toX);
+    if (x0 === x1) return false;
+
+    const cStart = Math.max(0, Math.min(x0, x1) + 1);
+    const cEnd = Math.min(this.width - 1, Math.max(x0, x1) - 1);
+    for (let c = cStart; c <= cEnd; c++) {
+      if (this.materials[c] !== TERRAIN_MATERIAL.ROCK) continue;
+      if (
+        this.segmentHitsRockColumn(fromX, fromY, toX, toY, c, heightsView[c])
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -675,112 +880,58 @@ export class TerrainManager {
   }
 
   /**
-   * Creuse un cratère avec transition progressive entre matériaux :
-   * - ROCK : préservé intact par défaut, ou creusé au rayon nominal (1.0x) si canCarveRock est vrai.
-   *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
-   * - SOFT / DIRT : la friabilité s'interpole en douceur (comme si la terre était mêlée à du sable),
-   *   produisant un cratère organique et continu sans falaise artificielle.
+   * Creuse la bande [startX, endX] d'un cratère :
+   * - ROCK : préservé intact par défaut, ou creusé au profil circulaire nominal (1.0x) si canCarveRock est vrai.
+   * - DIRT / SOFT : profil parabolique modulé par la friabilité locale et de souffle.
    */
-  private carveCircle(
+  private carveCraterBand(
     impactX: number,
     impactY: number,
     radius: number,
-    canCarveRock = false,
+    startX: number,
+    endX: number,
+    snapshotHeights: ReadonlyArray<number>,
+    protectedColumns: ReadonlyArray<boolean>,
+    canCarveRock: boolean,
   ): void {
-    if (radius <= 0) return;
-
-    const r = radius;
-    const maxMult = SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
-    const maxReach = r * maxMult;
-    const startX = Math.max(0, Math.floor(impactX - maxReach));
-    const endX = Math.min(this.width - 1, Math.floor(impactX + maxReach));
+    const maxReach = radius * SOFT_TERRAIN_DESTRUCTION_MULTIPLIER;
     const maxSurfaceY = this.height - 1;
-
     const impactSoftness = this.getLocalSoftness(impactX);
 
-    if (canCarveRock) {
-      const snapshotHeights = this.heights.slice();
-      for (let x = startX; x <= endX; x++) {
-        const dx = x - impactX;
-        const absDx = Math.abs(dx);
-
-        if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
-          if (absDx > r) continue;
-          const dy = Math.sqrt(r * r - dx * dx);
-          const craterDepth = impactY + dy;
-          if (craterDepth > snapshotHeights[x]) {
-            this.heights[x] = Math.min(maxSurfaceY, craterDepth);
-          }
-          continue;
-        }
-
-        if (
-          this.isHaloOccludedByOuterRock(
-            impactX,
-            impactY,
-            x,
-            snapshotHeights[x],
-            r,
-            snapshotHeights,
-          )
-        ) {
-          continue;
-        }
-
-        const localSoftness = this.getLocalSoftness(x);
-        const blastSoftness =
-          impactSoftness > 0
-            ? impactSoftness * Math.max(0, 1 - absDx / maxReach)
-            : 0;
-        const effectiveSoftness = Math.max(localSoftness, blastSoftness);
-        const mult = 1.0 + (maxMult - 1.0) * effectiveSoftness;
-        const effectiveR = r * mult;
-
-        if (absDx > effectiveR) continue;
-
-        const dy = Math.sqrt(effectiveR * effectiveR - dx * dx);
-        const craterDepth = impactY + dy;
-        if (craterDepth > snapshotHeights[x]) {
-          this.heights[x] = Math.min(maxSurfaceY, craterDepth);
-        }
-      }
-      return;
-    }
-
     for (let x = startX; x <= endX; x++) {
-      if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
-        // Roche indestructible : aucune modification de hauteur
-        continue;
-      }
-      if (this.isBlastOccludedByRock(impactX, impactY, x, this.heights[x])) {
-        continue;
-      }
-
       const dx = x - impactX;
       const absDx = Math.abs(dx);
 
-      // Friabilité locale (mélange progressif sable-terre)
-      const localSoftness = this.getLocalSoftness(x);
+      if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
+        if (canCarveRock && absDx <= radius) {
+          const dy = Math.sqrt(radius * radius - dx * dx);
+          const candidate = impactY + dy;
+          if (candidate > snapshotHeights[x]) {
+            this.heights[x] = Math.min(maxSurfaceY, candidate);
+          }
+        }
+        continue;
+      }
 
-      // Si l'impact est dans le sable, le souffle transmet une énergie dégressive vers l'extérieur
+      if (protectedColumns[x]) {
+        continue;
+      }
+
+      const localSoftness = this.getLocalSoftness(x);
       const blastSoftness =
         impactSoftness > 0
           ? impactSoftness * Math.max(0, 1 - absDx / maxReach)
           : 0;
+      const f = Math.max(localSoftness, blastSoftness);
+      const halfWidth = radius * (1 + SOFT_TERRAIN_WIDTH_BONUS * f);
 
-      // Degré de friabilité effectif pour cette colonne (entre 0 et 1)
-      const effectiveSoftness = Math.max(localSoftness, blastSoftness);
+      if (absDx > halfWidth) continue;
 
-      // Multiplicateur continu entre 1.0 (terre pure) et maxMult (sable pur)
-      const mult = 1.0 + (maxMult - 1.0) * effectiveSoftness;
-      const effectiveR = r * mult;
-
-      if (absDx > effectiveR) continue;
-
-      const dy = Math.sqrt(effectiveR * effectiveR - dx * dx);
-      const craterDepth = impactY + dy;
-      if (craterDepth > this.heights[x]) {
-        this.heights[x] = Math.min(maxSurfaceY, craterDepth);
+      const craterDepth = radius * (1 + SOFT_TERRAIN_DEPTH_BONUS * f);
+      const ratio = dx / halfWidth;
+      const candidate = impactY + craterDepth * (1 - ratio * ratio);
+      if (candidate > snapshotHeights[x]) {
+        this.heights[x] = Math.min(maxSurfaceY, candidate);
       }
     }
   }
@@ -801,13 +952,14 @@ export class TerrainManager {
   /**
    * Lissage de la heightmap (passe moyenne).
    * @param preserveDepth When true, smoothing never shallowens the surface (keeps craters open)
-   *                      et n'érode pas les colonnes de roche indestructible.
+   *                      et n'érode pas les colonnes de roche ni les colonnes protégées.
    */
   private smoothHeights(
     strength: number = 0.5,
     start?: number,
     end?: number,
     preserveDepth = false,
+    protectedColumns?: ReadonlyArray<boolean>,
   ): void {
     const s = Math.max(0, start ?? 1);
     const e = Math.min(this.width - 1, end ?? this.width - 2);
@@ -822,10 +974,15 @@ export class TerrainManager {
       this.smoothScratch[i] = this.heights[s + i];
     }
 
+    const maxSurfaceY = this.height - 1;
+
     for (let i = 1; i < len - 1; i++) {
       const idx = s + i;
-      // Ne pas éroder la roche lors du lissage des cratères
-      if (preserveDepth && this.materials[idx] === TERRAIN_MATERIAL.ROCK) {
+      if (
+        preserveDepth &&
+        (this.materials[idx] === TERRAIN_MATERIAL.ROCK ||
+          protectedColumns?.[idx])
+      ) {
         continue;
       }
       const cur = this.smoothScratch[i];
@@ -835,7 +992,9 @@ export class TerrainManager {
           this.smoothScratch[i + 1]) /
         3;
       const blended = cur * (1 - strength) + avg * strength;
-      this.heights[idx] = preserveDepth ? Math.max(cur, blended) : blended;
+      this.heights[idx] = preserveDepth
+        ? Math.min(maxSurfaceY, Math.max(cur, blended))
+        : blended;
     }
   }
 }

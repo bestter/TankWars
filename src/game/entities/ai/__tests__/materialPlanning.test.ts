@@ -264,11 +264,11 @@ describe("material candidate geometry and profile search contracts", () => {
   it("searches only the derived local window and does not invent a transition", () => {
     const f = fixture();
     expect(materialBoundaryPoints([f.target], "MISSILE", f.terrain, f.state.players)).toEqual([]);
-    const missileReach = TANK_HITBOX_WIDTH / 2 + 2.5 * WEAPON_REGISTRY.MISSILE.blastRadius;
+    const missileReach = TANK_HITBOX_WIDTH / 2 + 1.45 * WEAPON_REGISTRY.MISSILE.blastRadius;
     f.terrain.setMaterialRange(Math.floor(400 + missileReach) + 1, 799, TERRAIN_MATERIAL.ROCK);
     expect(materialBoundaryPoints([f.target], "MISSILE", f.terrain, f.state.players)).toEqual([]);
     f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.DIRT);
-    const drillerReach = TANK_HITBOX_WIDTH / 2 + 2.5 * WEAPON_REGISTRY.DRILLER.blastRadius +
+    const drillerReach = TANK_HITBOX_WIDTH / 2 + 1.45 * WEAPON_REGISTRY.DRILLER.blastRadius +
       Math.max(0, DRILLER_SHAFT_DEPTH - WEAPON_REGISTRY.DRILLER.blastRadius);
     const boundary = Math.floor(400 + drillerReach);
     f.terrain.setMaterialRange(boundary, 799, TERRAIN_MATERIAL.SOFT);

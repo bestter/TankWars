@@ -260,7 +260,7 @@ describe("TankManager.applyExplosionDamage", () => {
     expect(target.tank.health).toBe(target.tank.maxHealth);
   });
 
-  it("stops splash behind a rock wall but not when exploding on top of the rock", () => {
+  it("stops splash behind intermediate rock columns even when exploding on rock, while damaging same-column or unoccluded targets", () => {
     const terrain = new TerrainManager(200, 200);
     terrain.loadHeights(Array.from({ length: 200 }, () => 100));
     terrain.setMaterialRange(80, 120, "ROCK");
@@ -273,19 +273,28 @@ describe("TankManager.applyExplosionDamage", () => {
       id: "same",
       tank: makeTank("t-same", 40, 100, { health: 100, shield: 0 }),
     });
-    const tm = managerWith(behind, sameSide);
+    const onImpactColumn = makePlayer({
+      id: "on-col",
+      tank: makeTank("t-col", 100, 100, { health: 100, shield: 0 }),
+    });
+    const tm = managerWith(behind, sameSide, onImpactColumn);
 
     tm.applyExplosionDamage(explosion({ explosionX: 30, explosionY: 100, radius: 160, maxDamage: 80, terrain }));
 
     expect(behind.tank.health).toBe(100);
+    expect(onImpactColumn.tank.health).toBe(100);
     expect(sameSide.tank.health).toBeLessThan(100);
 
     behind.tank.health = 100;
     sameSide.tank.health = 100;
-    tm.applyExplosionDamage(explosion({ explosionY: 100, radius: 160, maxDamage: 80, terrain }));
+    onImpactColumn.tank.health = 100;
+    // Exploding at (100, 100) on the ROCK plateau: intermediate ROCK columns (80..99 and 101..120)
+    // occlude ground-level rays to x=40 and x=150, while x=100 (no intermediate column) takes damage.
+    tm.applyExplosionDamage(explosion({ explosionX: 100, explosionY: 100, radius: 160, maxDamage: 80, terrain }));
 
-    expect(behind.tank.health).toBeLessThan(100);
-    expect(sameSide.tank.health).toBeLessThan(100);
+    expect(behind.tank.health).toBe(100);
+    expect(sameSide.tank.health).toBe(100);
+    expect(onImpactColumn.tank.health).toBeLessThan(100);
   });
 
   it("deals 2x damage to shield on direct hit, and normal damage to health on overflow", () => {

@@ -141,15 +141,17 @@ describe('GameEngine online multiplayer', () => {
     'keeps ROCK indestructible and immediate blast for %s when setLocalMatch(false) is active',
     (weaponId) => {
       engine.setLocalMatch(false);
-      const { host, guest } = twoPlayerSetup();
-      host.inventory[weaponId] = 1;
+      const { host } = twoPlayerSetup();
+      const liveHost = engine.getTankManager().getPlayerById('player-1')!;
+      const liveGuest = engine.getTankManager().getPlayerById('player-2')!;
+      liveHost.inventory[weaponId] = 1;
       const terrain = engine.getTerrain();
       terrain.loadHeights(new Array(200).fill(120), new Array(200).fill(TERRAIN_MATERIAL.ROCK));
-      host.tank.position = { x: 40, y: 120 };
-      guest.tank.position = { x: 140, y: 120 };
+      liveHost.tank.position = { x: 40, y: 120 };
+      liveGuest.tank.position = { x: 141, y: 120 };
 
       engine.fireProjectile(
-        host.tank.position,
+        liveHost.tank.position,
         { angle: 0, power: 50, weaponId },
         host.id,
         { shotId: 1, isFirstShotOfRound: true },
@@ -163,8 +165,7 @@ describe('GameEngine online multiplayer', () => {
 
       expect(terrain.getHeightAt(140)).toBe(120);
       expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
-      const liveGuest = engine.getTankManager().getPlayerById('player-2');
-      expect(liveGuest?.tank.health).toBeLessThan(liveGuest?.tank.maxHealth ?? 100);
+      expect(liveGuest.tank.health).toBeLessThan(liveGuest.tank.maxHealth);
     },
   );
 });
