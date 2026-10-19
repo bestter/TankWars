@@ -207,7 +207,7 @@ export class TerrainManager {
   }
 
   /**
-   * Filled ribbon that follows terrain curves with uniform thickness.
+   * Surface cap covering every column through its right edge, including material boundaries.
    * Renders color corresponding to material:
    * - DIRT: VGA_PALETTE.GREEN (herbe)
    * - ROCK: VGA_PALETTE.LIGHT_GRAY (crête de pierre)
@@ -219,62 +219,17 @@ export class TerrainManager {
     bandEnd: number,
     lavaTop: number,
   ): void {
-    let segmentStart: number | null = null;
-    let currentMat: TerrainMaterial = TERRAIN_MATERIAL.DIRT;
-
-    const flushSegment = (segmentEnd: number, mat: TerrainMaterial): void => {
-      if (segmentStart === null) return;
-
-      const start = segmentStart;
-      const end = segmentEnd;
-
-      if (mat === TERRAIN_MATERIAL.ROCK) {
-        ctx.fillStyle = VGA_PALETTE.GRAY;
-      } else if (mat === TERRAIN_MATERIAL.SOFT) {
-        ctx.fillStyle = VGA_PALETTE.YELLOW;
-      } else {
-        ctx.fillStyle = VGA_PALETTE.GREEN;
-      }
-
-      ctx.beginPath();
-      for (let x = start; x <= end; x++) {
-        const h = Math.min(this.heights[x], lavaTop);
-        if (x === start) {
-          ctx.moveTo(x, h);
-        } else {
-          ctx.lineTo(x, h);
-        }
-      }
-      for (let x = end; x >= start; x--) {
-        const h = Math.min(this.heights[x], lavaTop);
-        ctx.lineTo(x, Math.min(h + CAP_THICKNESS, lavaTop));
-      }
-      ctx.closePath();
-      ctx.fill();
-
-      segmentStart = null;
-    };
-
     for (let x = bandStart; x <= bandEnd; x++) {
-      if (this.heights[x] < lavaTop) {
-        const mat = this.materials[x];
-        if (segmentStart === null) {
-          segmentStart = x;
-          currentMat = mat;
-        } else if (mat !== currentMat) {
-          flushSegment(x - 1, currentMat);
-          segmentStart = x;
-          currentMat = mat;
-        }
-      } else {
-        if (segmentStart !== null) {
-          flushSegment(x - 1, currentMat);
-        }
-      }
-    }
+      const surfaceY = Math.min(this.heights[x], lavaTop);
+      if (surfaceY >= lavaTop) continue;
 
-    if (segmentStart !== null) {
-      flushSegment(bandEnd, currentMat);
+      const mat = this.materials[x];
+      ctx.fillStyle = mat === TERRAIN_MATERIAL.ROCK
+        ? VGA_PALETTE.GRAY
+        : mat === TERRAIN_MATERIAL.SOFT
+          ? VGA_PALETTE.YELLOW
+          : VGA_PALETTE.GREEN;
+      ctx.fillRect(x, surfaceY, 1, Math.min(CAP_THICKNESS, lavaTop - surfaceY));
     }
   }
 
@@ -365,7 +320,7 @@ export class TerrainManager {
 
   /**
    * Creuse un cratère dans le terrain :
-   * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au rayon circulaire nominal (1.0x) lorsque canCarveRock est actif.
+   * - Ignore les colonnes ROCK par défaut (roche indestructible), ou creuse ROCK au profil parabolique nominal (1.0x) lorsque canCarveRock est actif.
    *   Ces rayons correspondent à `WEAPON_REGISTRY.NUKE.blastRadius` (62 px) et `WEAPON_REGISTRY.THERMONUCLEAR.blastRadius` (160 px).
    * - Applique un profil parabolique sur DIRT/SOFT modulé par la friabilité locale et de souffle (largeur jusqu'à 1.45x, profondeur jusqu'à 1.15x).
    * - Lisse puis applique l'éboulis local sans éroder les colonnes ROCK ni les colonnes occultées.
@@ -881,7 +836,7 @@ export class TerrainManager {
 
   /**
    * Creuse la bande [startX, endX] d'un cratère :
-   * - ROCK : préservé intact par défaut, ou creusé au profil circulaire nominal (1.0x) si canCarveRock est vrai.
+   * - ROCK : préservé intact par défaut, ou creusé au profil parabolique nominal (1.0x) si canCarveRock est vrai.
    * - DIRT / SOFT : profil parabolique modulé par la friabilité locale et de souffle.
    */
   private carveCraterBand(
@@ -904,8 +859,8 @@ export class TerrainManager {
 
       if (this.materials[x] === TERRAIN_MATERIAL.ROCK) {
         if (canCarveRock && absDx <= radius) {
-          const dy = Math.sqrt(radius * radius - dx * dx);
-          const candidate = impactY + dy;
+          const ratio = dx / radius;
+          const candidate = impactY + radius * (1 - ratio * ratio);
           if (candidate > snapshotHeights[x]) {
             this.heights[x] = Math.min(maxSurfaceY, candidate);
           }

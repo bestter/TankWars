@@ -667,11 +667,11 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(impactX)).toBeCloseTo(FLAT_Y + radius, 6);
       // Inclusive boundary |x - impactX| == r has dy = 0, while |x - impactX| == r - 1 is carved
       expect(terrain.getHeightAt(impactX - radius + 1)).toBeCloseTo(
-        FLAT_Y + Math.sqrt(radius * radius - (radius - 1) * (radius - 1)),
+        FLAT_Y + radius * (1 - ((radius - 1) / radius) ** 2),
         6,
       );
       expect(terrain.getHeightAt(impactX + radius - 1)).toBeCloseTo(
-        FLAT_Y + Math.sqrt(radius * radius - (radius - 1) * (radius - 1)),
+        FLAT_Y + radius * (1 - ((radius - 1) / radius) ** 2),
         6,
       );
       expect(terrain.getHeightAt(impactX - radius)).toBe(FLAT_Y);
@@ -707,8 +707,8 @@ describe('TerrainManager', () => {
       const radius = 10;
       terrain.destroyTerrain(impactX, FLAT_Y, radius, { canCarveRock: true });
 
-      // ROCK inside nominal radius (x=108, dx=8 <= 10) is carved at 1.0x radius (dy = 6)
-      expect(terrain.getHeightAt(108)).toBeCloseTo(FLAT_Y + 6, 6);
+      // ROCK inside nominal radius (x=108, dx=8 <= 10) is carved at 1.0x radius (depth = 3.6)
+      expect(terrain.getHeightAt(108)).toBeCloseTo(FLAT_Y + 3.6, 6);
       // ROCK strictly outside nominal radius (x=111, dx=11 > 10) is untouched despite SOFT impact
       expect(terrain.getHeightAt(111)).toBe(FLAT_Y);
       // SOFT side beyond nominal radius (x=86, dx=-14) is carved via 1.45x SOFT halo
