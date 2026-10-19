@@ -906,6 +906,76 @@ describe('TerrainManager', () => {
     });
   });
 
+  describe("Profil brut du cratère, sans lissage ni affaissement", () => {
+    it("conserve la parabole DIRT nominale à chaque colonne, même avec un impact fractionnaire", () => {
+      const terrain = new TerrainManager(101, 300);
+      terrain.loadHeights(new Array(101).fill(100));
+      for (const impactX of [50, 50.25]) {
+        const shape = terrain["buildCraterShape"](impactX, 10, 20, 80, []);
+        expect(shape.depth).toBe(10);
+        for (let x = 20; x <= 80; x++) {
+          const profile = shape.profiles[x - shape.startX];
+          if (Math.abs(x - impactX) > 10) {
+            expect(profile).toBe(-1);
+          } else {
+            const surface = terrain["craterSurface"](100, 90, shape.depth, profile, 0);
+            expect(surface).toBeCloseTo(110 - (x - impactX) ** 2 / 10, 12);
+          }
+        }
+      }
+    });
+
+    it("conserve les dimensions et l’aire SOFT avec une tangente nulle aux rebords", () => {
+      const terrain = new TerrainManager(101, 300);
+      terrain.loadHeights(new Array(101).fill(100), new Array(101).fill("SOFT"));
+      const shape = terrain["buildCraterShape"](50, 10, 20, 80, []);
+      expect(shape.depth).toBe(25);
+      expect(shape.profiles[50 - shape.startX]).toBe(1);
+      for (const edge of [25, 75]) {
+        expect(shape.profiles[edge - shape.startX]).toBeCloseTo(0, 12);
+        const outside = edge < 50 ? edge - 1 : edge + 1;
+        expect(shape.profiles[outside - shape.startX]).toBe(-1);
+      }
+
+      // Quadrature de Simpson : aire continue indépendante de la rastérisation.
+      const intervals = 1000;
+      let integral = 0;
+      for (let i = 0; i <= intervals; i++) {
+        const u = -1 + 2 * i / intervals;
+        const weight = i === 0 || i === intervals ? 1 : i % 2 === 0 ? 2 : 4;
+        integral += weight * terrain["craterProfile"](u, 1);
+      }
+      integral *= 2 / (3 * intervals);
+      expect(integral * 25 * shape.depth).toBeCloseTo((4 / 3) * 25 ** 2, 7);
+      for (const edge of [-1, 1]) {
+        const inside = edge * (1 - 1e-5);
+        const profile = terrain["craterProfile"](inside, 1);
+        expect(profile / 1e-5).toBeLessThan(0.001);
+        expect(terrain["craterSurface"](100, 110, 25, profile, 1)).toBeCloseTo(110, 7);
+      }
+    });
+
+    it("intègre le premier pas fractionnaire et la résistance d’une colonne protégée sans bonus SOFT", () => {
+      for (const material of ["ROCK", "SOFT"] as const) {
+        const terrain = new TerrainManager(101, 300);
+        terrain.loadHeights(new Array(101).fill(100), new Array(101).fill("SOFT"));
+        terrain.setMaterialAt(51, material);
+        const protectedColumns = new Array<boolean>(101).fill(false);
+        // ROCK ou SOFT occulté : même résistance nulle en friabilité.
+        protectedColumns[51] = true;
+        const shape = terrain["buildCraterShape"](50.25, 2, 44, 57, protectedColumns);
+        // Résistances SOFT = 1/5, protégée = 1/2; pas initial de 0.75 colonne.
+        // u(52) = 0.75 * (1/5 + 1/2)/2 + (1/2 + 1/5)/2 = 0.6125.
+        expect(shape.profiles[52 - shape.startX]).toBeCloseTo(0.6467559684820174, 12);
+        expect(shape.profiles[53 - shape.startX]).toBeGreaterThan(0);
+        expect(shape.profiles[54 - shape.startX]).toBe(-1);
+        expect(shape.profiles[55 - shape.startX]).toBe(-1);
+        // L’autre côté conserve son premier pas SOFT de 0.25 colonne (u = 0.05).
+        expect(shape.profiles[50 - shape.startX]).toBeCloseTo(0.99935940234375, 12);
+      }
+    });
+  });
+
   describe("Parabolic Craters, Slumping & Standard Rock Occlusion (#184)", () => {
     const WIDTH = 200;
     const HEIGHT = 300;
