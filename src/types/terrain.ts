@@ -15,14 +15,14 @@ export const TERRAIN_MATERIAL = {
 export type TerrainMaterial =
   (typeof TERRAIN_MATERIAL)[keyof typeof TERRAIN_MATERIAL];
 
-/** Multiplicateur maximal de demi-largeur pour le terrain meuble (1 + 0,45 = 1,45). */
-export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 1.45;
+/** Demi-largeur maximale historique du sable, conservée avec son profil arrondi. */
+export const SOFT_TERRAIN_DESTRUCTION_MULTIPLIER = 2.5;
 
-/** Bonus maximal de demi-largeur de cratère sur terrain meuble (+45 %). */
-export const SOFT_TERRAIN_WIDTH_BONUS = 0.45;
+/** Bonus maximal de demi-largeur de cratère sur terrain meuble (+150 %). */
+export const SOFT_TERRAIN_WIDTH_BONUS = 1.5;
 
-/** Bonus maximal de profondeur de cratère au centre sur terrain meuble (+15 %). */
-export const SOFT_TERRAIN_DEPTH_BONUS = 0.15;
+/** Bonus maximal de profondeur de cratère au centre sur terrain meuble (+150 %). */
+export const SOFT_TERRAIN_DEPTH_BONUS = 1.5;
 
 /** Seuil de dénivellation (en px) entre colonnes voisines au-delà duquel l'affaissement s'applique. */
 export const TERRAIN_SLUMP_THRESHOLD = 2;

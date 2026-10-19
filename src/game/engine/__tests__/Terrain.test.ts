@@ -573,7 +573,7 @@ describe('TerrainManager', () => {
     const FLAT_Y = 100;
     const RADIUS = 12;
 
-    it("carves deeper (+15%) and wider (+45%) on soft terrain than on normal dirt", () => {
+    it("preserves the historical 2.5x depth and reach on SOFT with rounded shoulders", () => {
       const dirtTerrain = new TerrainManager(WIDTH, HEIGHT);
       dirtTerrain.loadHeights(Array.from({ length: WIDTH }, () => FLAT_Y));
       dirtTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
@@ -585,10 +585,59 @@ describe('TerrainManager', () => {
       softTerrain.destroyTerrain(50, FLAT_Y, RADIUS);
       const softDepth = softTerrain.getHeightAt(50) - FLAT_Y;
 
-      expect(softDepth).toBeCloseTo(dirtDepth * 1.15, 6);
+      expect(softDepth).toBeCloseTo(dirtDepth * 2.5, 6);
       // Outside nominal radius (dx = 14 > 12), dirt is untouched while soft is carved
       expect(dirtTerrain.getHeightAt(50 + 14)).toBe(FLAT_Y);
       expect(softTerrain.getHeightAt(50 + 14)).toBeGreaterThan(FLAT_Y);
+      // The former reduced halo ended at 1.45r; the restored halo reaches 2.5r.
+      expect(softTerrain.getHeightAt(50 + 29)).toBeGreaterThan(FLAT_Y);
+      expect(softTerrain.getHeightAt(50 + 32)).toBe(FLAT_Y);
+      // Rounding the shoulders redistributes excavation toward the bowl interior.
+      expect(softTerrain.getHeightAt(50 + 15)).toBeCloseTo(FLAT_Y + 24.2578125, 9);
+    });
+
+    it.each([10, 28, 62])("rounds SOFT rims without losing depth, reach or excavation at radius %s", (radius) => {
+      for (const impactX of [400, 400.35]) {
+        const terrain = new TerrainManager(801, 800);
+        terrain.loadHeights(new Array(801).fill(FLAT_Y), new Array(801).fill("SOFT"));
+        terrain.destroyTerrain(impactX, FLAT_Y, radius);
+        const reach = 2.5 * radius;
+        const heights = terrain.getHeightmap();
+        const maxDepth = Math.max(...heights) - FLAT_Y;
+        expect(maxDepth).toBeCloseTo(reach, 2);
+        for (const direction of [-1, 1]) {
+          const edge = impactX + direction * reach;
+          const inside = direction === 1 ? Math.floor(edge) : Math.ceil(edge);
+          // The old parabola leaves a roughly 2px/column corner at a flat rim.
+          expect(Math.abs(heights[inside] - heights[inside + direction])).toBeLessThan(0.6);
+          expect(heights[inside - direction]).toBeGreaterThan(FLAT_Y);
+          expect(heights[inside + 3 * direction]).toBe(FLAT_Y);
+        }
+        // Same continuous raw area as the previous parabola (4/3 * reach^2).
+        // Raster sampling and removal-only smoothing/slumping add small differences.
+        const removed = heights.reduce((total, height) => total + height - FLAT_Y, 0);
+        const parabolicArea = (4 / 3) * reach * reach;
+        expect(removed).toBeGreaterThan(parabolicArea * 0.99);
+        expect(removed).toBeLessThan(parabolicArea * 1.04);
+      }
+    });
+
+    it.each([-0.25, 0.25])("joins the original SOFT slope smoothly in both directions (slope %s)", (slope) => {
+      const terrain = new TerrainManager(401, 500);
+      const heights = Array.from({ length: 401 }, (_, x) => 150 + slope * (x - 200));
+      terrain.loadHeights(heights, new Array(401).fill("SOFT"));
+      terrain.destroyTerrain(200, 150, 28);
+      for (const x of [130, 270]) {
+        // Compare excavation to the original slope, not to a horizontal impact plane.
+        const excavation = terrain.getHeightAt(x) - heights[x];
+        const inside = x < 200 ? x + 1 : x - 1;
+        const insideExcavation = terrain.getHeightAt(inside) - heights[inside];
+        expect(excavation).toBeLessThan(0.1);
+        expect(insideExcavation).toBeGreaterThan(0);
+        expect(insideExcavation - excavation).toBeLessThan(0.3);
+      }
+      expect(terrain.getHeightAt(200)).toBe(220);
+      expect(terrain.getHeightmap().every((height, x) => height >= heights[x])).toBe(true);
     });
 
     it("carves adjacent normal dirt appropriately when explosion occurs in soft terrain", () => {
@@ -607,6 +656,71 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(55) - FLAT_Y).toBeGreaterThan(0);
       // But soft side is deeper than dirt side at equal distance from impact
       expect(terrain.getHeightAt(45)).toBeGreaterThan(terrain.getHeightAt(55));
+    });
+
+    it.each([305, 310, 315, 320])("keeps a DIRT impact connected and monotone beside SOFT starting at %s", (boundary) => {
+      for (const direction of [-1, 1]) {
+        const terrain = new TerrainManager(800, 600);
+        const surfaceY = 317.9;
+        const impactX = direction === 1 ? 272.7 : 799 - 272.7;
+        terrain.loadHeights(new Array(800).fill(surfaceY));
+        if (direction === 1) terrain.setMaterialRange(boundary, 799, "SOFT");
+        else terrain.setMaterialRange(0, 799 - boundary, "SOFT");
+        terrain.destroyTerrain(impactX, surfaceY, 28);
+
+        let previousDepth = Infinity;
+        const first = direction === 1 ? Math.ceil(impactX) : Math.floor(impactX);
+        for (let step = 0; step <= 74; step++) {
+          const depth = terrain.getHeightAt(first + direction * step) - surfaceY;
+          // No secondary bowl or ridge introduced by the DIRT/SOFT transition.
+          expect(depth).toBeGreaterThanOrEqual(0);
+          expect(depth).toBeLessThanOrEqual(previousDepth + 1e-9);
+          previousDepth = depth;
+        }
+        if (boundary >= 315) {
+          const remoteSand = direction === 1 ? 327 : 799 - 327;
+          expect(terrain.getHeightAt(remoteSand)).toBe(surfaceY);
+        }
+      }
+    });
+
+    it("does not create a detached SOFT pocket in a DRILLER stamp originating in DIRT", () => {
+      const terrain = new TerrainManager(800, 600);
+      terrain.loadHeights(new Array(800).fill(317.9));
+      terrain.setMaterialRange(315, 799, "SOFT");
+      terrain.destroyTerrainShaft(272.7, 317.9, 0, 1, 28, 28);
+      expect(terrain.getHeightAt(273)).toBeGreaterThan(317.9);
+      for (let x = 305; x <= 343; x++) expect(terrain.getHeightAt(x)).toBe(317.9);
+    });
+
+    it("preserves inclusive DIRT boundaries when an impact is below the original surface", () => {
+      for (const shaft of [false, true]) {
+        const terrain = new TerrainManager(200, 300);
+        terrain.loadHeights(new Array(200).fill(100));
+        if (shaft) terrain.destroyTerrainShaft(100, 110, 0, 1, 10, 10);
+        else terrain.destroyTerrain(100, 110, 10);
+        expect(terrain.getHeightAt(90)).toBeGreaterThanOrEqual(110);
+        expect(terrain.getHeightAt(110)).toBeGreaterThanOrEqual(110);
+        if (shaft) {
+          expect(terrain.getHeightAt(89)).toBe(100);
+          expect(terrain.getHeightAt(111)).toBe(100);
+        }
+      }
+    });
+
+    it("does not let occluded SOFT change the crater on the near side of a ROCK wall", () => {
+      const makeTerrain = (hiddenSand: boolean) => {
+        const terrain = new TerrainManager(200, 300);
+        terrain.loadHeights(new Array(200).fill(100));
+        terrain.setMaterialAt(60, "ROCK");
+        if (hiddenSand) terrain.setMaterialRange(70, 199, "SOFT");
+        terrain.destroyTerrain(50, 100, 20);
+        return terrain;
+      };
+      const dirt = makeTerrain(false);
+      const hiddenSand = makeTerrain(true);
+      expect(hiddenSand.getHeightmap().slice(0, 60)).toEqual(dirt.getHeightmap().slice(0, 60));
+      expect(hiddenSand.getHeightmap().slice(60)).toEqual(new Array(140).fill(100));
     });
 
     it("produces a smooth progressive crater gradient across sand-dirt boundary", () => {
@@ -711,7 +825,7 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(108)).toBeCloseTo(FLAT_Y + 3.6, 6);
       // ROCK strictly outside nominal radius (x=111, dx=11 > 10) is untouched despite SOFT impact
       expect(terrain.getHeightAt(111)).toBe(FLAT_Y);
-      // SOFT side beyond nominal radius (x=86, dx=-14) is carved via 1.45x SOFT halo
+      // SOFT side beyond nominal radius (x=86, dx=-14) is carved via 2.5x SOFT halo
       expect(terrain.getHeightAt(86)).toBeGreaterThan(FLAT_Y);
     });
 
@@ -810,10 +924,14 @@ describe('TerrainManager', () => {
       const soft = new TerrainManager(WIDTH, HEIGHT);
       soft.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("SOFT"));
       soft.destroyTerrain(100, FLAT_Y, 10);
-      expect(soft.getHeightAt(100)).toBeCloseTo(111.5, 9);
-      const expectedSoftRim15 = 100 + ((655.5 / 841) * 0.35) / 3;
-      expect(soft.getHeightAt(85)).toBeCloseTo(expectedSoftRim15, 9);
-      expect(soft.getHeightAt(115)).toBeCloseTo(expectedSoftRim15, 9);
+      expect(soft.getHeightAt(100)).toBeCloseTo(125, 9);
+      expect(soft.getHeightAt(85)).toBeCloseTo(116.6912, 9);
+      expect(soft.getHeightAt(115)).toBeCloseTo(116.6912, 9);
+      const expectedSoftRim25 = 100 + (0.4014932992 * 0.35) / 3;
+      expect(soft.getHeightAt(75)).toBeCloseTo(expectedSoftRim25, 9);
+      expect(soft.getHeightAt(125)).toBeCloseTo(expectedSoftRim25, 9);
+      expect(soft.getHeightAt(74)).toBe(100);
+      expect(soft.getHeightAt(126)).toBe(100);
 
       // 3. GRENADE on pure DIRT (r = 24, impactY = surfaceY - 1.2 = 98.8) on flat height 100
       const grenadeDirt = new TerrainManager(WIDTH, HEIGHT);
@@ -866,7 +984,7 @@ describe('TerrainManager', () => {
       expect(terrain.getHeightAt(103)).toBeGreaterThan(FLAT_Y);
     });
 
-    it("applies parabolic stamp without smoothing or slumping in destroyTerrainShaft and enforces initial + stamp occlusion", () => {
+    it("applies material-specific stamps without smoothing or slumping in destroyTerrainShaft and enforces initial + stamp occlusion", () => {
       // 1. Parabolic stamp without smoothing/slumping on pure DIRT (depth=10, radius=10 -> travel=0, stamp at y=100)
       const shaftDirt = new TerrainManager(WIDTH, HEIGHT);
       shaftDirt.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("DIRT"));
@@ -876,6 +994,16 @@ describe('TerrainManager', () => {
       // Column 90 (|dx| = 10 = halfWidth) has candidate = 100, and without smoothing stays 100
       expect(shaftDirt.getHeightAt(90)).toBe(100);
       expect(shaftDirt.getHeightAt(110)).toBe(100);
+
+      // SOFT stamps restore the same 2.5x extent without changing the shaft travel.
+      const shaftSoft = new TerrainManager(WIDTH, HEIGHT);
+      shaftSoft.loadHeights(new Array(WIDTH).fill(FLAT_Y), new Array(WIDTH).fill("SOFT"));
+      shaftSoft.destroyTerrainShaft(100, FLAT_Y, 0, 1, 10, 10);
+      expect(shaftSoft.getHeightAt(100)).toBeCloseTo(125, 9);
+      expect(shaftSoft.getHeightAt(80)).toBeCloseTo(106.8688, 9);
+      expect(shaftSoft.getHeightAt(120)).toBeCloseTo(106.8688, 9);
+      expect(shaftSoft.getHeightAt(75)).toBe(100);
+      expect(shaftSoft.getHeightAt(125)).toBe(100);
 
       // 2. Diagonal shaft behind a ROCK column: initial occlusion forbids columns behind ROCK for all stamps
       const rockBlocked = new TerrainManager(WIDTH, HEIGHT);
