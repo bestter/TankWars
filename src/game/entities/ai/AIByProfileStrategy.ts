@@ -13,11 +13,13 @@ import type { AIEngine } from "./AIEngine";
 import type { GameState } from "../../../types/game";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
+import type { AIObserver } from "../../observation";
 import { AISimpleStrategy } from "./AISimpleStrategy";
 
 type LazyAIEngine = AIEngine;
 
 export class AIByProfileStrategy implements AIEngine {
+  public onDecisionObserved?: AIObserver;
   public onTargetSelected?: (playerId: string, targetId: string) => void;
   private readonly simple: AISimpleStrategy;
   private readonly isActive: () => boolean;
@@ -66,22 +68,26 @@ export class AIByProfileStrategy implements AIEngine {
       const strategy = await this.loadHeuristic();
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
+      strategy.onDecisionObserved = this.onDecisionObserved;
       return strategy.executeTurn(tankId, gameState, terrainManager);
     }
     if (profile === "v3-sniper") {
       const strategy = await this.loadSniper();
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
+      strategy.onDecisionObserved = this.onDecisionObserved;
       return strategy.executeTurn(tankId, gameState, terrainManager);
     }
     if (profile === "v4-smart") {
       const strategy = await this.loadSmart();
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
+      strategy.onDecisionObserved = this.onDecisionObserved;
       return strategy.executeTurn(tankId, gameState, terrainManager);
     }
 
     this.simple.onTargetSelected = this.onTargetSelected;
+    this.simple.onDecisionObserved = this.onDecisionObserved;
     return this.simple.executeTurn(tankId, gameState, terrainManager, isCurrent);
   }
 

@@ -3,6 +3,7 @@ import type { FireCommand } from "../../types/game";
 import type { CombatDamageEvent, CombatDestructionEvent } from "../economy/shotRewards";
 import type { ZeusStrikeResult } from "../zeus/zeusDomain";
 import type { WEAPON_REGISTRY } from "../../types/weapon";
+import type { AIObservation, CreditObservation, PhysicalObservation } from "../observation";
 
 export interface EnduranceConfig {
   players: Player[];
@@ -15,6 +16,14 @@ export interface EnduranceConfig {
 
 export const DEFAULT_LIMITS = { turns: 1000, roundMs: 1_800_000, actionMs: 120_000, transitionMs: 30_000 };
 export type EnduranceEvent =
+  | { kind: "ammo-consumed"; playerId: string; weaponId: import("../../types/weapon").WeaponId; before: number; after: number }
+  | { kind: "ai-detail"; observation: AIObservation }
+  | { kind: "credit"; credit: CreditObservation }
+  | { kind: "shot-result"; shotId: number; awards: readonly import("../economy/shotRewards").PlayerShotReward[] }
+  | { kind: "physical"; observation: PhysicalObservation }
+  | { kind: "shot-intent"; playerId: string; command: FireCommand }
+  | { kind: "shot-launched"; shotId: number; playerId: string; command: FireCommand; position: { x: number; y: number }; launch: { x: number; y: number } }
+  | { kind: "shot-refused"; playerId: string; command: FireCommand; reason: string }
   | { kind: "turn"; playerId: string; turn: number }
   | { kind: "decision-start"; playerId: string }
   | { kind: "target"; playerId: string; targetId: string }

@@ -244,6 +244,11 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     expect(engine.getTerrainImpactParticles()).toHaveLength(0);
 
     // Clear on resetGame
+    // startNextRound generated a random map/roster. Restore a controlled terrain
+    // contact so this clearing assertion cannot miss on lava or hit a tank instead.
+    engine.getTerrain().loadHeights(new Array(800).fill(300), new Array(800).fill(TERRAIN_MATERIAL.DIRT));
+    engine.getTankManager().getPlayerById('p1')!.tank.position = { x: 150, y: 300 };
+    engine.getTankManager().getPlayerById('p2')!.tank.position = { x: 650, y: 300 };
     triggerHit();
     expect(engine.getTerrainImpactParticles().length).toBeGreaterThan(0);
     engine.resetGame([p1, p2]);

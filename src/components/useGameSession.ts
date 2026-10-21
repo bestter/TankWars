@@ -414,7 +414,7 @@ export function useGameSession({
     const enduranceHost = {
       stop: stopExecution,
       context: () => ({ players: structuredClone([...engine.getTankManager().getPlayers()]),
-        heights: [...engine.getTerrain().getHeightmap()], materials: [...engine.getTerrain().getMaterials()], phase: gamePhaseRef.current }),
+        heights: [...engine.getTerrain().getHeightmap()], materials: [...engine.getTerrain().getMaterials()], phase: gamePhaseRef.current, windForce: engine.getWindForce() }),
     };
     if (endurance) {
       const blockId = endurance.block?.id;
@@ -422,7 +422,9 @@ export function useGameSession({
         !stopped && endurance.block?.id === blockId && endurance.emit(event) };
       endurance.attach(enduranceHost);
       engine.combatObserver = observer; tm.combatObserver = observer;
+      engine.getPhysicsEngine().onPhysicalObserved = observation => { observer.emit({ kind: "physical", observation }); };
       const strategy = new AIByProfileStrategy(() => !stopped && endurance.running);
+      strategy.onDecisionObserved = observation => { observer.emit({ kind: "ai-detail", observation }); };
       strategy.onTargetSelected = (playerId, targetId) => {
         if (!observer.emit({ kind: "target", playerId, targetId })) throw new Error("ENDURANCE_TARGET_REJECTED");
       };

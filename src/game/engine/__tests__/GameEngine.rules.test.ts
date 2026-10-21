@@ -145,6 +145,8 @@ describe("GameEngine match rules", () => {
 
   it("finalizes real shot events, applies earnings once, and accumulates round earnings", () => {
     const { a, b } = threePlayers();
+    const observed = vi.fn<(event: import("../../endurance/types").EnduranceEvent) => boolean>(() => true);
+    engine.combatObserver = { emit: observed };
     engine.fireProjectile(
       a.tank.position,
       { angle: 0, power: 50, weaponId: "MISSILE" },
@@ -167,6 +169,10 @@ describe("GameEngine match rules", () => {
 
     expect(preview.awards.find((award) => award.playerId === a.id)?.amount).toBe(525);
     expect(a.money).toBe(525);
+    expect(observed.mock.calls.flatMap(([e]) => e.kind === "credit" ? [e.credit] : [])).toEqual([
+      { source: "shot", causalId: preview.shotId, playerId: a.id, amount: 525, before: 0, after: 525,
+        components: preview.awards.find(award => award.playerId === a.id)!.components },
+    ]);
     expect(engine.buildRoundResult().earningsByPlayer).toEqual({ a: 525 });
 
     engine.applyResolvedEarnings(preview.shotId, preview.balances);
@@ -290,6 +296,8 @@ describe("GameEngine match rules", () => {
         }),
       });
       const appointed = vi.fn();
+      const observed = vi.fn<(event: import("../../endurance/types").EnduranceEvent) => boolean>(() => true);
+      engine.combatObserver = { emit: observed };
       const struck = vi.fn();
       const roundEnded = vi.fn();
       engine.onZeusAppointed = appointed;
@@ -321,6 +329,10 @@ describe("GameEngine match rules", () => {
       expect(struck).toHaveBeenCalledOnce();
       expect(target?.tank).toMatchObject({ health: 0, shield: 0, isDead: true });
       expect(zeus?.money).toBe(75);
+      expect(observed.mock.calls.flatMap(([event]) => event.kind === "credit" ? [event.credit] : [])).toEqual([
+        expect.objectContaining({ source: "zeus", playerId: appointment.zeusId, amount: 75, before: 0, after: 75 }),
+      ]);
+      expect(observed.mock.calls.filter(([event]) => event.kind === "shot-result")).toHaveLength(10);
       expect(roundEnded).toHaveBeenCalledOnce();
       expect(roundEnded.mock.calls[0]?.[0].survivors.map((player: Player) => player.id)).toEqual([
         appointment.zeusId,

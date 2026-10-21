@@ -846,10 +846,12 @@ export class TurnManager {
    * Mutates the live player (consistent with shop mutations) and notifies HUD.
    */
   private consumeAmmo(player: Player, weaponId: WeaponId): void {
+    const before = player.inventory[weaponId] ?? 0;
     const consumed = consumeWeaponForFire(player, weaponId);
     if (!consumed.ok) return;
     player.inventory = consumed.player.inventory;
     player.tank.currentWeapon = consumed.player.tank.currentWeapon;
+    this.combatObserver?.emit({ kind: "ammo-consumed", playerId: player.id, weaponId, before, after: player.inventory[weaponId] ?? 0 });
     this.notifyHudUpdate();
   }
 
@@ -1367,6 +1369,7 @@ export class TurnManager {
       };
 
       const launchedLocally = this.fireIntentHandler === null;
+      if (this.combatObserver?.emit({ kind: "shot-intent", playerId: player.id, command: { ...command } }) === false) return;
       if (this.fireIntentHandler) {
         this.isAwaitingFireAuthority = true;
         this.lastLocalFireCommand = { ...command };

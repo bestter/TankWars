@@ -9,8 +9,10 @@
 import type { GameState } from "../../../types/game";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
+import type { AIObserver } from "../../observation";
 
 export interface AIEngine {
+  onDecisionObserved?: AIObserver;
   /** Optional structured observation of an explicitly selected target; never inferred from aim. */
   onTargetSelected?: (playerId: string, targetId: string) => void;
   /**

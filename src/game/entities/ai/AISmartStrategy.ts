@@ -3,6 +3,8 @@ import type { GameState } from "../../../types/game";
 import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
+import type { AIObserver } from "../../observation";
+import { DecisionObservation, observedFallback } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -24,6 +26,7 @@ import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 type SmartMemory = AimMemory;
 
 export class AISmartStrategy implements AIEngine {
+  public onDecisionObserved?: AIObserver;
   public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, SmartMemory>();
 
@@ -43,7 +46,7 @@ export class AISmartStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
     }
 
     const memory = this.getMem(self.id);
@@ -53,7 +56,7 @@ export class AISmartStrategy implements AIEngine {
     const cache = createExpertForecastCache();
     const aim = createExpertDecisionAim(memory, gameState.roundNumber);
     const plan = chooseExpertPlan(self, gameState, terrainManager, aim, undefined,
-      import.meta.env.DEV ? (trace) => { decisionTrace = trace; } : undefined, cache);
+      import.meta.env.DEV || this.onDecisionObserved ? (trace) => { decisionTrace = trace; } : undefined, cache);
     const target = plan
       ? gameState.players.find((player) => player.id === plan.primaryTargetId)
       : ordinaryExpertTarget(self, gameState.players, memory);
@@ -64,10 +67,11 @@ export class AISmartStrategy implements AIEngine {
           ...decisionTrace, finalReason: "aucun adversaire vivant",
         }));
       }
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
     this.onTargetSelected?.(self.id, target.id);
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
     const fallback = plan ? undefined : chooseExpertFallback(
       gameState, terrainManager, self, target, adjustWeaponForMaterial(
         chooseExpertTacticalWeapon(self, target, terrainManager, gameState),
@@ -79,7 +83,9 @@ export class AISmartStrategy implements AIEngine {
     if (!choice) {
       console.error("[AI EXPERT] Aucun choix de tir", { shooterId: self.id,
         round: gameState.roundNumber, turn: gameState.turn });
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      const final = { angle: 45, power: 50, weaponId: "MISSILE" as const };
+      observation?.finish(final, "no-shot-choice", decisionTrace);
+      return final;
     }
     const { weaponId, point } = choice;
     const policy = choice.policy;
@@ -87,6 +93,8 @@ export class AISmartStrategy implements AIEngine {
     self.tank.currentWeapon = weaponId;
 
     let command = choice.rawCommand;
+    observation?.evaluated({ ...choice.command, weaponId }, point);
+    observation?.step("offset", null, null, { offset: choice.offset, aimedPoint: choice.requestedPoint });
 
     const gaffe = ADVANCED_GAFFES["v4-smart"];
     const reactionIntensity = getHitReactionIntensity(
@@ -94,6 +102,7 @@ export class AISmartStrategy implements AIEngine {
       self.tank.hitReaction,
     );
     let reactionCommand: typeof command | undefined;
+    let before = command;
     if (reactionIntensity > 0) {
       command = applySignedCorruption(
         command,
@@ -103,6 +112,8 @@ export class AISmartStrategy implements AIEngine {
       if (import.meta.env.DEV) reactionCommand = command;
     }
     const gaffeOccurred = maybeGaffe(gaffe.chance);
+    observation?.step("reaction", before, command, { intensity: reactionIntensity });
+    before = command;
     if (gaffeOccurred) {
       command = applySignedCorruption(
         command,
@@ -113,6 +124,10 @@ export class AISmartStrategy implements AIEngine {
 
     const finalAim = reactionIntensity > 0 || gaffeOccurred
       ? finalizeAdvancedAim(command) : choice.command;
+    observation?.step("gaffe", before, command, { chance: gaffe.chance, occurred: gaffeOccurred });
+    observation?.step("finalize", command, finalAim);
+    observation?.finish({ ...finalAim, weaponId }, plan ? decisionTrace?.selectionReason ?? null : fallback?.selectionReason ?? null,
+      { planner: decisionTrace ?? null, fallback: fallback?.selectionReason ?? null, policy });
     if (import.meta.env.DEV) {
       const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
       const conservationReason = fallback?.conservationReason;

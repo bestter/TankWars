@@ -6,10 +6,12 @@ import type { Checkpoint, EnduranceStorage } from "./storage";
 import type { BlockRecord, CombatObserver, EnduranceConfig, EnduranceEvent, EnduranceExport, Incident, RecentEvent, RoundRecord, SessionRecord } from "./types";
 import type { Player } from "../../types/player";
 import { WEAPON_REGISTRY } from "../../types/weapon";
+import { EnduranceJournal, type JournalEvent, type JournalEntry, type JournalStatus } from "./journal";
+import type { PurchaseObservation } from "../observation";
 
 export interface EnduranceHost {
   stop(): void;
-  context(): { players: Player[]; heights: readonly number[]; materials: readonly string[]; phase: string };
+  context(): { players: Player[]; heights: readonly number[]; materials: readonly string[]; phase: string; windForce?: number };
 }
 export interface EnduranceClock { now(): number; date(): string; id(): string; seed(): number }
 const clock: EnduranceClock = { now: () => performance.now(), date: () => new Date().toISOString(),
@@ -19,7 +21,9 @@ export class EnduranceSession implements CombatObserver {
   readonly session: SessionRecord;
   block: BlockRecord | null = null;
   ready = false;
-  busy = false;
+  private working = false;
+  private finalizing = false;
+  get busy(): boolean { return this.working || this.finalizing; }
   phase = "PREPARATION";
   latestIncident: Incident | null = null;
   private host: EnduranceHost | null = null;
@@ -44,6 +48,11 @@ export class EnduranceSession implements CombatObserver {
   private stopped = false;
   private storageUnavailable = false;
   private finishing: Promise<void> | null = null;
+  private journal: EnduranceJournal | null = null;
+  private decisionCounter = 0;
+  private decisionId: string | null = null;
+  private decisionState: "computing" | "ready" | "launched" | null = null;
+  private visitCounter = 0;
 
   private readonly storage: EnduranceStorage;
   private readonly time: EnduranceClock;
@@ -56,6 +65,67 @@ export class EnduranceSession implements CombatObserver {
       abandoned: 0, interrupted: 0, suspect: 0, roundsStarted: 0, roundsCompleted: 0, incidents: 0,
       collection: "incomplete", storageError: null, completedMetrics: groups(), partialMetrics: groups(),
       retention: { recentEvents: 256, checkpointMs: 15000, fullEventHistory: false } };
+    if (storage.appendJournal && storage.readJournal) this.journal = new EnduranceJournal(this.session.id,
+      (entries, status) => {
+        const operation = this.writes.then(async () => {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try { await Promise.race([storage.appendJournal!(entries, status), new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("JOURNAL_TIMEOUT")), 10000);
+          })]); } finally { if (timer !== undefined) clearTimeout(timer); }
+        });
+        // The journal reports failures and stops the session; keep the shared lane usable for its final checkpoint.
+        this.writes = operation.catch(() => {});
+        return operation;
+      }, error => {
+        console.error("[Endurance] Journal failed", error);
+        this.session.storageError = `Journal: ${String(error)}`; this.session.collection = "incomplete";
+        void this.stop("journal-failure"); this.changed();
+      });
+  }
+  get journalStatus(): JournalStatus | null { return this.journal ? { ...this.journal.status } : null; }
+  private recordJournal(event: JournalEvent, snapshot = false): void {
+    if (!this.journal) return;
+    let context: ReturnType<EnduranceHost["context"]> | null = null, contextError: string | null = null;
+    try { context = snapshot ? this.host?.context() ?? null : null; } catch (error) { contextError = String(error); }
+    this.journal.append({ at: this.time.date(), atMs: this.time.now() - this.started,
+      blockId: this.block?.id ?? null, blockIndex: this.block?.index ?? 0, seed: this.block?.seed ?? null,
+      round: this.roundNumber, turn: this.turn, phase: this.phase, decisionId: this.decisionId, event,
+      context: context ? { players: context.players, windForce: context.windForce ?? null } : null, contextError });
+  }
+  async journalPage(after = 0, limit = 256): Promise<{ status: JournalStatus | null; entries: JournalEntry[] }> {
+    await this.journal?.flush();
+    return { status: this.journalStatus, entries: await this.storage.readJournal?.(this.session.id, after, limit) ?? [] };
+  }
+  async journalJSONL(): Promise<string> {
+    const chunks: string[] = []; let after = 0;
+    const status = (await this.journalPage()).status;
+    if (!status) throw new Error("JOURNAL_UNAVAILABLE");
+    chunks.push(JSON.stringify({ schemaVersion: 1, kind: "journal-status", status }) + "\n");
+    const upper = status.persisted;
+    while (after < upper) {
+      // Each bounded page depends on the last sequence read; do not load the full history in parallel.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const { entries } = await this.journalPage(after);
+      const rows = entries.filter(e => e.sequence <= upper);
+      if (!rows.length) throw new Error("JOURNAL_SEQUENCE_GAP");
+      for (const row of rows) { if (row.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP"); chunks.push(JSON.stringify(row) + "\n"); }
+    }
+    for (const row of status.error ? this.journal?.pending() ?? [] : []) {
+      if (row.sequence <= upper) continue;
+      if (row.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP");
+      chunks.push(JSON.stringify(row) + "\n");
+    }
+    return chunks.join("");
+  }
+  beginShopVisit(player: Player): string | null {
+    if (!this.active || this.stopped) return null;
+    const visitId = `${this.session.id}:shop:${++this.visitCounter}`;
+    this.recordJournal({ kind: "shop-start", visitId, player }); return visitId;
+  }
+  endShopVisit(visitId: string, player: Player, purchases: readonly PurchaseObservation[]): void {
+    if (!this.active || this.stopped) return;
+    for (const purchase of purchases) this.recordJournal({ kind: "purchase", visitId, purchase });
+    this.recordJournal({ kind: "shop-end", visitId, player }); void this.journal?.flush();
   }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   snapshot = (): number => this.revision;
@@ -66,6 +136,9 @@ export class EnduranceSession implements CombatObserver {
     return (c.maxDurationMs !== null && this.time.now() - this.started >= c.maxDurationMs);
   }
   async start(): Promise<void> {
+    this.recordJournal({ kind: "session-start", metadata: { gameVersion: this.session.gameVersion, build: this.session.build,
+      config: this.session.config, coordinates: "pixels; x right, y down; angle degrees: 0 right, 90 up, 180 left",
+      unavailable: "null; nominal aim, target or reasoning are never reconstructed", runtime: this.session.runtime } });
     await this.save();
     if (!this.stopped) await this.nextBlock();
   }
@@ -77,14 +150,16 @@ export class EnduranceSession implements CombatObserver {
     this.blockStarted = this.time.now();
     this.transitionStarted = this.blockStarted;
     this.phase = "PREPARATION"; this.roundNumber = 0; this.turn = 0; this.sequence = 0; this.recent = [];
+    this.decisionId = null; this.decisionState = null;
     this.block = { id: this.time.id(), sessionId: this.session.id, index: ++this.session.attempted, seed: this.time.seed(),
       config: structuredClone(this.session.config), gameVersion: this.session.gameVersion, build: this.session.build,
       schemaVersion: 1, physics: "local", startedAt: this.time.date(), durationMs: 0, status: "running", reason: null,
       suspect: false, roundsStarted: 0, roundsCompleted: 0, completedMetrics: groups(), partialMetrics: groups() };
-    this.busy = true; this.changed();
+    this.recordJournal({ kind: "block-start", reason: null, players: this.block.config.players });
+    this.working = true; this.changed();
     await this.save();
     if (this.stopped) return;
-    this.busy = false; this.ready = true; this.active = true; this.changed();
+    this.working = false; this.ready = true; this.active = true; this.changed();
   }
   attach(host: EnduranceHost): void {
     if (!this.active || this.host) throw new Error("INVALID_ENDURANCE_ATTACH");
@@ -98,11 +173,14 @@ export class EnduranceSession implements CombatObserver {
     this.actionStarted = null; this.phase = "COMBAT";
     this.collector = new RoundCollector(this.session.config.players);
     this.block.roundsStarted++; this.session.roundsStarted++;
+    this.decisionId = null; this.decisionState = null;
+    this.recordJournal({ kind: "round-start", reason: null, players: [] }, true);
     return true;
   }
   setPhase(phase: string): void {
     if (!this.active || this.phase === phase) return;
     this.phase = phase; this.transitionStarted = this.time.now(); this.changed();
+    this.recordJournal({ kind: "phase", reason: phase, players: [] }, true); void this.journal?.flush();
   }
   private validate(): void {
     if (!this.host) return;
@@ -117,6 +195,15 @@ export class EnduranceSession implements CombatObserver {
     if (!this.active || this.stopped) return false;
     if (this.limitReached()) { void this.stop("duration"); return false; }
     try {
+      if (event.kind === "turn" || event.kind === "decision-start") {
+        if (this.decisionId && (this.decisionState === "computing" || this.decisionState === "ready")) {
+          this.recordJournal({ kind: "decision-cancelled", reason: "superseded" });
+        }
+        this.decisionId = null; this.decisionState = null;
+      }
+      if (event.kind === "decision-start") { this.decisionId = `${this.session.id}:decision:${++this.decisionCounter}`; this.decisionState = "computing"; }
+      if (event.kind === "decision") this.decisionState = "ready";
+      if (event.kind === "shot-launched") this.decisionState = "launched";
       if (event.kind === "turn") {
         if (event.turn > this.session.config.limits.turns) {
           this.incident("limit", "turns", event.turn); return false;
@@ -136,6 +223,7 @@ export class EnduranceSession implements CombatObserver {
         if (event.targetId === event.playerId || !players.some(p => p.id === event.targetId && !p.tank.isDead)) throw new Error("INVALID_EXPLICIT_TARGET");
       }
       this.collector?.observe(event);
+      this.recordJournal({ kind: "combat", event }, ["decision-start", "shot-launched", "shot-result", "zeus"].includes(event.kind));
       const recent = { sequence: ++this.sequence, atMs: this.time.now() - this.blockStarted, round: this.roundNumber, event: structuredClone(event) };
       this.recent.push(recent); if (this.recent.length > 256) this.recent.shift();
       if (event.kind === "recovery") this.incident("warning", `SAFETY_${event.reason}`);
@@ -156,6 +244,7 @@ export class EnduranceSession implements CombatObserver {
       const round = this.roundRecord(true, survivors);
       addMetrics(this.block.completedMetrics, this.collector.data); addMetrics(this.session.completedMetrics, this.collector.data);
       this.block.roundsCompleted++; this.session.roundsCompleted++;
+      this.recordJournal({ kind: "round-end", reason: survivors.length === 0 ? "draw" : "winner", players: [] }, true);
       this.collector = null; this.actionStarted = null; this.setPhase("CELEBRATION");
       void this.save(round);
     } catch (error) { this.incident("invariant", String(error)); }
@@ -193,11 +282,13 @@ export class EnduranceSession implements CombatObserver {
       round: this.roundNumber, turn: this.turn, kind, reason, at: this.time.date(), phase: this.phase, observedMs,
       lastProgress: this.recent.at(-1) ?? null, recent: structuredClone(this.recent), context };
     this.latestIncident = structuredClone(incident); this.session.incidents++;
+    this.recordJournal({ kind: "incident", incident });
     if (!this.block.suspect) { this.block.suspect = true; this.session.suspect++; }
     if (kind === "warning") { void this.save(undefined, incident); this.changed(); return; }
     void this.finishBlock(kind === "external" ? "interrupted" : "abandoned", reason, incident);
   }
   private save(round?: Checkpoint["round"], incident?: Incident): Promise<void> {
+    void this.journal?.flush();
     this.session.durationMs = this.time.now() - this.started;
     this.checkpointAt = this.time.now();
     const checkpoint = structuredClone({ session: this.session, block: this.block, round, incident });
@@ -225,6 +316,9 @@ export class EnduranceSession implements CombatObserver {
     this.fallback.push(checkpoint); if (this.fallback.length > 8) this.fallback.shift();
   }
   private halt(): void {
+    if (this.decisionId && (this.decisionState === "computing" || this.decisionState === "ready")) {
+      this.recordJournal({ kind: "decision-cancelled", reason: "execution-stopped" }); this.decisionState = null;
+    }
     this.active = false; this.ready = false;
     try { this.host?.stop(); } finally { this.host = null; }
   }
@@ -233,14 +327,16 @@ export class EnduranceSession implements CombatObserver {
     console.error("[Endurance] Storage failed", error);
     this.session.storageError = error instanceof Error ? error.message : String(error);
     this.session.collection = "incomplete";
+    this.journal?.invalidate(error);
     void this.stop("storage-failure"); this.changed();
   }
   private finishBlock(status: BlockRecord["status"], reason: string, incident?: Incident): Promise<void> {
     if (this.finishing) return this.finishing;
     if (!this.block || this.block.status !== "running") return Promise.resolve();
+    this.recordJournal({ kind: "block-end", reason, players: [] }, true);
     let cleanupFailed = false;
     try { this.halt(); } catch (error) { cleanupFailed = true; this.session.storageError = `Cleanup: ${String(error)}`; }
-    this.busy = true;
+    this.working = true;
     const round = this.collector ? this.roundRecord(false, []) : undefined;
     if (this.collector) {
       this.collector.finish(null);
@@ -254,7 +350,8 @@ export class EnduranceSession implements CombatObserver {
     if (status === "interrupted") this.session.interrupted++;
     this.changed();
     this.finishing = this.save(round, incident).then(async () => {
-      this.finishing = null; this.busy = false;
+      await this.journal?.flush();
+      this.finishing = null; this.working = false;
       if (cleanupFailed || this.session.storageError) { await this.stop(cleanupFailed ? "cleanup-failure" : "storage-failure"); return; }
       if (!this.stopped && status === "abandoned" && this.session.config.stopOnIncident) { await this.stop("incident"); return; }
       if (!this.stopped) await this.nextBlock();
@@ -264,12 +361,15 @@ export class EnduranceSession implements CombatObserver {
   }
   async stop(reason = "manual"): Promise<void> {
     if (this.stopped) return;
+    this.finalizing = true;
     this.stopped = true;
     this.session.status = "stopped"; this.session.reason = reason;
     if (this.block?.status === "running") await this.finishBlock("interrupted", reason);
     else { try { this.halt(); } catch (error) { this.session.storageError = `Cleanup: ${String(error)}`; } }
     this.session.collection = this.session.storageError ? "incomplete" : "complete";
-    await this.save(); this.changed();
+    this.recordJournal({ kind: "session-stop", reason, players: [] });
+    await this.journal?.finish();
+    await this.save(); this.finalizing = false; this.changed();
   }
   async export(): Promise<EnduranceExport> {
     await this.writes;

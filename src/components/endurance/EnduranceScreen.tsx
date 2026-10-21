@@ -9,6 +9,7 @@ import { markdownReport } from "../../game/endurance/report";
 import type { EnduranceConfig, EnduranceExport, SessionRecord } from "../../game/endurance/types";
 import type { AiProfile } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
+import { installJournalBridge } from "./journalBridge";
 
 const PROFILES: AiProfile[] = ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"];
 const COLORS = [VGA_PALETTE.BLUE, VGA_PALETTE.RED, VGA_PALETTE.ELECTRIC_CYAN, VGA_PALETTE.FLASH_GREEN];
@@ -33,6 +34,7 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
   const [report, setReport] = useState<EnduranceExport | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    const removeBridge = installJournalBridge(session);
     const tick = setInterval(() => session.tick(), 1000);
     const hidden = () => { if (document.hidden) void session.stop("environment-hidden"); };
     const pagehide = () => { void session.stop("environment-pagehide"); };
@@ -42,12 +44,14 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
     window.addEventListener("error", failed); window.addEventListener("unhandledrejection", rejected);
     hidden();
     return () => {
+      removeBridge();
       clearInterval(tick); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("error", failed); window.removeEventListener("unhandledrejection", rejected);
     };
   }, [session]);
-  const exportResult = async (format: "json" | "md" | "view") => {
+  const exportResult = async (format: "json" | "md" | "view" | "jsonl") => {
     try {
+      if (format === "jsonl") { download(`${session.session.id}.jsonl`, await session.journalJSONL(), "application/x-ndjson"); return; }
       const data = await session.export(); setReport(data);
       if (format === "json") download(`${data.session.id}.json`, JSON.stringify(data, null, 2), "application/json");
       if (format === "md") download(`${data.session.id}.md`, markdownReport(data, i18n.language.startsWith("fr")), "text/markdown");
@@ -59,6 +63,8 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
     <p>{t("endurance_progress", { attempted: s.attempted, completed: s.completed, abandoned: s.abandoned, interrupted: s.interrupted, rounds: s.roundsCompleted })}</p>
     <p>{s.id} · {(s.durationMs / 60000).toFixed(1)} min · {session.phase} · {s.status} {s.reason}</p>
     <p role="status">{t("endurance_storage")}: {s.storageError ?? (session.busy ? t("endurance_saving") : t("endurance_saved"))}</p>
+    {session.journalStatus && <p role="status">{t("endurance_journal_status", { ...session.journalStatus,
+      state: t(session.journalStatus.complete ? "endurance_journal_complete" : session.journalStatus.error || !session.running ? "endurance_journal_incomplete" : "endurance_journal_active") })}</p>}
     {(error || s.storageError) && <p role="alert">{error ?? s.storageError}</p>}
     {session.latestIncident && <p role="alert">{session.latestIncident.kind}: {session.latestIncident.reason} · seed {session.latestIncident.seed}</p>}
     <div className="endurance-actions">
@@ -66,6 +72,7 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
       <button type="button" onClick={() => void exportResult("view")}>{t("endurance_report")}</button>
       <button type="button" onClick={() => void exportResult("json")}>JSON</button>
       <button type="button" onClick={() => void exportResult("md")}>Markdown</button>
+      <button type="button" disabled={!session.journalStatus} onClick={() => void exportResult("jsonl")}>JSONL</button>
       <button type="button" disabled={session.running || session.busy} onClick={() => { session.close(); onExit(); }}>{t("btn_menu")}</button>
     </div>
     <p>{t("endurance_limits_help")}</p>
@@ -100,9 +107,23 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
         maxDurationMs: minutes === 0 ? null : minutes * 60000, stopOnIncident, limits });
     } catch (e) { setError(`${t("endurance_invalid")}: ${String(e)}`); }
   };
-  const recovered = async (format: "json" | "md") => {
+  const recovered = async (format: "json" | "md" | "jsonl") => {
     if (!saved) return;
     try {
+      if (format === "jsonl") {
+        const status = await storage.journalStatus(saved.id);
+        if (!status) throw new Error(t("endurance_journal_unavailable"));
+        const chunks = [JSON.stringify({ schemaVersion: 1, kind: "journal-status", status: { ...status, complete: saved.status === "stopped" && status.complete } }) + "\n"];
+        let after = 0;
+        while (after < status.persisted) {
+          // The next bounded page starts at the sequence validated in the preceding page.
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          const entries = await storage.readJournal(saved.id, after, 256);
+          if (!entries.length) throw new Error("JOURNAL_SEQUENCE_GAP");
+          for (const entry of entries) { if (entry.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP"); chunks.push(JSON.stringify(entry) + "\n"); }
+        }
+        download(`${saved.id}.jsonl`, chunks.join(""), "application/x-ndjson"); return;
+      }
       const record = structuredClone(saved);
       if (record.status === "running") { record.collection = "incomplete"; record.reason = "crash-checkpoint"; }
       const data = await storage.exportSession(record);
@@ -122,7 +143,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
       <button type="submit">{t("endurance_start")}</button><button type="button" onClick={onExit}>{t("btn_menu")}</button>
     </form>
     {error && <p role="alert">{error}</p>}
-    {saved && <p>{t("endurance_recover")} ({saved.id}) <button type="button" onClick={() => void recovered("json")}>JSON</button> <button type="button" onClick={() => void recovered("md")}>Markdown</button></p>}
+    {saved && <p>{t("endurance_recover")} ({saved.id}) <button type="button" onClick={() => void recovered("json")}>JSON</button> <button type="button" onClick={() => void recovered("md")}>Markdown</button> <button type="button" onClick={() => void recovered("jsonl")}>JSONL</button></p>}
   </section>;
 }
 

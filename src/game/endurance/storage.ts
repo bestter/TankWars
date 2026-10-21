@@ -1,6 +1,7 @@
 import type { BlockRecord, EnduranceExport, Incident, RoundRecord, SessionRecord } from "./types";
 import { metrics } from "./metrics";
 import { isPlayers } from "../online/protocol";
+import type { JournalEntry, JournalStatus, JournalStorage } from "./journal";
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,6 +40,9 @@ export interface Checkpoint {
   incident?: Incident;
 }
 export interface EnduranceStorage {
+  appendJournal?: JournalStorage["appendJournal"];
+  readJournal?: JournalStorage["readJournal"];
+  journalStatus?: JournalStorage["journalStatus"];
   save(checkpoint: Checkpoint): Promise<void>;
   latest(): Promise<SessionRecord | null>;
   exportSession(session: SessionRecord): Promise<EnduranceExport>;
@@ -51,13 +55,16 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
   private connection: Promise<IDBDatabase> | null = null;
   private db(): Promise<IDBDatabase> {
     return this.connection ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open("tankwars-endurance", 1);
+      const request = indexedDB.open("tankwars-endurance", 2);
       request.onupgradeneeded = () => {
         for (const name of STORES) {
+          if (request.result.objectStoreNames.contains(name)) continue;
           const store = request.result.createObjectStore(name, { keyPath: "id" });
           if (name !== "sessions") store.createIndex("sessionId", "sessionId");
           else store.createIndex("startedAt", "startedAt");
         }
+        if (!request.result.objectStoreNames.contains("journal")) request.result.createObjectStore("journal", { keyPath: ["sessionId", "sequence"] });
+        if (!request.result.objectStoreNames.contains("journalMeta")) request.result.createObjectStore("journalMeta", { keyPath: "sessionId" });
       };
       request.onsuccess = () => {
         request.result.onversionchange = () => request.result.close();
@@ -78,6 +85,48 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
       if (checkpoint.block) tx.objectStore("blocks").put(checkpoint.block);
       if (checkpoint.round) tx.objectStore("rounds").put(checkpoint.round);
       if (checkpoint.incident) tx.objectStore("incidents").put(checkpoint.incident);
+    });
+  }
+  async appendJournal(entries: readonly JournalEntry[], status: JournalStatus): Promise<void> {
+    const db = await this.db();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["journal", "journalMeta"], "readwrite");
+      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error ?? new Error("JOURNAL_WRITE_FAILED"));
+      tx.onerror = () => reject(tx.error ?? new Error("JOURNAL_WRITE_FAILED"));
+      for (const entry of entries) tx.objectStore("journal").add(entry);
+      tx.objectStore("journalMeta").put(status);
+    });
+  }
+  async readJournal(sessionId: string, after: number, limit: number): Promise<JournalEntry[]> {
+    if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 256) throw new Error("INVALID_JOURNAL_PAGE");
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction("journal").objectStore("journal").getAll(IDBKeyRange.bound([sessionId, after], [sessionId, Number.MAX_SAFE_INTEGER], true), limit);
+      request.onsuccess = () => {
+        try {
+          const values: unknown[] = request.result;
+          if (!values.every(v => object(v) && v.schemaVersion === 1 && v.sessionId === sessionId &&
+            Number.isSafeInteger(v.sequence) && Number(v.sequence) > after && typeof v.at === "string" &&
+            typeof v.atMs === "number" && Number.isFinite(v.atMs) && object(v.event) && typeof v.event.kind === "string")) throw new Error("INVALID_JOURNAL_RECORD");
+          resolve(values as JournalEntry[]);
+        } catch (error) { reject(error); }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async journalStatus(sessionId: string): Promise<JournalStatus | null> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction("journalMeta").objectStore("journalMeta").get(sessionId);
+      request.onsuccess = () => {
+        const v: unknown = request.result;
+        if (v === undefined) { resolve(null); return; }
+        if (!object(v) || v.schemaVersion !== 1 || v.sessionId !== sessionId ||
+          !Number.isSafeInteger(v.emitted) || !Number.isSafeInteger(v.persisted) || Number(v.persisted) < 0 ||
+          Number(v.emitted) < Number(v.persisted) || typeof v.complete !== "boolean" || (v.error !== null && typeof v.error !== "string")) { reject(new Error("INVALID_JOURNAL_STATUS")); return; }
+        resolve(v as unknown as JournalStatus);
+      };
+      request.onerror = () => reject(request.error);
     });
   }
   async latest(): Promise<SessionRecord | null> {

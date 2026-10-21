@@ -83,6 +83,23 @@ function makeAiPlayer(
 }
 
 describe("autoBuyForAI", () => {
+  it.each(RICH_PROFILE_CASES)("observes each accepted unit transaction without changing $profile (N=$initialPlayerCount)", ({ profile, initialPlayerCount }) => {
+    const player = makeAiPlayer(profile);
+    const observed = autoBuyForAI(player, initialPlayerCount, {}, true);
+    const ordinary = autoBuyForAI(player, initialPlayerCount, {});
+    expect(observed.player).toEqual(ordinary.player);
+    expect(observed.counters).toEqual(ordinary.counters);
+    let money = player.money; const inventory = { ...player.inventory };
+    for (const purchase of observed.purchases ?? []) {
+      expect(purchase).toMatchObject({ playerId: player.id, profile, quantity: 1, moneyBefore: money,
+        stockBefore: inventory[purchase.weaponId] ?? 0, price: WEAPON_REGISTRY[purchase.weaponId].price });
+      money -= purchase.price; inventory[purchase.weaponId] = (inventory[purchase.weaponId] ?? 0) + 1;
+      expect(purchase.moneyAfter).toBe(money); expect(purchase.stockAfter).toBe(inventory[purchase.weaponId]);
+    }
+    expect(observed.player.money).toBe(money); expect(observed.player.inventory).toEqual(inventory);
+    expect(autoBuyForAI(observed.player, initialPlayerCount, observed.counters, true).purchases).toEqual([]);
+    expect(autoBuyForAI({ ...player, money: 0 }, initialPlayerCount, {}, true).purchases).toEqual([]);
+  });
   it("does nothing for a human player", () => {
     const player = makePlayer({ isHuman: true, money: 1_000, inventory: {} });
     const counters: ShopVisitCounters = {};

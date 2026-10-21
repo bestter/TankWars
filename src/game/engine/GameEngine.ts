@@ -35,6 +35,7 @@ import {
   type CombatDamageEvent,
   type CombatDestructionEvent,
   type ShotRewardResult,
+  type PlayerShotReward,
 } from "../economy/shotRewards";
 import {
   allocateZeusStrike,
@@ -404,6 +405,8 @@ export class GameEngine {
     return this.turnManager;
   }
 
+  public getPhysicsEngine(): PhysicsEngine { return this.physicsEngine; }
+
   /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy or AIByProfileStrategy for mixed v1/v2). */
   public setAIEngine(aiEngine: AIEngine): void {
     this.turnManager.setAIEngine(aiEngine);
@@ -474,10 +477,12 @@ export class GameEngine {
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
+      this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "unknown-weapon" });
       console.warn(`Unknown weapon: ${command.weaponId}`);
       return;
     }
     if (this.activeShotLedger !== null) {
+      this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "active-shot" });
       console.warn("[GameEngine] Refus d'un second tir avant la finalisation du tir actif.");
       return;
     }
@@ -533,6 +538,8 @@ export class GameEngine {
       ownerColor,
       { shotId, munitionId: 0 },
     );
+    this.combatObserver?.emit({ kind: "shot-launched", shotId, playerId: ownerId, command: { ...command },
+      position: { ...from }, launch: { x: launchX, y: launchY } });
   }
 
   /** Associe l'identifiant serveur au tir optimiste encore actif. */
@@ -675,7 +682,8 @@ export class GameEngine {
     this.tankManager.clearShotAttribution();
 
     if (this.localMatch) {
-      this.applyResolvedEarnings(preview.shotId, balances);
+      this.applyResolvedEarnings(preview.shotId, balances, preview.awards);
+      this.combatObserver?.emit({ kind: "shot-result", shotId: preview.shotId, awards: structuredClone(preview.awards) });
       const evaluation = evaluateZeusDeadlock(
         this.zeusState,
         this.tankManager.getPlayers(),
@@ -697,6 +705,7 @@ export class GameEngine {
   public applyResolvedEarnings(
     shotId: number,
     balances: ReadonlyArray<{ playerId: string; money: number }>,
+    awards: readonly PlayerShotReward[] = [],
   ): void {
     if (!Number.isSafeInteger(shotId) || shotId <= this.lastAppliedShotId) return;
     const seen = new Set<string>();
@@ -719,6 +728,11 @@ export class GameEngine {
       }
     }
     this.lastAppliedShotId = shotId;
+    const componentsByPlayer = new Map(awards.map(award => [award.playerId, award.components]));
+    for (const update of updates) if (update.delta > 0) this.combatObserver?.emit({ kind: "credit", credit: {
+      source: "shot", causalId: shotId, playerId: update.player.id, amount: update.delta,
+      before: update.money - update.delta, after: update.money,
+      components: structuredClone(componentsByPlayer.get(update.player.id) ?? []) } });
   }
 
   public syncAuthoritativeBalances(
@@ -860,7 +874,11 @@ export class GameEngine {
             player.money +
             (player.id === reward.award.playerId ? reward.award.amount : 0),
         }));
+        const before = this.tankManager.getPlayerById(reward.award.playerId)!.money;
         this.applyZeusBalances(balances);
+        if (reward.award.amount > 0) this.combatObserver?.emit({ kind: "credit", credit: { source: "zeus", causalId: visual.strike.strikeId,
+          playerId: reward.award.playerId, amount: reward.award.amount, before,
+          after: this.tankManager.getPlayerById(reward.award.playerId)!.money, components: [] } });
         visual.result = { ...visual.strike, ...reward, balances };
         this.lastAppliedZeusStrikeId = visual.strike.strikeId;
         this.pendingSpecialRoundOutcome = reward.roundOutcome;

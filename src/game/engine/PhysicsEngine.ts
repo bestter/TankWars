@@ -2,6 +2,7 @@ import { insideTankHitbox } from "../combatConstants";
 import { BALLISTICS_BASE_SPEED, advanceProjectile, projectileOutOfBounds } from "./projectileMotion";
 import { applyBulldozerHit } from "./bulldozerImpact";
 import { secureRandom, createSeededRNG } from '../../utils/random';
+import type { PhysicalObservation } from "../observation";
 /**
  * TankWars - PhysicsEngine
  *
@@ -64,6 +65,7 @@ export interface ProjectileHitEvent {
 }
 
 export class PhysicsEngine {
+  public onPhysicalObserved?: (event: PhysicalObservation) => void;
   private readonly random: () => number;
   private shotRandom: (() => number) | null = null;
 
@@ -417,11 +419,13 @@ export class PhysicsEngine {
 
     for (let k = 0; k < numSubs; k++) {
       const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
-      const spread = frac * maxSpreadRad * (0.7 + this.physicalRandom() * 0.6);
+      const spreadDraw = this.physicalRandom();
+      const spread = frac * maxSpreadRad * (0.7 + spreadDraw * 0.6);
       const subDir = dir + spread;
 
       // subs get a fraction of current speed + variation; higher power gives more energetic subs
-      const subSpeed = currentSpeed * (0.5 + this.physicalRandom() * 0.4) * (0.65 + (power / 100) * 0.6);
+      const speedDraw = this.physicalRandom();
+      const subSpeed = currentSpeed * (0.5 + speedDraw * 0.4) * (0.65 + (power / 100) * 0.6);
       const subVx = Math.cos(subDir) * subSpeed;
       const subVy = Math.sin(subDir) * subSpeed;
 
@@ -448,6 +452,8 @@ export class PhysicsEngine {
       sub.bounceCount = undefined;
       sub.hasLeftOwnerHitbox = undefined;
       this.projectiles.push(sub);
+      this.onPhysicalObserved?.({ kind: "cluster", shotId: p.shotId, munitionId: k + 1,
+        draws: [spreadDraw, speedDraw], parameters: { spread, subSpeed, vx: subVx, vy: subVy, x: relX, y: relY } });
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
@@ -475,10 +481,13 @@ export class PhysicsEngine {
 
     const bounceCount = (p.bounceCount ?? 0) + 1;
     p.bounceCount = bounceCount;
+    const before = this.onPhysicalObserved ? { vx: p.vx, vy: p.vy } : null;
+    const draws: number[] = [];
+    const random = this.onPhysicalObserved ? () => { const value = this.physicalRandom(); draws.push(value); return value; } : this.physicalRandom;
 
     const bounce = grenadeBounceParams(
       terrainManager.getMaterialAt(p.x),
-      this.physicalRandom,
+      random,
     );
 
     // Check if this contact should cause detonation rather than another bounce.
@@ -492,6 +501,8 @@ export class PhysicsEngine {
       Math.abs(p.vy) < 2.0;
 
     if (shouldExplode) {
+      this.onPhysicalObserved?.({ kind: "grenade", shotId: p.shotId, munitionId: p.munitionId, draws,
+        parameters: { before, bounceCount, ...bounce, exploded: true, x: p.x, y: p.y } });
       // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
       this.handleImpact(index, p, terrainManager, tankManager);
       return;
@@ -502,20 +513,22 @@ export class PhysicsEngine {
     p.vy = -p.vy * bounce.restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= bounce.friction + (this.physicalRandom() - 0.5) * 0.06;
+    p.vx *= bounce.friction + (random() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
-    p.vy += (this.physicalRandom() - 0.5) * 0.5;
+    p.vy += (random() - 0.5) * 0.5;
 
     // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
     if (p.vy > -1.0) {
-      p.vy = -1.0 - this.physicalRandom() * 1.2;
+      p.vy = -1.0 - random() * 1.2;
     }
 
     // Clamp absurd horizontal speeds after many skids (safety).
     if (Math.abs(p.vx) > 12) {
       p.vx = Math.sign(p.vx) * 12;
     }
+    this.onPhysicalObserved?.({ kind: "grenade", shotId: p.shotId, munitionId: p.munitionId, draws,
+      parameters: { before, after: { vx: p.vx, vy: p.vy }, bounceCount, ...bounce, exploded: false, x: p.x, y: p.y } });
   }
 
   /**

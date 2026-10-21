@@ -3,6 +3,8 @@ import type { GameState } from "../../../types/game";
 import type { WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
+import type { AIObserver } from "../../observation";
+import { DecisionObservation, observedFallback } from "./decisionObservation";
 import {
   finalizeSimpleAim,
   interpolateAimCommands,
@@ -47,6 +49,7 @@ export function getSimpleErrorChances(
 }
 
 export class AISimpleStrategy implements AIEngine {
+  public onDecisionObserved?: AIObserver;
   public onTargetSelected?: (playerId: string, targetId: string) => void;
   private readonly isActive: () => boolean;
   constructor(isActive: () => boolean = () => true) { this.isActive = isActive; }
@@ -69,7 +72,7 @@ export class AISimpleStrategy implements AIEngine {
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
     }
 
     const memory = this.getMem(self.id);
@@ -78,7 +81,7 @@ export class AISimpleStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
     let target = memory.currentTargetId
@@ -92,10 +95,11 @@ export class AISimpleStrategy implements AIEngine {
       )[0];
     }
     if (!target) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
     this.onTargetSelected?.(self.id, target.id);
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
     const attempts = recordAimAttempt(memory, target.id);
     const weaponId = self.tank.currentWeapon || "MISSILE";
     self.tank.currentWeapon = weaponId;
@@ -107,8 +111,14 @@ export class AISimpleStrategy implements AIEngine {
 
     if (maybeGaffe(chances.gaffe)) {
       consumeHitReaction(self.tank.hitReaction);
-      return { ...finalizeSimpleAim(sampleSimpleGaffe()), weaponId };
+      const sampled = sampleSimpleGaffe();
+      const final = { ...finalizeSimpleAim(sampled), weaponId };
+      observation?.step("gaffe", null, sampled, { chance: chances.gaffe, occurred: true, shortCircuit: true });
+      observation?.step("finalize", sampled, final);
+      observation?.finish(final, "early-gaffe");
+      return final;
     }
+    observation?.step("gaffe", null, null, { chance: chances.gaffe, occurred: false, shortCircuit: true });
 
     const aimX =
       target.tank.position.x +
@@ -123,13 +133,24 @@ export class AISimpleStrategy implements AIEngine {
       gameState.gravity,
       terrainManager,
     );
+    observation?.step("offset", null, null, { offset: aimX - target.tank.position.x, aimedPoint: { x: aimX, y: target.tank.position.y - 6 } });
+    observation?.evaluated({ ...command, weaponId }, { x: target.tank.position.x, y: target.tank.position.y - 6 });
 
+    let before = command;
     if (maybeGaffe(chances.direction)) {
       command = { ...command, angle: secureRandom() * 180 };
+      observation?.step("direction-error", before, command, { chance: chances.direction, occurred: true });
+    } else {
+      observation?.step("direction-error", before, command, { chance: chances.direction, occurred: false });
     }
+    before = command;
     if (maybeGaffe(chances.power)) {
       command = { ...command, power: randomIntegerInclusive(1, 99) };
+      observation?.step("power-error", before, command, { chance: chances.power, occurred: true });
+    } else {
+      observation?.step("power-error", before, command, { chance: chances.power, occurred: false });
     }
+    before = command;
     if (reactionIntensity > 0) {
       command = interpolateAimCommands(
         command,
@@ -137,9 +158,13 @@ export class AISimpleStrategy implements AIEngine {
         reactionIntensity,
       );
     }
+    observation?.step("reaction", before, command, { intensity: reactionIntensity });
 
     consumeHitReaction(self.tank.hitReaction);
-    return { ...finalizeSimpleAim(command), weaponId };
+    const final = { ...finalizeSimpleAim(command), weaponId };
+    observation?.step("finalize", command, final);
+    observation?.finish(final);
+    return final;
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {

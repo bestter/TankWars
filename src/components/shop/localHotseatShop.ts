@@ -1,5 +1,6 @@
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine } from "../../game/engine/GameEngine";
+import type { EnduranceSession } from "../../game/endurance/session";
 import {
   autoBuyForAI,
   type InitialPlayerCount,
@@ -12,6 +13,7 @@ import type {
 } from "../gameCanvasReducer";
 
 export interface LocalHotseatShopHost {
+  readonly endurance?: EnduranceSession;
   readonly gameMode: "local" | "online";
   readonly initialPlayerCount: InitialPlayerCount;
   readonly engineRef: MutableRefObject<GameEngine | null>;
@@ -77,11 +79,13 @@ export function processNextShopperIfAI(host: LocalHotseatShopHost): void {
   const idx = host.currentShopIndexRef.current;
   const current = host.shopPlayersRef.current[idx];
   if (!current || current.isHuman) return;
+  const visitId = host.endurance?.beginShopVisit(current);
 
   const autoBuy = autoBuyForAI(
     copySafeInventory(current),
     host.initialPlayerCount,
     host.shopSessionRef.current.counters,
+    !!host.endurance,
   );
   const engine = host.engineRef.current;
   const basePlayers = engine
@@ -105,6 +109,7 @@ export function processNextShopperIfAI(host: LocalHotseatShopHost): void {
     counters: autoBuy.counters,
     denial: null,
   });
+  if (visitId) host.endurance?.endShopVisit(visitId, autoBuy.player, autoBuy.purchases ?? []);
 
   advanceToNextShopper(host);
 }
