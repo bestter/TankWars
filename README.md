@@ -13,7 +13,7 @@
 
 ## Features
 
-- **Local AI Endurance (0.11.0)** — Run rendered AI-only blocks of multiple rounds at normal speed, with automatic celebrations, summaries and shops, watchdogs, structured physical statistics, local checkpoints and Markdown/JSON exports. See [AI Endurance](#ai-endurance-206).
+- **Local AI Endurance (0.11.0, test builds only)** — Run rendered AI-only blocks of multiple rounds at normal speed, with automatic celebrations, summaries and shops, watchdogs, structured physical statistics, local checkpoints and Markdown/JSON exports. Excluded from public builds. See [AI Endurance](#ai-endurance-206).
 
 - **Local Shot Advisor (0.9.9)** — During a stable living human turn, **Suggest a shot** uses EXPERT’s shared candidate search and physical/economic forecasts in a dedicated browser Web Worker. **SURVIVAL** is the default for each human, retained between rounds and reset for a new match. It first attempts a safe destruction of the priority lethal threat, accepting a loss: neutralization ranks opponent destructions and real HP/shield losses rather than profit. Otherwise it maximizes profit among safe shots. **MAXIMIZE_PROFIT** directly maximizes immediate net earnings, allowing a more profitable suicidal shot and preferring survival at equal profit. Outside neutralization, negative-profit paid ammunition is excluded; zero-profit shots remain admissible. Ties use opponent destructions, real losses, turn order and stable search order, without human/AI preference. EXPERT’s automatic policies and randomness remain unchanged.
   - The result shows weapon, angle, power, targets, objective, HP/shield losses, predicted deaths (including the shooter), earnings, ammunition cost and net profit in production. **Apply aim** voluntarily replaces weapon/angle/power together; it never fires or consumes ammunition. Manual aiming stays available during calculation and does not expire advice.
@@ -220,7 +220,11 @@ Still planned:
 
 ## AI Endurance (#206)
 
-Open **AI Endurance** from the local menu. Choose two to four existing AI profiles, a positive number of rounds per block and at least one session limit: attempted blocks or elapsed minutes. Zero disables an optional session limit. Defaults are four distinct profiles, two rounds per block and four hours, continuing after an incident abort.
+AI Endurance is available **only in explicitly selected test builds**. The normal `npm run build` excludes its menu entry and lazy-loaded configuration, session, storage and report modules. Enable it for a private test artifact with `npm run build -- --mode endurance`, or use `npm run dev -- --mode endurance` locally. The mode is fixed during compilation; URL parameters and browser storage cannot enable it in a public build. `VITE_HOTSEAT_ONLY=true` can additionally disable online features for the test artifact. Existing private deployment scripts must explicitly select the `endurance` mode when this feature is needed.
+
+In that test build, open **AI Endurance** from the local menu. Choose two to four existing AI profiles, a positive number of rounds per block and at least one session limit: attempted blocks or elapsed minutes. Zero disables an optional session limit. Defaults are four distinct profiles, two rounds per block and four hours, continuing after an incident abort.
+
+Simulation and IndexedDB storage run on the browser's device, without creating online game rooms. Endurance does not send the ordinary `game_start` or `round_end` analytics events to Zaraz; ordinary matches retain their existing analytics. This does not disable analytics scripts that may be configured separately on the hosting service.
 
 The real local game runs with rendering, audio and normal timing. Each block preserves money, ammunition, AI continuity and Zeus history between rounds. Celebrations retain their normal duration; summaries advance after three seconds into the existing AI shop. After the final round presentation there are no further purchases. The next block restores a deep copy of the initial roster and creates fresh engine/strategy instances. Blocks have no overall champion; wins, survival and draws belong to completed rounds.
 

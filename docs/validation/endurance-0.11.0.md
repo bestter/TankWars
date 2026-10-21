@@ -16,13 +16,15 @@ La batterie finale a été exécutée dans l’ordre prescrit :
 | --- | --- |
 | `npm run lint` | Réussi |
 | `npm run build` | Réussi, types client et Worker inclus |
-| `npm run test` | 111 fichiers, 1 840 tests réussis |
-| `npm run doctor -- --verbose --scope changed --blocking warning` | 100/100, aucun diagnostic sur les 36 fichiers analysés |
+| `npm run test` | 112 fichiers, 1 842 tests réussis |
+| `npm run doctor -- --verbose --scope changed --blocking warning` | 100/100, aucun diagnostic sur les 38 fichiers analysés |
 | `git diff --check` | Réussi |
 
 Une analyse React Doctor supplémentaire avec `--scope full --blocking warning` a aussi réussi : 254 fichiers, 100/100, aucun diagnostic. Cette analyse couvre notamment les nouveaux fichiers non suivis par Git, absents de la sélection `changed`.
 
 La batterie a été répétée avant publication, après inclusion des modifications réalisées depuis VS Code : utilitaire UUID Web Crypto compatible HTTP/LAN, son utilisation pour les identifiants locaux et les actions client, et ses trois tests. La sélection `changed` inclut alors les nouveaux fichiers préparés dans l’index Git. Les versions des dépendances et les fichiers compagnons de règles restent inchangés.
+
+La batterie a ensuite été répétée pour la restriction aux builds de test. Le build public normal ne produit aucun chunk `EnduranceScreen` et ses bundles ne contiennent pas le nom de la base IndexedDB dédiée. Le build explicite `npm run build -- --mode endurance` contient le module et permet d’ouvrir sa configuration. Les deux menus ont été vérifiés dans le navigateur. Les tests confirment l’absence des événements analytiques `game_start` et `round_end` pendant deux manches d’endurance, ainsi que leur maintien pour une partie ordinaire. L’essai prolongé utilise toujours son build antérieur; aucun redéploiement ne l’interrompt.
 
 Les tests ont été repris avec l’accès approprié après un refus Windows `EPERM` sur les fichiers temporaires Vitest. Les avertissements jsdom concernant Canvas et l’avertissement Node `--localstorage-file` n’ont pas fait échouer la suite. Vite signale un chunk principal supérieur à 500 Ko; le mode endurance et les stratégies avancées restent chargés à la demande.
 

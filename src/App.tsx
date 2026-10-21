@@ -17,7 +17,9 @@ import {
   type OnlineMeta,
 } from "./appReducer";
 import { isHotseatOnlyBuild } from "./utils/deploymentMode";
-const EnduranceScreen = lazy(() => import("./components/endurance/EnduranceScreen").then(module => ({ default: module.EnduranceScreen })));
+const EnduranceScreen = import.meta.env.MODE === "endurance"
+  ? lazy(() => import("./components/endurance/EnduranceScreen").then(module => ({ default: module.EnduranceScreen })))
+  : null;
 
 interface OnlineParams {
   readonly room: string | null;
@@ -26,7 +28,7 @@ interface OnlineParams {
 }
 
 interface AppScreenProps {
-  readonly onEndurance: () => void;
+  readonly onEndurance?: () => void;
   readonly showMenu: boolean;
   readonly showOnlineLobby: boolean;
   readonly isOnlineJoin: boolean;
@@ -223,8 +225,8 @@ function App() {
         <LanguageSwitcher />
       </div>
 
-      {showEndurance ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
-        onEndurance={() => setShowEndurance(true)}
+      {showEndurance && EnduranceScreen ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
+        onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
         showMenu={showMenu}
         showOnlineLobby={showOnlineLobby}
         isOnlineJoin={isOnlineJoin}

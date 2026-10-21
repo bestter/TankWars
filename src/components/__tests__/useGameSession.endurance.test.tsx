@@ -9,8 +9,11 @@ import { GameEngine } from "../../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../../game/entities/ai/AIByProfileStrategy";
 import type { EnduranceSession } from "../../game/endurance/session";
 import type { Player } from "../../types/player";
+import { trackEvent } from "../../utils/analytics";
 
-function Harness({ run, players, sessionRef }: { run: EnduranceSession; players: Player[]; sessionRef: { current: ReturnType<typeof useGameSession> | null } }) {
+vi.mock("../../utils/analytics", () => ({ trackEvent: vi.fn() }));
+
+function Harness({ run, players, sessionRef }: { run?: EnduranceSession; players: Player[]; sessionRef: { current: ReturnType<typeof useGameSession> | null } }) {
   const session = useGameSession({ endurance: run, initialPlayers: players });
   useEffect(() => { sessionRef.current = session; });
   const { canvasRef } = session;
@@ -19,6 +22,7 @@ function Harness({ run, players, sessionRef }: { run: EnduranceSession; players:
 describe("real local endurance session integration", () => {
   const previous = getRNG();
   beforeEach(() => {
+    vi.mocked(trackEvent).mockClear();
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", { configurable: true, value: () => new Proxy({}, { get: () => () => undefined }) });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.spyOn(AIByProfileStrategy.prototype, "executeTurn").mockImplementation(() => new Promise(() => {}));
@@ -61,6 +65,7 @@ describe("real local endurance session integration", () => {
     expect(roster.some(p => p.money < 250)).toBe(true);
     await finish();
     expect(f.run.session.completed).toBe(1);
+    expect(trackEvent).not.toHaveBeenCalled();
     const data = await f.run.export();
     expect(data.rounds.filter(r => r.completed)).toHaveLength(2);
   });
@@ -72,5 +77,17 @@ describe("real local endurance session integration", () => {
     await act(async () => { vi.advanceTimersByTime(1); });
     expect(f.run.session.abandoned).toBe(1); expect(f.run.latestIncident?.reason).toBe("ROUND_PREPARATION_FAILED");
     await f.run.stop();
+  });
+  it("preserves start and round-end analytics for ordinary matches", async () => {
+    const f = fixture();
+    const setPlayers = vi.spyOn(GameEngine.prototype, "setPlayers");
+    const sessionRef = { current: null as ReturnType<typeof useGameSession> | null };
+    render(<Harness players={structuredClone(f.players)} sessionRef={sessionRef} />);
+    expect(trackEvent).toHaveBeenCalledWith("game_start", expect.objectContaining({ playerCount: 2 }));
+    const engine = setPlayers.mock.instances[0] as GameEngine;
+    const roster = engine.getTankManager().getPlayers();
+    roster[1].tank.isDead = true;
+    await act(async () => { engine.onRoundEnded?.({ survivors: [roster[0]], roundWinner: roster[0], isDraw: false }); });
+    expect(trackEvent).toHaveBeenCalledWith("round_end", expect.objectContaining({ roundNumber: 1 }));
   });
 });

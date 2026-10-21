@@ -173,7 +173,7 @@ export function wireEngineSessionCallbacks(opts: {
       (count, player) => count + (player.isHuman ? 1 : 0),
       0,
     );
-    trackEvent("round_end", {
+    if (!opts.endurance) trackEvent("round_end", {
       roundNumber: opts.currentMancheRef.current,
       winnerId: winner ? winner.id : null,
       winnerType,

@@ -550,8 +550,8 @@ export function useGameSession({
       { humanCount: 0, aiProfiles: [] as string[] }
     );
 
-    // Track game start event with Cloudflare Zaraz
-    trackEvent("game_start", {
+    // Endurance observations stay local and must not generate analytics traffic.
+    if (!endurance) trackEvent("game_start", {
       playerCount: players.length,
       humanCount: playerStats.humanCount,
       aiCount: players.length - playerStats.humanCount,
