@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject } from "react";
+import type { EnduranceSession } from "../../game/endurance/session";
 import type { GameEngine } from "../../game/engine/GameEngine";
 import type { RoundMap } from "../../game/round/prepareRound";
 import { setRNG, createSeededRNG, seedFromRoomRound } from "../../utils/random";
@@ -19,6 +20,7 @@ import {
 } from "./localHotseatShop";
 
 export interface CompleteShopRoundHost {
+  readonly endurance?: EnduranceSession;
   readonly gameMode: "local" | "online";
   readonly initialPlayerCount: InitialPlayerCount;
   readonly roomId?: string;
@@ -148,6 +150,7 @@ export function finishShopPhase(
     return;
   }
   try {
+    if (host.endurance && !host.endurance.beginRound(host.currentMancheRef.current)) { host.shopFinishingRef.current = false; return; }
     if (host.gameMode === "online" && !map) throw new Error("INVALID_ROUND_MAP");
     if (!engine.startNextRound(map, finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
       host.shopFinishingRef.current = false;
@@ -155,6 +158,7 @@ export function finishShopPhase(
     }
   } catch (error) {
     console.error("[Shop] Round preparation failed", error);
+    host.endurance?.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
     tm.pauseForInterRound();
     host.shopFinishingRef.current = false;
     host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
@@ -201,6 +205,8 @@ export function finishShopPhase(
 }
 
 export function startShopPhase(host: CompleteShopRoundHost): void {
+  if (host.endurance && !host.endurance.ready) return;
+  host.endurance?.setPhase("SHOP");
   const engine = host.engineRef.current;
   if (!engine) return;
 

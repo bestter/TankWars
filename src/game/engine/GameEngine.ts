@@ -20,6 +20,7 @@ import { launchFromBarrel } from "./projectileMotion";
 import { TankManager } from "../entities/TankManager";
 import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
+import type { CombatObserver } from "../endurance/types";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
 import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
@@ -248,6 +249,7 @@ export class GameEngine {
 
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
+  public combatObserver?: CombatObserver;
   public onAllProjectilesSettled?: () => void;
   /** Fired when a new combat round rolls wind (React HUD). */
   public onWindChange?: (force: number) => void;
@@ -285,6 +287,7 @@ export class GameEngine {
 
     // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
     this.tankManager.onPlayerDied = (playerId, cause, details) => {
+      this.combatObserver?.emit({ kind: "death", playerId, cause });
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion" || cause === "zeus") {
         this.playTankDestroyedByExplosionSound();
@@ -293,10 +296,12 @@ export class GameEngine {
       }
     };
     this.tankManager.onDamageApplied = (event) => {
+      this.combatObserver?.emit({ kind: "damage", event });
       if (event.shotId !== this.activeShotLedger?.shotId) return;
       this.activeShotLedger.damageEvents.push(event);
     };
     this.tankManager.onTankDestroyed = (event) => {
+      this.combatObserver?.emit({ kind: "destruction", event });
       if (event.shotId !== this.activeShotLedger?.shotId) return;
       this.activeShotLedger.destructionEvents.push(event);
     };
@@ -481,6 +486,7 @@ export class GameEngine {
     this.currentFirerId = ownerId;
     this.shotNumberInRound++;
     const shotId = identity?.shotId ?? this.nextShotId++;
+    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) return;
     const isFirstShotOfRound = identity?.isFirstShotOfRound ?? this.shotNumberInRound === 1;
     const aliveBeforeShot = this.tankManager.getAlivePlayers().map((player) => player.id);
     this.activeShotLedger = {
@@ -599,6 +605,7 @@ export class GameEngine {
       return null;
     }
     const survivorsAfterShot = this.tankManager.getAlivePlayers().map((player) => player.id);
+    if (this.combatObserver?.emit({ kind: "resolved", shotId: ledger.shotId }) === false) return null;
     const reward = calculateShotRewards({
       ...ledger,
       playerCountAtMatchStart: this.tankManager.getPlayers().length,
@@ -859,6 +866,7 @@ export class GameEngine {
         this.pendingSpecialRoundOutcome = reward.roundOutcome;
         this.zeusFlashLife = 8;
         this.onZeusStrikeApplied?.(visual.result);
+        this.combatObserver?.emit({ kind: "zeus", result: visual.result });
       }
     }
 

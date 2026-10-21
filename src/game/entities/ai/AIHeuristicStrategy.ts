@@ -21,6 +21,7 @@ import { shouldPickBulldozer } from "./bulldozerTactics";
 import { chooseLocalMaterialShot } from "./localMaterialPlanner";
 
 export class AIHeuristicStrategy implements AIEngine {
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, AimMemory>();
 
   private getMem(playerId: string): AimMemory {
@@ -96,6 +97,7 @@ export class AIHeuristicStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    this.onTargetSelected?.(self.id, target.id);
     const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
     const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
       ordinaryWeapon, (point, weapon, variant) => solveHeuristicAim(

@@ -1,4 +1,4 @@
-import { useReducer, useState } from "react";
+import { lazy, Suspense, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
@@ -17,6 +17,7 @@ import {
   type OnlineMeta,
 } from "./appReducer";
 import { isHotseatOnlyBuild } from "./utils/deploymentMode";
+const EnduranceScreen = lazy(() => import("./components/endurance/EnduranceScreen").then(module => ({ default: module.EnduranceScreen })));
 
 interface OnlineParams {
   readonly room: string | null;
@@ -25,6 +26,7 @@ interface OnlineParams {
 }
 
 interface AppScreenProps {
+  readonly onEndurance: () => void;
   readonly showMenu: boolean;
   readonly showOnlineLobby: boolean;
   readonly isOnlineJoin: boolean;
@@ -70,6 +72,7 @@ function AppScreen({
   onStartOnlineGame,
   onHideOnlineLobby,
   onReturnToMenu,
+  onEndurance,
 }: AppScreenProps) {
   if (!showMenu) {
     return (
@@ -105,6 +108,7 @@ function AppScreen({
 
   return (
     <MainMenu
+      onEndurance={onEndurance}
       onStartGame={onStartLocalGame}
       {...(onlineMultiplayerEnabled
         ? { onPlayOnline: onHideOnlineLobby }
@@ -125,6 +129,7 @@ function AppScreen({
  */
 
 function App() {
+  const [showEndurance, setShowEndurance] = useState(false);
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
   const onlineMultiplayerEnabled = !hotseatOnly;
@@ -218,7 +223,8 @@ function App() {
         <LanguageSwitcher />
       </div>
 
-      <AppScreen
+      {showEndurance ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
+        onEndurance={() => setShowEndurance(true)}
         showMenu={showMenu}
         showOnlineLobby={showOnlineLobby}
         isOnlineJoin={isOnlineJoin}
@@ -231,7 +237,7 @@ function App() {
         onStartOnlineGame={handleStartOnlineGame}
         onHideOnlineLobby={handleOnlineMenuToggle}
         onReturnToMenu={handleReturnToLobbyOrMenu}
-      />
+      />}
     </div>
   );
 }

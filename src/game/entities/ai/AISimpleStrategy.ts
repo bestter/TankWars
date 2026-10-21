@@ -47,6 +47,9 @@ export function getSimpleErrorChances(
 }
 
 export class AISimpleStrategy implements AIEngine {
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
+  private readonly isActive: () => boolean;
+  constructor(isActive: () => boolean = () => true) { this.isActive = isActive; }
   private memories = new Map<string, SimpleMemory>();
 
   private getMem(playerId: string): SimpleMemory {
@@ -62,6 +65,7 @@ export class AISimpleStrategy implements AIEngine {
     tankId: string,
     gameState: GameState,
     terrainManager: TerrainManager,
+    isCurrent: () => boolean = () => true,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
     if (!self || self.tank.isDead) {
@@ -91,6 +95,7 @@ export class AISimpleStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    this.onTargetSelected?.(self.id, target.id);
     const attempts = recordAimAttempt(memory, target.id);
     const weaponId = self.tank.currentWeapon || "MISSILE";
     self.tank.currentWeapon = weaponId;
@@ -109,6 +114,7 @@ export class AISimpleStrategy implements AIEngine {
       target.tank.position.x +
       signedImpactOffset(attempts, "v1-random", gameState.roundNumber);
     const { computeHeuristicShot } = await import("./heuristicShot");
+    if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
     let command = computeHeuristicShot(
       self,
       aimX,

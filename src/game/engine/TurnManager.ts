@@ -15,6 +15,7 @@ import type { TerrainManager } from "./Terrain";
 import type { GameState } from "../../types/game";
 import { type WeaponId, ALL_WEAPON_IDS } from "../../types/weapon";
 import { consumeWeaponForFire } from "../shop/shopTransaction";
+import type { CombatObserver } from "../endurance/types";
 
 export type AuthoritativeReplayMode =
   | "LIVE_LOCAL"
@@ -52,6 +53,7 @@ export interface ShotResolutionGate {
 }
 
 export class TurnManager {
+  public combatObserver?: CombatObserver;
   private tankManager: TankManager;
   private terrainManager: TerrainManager;
   private fireCallback: (
@@ -287,6 +289,7 @@ export class TurnManager {
     ) {
       this.turnLockAccumulatedTime += dt;
       if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
+        if (this.combatObserver?.emit({ kind: "recovery", reason: "turn-lock" }) === false) return;
         console.warn(
           `[TurnManager] Turn lock safety watchdog triggered for (player redacted) — forcing shot resolution (missed settlement?)`,
         );
@@ -313,6 +316,7 @@ export class TurnManager {
     ) {
       this.resolutionAccumulatedTime += dt;
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
+        if (this.combatObserver?.emit({ kind: "recovery", reason: "decision-timeout" }) === false) return;
         const player = this.resolutionPlayer;
         console.warn(
           `[TurnManager] AI resolution timeout for (player redacted). Triggering fallback.`,
@@ -344,6 +348,7 @@ export class TurnManager {
             this.consumeAmmo(player, player.tank.currentWeapon);
           }
         } else {
+          if (this.combatObserver?.emit({ kind: "recovery", reason: "skipped" }) === false) return;
           console.warn(
             `[TurnManager] (player redacted) forfeits its turn (no resolution fallback).`,
           );
@@ -370,6 +375,7 @@ export class TurnManager {
     ) {
       this.settlementAccumulatedTime += dt;
       if (this.settlementAccumulatedTime >= this.SETTLEMENT_SAFETY_LIMIT) {
+        if (this.combatObserver?.emit({ kind: "recovery", reason: "settlement" }) === false) return;
         if (this.aiTurnGeneration === this.settlementGeneration) {
           const stillCurrent = this.getCurrentPlayer();
           if (
@@ -1265,6 +1271,7 @@ export class TurnManager {
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
     console.log('[TurnManager] handleAITurnIfNeeded: player=(player redacted), isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (this.isProcessingAI || this.isMatchEnded()) return;
+    if (this.combatObserver?.emit({ kind: "turn", playerId: player.id, turn: this.turnNumber }) === false) return;
     if (this.onSpecialTurn?.(player)) {
       this.lockSpecialTurn();
       return;
@@ -1277,6 +1284,7 @@ export class TurnManager {
       return;
     }
     if (!this.aiEngine) {
+      if (this.combatObserver?.emit({ kind: "recovery", reason: "skipped" }) === false) return;
       console.warn(
         `[TurnManager] No AIEngine configured for AI player (player redacted). Skipping turn.`,
       );
@@ -1291,6 +1299,9 @@ export class TurnManager {
     // Capture generation so we can detect if the turn was aborted (e.g. round ended
     // and we went to SUMMARY/SHOP while this async function was awaiting).
     const turnGeneration = this.aiTurnGeneration;
+    const decisionTurn = this.turnNumber;
+    const isDecisionCurrent = () => this.aiTurnGeneration === turnGeneration &&
+      !this.interRoundPaused && this.turnNumber === decisionTurn && this.getCurrentPlayer()?.id === player.id;
 
     // Arm general recovery watchdog (in addition to AI-specific ones)
     this.armTurnLockSafetyWatchdog();
@@ -1311,16 +1322,24 @@ export class TurnManager {
       };
 
       console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');
-      const decision = await this.aiEngine.executeTurn(
+      const decisionStarted = this.combatObserver ? performance.now() : 0;
+      if (this.combatObserver?.emit({ kind: "decision-start", playerId: player.id }) === false) return;
+      const decision = await (this.combatObserver ? this.aiEngine.executeTurn(
+        player.tank.id, gameState, this.terrainManager,
+        isDecisionCurrent,
+      ) : this.aiEngine.executeTurn(
         player.tank.id,
         gameState,
         this.terrainManager,
-      );
+      ));
 
       // Abort if the game moved on (SUMMARY/SHOP) while we were awaiting the strategy.
-      if (this.aiTurnGeneration !== turnGeneration) {
+      if (this.aiTurnGeneration !== turnGeneration || (this.combatObserver && !isDecisionCurrent())) {
         return;
       }
+      if (this.combatObserver?.emit({ kind: "decision", playerId: player.id,
+        durationMs: performance.now() - decisionStarted,
+        command: { ...decision, weaponId: decision.weaponId ?? player.tank.currentWeapon } }) === false) return;
       console.log('[TurnManager] handleAITurnIfNeeded: AI strategy decided:', decision);
 
       if (decision.weaponId) {
@@ -1335,7 +1354,7 @@ export class TurnManager {
       await this.waitForAIThinkingDelay();
 
       // Abort before firing if we have been paused for inter-round in the meantime.
-      if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked) {
+      if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked || (this.combatObserver && !isDecisionCurrent())) {
         return;
       }
       console.log('[TurnManager] handleAITurnIfNeeded: thinking delay done');
@@ -1377,16 +1396,17 @@ export class TurnManager {
         this.isSettlementSafetyArmed = true;
       }
     } catch (error) {
-      if (this.aiTurnGeneration !== turnGeneration) return;
+      if (this.aiTurnGeneration !== turnGeneration || (this.combatObserver && !isDecisionCurrent())) return;
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error("[TurnManager] AI turn failed:", errorMessage);
+      if (this.combatObserver?.emit({ kind: "failure", reason: "AI_DECISION_FAILED", error: error instanceof Error ? error.stack : errorMessage }) === false) return;
       this.clearResolutionTimeout();
       this.clearSettlementSafetyTimeout();
       this.scheduleAIRecovery(1000, turnGeneration);
     } finally {
       // Only the active generation may release its flag. Invalidation already
       // released stale work synchronously and a newer AI turn may now own it.
-      if (this.aiTurnGeneration === turnGeneration) {
+      if (this.aiTurnGeneration === turnGeneration && (!this.combatObserver || isDecisionCurrent())) {
         this.isProcessingAI = false;
       }
     }

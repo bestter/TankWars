@@ -24,6 +24,7 @@ import { adjustWeaponForMaterial } from "./terrainMaterialTactics";
 type SmartMemory = AimMemory;
 
 export class AISmartStrategy implements AIEngine {
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, SmartMemory>();
 
   private getMem(playerId: string): SmartMemory {
@@ -66,6 +67,7 @@ export class AISmartStrategy implements AIEngine {
       return { angle: 45, power: 50, weaponId: "MISSILE" };
     }
 
+    this.onTargetSelected?.(self.id, target.id);
     const fallback = plan ? undefined : chooseExpertFallback(
       gameState, terrainManager, self, target, adjustWeaponForMaterial(
         chooseExpertTacticalWeapon(self, target, terrainManager, gameState),

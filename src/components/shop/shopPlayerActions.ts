@@ -1,4 +1,5 @@
 import type { WeaponId } from "../../types/weapon";
+import { randomUUID } from "../../utils/randomUUID";
 import { applyShopTransaction } from "../../game/shop/shopTransaction";
 import type {
   ShopBuySellMessage,
@@ -72,7 +73,7 @@ export function shopBuySell(
     ) {
       return;
     }
-    const actionId = crypto.randomUUID();
+    const actionId = randomUUID();
     const intent: PendingShopIntent = {
       kind: "BUY_SELL",
       actionId,
@@ -132,7 +133,7 @@ export function shopReady(host: CompleteShopRoundHost): void {
       .find((player) => player.id === host.localPlayerId);
     if (!me?.isHuman) return;
 
-    const actionId = crypto.randomUUID();
+    const actionId = randomUUID();
     const intent: PendingShopIntent = {
       kind: "READY",
       actionId,

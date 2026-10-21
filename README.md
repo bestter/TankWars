@@ -1,6 +1,6 @@
 # Bestter's TankWars
 
-> A browser-based artillery tank battle game with fully destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
+> A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
 
 **Classic Scorched Earth / Worms-style gameplay** — no external physics engines, no game frameworks. Pure custom terrain algorithms, projectile simulation, and a strict decoupled architecture.
 
@@ -12,6 +12,8 @@
 ---
 
 ## Features
+
+- **Local AI Endurance (0.11.0)** — Run rendered AI-only blocks of multiple rounds at normal speed, with automatic celebrations, summaries and shops, watchdogs, structured physical statistics, local checkpoints and Markdown/JSON exports. See [AI Endurance](#ai-endurance-206).
 
 - **Local Shot Advisor (0.9.9)** — During a stable living human turn, **Suggest a shot** uses EXPERT’s shared candidate search and physical/economic forecasts in a dedicated browser Web Worker. **SURVIVAL** is the default for each human, retained between rounds and reset for a new match. It first attempts a safe destruction of the priority lethal threat, accepting a loss: neutralization ranks opponent destructions and real HP/shield losses rather than profit. Otherwise it maximizes profit among safe shots. **MAXIMIZE_PROFIT** directly maximizes immediate net earnings, allowing a more profitable suicidal shot and preferring survival at equal profit. Outside neutralization, negative-profit paid ammunition is excluded; zero-profit shots remain admissible. Ties use opponent destructions, real losses, turn order and stable search order, without human/AI preference. EXPERT’s automatic policies and randomness remain unchanged.
   - The result shows weapon, angle, power, targets, objective, HP/shield losses, predicted deaths (including the shooter), earnings, ammunition cost and net profit in production. **Apply aim** voluntarily replaces weapon/angle/power together; it never fires or consumes ammunition. Manual aiming stays available during calculation and does not expire advice.
@@ -105,7 +107,7 @@ npm run preview
 # Lint
 npm run lint
 
-# React health scan (before/after UI changes)
+# Mandatory React health scan for source/configuration changes
 npm run doctor
 
 # Run unit and integration tests (Vitest, without watch mode)
@@ -189,14 +191,14 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.10.1** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.11.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
 - Retro `MENU` with 2–4 players, Human + four AI profiles, ColorPicker + TankPreview
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
-- Destructible heightmap (parabolic `DIRT` and smoothly rounded `SOFT` craters, `2.5×` sand half-width/depth with slumping, unified `ROCK` column-rectangle occlusion, VGA material impact particles #184, plus local `NUKE` / `THERMONUCLEAR` `ROCK` carving and pre-fall blast #302), DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
+- Destructible heightmap (parabolic `DIRT` and smoothly rounded `SOFT` craters, `2.5×` sand half-width/depth with slumping, unified `ROCK` column-rectangle occlusion, VGA material impact particles #184, plus local `NUKE` / `THERMONUCLEAR` `ROCK` carving and pre-fall blast #302), DRILLER oriented shaft, GRENADE bounce/stick by material, wind and the configured projectile launch speed
 - Four AI profiles use `fallibleAim` plus target/round memory (first shot remains outside direct aim; locks Simple/OK/Sniper/Expert at 7/5/3/2); SIMPLE avoids revenge/material/BULLDOZER tactics and SNIPER has no post-lock slip; shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
@@ -213,6 +215,24 @@ Still planned:
 - More weapons and power-ups
 - Persistent high scores / match history
 - Further audio and particle polish
+
+---
+
+## AI Endurance (#206)
+
+Open **AI Endurance** from the local menu. Choose two to four existing AI profiles, a positive number of rounds per block and at least one session limit: attempted blocks or elapsed minutes. Zero disables an optional session limit. Defaults are four distinct profiles, two rounds per block and four hours, continuing after an incident abort.
+
+The real local game runs with rendering, audio and normal timing. Each block preserves money, ammunition, AI continuity and Zeus history between rounds. Celebrations retain their normal duration; summaries advance after three seconds into the existing AI shop. After the final round presentation there are no further purchases. The next block restores a deep copy of the initial roster and creates fresh engine/strategy instances. Blocks have no overall champion; wins, survival and draws belong to completed rounds.
+
+Operational watchdogs default to 1,000 started turns per round, 30 minutes of combat per round, 120 seconds per combat action and 30 seconds per automatic transition. All are editable before starting and recorded in exports. The page uses a monotonic clock independent of physics; exceeding a limit aborts one block and records context without asserting an infinite-loop defect. Exceptions and invalid states also abort; ordinary safety recoveries are warnings. Optional stop-on-first-abort and manual stop are available. Session limits count attempted blocks, including failures.
+
+Keep the tab active and the device awake. Hiding the tab stops and saves the session as an environmental interruption. A page timer cannot interrupt a synchronous infinite loop or recover a browser crash. Seeds and full initial configuration are recorded before preparation; visual/audio scheduling can affect random consumption, so identical replay and combat resume are not promised. This mode does not exercise the online Worker AI and changes no balancing or protocol rules.
+
+**Statistics:** decisions and their call duration, executed commands, launched/resolved shots, real HP and shield losses, self-damage, attributed destructions/suicides, unattributed deaths, BULLDOZER displacement/recoil, Zeus and safety recoveries. CLUSTER sub-munitions are not new shots. Offensive-effect rate counts at most one effect per resolved shot; zero denominators are not applicable. Results aggregate by player/profile/weapon where applicable and keep completed rounds separate from partial observations. An aborted block is not a defeat. Suspect blocks overlap terminal categories and must not be added to them. Command evaluation/perturbation diagnostics that are not exposed are marked unavailable rather than inferred from final aim. Observers never reveal opponent nuclear stocks to strategies.
+
+**Storage and exports:** IndexedDB stores session metadata, compact block/round results, aggregates and incidents incrementally. Checkpoints occur every 15 seconds, at round/block boundaries and on incidents. Incidents include the last 256 structured events plus available roster, terrain, command and error context; full event history is not retained. History is read in batches of 128 records. Storage failures stop the session visibly; export preserves the available in-memory tail and marks collection incomplete. The configuration screen offers the latest saved session after a crash; it remains incomplete and never resumes combat. Saved sessions remain in the browser profile; exports require that same origin/profile. JSON schema v1 contains detailed records; Markdown provides a readable summary. Game version and build identity (Git SHA, dirty flag, build timestamp) are recorded.
+
+Implementation: `src/game/endurance/` is independent of React; `src/components/endurance/` owns configuration and presentation. Existing local session/shop paths orchestrate play, with optional additive observers in the engine and AI router. Reports should identify the exact configuration, build, browser/environment and measured duration; automated tests are not evidence of a successful four-hour rendered run.
 
 ---
 
@@ -258,7 +278,6 @@ To explore the codebase:
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
-Enjoy blowing up the landscape!
 
 ### Chargement et couverture IA (#212)
 

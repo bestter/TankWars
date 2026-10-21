@@ -82,6 +82,7 @@ function sniperDecisionPayload(
 }
 
 export class AISniperStrategy implements AIEngine {
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, SniperMemory>();
 
   private getMem(playerId: string): SniperMemory {
@@ -148,6 +149,7 @@ export class AISniperStrategy implements AIEngine {
       })[0];
     }
 
+    this.onTargetSelected?.(self.id, target.id);
     const attempts = recordAimAttempt(memory, target.id);
     const targetX = target.tank.position.x;
     let offsetDirection = targetX > terrainManager.width - targetX ? -1 : 1;

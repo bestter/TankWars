@@ -18,7 +18,13 @@ import { AISimpleStrategy } from "./AISimpleStrategy";
 type LazyAIEngine = AIEngine;
 
 export class AIByProfileStrategy implements AIEngine {
-  private readonly simple = new AISimpleStrategy();
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
+  private readonly simple: AISimpleStrategy;
+  private readonly isActive: () => boolean;
+  constructor(isActive: () => boolean = () => true) {
+    this.isActive = isActive;
+    this.simple = new AISimpleStrategy(isActive);
+  }
   private heuristic: LazyAIEngine | null = null;
   private sniper: LazyAIEngine | null = null;
   private smart: LazyAIEngine | null = null;
@@ -51,21 +57,32 @@ export class AIByProfileStrategy implements AIEngine {
     tankId: string,
     gameState: GameState,
     terrainManager: TerrainManager,
+    isCurrent: () => boolean = () => true,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const p = gameState.players.find((pp) => pp.tank.id === tankId);
     const profile = p?.aiProfile ?? "v1-random";
 
     if (profile === "v2-heuristic") {
-      return (await this.loadHeuristic()).executeTurn(tankId, gameState, terrainManager);
+      const strategy = await this.loadHeuristic();
+      if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
+      strategy.onTargetSelected = this.onTargetSelected;
+      return strategy.executeTurn(tankId, gameState, terrainManager);
     }
     if (profile === "v3-sniper") {
-      return (await this.loadSniper()).executeTurn(tankId, gameState, terrainManager);
+      const strategy = await this.loadSniper();
+      if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
+      strategy.onTargetSelected = this.onTargetSelected;
+      return strategy.executeTurn(tankId, gameState, terrainManager);
     }
     if (profile === "v4-smart") {
-      return (await this.loadSmart()).executeTurn(tankId, gameState, terrainManager);
+      const strategy = await this.loadSmart();
+      if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
+      strategy.onTargetSelected = this.onTargetSelected;
+      return strategy.executeTurn(tankId, gameState, terrainManager);
     }
 
-    return this.simple.executeTurn(tankId, gameState, terrainManager);
+    this.simple.onTargetSelected = this.onTargetSelected;
+    return this.simple.executeTurn(tankId, gameState, terrainManager, isCurrent);
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {
