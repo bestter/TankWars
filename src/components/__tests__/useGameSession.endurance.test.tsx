@@ -4,7 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useGameSession } from "../useGameSession";
 import { fixture } from "../../game/endurance/__tests__/helpers";
-import { getRNG, setRNG } from "../../utils/random";
+import { createSeededRNG, getRNG, secureRandom, setRNG } from "../../utils/random";
 import { GameEngine } from "../../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../../game/entities/ai/AIByProfileStrategy";
 import type { EnduranceSession } from "../../game/endurance/session";
@@ -39,6 +39,35 @@ describe("real local endurance session integration", () => {
     await act(async () => { await f.run.stop(); });
     expect(stop).toHaveBeenCalledOnce(); expect(getRNG()).toBe(previous);
     expect(f.run.emit({ kind: "decision-start", playerId: "player-1" })).toBe(false);
+  });
+  // Manual stop above does not exercise React disposal or incident-driven block abandonment.
+  it.each(["unmount", "incident"] as const)("restores an injected RNG without advancing it after %s cleanup", async reason => {
+    const injected = createSeededRNG(123);
+    const control = createSeededRNG(123);
+    setRNG(injected);
+    expect(secureRandom()).toBe(control.next());
+    const f = fixture(); await f.run.start();
+    const stop = vi.spyOn(GameEngine.prototype, "stop");
+    const sessionRef = { current: null as ReturnType<typeof useGameSession> | null };
+    const view = render(<Harness run={f.run} players={structuredClone(f.players)} sessionRef={sessionRef} />);
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(f.run.session.roundsStarted).toBe(1);
+    expect(getRNG()).not.toBe(injected);
+
+    if (reason === "unmount") view.unmount();
+    else {
+      await act(async () => { f.run.incident("exception", "AI_DECISION_FAILED"); });
+      expect(f.run.session.abandoned).toBe(1);
+    }
+
+    expect(stop).toHaveBeenCalledOnce();
+    expect(getRNG()).toBe(injected);
+    expect(secureRandom()).toBe(control.next());
+    view.unmount();
+    await act(async () => { await f.run.stop(); });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(getRNG()).toBe(injected);
+    expect(secureRandom()).toBe(control.next());
   });
   it("automates celebration, three-second summary and AI shop; finishes without final purchases", async () => {
     const f = fixture(); await f.run.start();

@@ -17,6 +17,8 @@ import {
   type OnlineMeta,
 } from "./appReducer";
 import { isHotseatOnlyBuild } from "./utils/deploymentMode";
+// Vite replaces MODE at build time: outside endurance, the false branch removes
+// this dynamic import and its dedicated modules. Keep the import inside the gate.
 const EnduranceScreen = import.meta.env.MODE === "endurance"
   ? lazy(() => import("./components/endurance/EnduranceScreen").then(module => ({ default: module.EnduranceScreen })))
   : null;
