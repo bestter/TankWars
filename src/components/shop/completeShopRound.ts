@@ -53,6 +53,7 @@ export function hotseatHostFrom(
   host: CompleteShopRoundHost,
 ): LocalHotseatShopHost {
   return {
+    endurance: host.endurance,
     gameMode: host.gameMode,
     initialPlayerCount: host.initialPlayerCount,
     engineRef: host.engineRef,

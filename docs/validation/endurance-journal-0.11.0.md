@@ -31,4 +31,30 @@ Le menu et la configuration FR/EN ont été vérifiés dans le navigateur sans d
 
 Au terme de la validation, les changements étaient locaux, sans commit, push, changement de PR, déploiement ou lancement autonome. Leur publication ultérieure est distincte de cette validation et ne déclenche aucun essai d’endurance. Le protocole, le Worker et les fichiers de règles demeurent inchangés; aucun envoi analytique ou service réseau n’est ajouté par le journal. Les données brutes et les renseignements opérationnels privés demeurent hors du dépôt.
 
+## Correction de la journalisation des boutiques réelles
+
+Un essai autonome de quinze minutes, configuré en blocs de trois manches, a été interrompu par le pilote de vérification après environ 91 secondes. La première manche avait terminé; à l'entrée de la deuxième, l'événement 509 contenait les soldes après achats, sans événements de visite ni d'achat intermédiaires. Les transactions observées correspondent aux variations de stock et aux prix du catalogue. Ce résultat ne démontre aucune erreur de calcul économique et ne valide pas quinze minutes continues.
+
+La fonction `hotseatHostFrom` omettait de propager la session d'endurance vers le traitement des boutiques IA. Le correctif transmet cet observateur facultatif, sans modifier les règles d'achat, les prix, les profils, les tirages RNG, le protocole ou le Worker. Les visites avec et sans achats sont maintenant observées dans le parcours complet.
+
+Deux scénarios d'intégration supplémentaires couvrent les quatre profils, avec 250 ou zéro unité d'argent initial : célébration, résumé, boutique réelle, achats unitaires, réconciliation des soldes et stocks à la manche suivante, et absence de boutique après la dernière manche du bloc. Les deux scénarios échouent avant le correctif (zéro visite au lieu de quatre) et passent après. Ils complètent les tests unitaires qui appelaient auparavant les observateurs directement, sans couvrir leur transmission par l'orchestration.
+
+Le pilote privé conserve dorénavant l'événement reçu sur disque avant de le valider. En cas d'échec, il tente un arrêt avec sauvegarde, les exports finaux et une capture avant de fermer le navigateur. Le motif d'échec initial reste distinct des erreurs de récupération, et les anciens compteurs sont signalés comme périmés si aucun nouvel export n'a pu être obtenu. Quatre tests Python isolés couvrent la conservation de l'événement fautif, la récupération, les erreurs secondaires et la fermeture normale. Le pilote, ses tests, les données brutes et les paramètres du serveur restent hors Git.
+
+Validation du correctif le 21 octobre 2026, exécutée dans l'ordre prescrit :
+
+| Vérification | Résultat |
+| --- | --- |
+| `npm run lint` | Réussi après retrait d'un paramètre inutilisé du stockage de test |
+| `npm run build` | Réussi, types client et Worker; avertissement Vite sur le chunk principal supérieur à 500 Ko |
+| `npm run test` | 118 fichiers, 1 887 tests réussis |
+| `npm run doctor -- --verbose --scope changed --blocking warning` | 55 fichiers, 100/100, aucun diagnostic |
+| `git diff --check` | Réussi |
+| Build endurance avec sortie privée distincte | Réussi |
+| Pilote privé | Quatre tests Python réussis et compilation réussie des deux points d'entrée et du module de récupération |
+
+Un parcours local réel dans Chromium a exercé le menu, le combat des quatre profils, la célébration, le résumé, la boutique et le début de la deuxième manche. Build mesuré : `38efdae73650b8a7d5e5b623f9549b14b47366d4-dirty/2026-10-21T15:33:56.648Z`, incluant le correctif. Arrêt manuel après environ 139 secondes : une manche terminée sur deux commencées, aucun incident ni erreur de stockage. Le JSONL exporté est complet : 626 événements consécutifs, quatre débuts et quatre fins de visite, vingt achats unitaires. Le rapprochement original du pilote passe sur chaque événement, y compris les instantanés après boutique; aucun écart d'argent ou de stock. Le dernier bloc est interrompu volontairement par cet arrêt manuel. Les preuves brutes et la capture restent privées.
+
+Aucun essai prolongé réussi n'est déduit de ce parcours court, des tests simulés ni de l'essai interrompu. Aucun redéploiement du staging n'est effectué pour cette correction. Les avertissements jsdom Canvas et Node sur `--localstorage-file` demeurent sans échec de test. Les modifications du pilote privé ont nécessité un accès adapté aux fichiers temporaires Windows pour exécuter leurs tests.
+
 Codex — GPT-6
