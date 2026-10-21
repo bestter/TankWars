@@ -134,7 +134,7 @@ npm run doctor -- --verbose --scope changed --blocking warning
 git diff --check
 ```
 
-The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
+The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Always report its status, score and available diagnostics, including warnings. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking in development and CI. Cloudflare and staging deployment scripts use `--blocking error` instead: warnings remain visible without blocking publication. Errors and tool execution failures remain blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
 
 ### Deployment
 
@@ -142,7 +142,7 @@ Production uses a controlled Worker-first publication. First, [disable automatic
 
 On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
-1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking warning` → `git diff --check`;
+1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking error` → `git diff --check`, displaying React Doctor diagnostics while allowing warnings;
 2. deploys the Worker with the repository's local Wrangler;
 3. polls the uncached `/api/health` without following redirects for at most 60 seconds, requires `ok: true` and service `tankwars-api`, and checks both numeric versions against the literal constants in `src/game/online/protocol.ts` (currently `4`/`4`);
 4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
