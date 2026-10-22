@@ -189,14 +189,14 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     expect(headlessEngine.getTerrainImpactParticles()).toHaveLength(0);
   });
 
-  it('advances particles in render(ctx) and clears them across all round lifecycle transitions', () => {
+  it.each([1, 13, 42])('advances particles in render(ctx) and clears them across all round lifecycle transitions (seed %i)', (seed) => {
+    // Seed 13 reproduced a missed impact after setPlayers regenerated the map.
+    const rng = random.createSeededRNG(seed);
+    vi.spyOn(random, 'secureRandom').mockImplementation(() => rng.next());
     const engine = new GameEngine(800, 480);
     const p1 = makePlayer({ id: 'p1', name: 'P1', tank: makeTank('t1', 150, 300) });
     const p2 = makePlayer({ id: 'p2', name: 'P2', tank: makeTank('t2', 650, 300) });
     engine.setPlayers([p1, p2]);
-    engine.getTerrain().loadHeights(new Array(800).fill(300), new Array(800).fill(TERRAIN_MATERIAL.SOFT));
-    const live1 = engine.getTankManager().getPlayerById('p1')!;
-    live1.tank.position = { x: 150, y: 300 };
 
     const ctx = makeCanvasCtx();
     const step = Reflect.get(engine, 'update') as (dt: number) => void;
@@ -204,6 +204,11 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
 
     let shotCounter = 0;
     const triggerHit = () => {
+      // Round setup randomizes terrain and spawns. Restore a safe contact before
+      // every hit so lifecycle assertions cannot depend on lava or nearby tanks.
+      engine.getTerrain().loadHeights(new Array(800).fill(300), new Array(800).fill(TERRAIN_MATERIAL.SOFT));
+      engine.getTankManager().getPlayerById('p1')!.tank.position = { x: 150, y: 300 };
+      engine.getTankManager().getPlayerById('p2')!.tank.position = { x: 650, y: 300 };
       const shooter = engine.getTankManager().getPlayerById('p1')!;
       engine.fireProjectile(shooter.tank.position, { angle: 0, power: 50, weaponId: 'MISSILE' }, shooter.id, {
         shotId: ++shotCounter,

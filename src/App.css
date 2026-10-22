@@ -908,3 +908,10 @@ canvas {
 .shot-advisor :focus-visible { outline: 2px solid #ffff55; outline-offset: 2px; }
 .shot-advisor-danger { color: #ff5555; font-weight: bold; }
 
+.endurance-screen { padding: 40px 16px 16px; color: #aaaaaa; font-family: monospace; max-width: 1000px; margin: auto; }
+.endurance-screen h1 { color: #ffff55; }
+.endurance-config { display: grid; gap: 12px; max-width: 620px; }
+.endurance-config label { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.endurance-config input, .endurance-config select { max-width: 180px; }
+.endurance-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.endurance-report { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #555555; padding: 12px; }

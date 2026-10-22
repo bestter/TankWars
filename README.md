@@ -1,6 +1,6 @@
 # Bestter's TankWars
 
-> A browser-based artillery tank battle game with fully destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
+> A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
 
 **Classic Scorched Earth / Worms-style gameplay** — no external physics engines, no game frameworks. Pure custom terrain algorithms, projectile simulation, and a strict decoupled architecture.
 
@@ -12,6 +12,8 @@
 ---
 
 ## Features
+
+- **Local AI Endurance (0.11.0, test builds only)** — Run rendered AI-only blocks of multiple rounds at normal speed, with automatic celebrations, summaries and shops, watchdogs, structured physical statistics, local checkpoints and Markdown/JSON exports. Excluded from public builds. See [AI Endurance](#ai-endurance-206).
 
 - **Local Shot Advisor (0.9.9)** — During a stable living human turn, **Suggest a shot** uses EXPERT’s shared candidate search and physical/economic forecasts in a dedicated browser Web Worker. **SURVIVAL** is the default for each human, retained between rounds and reset for a new match. It first attempts a safe destruction of the priority lethal threat, accepting a loss: neutralization ranks opponent destructions and real HP/shield losses rather than profit. Otherwise it maximizes profit among safe shots. **MAXIMIZE_PROFIT** directly maximizes immediate net earnings, allowing a more profitable suicidal shot and preferring survival at equal profit. Outside neutralization, negative-profit paid ammunition is excluded; zero-profit shots remain admissible. Ties use opponent destructions, real losses, turn order and stable search order, without human/AI preference. EXPERT’s automatic policies and randomness remain unchanged.
   - The result shows weapon, angle, power, targets, objective, HP/shield losses, predicted deaths (including the shooter), earnings, ammunition cost and net profit in production. **Apply aim** voluntarily replaces weapon/angle/power together; it never fires or consumes ammunition. Manual aiming stays available during calculation and does not expire advice.
@@ -105,7 +107,7 @@ npm run preview
 # Lint
 npm run lint
 
-# React health scan (before/after UI changes)
+# Mandatory React health scan for source/configuration changes
 npm run doctor
 
 # Run unit and integration tests (Vitest, without watch mode)
@@ -132,7 +134,7 @@ npm run doctor -- --verbose --scope changed --blocking warning
 git diff --check
 ```
 
-The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
+The build checks both client and Worker TypeScript before bundling the client. Vitest reports the current test and file totals. React Doctor is mandatory in every validation run, even without React changes; automatic hooks do not replace this step. Always report its status, score and available diagnostics, including warnings. Explicitly report when no relevant files are found to scan. Follow the [React Doctor skill](./.agents/skills/react-doctor/SKILL.md): the [React Doctor workflow](./.github/workflows/react-doctor.yml) treats warnings as blocking in development and CI. Cloudflare and staging deployment scripts use `--blocking error` instead: warnings remain visible without blocking publication. Errors and tool execution failures remain blocking. Changes to the interface or engine also require checking the affected menu, combat, round summary, shop and next-round flow; network changes need the relevant reconnect/resume checks. See [AGENTS.md](./AGENTS.md#verification-checklist).
 
 ### Deployment
 
@@ -140,7 +142,7 @@ Production uses a controlled Worker-first publication. First, [disable automatic
 
 On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
-1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking warning` → `git diff --check`;
+1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking error` → `git diff --check`, displaying React Doctor diagnostics while allowing warnings;
 2. deploys the Worker with the repository's local Wrangler;
 3. polls the uncached `/api/health` without following redirects for at most 60 seconds, requires `ok: true` and service `tankwars-api`, and checks both numeric versions against the literal constants in `src/game/online/protocol.ts` (currently `4`/`4`);
 4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
@@ -189,14 +191,14 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.10.1** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.11.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 In the build today:
 
 - Retro `MENU` with 2–4 players, Human + four AI profiles, ColorPicker + TankPreview
 - Procedural tanks, slope tilt, active-player indicator, owner-colored shells, micro recoil
 - Randomized / shuffled spawns each round (local humans −25 % on SOFT; AI −25 % on ROCK); AABB shell-to-tank hits with owner-exit guard
-- Destructible heightmap (parabolic `DIRT` and smoothly rounded `SOFT` craters, `2.5×` sand half-width/depth with slumping, unified `ROCK` column-rectangle occlusion, VGA material impact particles #184, plus local `NUKE` / `THERMONUCLEAR` `ROCK` carving and pre-fall blast #302), DRILLER oriented shaft, GRENADE bounce/stick by material, wind, `baseSpeed` 6.0 (full-width at POW 100)
+- Destructible heightmap (parabolic `DIRT` and smoothly rounded `SOFT` craters, `2.5×` sand half-width/depth with slumping, unified `ROCK` column-rectangle occlusion, VGA material impact particles #184, plus local `NUKE` / `THERMONUCLEAR` `ROCK` carving and pre-fall blast #302), DRILLER oriented shaft, GRENADE bounce/stick by material, wind and the configured projectile launch speed
 - Four AI profiles use `fallibleAim` plus target/round memory (first shot remains outside direct aim; locks Simple/OK/Sniper/Expert at 7/5/3/2); SIMPLE avoids revenge/material/BULLDOZER tactics and SNIPER has no post-lock slip; shared `BallisticsSimulator`; lazy-loaded v2–v4 chunks
 - Shop + ammo + exact per-shot economy; 3-second non-blocking floating rewards; round-only earnings summary; local hotseat shop stays usable after round 1
 - CELEBRATION fireworks (60 Hz, 250-particle cap) + Web Audio
@@ -213,6 +215,34 @@ Still planned:
 - More weapons and power-ups
 - Persistent high scores / match history
 - Further audio and particle polish
+
+---
+
+## AI Endurance (#206)
+
+AI Endurance is available **only in explicitly selected test builds**. The normal `npm run build` excludes its menu entry and lazy-loaded configuration, session, storage and report modules. Enable it for a private test artifact with `npm run build -- --mode endurance`, or use `npm run dev -- --mode endurance` locally. The mode is fixed during compilation; URL parameters and browser storage cannot enable it in a public build. `VITE_HOTSEAT_ONLY=true` can additionally disable online features for the test artifact. Existing private deployment scripts must explicitly select the `endurance` mode when this feature is needed.
+
+In that test build, open **AI Endurance** from the local menu. Choose two to four existing AI profiles, a positive number of rounds per block and at least one session limit: attempted blocks or elapsed minutes. Zero disables an optional session limit. Defaults are four distinct profiles, two rounds per block and four hours, continuing after an incident abort.
+
+Simulation and IndexedDB storage run on the browser's device, without creating online game rooms. Endurance does not send the ordinary `game_start` or `round_end` analytics events to Zaraz; ordinary matches retain their existing analytics. This does not disable analytics scripts that may be configured separately on the hosting service.
+
+The real local game runs with rendering, audio and normal timing. Each block preserves money, ammunition, AI continuity and Zeus history between rounds. Celebrations retain their normal duration; summaries advance after three seconds into the existing AI shop. After the final round presentation there are no further purchases. The next block restores a deep copy of the initial roster and creates fresh engine/strategy instances. Blocks have no overall champion; wins, survival and draws belong to completed rounds.
+
+Operational watchdogs default to 1,000 started turns per round, 30 minutes of combat per round, 120 seconds per combat action and 30 seconds per automatic transition. All are editable before starting and recorded in exports. The page uses a monotonic clock independent of physics; exceeding a limit aborts one block and records context without asserting an infinite-loop defect. Exceptions and invalid states also abort; ordinary safety recoveries are warnings. Optional stop-on-first-abort and manual stop are available. Session limits count attempted blocks, including failures.
+
+Keep the tab active and the device awake. Hiding the tab stops and saves the session as an environmental interruption. A page timer cannot interrupt a synchronous infinite loop or recover a browser crash. Seeds and full initial configuration are recorded before preparation; visual/audio scheduling can affect random consumption, so identical replay and combat resume are not promised. This mode does not exercise the online Worker AI and changes no balancing or protocol rules.
+
+**Statistics:** decisions and their call duration, executed commands, launched/resolved shots, real HP and shield losses, self-damage, attributed destructions/suicides, unattributed deaths, BULLDOZER displacement/recoil, Zeus and safety recoveries. CLUSTER sub-munitions are not new shots. Offensive-effect rate counts at most one effect per resolved shot; zero denominators are not applicable. Results aggregate by player/profile/weapon where applicable and keep completed rounds separate from partial observations. An aborted block is not a defeat. Suspect blocks overlap terminal categories and must not be added to them. Command evaluation/perturbation diagnostics that are not exposed are marked unavailable rather than inferred from final aim. Observers never reveal opponent nuclear stocks to strategies.
+
+**Storage and exports:** IndexedDB stores session metadata, compact block/round results, aggregates and incidents incrementally. Checkpoints occur every 15 seconds, at round/block boundaries and on incidents. Incidents include the last 256 structured events plus available roster, terrain, command and error context. Result history is read in batches of 128 records. Storage failures stop the session visibly; export preserves the available in-memory tail and marks collection incomplete. The configuration screen offers the latest saved session after a crash; it remains incomplete and never resumes combat. Saved sessions remain in the browser profile; exports require that same origin/profile. JSON schema v1 contains detailed results; Markdown provides a readable summary. Game version and build identity (Git SHA, dirty flag, build timestamp) are recorded.
+
+**Detailed JSONL journal (test builds):** The separate JSONL button exports a status header followed by version 1 events with session-wide sequences, wall/monotonic timestamps and block, round, turn and decision context. It records available evaluated commands, explicit targets/points, aim offsets, hit reactions, gaffes and final decisions; confirmed launches retain actual commands, tank positions and barrel origins. Unavailable values are `null`: no target or uncomputed nominal shot is inferred. Physical CLUSTER/GRENADE draws are recorded where consumed; visual randomness and presentation delays are excluded. Credits are observed after application with before/after balances and exact rational reward components explaining the single rounded payment. Zero-gain resolutions, Zeus credits, accepted unit purchases, empty shop visits and boundary rosters remain distinguishable. The endurance observer follows the full local shop orchestration, including all AI shoppers and visits with no affordable purchase; the final round of a block has no shop. Initial balances and block resets are initialization events, not income. Full inventory snapshots are observational only and never enter opponent nuclear threat information.
+
+Database version 2 adds journal stores while retaining existing sessions and result schema v1. Journal writes share the serialized checkpoint lane, flush every second and at boundaries, and use at most 256 entries per batch with a maximum 2,048-entry queue including in-flight writes. Saturation or write failure stops the session, exposes the error and marks the journal incomplete; the JSONL status reports emitted and confirmed sequences. Failed queued entries remain available for manual export while the page is open. After a crash, only confirmed IndexedDB writes are recoverable. Old sessions without a journal retain their result exports. Normal execution retains bounded queues/recent events; manual downloads may assemble the requested file in memory.
+
+The endurance-only `window.__tankwarsEnduranceTest.readJournalPage(after, limit)` bridge returns confirmed pages of at most 256 entries for a local Playwright driver. It opens no HTTP service and sends nothing externally. The private driver can append pages to disk and check sequence continuity and final completeness without holding the history in memory. Protect raw journals as test data; they contain complete inventories and player names. The next long-run protocol is 20 rounds per block for six hours, subject to separate launch authorization; preparing the driver does not run it.
+
+Implementation: `src/game/endurance/` is independent of React; `src/components/endurance/` owns configuration and presentation. Existing local session/shop paths orchestrate play, with optional additive observers in the engine and AI router. Reports should identify the exact configuration, build, browser/environment and measured duration; automated tests are not evidence of a successful four-hour rendered run.
 
 ---
 
@@ -258,7 +288,6 @@ To explore the codebase:
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
-Enjoy blowing up the landscape!
 
 ### Chargement et couverture IA (#212)
 

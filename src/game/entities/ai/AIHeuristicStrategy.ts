@@ -4,6 +4,8 @@ import type { Player } from "../../../types/player";
 import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
+import type { AIObserver } from "../../observation";
+import { DecisionObservation, observedFallback } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -21,6 +23,8 @@ import { shouldPickBulldozer } from "./bulldozerTactics";
 import { chooseLocalMaterialShot } from "./localMaterialPlanner";
 
 export class AIHeuristicStrategy implements AIEngine {
+  public onDecisionObserved?: AIObserver;
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, AimMemory>();
 
   private getMem(playerId: string): AimMemory {
@@ -46,7 +50,7 @@ export class AIHeuristicStrategy implements AIEngine {
       if (player.tank.id === tankId) self = player;
     }
     if (!self || self.tank.isDead) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
     }
 
     const memory = this.getMem(self.id);
@@ -56,7 +60,7 @@ export class AIHeuristicStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
     let target: Player | undefined;
@@ -93,9 +97,11 @@ export class AIHeuristicStrategy implements AIEngine {
       })[0];
     }
     if (!target) {
-      return { angle: 45, power: 50, weaponId: "MISSILE" };
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
+    this.onTargetSelected?.(self.id, target.id);
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
     const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
     const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
       ordinaryWeapon, (point, weapon, variant) => solveHeuristicAim(
@@ -124,10 +130,13 @@ export class AIHeuristicStrategy implements AIEngine {
     );
 
     const gaffe = ADVANCED_GAFFES["v2-heuristic"];
+    observation?.evaluated({ ...command, weaponId }, choice.point);
+    observation?.step("offset", null, null, { offset: aimX - choice.point.x, aimedPoint: { x: aimX, y: choice.point.y } });
     const reactionIntensity = getHitReactionIntensity(
       self.aiProfile ?? "v2-heuristic",
       self.tank.hitReaction,
     );
+    let before = command;
     if (reactionIntensity > 0) {
       command = applySignedCorruption(
         command,
@@ -135,16 +144,22 @@ export class AIHeuristicStrategy implements AIEngine {
         reactionIntensity * gaffe.powerAmplitude,
       );
     }
-    if (maybeGaffe(gaffe.chance)) {
+    observation?.step("reaction", before, command, { intensity: reactionIntensity });
+    before = command;
+    const gaffeOccurred = maybeGaffe(gaffe.chance);
+    if (gaffeOccurred) {
       command = applySignedCorruption(
         command,
         gaffe.angleAmplitude,
         gaffe.powerAmplitude,
       );
     }
+    observation?.step("gaffe", before, command, { chance: gaffe.chance, occurred: gaffeOccurred });
 
     consumeHitReaction(self.tank.hitReaction);
     const finalized = finalizeAdvancedAim(command);
+    observation?.step("finalize", command, finalized);
+    observation?.finish({ ...finalized, weaponId }, choice.reason, { variant: choice.variant, point: choice.point });
     return { ...finalized, weaponId };
   }
 

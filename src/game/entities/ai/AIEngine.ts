@@ -9,8 +9,12 @@
 import type { GameState } from "../../../types/game";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { WeaponId } from "../../../types/weapon";
+import type { AIObserver } from "../../observation";
 
 export interface AIEngine {
+  onDecisionObserved?: AIObserver;
+  /** Optional structured observation of an explicitly selected target; never inferred from aim. */
+  onTargetSelected?: (playerId: string, targetId: string) => void;
   /**
    * Executes one full turn for the given AI tank.
    * Must return the angle and power the AI decides to use.
@@ -20,6 +24,7 @@ export interface AIEngine {
     tankId: string,
     gameState: GameState,
     terrainManager: TerrainManager,
+    isCurrent?: () => boolean,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }>;
 
   /**

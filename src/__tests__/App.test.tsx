@@ -85,6 +85,7 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByText('main_title')).toBeDefined();
     expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'endurance_title' })).toBeNull();
   });
 
   it('transitions from MainMenu to GameCanvas on start local battle, and unmounts MainMenu', () => {

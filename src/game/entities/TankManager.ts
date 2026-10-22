@@ -104,6 +104,7 @@ export class TankManager {
   ) => void;
 
   public onDamageApplied?: (event: CombatDamageEvent) => void;
+  public onBulldozerDisplacement?: (playerId: string, distance: number) => void;
   public onTankDestroyed?: (event: CombatDestructionEvent) => void;
 
   /** Called (throttled by caller) while a tank has downward velocity after losing ground support (for scrape/slide SFX). */
@@ -634,7 +635,9 @@ export class TankManager {
       tank.position.y = currentY;
     }
 
-    return Math.abs(currentX - startX);
+    const distance = Math.abs(currentX - startX);
+    this.onBulldozerDisplacement?.(player.id, distance);
+    return distance;
   }
 
   /**

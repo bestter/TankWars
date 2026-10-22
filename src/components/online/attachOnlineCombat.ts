@@ -1,5 +1,6 @@
 import { CombatCatchUpAssembler, isCombatEvent, type CombatCatchUpMessage, type CombatEvent, type CombatSnapshot } from "../../game/online/combatCatchUp";
 import { earningsPlayers } from "../../game/online/earningsValidation";
+import { randomUUID } from "../../utils/randomUUID";
 import type { RoundMap } from "../../game/round/prepareRound";
 import type { Dispatch, MutableRefObject } from "react";
 import type { GameEngine, ResolvedShotPreview } from "../../game/engine/GameEngine";
@@ -201,7 +202,7 @@ export function attachOnlineCombat(
       clearTimeout(opts.fireRejectionTimerRef.current);
       opts.fireRejectionTimerRef.current = null;
     }
-    const actionId = crypto.randomUUID();
+    const actionId = randomUUID();
     const pending: PendingFireIntent = {
       actionId,
       command: { ...command },
