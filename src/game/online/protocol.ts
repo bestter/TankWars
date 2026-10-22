@@ -371,7 +371,7 @@ const FIRE_REJECTION_REASONS: readonly FireRejectedReason[] = [
   "ILLEGAL_INVENTORY",
 ];
 
-function isFireRejectedReason(value: unknown): value is FireRejectedReason {
+export function isFireRejectedReason(value: unknown): value is FireRejectedReason {
   return (
     typeof value === "string" &&
     FIRE_REJECTION_REASONS.includes(value as FireRejectedReason)

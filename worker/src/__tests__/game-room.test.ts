@@ -2519,6 +2519,27 @@ describe('GameRoom Durable Object', () => {
       expect(res.status).toBe(403);
     });
 
+    it('does not route sub-path /api/rooms/:id/create or GET /create to fetchCreate', async () => {
+      const subPathRes = await room.fetch(
+        new Request('http://localhost/api/rooms/room-sub/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'room-sub',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          }),
+        }),
+      );
+      expect(subPathRes.status).toBe(400);
+      expect(await subPathRes.text()).toBe('GameRoom: unsupported');
+      expect(room.getRoster()).toBeNull();
+
+      const getCreateRes = await room.fetch(new Request('http://localhost/internal/create'));
+      expect(getCreateRes.status).toBe(400);
+      expect(await getCreateRes.text()).toBe('GameRoom: unsupported');
+      expect(room.getRoster()).toBeNull();
+    });
+
     it('rejects FIRE payloads that are not a finite command', async () => {
       await room.fetchCreate(
         new Request('http://localhost/api/room', {

@@ -30,6 +30,12 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
     expect(scriptSrcDirective).toContain('https://static.cloudflareinsights.com');
     expect(cspContent).toContain('https://cloudflareinsights.com');
     expect(cspContent).toContain('https://static.cloudflareinsights.com');
+
+    const connectSrcDirective = directives.find((d: string) => d.startsWith('connect-src'));
+    expect(connectSrcDirective).toBeDefined();
+    const connectSrcTokens = connectSrcDirective!.split(/\s+/);
+    expect(connectSrcTokens).not.toContain('ws:');
+    expect(connectSrcTokens).not.toContain('wss:');
   });
 
   it('should require style-src to allow unsafe-inline in public/_headers to prevent production UI breakage', () => {
@@ -48,6 +54,20 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
     expect(cspLine).toContain("'unsafe-inline'");
     expect(cspLine).toContain('https://static.cloudflareinsights.com');
     expect(cspLine).toContain('https://cloudflareinsights.com');
+
+    const connectSrcMatch = cspLine!.match(/connect-src\s+([^;]+)/);
+    expect(connectSrcMatch).not.toBeNull();
+    const connectSrcTokens = connectSrcMatch![1].trim().split(/\s+/);
+    expect(connectSrcTokens).not.toContain('ws:');
+    expect(connectSrcTokens).not.toContain('wss:');
+
+    // Vérifions qu'aucune note non commentée n'est interprétée comme un en-tête HTTP
+    const nonEmptyNonCommentLines = lines
+      .map((l: string) => l.trim())
+      .filter((l: string) => l.length > 0 && !l.startsWith('#') && l !== '/*');
+    for (const headerLine of nonEmptyNonCommentLines) {
+      expect(headerLine).toMatch(/^[A-Za-z-]+:\s+.+$/);
+    }
   });
 });
 

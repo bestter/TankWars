@@ -456,4 +456,15 @@ describe('onlineSession', () => {
     expect(read?.canvas.shopSession).toEqual(activeShopSession);
     expect(read?.canvas.fireRejection).toBe('NO_AMMO');
   });
+
+  it('accepts and restores ZEUS_TURN as a valid FireRejectedReason', () => {
+    expect(isFireRejectedReason('ZEUS_TURN')).toBe(true);
+    const rawSession = makeSession();
+    rawSession.canvas.fireRejection = 'ZEUS_TURN';
+    persistOnlineSession(rawSession);
+
+    const read = readOnlineSession();
+    expect(read).not.toBeNull();
+    expect(read?.canvas.fireRejection).toBe('ZEUS_TURN');
+  });
 });

@@ -703,7 +703,11 @@ export class GameRoom extends DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === '/internal/create' || url.pathname.endsWith('/create')) {
+    if (
+      (url.pathname === '/internal/create' || url.pathname === '/create') &&
+      request.method === 'POST' &&
+      request.headers.get('Upgrade') !== 'websocket'
+    ) {
       return this.fetchCreate(request);
     }
 
