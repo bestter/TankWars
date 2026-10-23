@@ -174,3 +174,8 @@ No security impact, strictly an internal performance cache.
 **Vulnerability:** Weak token generation for game invite links in `worker/src/game-room.ts`. The custom `makeToken()` function used a 32-character alphabet and 6 bytes of entropy, resulting in a predictable sequence.
 **Learning:** This function was used as the secret for users to join a game room slot, effectively providing authorization for a participant. Short, weak tokens are susceptible to brute force attacks where a malicious actor could intercept or guess an active game room's invitation token.
 **Prevention:** Ensure functions acting as secrets, invite links, and authorization tokens use secure standard methods for generating identifiers, such as standard UUIDv4 by utilizing `crypto.randomUUID()`. Do not reinvent custom cryptographically-weak generators for authorization.
+
+## 2026-10-16 - Predictable PRNG in Authoritative Logic
+**Vulnerability:** The PRNG used for server-side authoritative logic (`mulberry32`) relied on a simple 32-bit state and predictable operations, making it easy to determine future outputs.
+**Learning:** Predictable PRNG used in authoritative contexts enables cheat clients to predict game outcomes and manipulate future random events. Deterministic game features should not expose the main logic's RNG state.
+**Prevention:** Always use cryptographically secure pseudorandom number generators (CSPRNG), such as `crypto.getRandomValues()`, when making authoritative decisions that players could exploit.

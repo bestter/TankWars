@@ -252,10 +252,8 @@ describe('Zeus v3 durable settlement', () => {
     await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
     await send(0, report(shot.shotId)); await vi.advanceTimersByTimeAsync(0);
     const strike = structuredClone(room.getRoster()!.activeZeusStrike);
-    const seed = room.getRoster()!.zeusRngState;
     const restored = await restart();
     expect(restored.getRoster()!.activeZeusStrike).toEqual(strike);
-    expect(restored.getRoster()!.zeusRngState).toBe(seed);
     const inventory = structuredClone(restored.getRoster()!.players[restored.getRoster()!.currentPlayerIndex].inventory);
     await (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored,
       restored.getRoster()!.currentPlayerIndex, JSON.stringify({ type: 'FIRE', actionId: 'during-zeus', command: { angle: 45, power: 60, weaponId: 'GRENADE' } }));

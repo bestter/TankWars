@@ -186,7 +186,7 @@ interface RoomState {
   zeusState: ZeusState;
   zeusRotationSlots: number[];
   lastDirectAttackerByPlayerId: Record<string, string>;
-  zeusRngState: number;
+  // zeusRngState is deprecated
   activeZeusStrike: ZeusStrikeMessage | null;
   lastAppliedZeusStrike: ZeusStrikeAppliedMessage | null;
 }
@@ -196,14 +196,11 @@ function makeToken(): string {
   return crypto.randomUUID();
 }
 
-// Very lightweight seeded RNG (for future injection of real server sim determinism)
-function mulberry32(seed: number) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+// Secure RNG for authoritative server-side logic
+function secureRandom(): number {
+  const array = new Uint32Array(1);
+  crypto.getRandomValues(array);
+  return array[0] / (0xffffffff + 1);
 }
 
 function seedFromString(value: string): number {
@@ -395,7 +392,6 @@ export class GameRoom extends DurableObject {
         this.state.zeusState ??= createZeusState();
         this.state.zeusRotationSlots ??= [];
         this.state.lastDirectAttackerByPlayerId ??= {};
-        this.state.zeusRngState ??= seedFromString(this.state.roomId);
         this.state.activeZeusStrike ??= null;
         this.state.lastAppliedZeusStrike ??= null;
         this.shotInFlight = this.state.activeShot !== null;
@@ -639,7 +635,6 @@ export class GameRoom extends DurableObject {
       zeusState: createZeusState(),
       zeusRotationSlots: [],
       lastDirectAttackerByPlayerId: {},
-      zeusRngState: seedFromString(roomId),
       activeZeusStrike: null,
       lastAppliedZeusStrike: null,
     };
@@ -1579,12 +1574,7 @@ export class GameRoom extends DurableObject {
   }
 
   private nextZeusRandom(): number {
-    if (!this.state) return 0;
-    this.state.zeusRngState = (this.state.zeusRngState + 0x6d2b79f5) >>> 0;
-    let value = this.state.zeusRngState;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    return secureRandom();
   }
 
   private async applyZeusAppointment(
