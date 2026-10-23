@@ -51,6 +51,37 @@ function createEnv() {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('Room creation rate limiting', () => {
+  it.each([
+    ['IP longer than 256 characters', 'a'.repeat(257)],
+    ['ASCII name one byte over the limit including the prefix', 'a'.repeat(246)],
+    ['UTF-8 name one byte over the limit including the prefix', 'é'.repeat(123)],
+  ])('rejects %s before accessing either namespace', async (_description, ip) => {
+    const { env, createRoom, limiterFetch, roomFetch } = createEnv();
+
+    const response = await createRoom(ip);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid IP identifier' });
+    expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
+    expect(env.RATE_LIMITER.get).not.toHaveBeenCalled();
+    expect(limiterFetch).not.toHaveBeenCalled();
+    expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
+    expect(env.GAME_ROOM.get).not.toHaveBeenCalled();
+    expect(roomFetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['a'.repeat(245), 'é'.repeat(122) + 'a'])(
+    'accepts a final rate limiter name of exactly 256 UTF-8 bytes (case %#)',
+    async (ip) => {
+      const { env, createRoom, limiterFetch, roomFetch } = createEnv();
+
+      expect((await createRoom(ip)).status).toBe(200);
+      expect(env.RATE_LIMITER.idFromName).toHaveBeenCalledWith('rate_limit_' + ip);
+      expect(limiterFetch).toHaveBeenCalledOnce();
+      expect(roomFetch).toHaveBeenCalledOnce();
+    },
+  );
+
   it('returns 429 and Retry-After for the sixth request without creating another room', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     const { createRoom, roomFetch } = createEnv();
@@ -74,24 +105,24 @@ describe('Room creation rate limiting', () => {
     const { createRoom, limiters } = createEnv();
     for (let i = 0; i < 5; i++) expect((await createRoom()).status).toBe(200);
     expect((await createRoom()).status).toBe(429);
-    expect(limiters.has('unknown')).toBe(true);
+    expect(limiters.has('rate_limit_unknown')).toBe(true);
     expect((await createRoom('192.0.2.1')).status).toBe(200);
   });
 
-  it.each([200, 403, 500, 429])('logs and fails open on unexpected status %s or malformed denial', async (status) => {
+  it.each([200, 403, 500, 429])('logs and fails closed on unexpected status %s or malformed denial', async (status) => {
     const { createRoom, limiterFetch, roomFetch } = createEnv();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     limiterFetch.mockResolvedValueOnce(new Response('unexpected', { status }));
-    expect((await createRoom('192.0.2.1')).status).toBe(200);
+    expect((await createRoom('192.0.2.1')).status).toBe(500);
     expect(log).toHaveBeenCalledOnce();
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(roomFetch).not.toHaveBeenCalled();
   });
 
-  it('logs and fails open on a limiter exception', async () => {
+  it('logs and fails closed on a limiter exception', async () => {
     const { createRoom, limiterFetch } = createEnv();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     limiterFetch.mockRejectedValueOnce(new Error('storage unavailable'));
-    expect((await createRoom()).status).toBe(200);
+    expect((await createRoom()).status).toBe(500);
     expect(log).toHaveBeenCalledOnce();
   });
 
