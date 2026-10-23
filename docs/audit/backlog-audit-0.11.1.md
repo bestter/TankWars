@@ -43,6 +43,8 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   2. Utiliser une comparaison en temps constant (`crypto.subtle.timingSafeEqual` sur `TextEncoder().encode(...)` de même longueur) dans `GameRoom.fetch`.
 
 ### IMP-04 — Collision de casse Git (`Scripts/` vs `scripts/`) et scripts shell temporaires à la racine
+- **Résolution (#322)** : Retrait des deux fichiers vides `ping-indexnow.js`, du hook `postbuild` sans effet et des quatre scripts shell ponctuels. Le constat initial ci-dessous est conservé comme historique. Le script documenté `Scripts/test-deploy-cloudflare.ps1` reste en place; aucun renommage global du dossier n'est requis. La collision est confirmée dans l'index Git, sans échec fonctionnel démontré; il s'agit d'un nettoyage de portabilité, sans urgence fonctionnelle. Aucun nouveau test automatisé n'est ajouté pour ces suppressions sans logique de jeu; vérifier l'arbre Git, les références et la batterie de validation du dépôt.
+- **Analyse et résolution** : GPT-6 — Codex.
 - **Fichiers concernés** :
   - `package.json:L13` (`"postbuild": "node Scripts/ping-indexnow.js"`)
   - `Scripts/ping-indexnow.js:L1` (0 octet) et `scripts/ping-indexnow.js:L1` (0 octet)
