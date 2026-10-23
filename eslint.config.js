@@ -14,6 +14,9 @@ export default defineConfig([
       tseslint.configs.recommended,
     ],
   },
+  // Réserver les règles React et les globals navigateur au client.
+  // Le Worker utilise ses propres globals et des exceptions ciblées
+  // pour les paramètres inutilisés et les exclusions par déstructuration.
   {
     files: ['**/*.{ts,tsx}'],
     ignores: ['worker/**'],
