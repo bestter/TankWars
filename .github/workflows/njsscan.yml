@@ -38,10 +38,13 @@ jobs:
         python-version: '3.12'
     - name: Install njsscan
       run: python -m pip install njsscan==1.0.1
+    - name: Test scanner execution checks
+      run: python -B -m unittest discover -s Scripts -p "test_njsscan_runner.py" -v
     - name: nodejsscan scan
       id: njsscan
-      run: njsscan . --sarif --output results.sarif || true
+      run: python Scripts/njsscan_runner.py
     - name: Upload njsscan report
+      if: ${{ !cancelled() && steps.njsscan.outcome != 'skipped' && hashFiles('results.sarif') != '' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: results.sarif

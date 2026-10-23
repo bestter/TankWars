@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,8 +28,17 @@ jobs:
       - name: Install Dependencies
         run: npm ci --ignore-scripts
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build Project
         run: npm run build
+
+      - name: Test
+        run: npm run test
+
+      - name: React Doctor
+        run: npm run doctor -- --verbose --scope changed --blocking warning
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

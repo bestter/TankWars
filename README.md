@@ -154,7 +154,11 @@ With the private script present, run `pwsh -NoProfile -File Scripts/test-deploy-
 
 For the private staging machine, run `.\deploy-staging.ps1`. It runs lint, build and tests, then rebuilds only `dist` with `VITE_HOTSEAT_ONLY=true` and no `VITE_API_BASE`. It validates the exact remote staging directory before cleaning it, uploads through SSH/SCP, and never deploys a Worker. This artifact supports local humans and AI but exposes no online lobby, invitation, or saved online session. Both scripts remain gitignored because their deployment parameters are machine-specific. See `.env.production.example` for manual build variables.
 
-The repository also contains a separate [GitHub Pages workflow](./.github/workflows/deploy.yml), triggered by pushes to `main`. It builds and publishes the client to GitHub Pages; it does not deploy the Worker or perform the Cloudflare Worker-first health gate. Disabling automatic Cloudflare Pages deployments does not disable this GitHub Actions workflow.
+The repository also contains a separate [GitHub Pages workflow](./.github/workflows/deploy.yml), triggered by pushes to `main`. It runs lint, build, tests and React Doctor (`--verbose --scope changed --blocking warning`) on the checkout being published before uploading or deploying the client. It does not deploy the Worker or perform the Cloudflare Worker-first health gate. Disabling automatic Cloudflare Pages deployments does not disable this GitHub Actions workflow.
+
+The [Release workflow](./.github/workflows/release-and-deploy.yml) runs the same checks before publishing build artifacts for `v*` tags or published releases. A failed check blocks artifact publication; for an already published release, it cannot undo the release event. Both workflows run their own checks rather than assuming the independent CI and React Doctor workflows have finished.
+
+The [njsscan workflow](./.github/workflows/njsscan.yml) keeps security findings advisory, but fails when the scanner cannot run, its report is missing or malformed, its execution is incomplete, or its exit code disagrees with the report. An available SARIF report is still uploaded after a failed scan check. The runner validates the expected njsscan 1.0.1 report structure and execution evidence; GitHub's upload action performs the SARIF schema validation. Run its isolated regression tests with `python -B -m unittest discover -s Scripts -p "test_njsscan_runner.py" -v`.
 
 ---
 

@@ -63,6 +63,8 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   2. Suivre un ensemble d'entrées modifiées (`dirtyKeys`) entre deux `saveState()` pour éviter de re-sérialiser tout le journal à chaque action.
 
 ### IMP-06 — Scan SAST CI non bloquant (`njsscan.yml`) et workflows de déploiement sans tests préalables
+- **Résolution (#324)** : Les workflows GitHub Pages et Release exécutent lint, build, tests et React Doctor (`--verbose --scope changed --blocking warning`) sur le checkout publié avant toute publication d'artefacts. Le lanceur `Scripts/njsscan_runner.py` vérifie le code de sortie, la structure attendue du SARIF et la réussite explicite de l'analyse; les détections restent consultatives et un rapport disponible est téléversé même après un échec du contrôle. Les tests Python isolés couvrent les pannes et rapports incohérents. La validation complète du schéma SARIF reste assurée par l'action de téléversement GitHub. Les constats et pistes initiaux ci-dessous sont conservés comme historique; la présence d'une CI indépendante n'impose aucun ordre de publication et le workflow Release ne déploie pas sur Cloudflare.
+- **Analyse et résolution** : GPT-6 — Codex.
 - **Fichiers concernés** :
   - `.github/workflows/njsscan.yml:L43`
   - `.github/workflows/deploy.yml:L25-L50`
