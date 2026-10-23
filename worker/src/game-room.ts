@@ -200,15 +200,6 @@ function secureRandom(): number {
   crypto.getRandomValues(array);
   return array[0] / (0xffffffff + 1);
 }
-function seedFromString(value: string): number {
-  let seed = 0;
-  for (let index = 0; index < value.length; index++) {
-    seed = Math.imul(seed, 31) + value.charCodeAt(index);
-    seed |= 0;
-  }
-  return seed >>> 0;
-}
-
 function makeShopActionKey(
   kind: 'BUY_SELL' | 'READY',
   slot: number,
