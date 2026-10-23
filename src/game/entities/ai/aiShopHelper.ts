@@ -1,6 +1,7 @@
 import type { AiProfile, Player } from "../../../types/player";
 import type { WeaponId } from "../../../types/weapon";
 import { WEAPON_REGISTRY } from "../../../types/weapon";
+import type { PurchaseObservation } from "../../observation";
 import { getShopPolicy } from "../../shop/shopPolicy";
 import {
   applyShopTransaction,
@@ -106,6 +107,7 @@ function strategicStockCap(
 export interface AutoBuyResult {
   readonly player: Player;
   readonly counters: ShopVisitCounters;
+  readonly purchases?: readonly PurchaseObservation[];
 }
 
 /**
@@ -116,6 +118,7 @@ export function autoBuyForAI(
   aiPlayer: Player,
   initialPlayerCount: InitialPlayerCount,
   initialCounters: ShopVisitCounters,
+  observe = false,
 ): AutoBuyResult {
   if (
     !isSafePlayerTarget(aiPlayer) ||
@@ -127,6 +130,7 @@ export function autoBuyForAI(
 
   let player = aiPlayer;
   let counters = initialCounters;
+  const purchases: PurchaseObservation[] = [];
   const profile = resolveShopProfile(aiPlayer.aiProfile);
 
   for (const weaponId of AI_SHOP_PREFERENCES[profile]) {
@@ -166,10 +170,13 @@ export function autoBuyForAI(
         delta: 1,
       });
       if (!transaction.ok) break;
+      if (observe) purchases.push({ playerId: player.id, profile: player.aiProfile, weaponId, quantity: 1, price,
+        moneyBefore: player.money, moneyAfter: transaction.player.money,
+        stockBefore: player.inventory[weaponId] ?? 0, stockAfter: transaction.player.inventory[weaponId] ?? 0 });
       player = transaction.player;
       counters = transaction.counters;
     }
   }
 
-  return { player, counters };
+  return { player, counters, ...(observe ? { purchases } : {}) };
 }

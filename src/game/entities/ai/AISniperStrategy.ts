@@ -4,6 +4,8 @@ import type { Player } from "../../../types/player";
 import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
+import type { AIObserver } from "../../observation";
+import { DecisionObservation, observedFallback } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -21,8 +23,6 @@ import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 
 type SniperMemory = AimMemory;
 type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible";
-
-const FALLBACK_SHOT = { angle: 45, power: 50, weaponId: "MISSILE" as const };
 
 function logSniperDecision(build: () => object): void {
   if (!import.meta.env.DEV) return;
@@ -82,6 +82,8 @@ function sniperDecisionPayload(
 }
 
 export class AISniperStrategy implements AIEngine {
+  public onDecisionObserved?: AIObserver;
+  public onTargetSelected?: (playerId: string, targetId: string) => void;
   private memories = new Map<string, SniperMemory>();
 
   private getMem(playerId: string): SniperMemory {
@@ -107,7 +109,7 @@ export class AISniperStrategy implements AIEngine {
         round: gameState.roundNumber,
         turn: gameState.turn,
       }));
-      return FALLBACK_SHOT;
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
     }
 
     const memory = this.getMem(self.id);
@@ -126,7 +128,7 @@ export class AISniperStrategy implements AIEngine {
         windForce: gameState.windForce,
         gravity: gameState.gravity,
       }));
-      return FALLBACK_SHOT;
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
     const remembered = memory.currentTargetId
@@ -148,6 +150,8 @@ export class AISniperStrategy implements AIEngine {
       })[0];
     }
 
+    this.onTargetSelected?.(self.id, target.id);
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
     const attempts = recordAimAttempt(memory, target.id);
     const targetX = target.tank.position.x;
     let offsetDirection = targetX > terrainManager.width - targetX ? -1 : 1;
@@ -180,6 +184,9 @@ export class AISniperStrategy implements AIEngine {
     );
     let perturbed = false;
     let command = choice.rawCommand;
+    observation?.evaluated({ ...choice.command, weaponId }, choice.point);
+    observation?.step("offset", null, null, { offset, offsetDirection, aimedPoint: { x: choice.point.x + offset, y: choice.point.y } });
+    let before = command;
     if (reactionIntensity > 0) {
       command = applySignedCorruption(
         command,
@@ -189,6 +196,8 @@ export class AISniperStrategy implements AIEngine {
       perturbed = true;
     }
     const gaffeOccurred = maybeGaffe(gaffe.chance);
+    observation?.step("reaction", before, command, { intensity: reactionIntensity });
+    before = command;
     if (gaffeOccurred) {
       command = applySignedCorruption(
         command,
@@ -199,7 +208,11 @@ export class AISniperStrategy implements AIEngine {
     }
 
     consumeHitReaction(self.tank.hitReaction);
+    observation?.step("gaffe", before, command, { chance: gaffe.chance, occurred: gaffeOccurred });
     const fired = perturbed ? finalizeAdvancedAim(command) : choice.command;
+    observation?.step("finalize", command, fired);
+    observation?.finish({ ...fired, weaponId }, choice.reason, { ...choice.trace, certified: choice.certified,
+      rawCommand: choice.rawCommand, predictedCommand: choice.command, variant: choice.variant });
     logSniperDecision(() => sniperDecisionPayload(
       self, target, targetRule, gameState, terrainManager, attempts, offsetDirection, offset, choice,
       reactionIntensity, gaffeOccurred, fired,

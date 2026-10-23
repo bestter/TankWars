@@ -8,6 +8,7 @@ import { PlayerConfigList } from "./PlayerConfigList";
 import type { PlayerController } from "./playerControllerUi";
 
 interface MainMenuViewProps {
+  onEndurance?: () => void;
   numPlayers: 2 | 3 | 4;
   playerConfigs: readonly PlayerConfig[];
   colorPool: readonly Color[];
@@ -45,6 +46,7 @@ export function MainMenuView({
   onControllerChange,
   onStart,
   onPlayOnline,
+  onEndurance,
 }: MainMenuViewProps) {
   const { t } = useTranslation();
 
@@ -121,6 +123,7 @@ export function MainMenuView({
                 </button>
               </div>
             )}
+            {onEndurance && <div style={{ marginTop: 10 }}><button type="button" className="retro-online-btn" onClick={onEndurance}>{t("endurance_title")}</button></div>}
           </div>
 
           <div className="retro-legal">

@@ -1,5 +1,8 @@
 import { useShotAdvisor } from "./advisor/useShotAdvisor";
-import { type RoundMap } from "../game/round/prepareRound";
+import { startCanvasLoop } from "./canvasLoop";
+import type { EnduranceSession } from "../game/endurance/session";
+import type { RoundMap } from "../game/round/prepareRound";
+import { ONLINE_PROTOCOL_VERSION } from "../game/online/protocol";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
@@ -18,7 +21,7 @@ import {
   type ShopClientSessionState,
 } from "./gameCanvasReducer";
 import { trackEvent } from "../utils/analytics";
-import { setRNG, resetRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
+import { setRNG, getRNG, resetRNG, createSeededRNG, seedFromRoomRound } from "../utils/random";
 import {
   type OnlineCanvasSnapshot,
 } from "../utils/onlineSession";
@@ -63,6 +66,7 @@ function requireInitialPlayerCount(playerCount: number): InitialPlayerCount {
 export { buildOverlayAwards } from "./sessionPresentation";
 
 interface UseGameSessionProps {
+  endurance?: EnduranceSession;
   initialPlayers?: Player[];
   onReturnToMenu?: () => void;
   /** Online mode */
@@ -110,6 +114,7 @@ function useOnlineSessionRefs(resumeCanvas?: OnlineCanvasSnapshot) {
 }
 
 export function useGameSession({
+  endurance,
   initialPlayers,
   onReturnToMenu,
   gameMode = 'local',
@@ -361,6 +366,7 @@ export function useGameSession({
 
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
+    const initialize = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -377,11 +383,56 @@ export function useGameSession({
     ctxRef.current = ctx;
 
     // === GAME ENGINE ===
-    const engine = new GameEngine(CANVAS_WIDTH, CANVAS_HEIGHT, {
+    const previousRNG = endurance ? getRNG() : null;
+    if (endurance?.block) setRNG(createSeededRNG(endurance.block.seed));
+    let engine: GameEngine;
+    try { engine = new GameEngine(CANVAS_WIDTH, CANVAS_HEIGHT, {
       gravity: 260,
       baseShotSpeed: 420,
-    });
+    }); } catch (error) {
+      if (previousRNG) setRNG(previousRNG);
+      endurance?.incident("exception", "ENGINE_CREATION_FAILED", 0, String(error));
+      if (!endurance) throw error;
+      return;
+    }
     const tm = engine.getTurnManager();
+    let stopRendering = () => {};
+    let stopped = false;
+    const stopExecution = () => {
+      if (stopped) return;
+      stopped = true;
+      clearShopAiTimeout(); clearCelebrationTimer();
+      if (zeusAnnouncementTimerRef.current !== null) clearTimeout(zeusAnnouncementTimerRef.current);
+      if (fireRejectionTimerRef.current !== null) clearTimeout(fireRejectionTimerRef.current);
+      try { engine.stop(); tm.removeInputListeners(); }
+      finally {
+        stopRendering();
+        if (previousRNG) setRNG(previousRNG);
+        engineRef.current = null; ctxRef.current = null;
+      }
+    };
+    const enduranceHost = {
+      stop: stopExecution,
+      context: () => ({ players: structuredClone([...engine.getTankManager().getPlayers()]),
+        heights: [...engine.getTerrain().getHeightmap()], materials: [...engine.getTerrain().getMaterials()], phase: gamePhaseRef.current, windForce: engine.getWindForce() }),
+    };
+    if (endurance) {
+      const blockId = endurance.block?.id;
+      const observer = { emit: (event: Parameters<EnduranceSession["emit"]>[0]) =>
+        !stopped && endurance.block?.id === blockId && endurance.emit(event) };
+      endurance.attach(enduranceHost);
+      engine.combatObserver = observer; tm.combatObserver = observer;
+      engine.getPhysicsEngine().onPhysicalObserved = observation => { observer.emit({ kind: "physical", observation }); };
+      const strategy = new AIByProfileStrategy(() => !stopped && endurance.running);
+      strategy.onDecisionObserved = observation => { observer.emit({ kind: "ai-detail", observation }); };
+      strategy.onTargetSelected = (playerId, targetId) => {
+        if (!observer.emit({ kind: "target", playerId, targetId })) throw new Error("ENDURANCE_TARGET_REJECTED");
+      };
+      engine.setAIEngine(strategy);
+      engine.getTankManager().onBulldozerDisplacement = (playerId, distance) => {
+        observer.emit({ kind: "displacement", playerId, distance, recoil: tm.getCurrentPlayer()?.id === playerId });
+      };
+    }
 
     // Keep the existing deterministic combat RNG; the authoritative map consumes no draws here.
     if (gameMode === "online" && roomId && initialMap) {
@@ -467,6 +518,10 @@ export function useGameSession({
         engine.setPlayers(players, gameMode === "online" ? initialMap : undefined);
       } catch (error) {
         console.error("[Game] Initial round preparation failed", error);
+        if (endurance) {
+          endurance.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
+          return () => { stopExecution(); endurance.detach(enduranceHost); };
+        }
         engine.enterInterRoundPhase();
         dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
       }
@@ -497,8 +552,8 @@ export function useGameSession({
       { humanCount: 0, aiProfiles: [] as string[] }
     );
 
-    // Track game start event with Cloudflare Zaraz
-    trackEvent("game_start", {
+    // Endurance observations stay local and must not generate analytics traffic.
+    if (!endurance) trackEvent("game_start", {
       playerCount: players.length,
       humanCount: playerStats.humanCount,
       aiCount: players.length - playerStats.humanCount,
@@ -506,10 +561,11 @@ export function useGameSession({
     });
 
     // Inject profile-aware AI (v1-random = IA SIMPLE; v2-heuristic = IA OK).
-    engine.setAIEngine(new AIByProfileStrategy());
+    if (!endurance) engine.setAIEngine(new AIByProfileStrategy());
 
     wireEngineSessionCallbacks({
       engine,
+      endurance,
       dispatch,
       gameMode,
       localPlayerId,
@@ -538,17 +594,17 @@ export function useGameSession({
     engine.start();
 
     // === CONTINUOUS RENDERING LOOP ===
-    let rafId: number;
-    const renderLoop = () => {
+    stopRendering = startCanvasLoop(() => {
+      if (stopped) return;
       if (ctx) {
         ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       }
       renderFrame();
-      rafId = requestAnimationFrame(renderLoop);
-    };
-    renderLoop();
+    });
 
     return () => {
+      stopExecution();
+      endurance?.detach(enduranceHost);
       onlineCombat?.detach();
       if (gameMode === "online") resetRNG();
       combatSendRef.current = () => {};
@@ -572,15 +628,23 @@ export function useGameSession({
         zeusAnnouncementTimerRef.current = null;
       }
 
-      engine.stop();
       tm.setFireIntentHandler(null);
       tm.onAuthoritativeShotSettled = undefined;
       tm.removeInputListeners();
-      if (rafId) cancelAnimationFrame(rafId);
       engineRef.current = null;
       ctxRef.current = null;
     };
-  }, [clearCelebrationTimer, clearShopAiTimeout, clearZeusAnnouncement, goToSummary]); // eslint-disable-line react-hooks/exhaustive-deps -- complex effect with conditional online logic; re-running on those is acceptable for game session mount
+    };
+    if (!endurance) return initialize();
+    // StrictMode's probe mount must not start a second real block or consume its RNG.
+    let dispose: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      if (!endurance.ready) return;
+      try { dispose = initialize(); }
+      catch (error) { endurance.incident("exception", "SESSION_INITIALIZATION_FAILED", 0, String(error)); }
+    }, 0);
+    return () => { clearTimeout(timer); dispose?.(); };
+  }, [clearCelebrationTimer, clearShopAiTimeout, clearZeusAnnouncement, goToSummary, endurance]); // eslint-disable-line react-hooks/exhaustive-deps -- one engine per mounted game session
 
   // Global SPACE to skip round celebration fireworks
   useEffect(() => {
@@ -625,6 +689,7 @@ export function useGameSession({
   };
 
   const shopRoundHost: CompleteShopRoundHost = {
+    endurance,
     gameMode,
     get initialPlayerCount() {
       return initialPlayerCountRef.current;
@@ -651,8 +716,23 @@ export function useGameSession({
   };
 
   const handleNextRound = (): void => {
+    if (endurance && !endurance.ready) return;
     startShopPhase(shopRoundHost);
   };
+
+  useEffect(() => {
+    if (!endurance) return;
+    endurance.setPhase(gamePhase);
+    if (gamePhase !== "SUMMARY" || !endurance.ready) return;
+    const timer = setTimeout(() => {
+      if (!endurance.ready) return;
+      if (endurance.block && endurance.block.roundsCompleted >= endurance.session.config.roundsPerBlock) endurance.finishPresentation();
+      else startShopPhase(shopRoundHost);
+    }, 3000);
+    return () => clearTimeout(timer);
+  // The phase timer belongs to this block/phase, not to HUD renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endurance, gamePhase]);
 
   const handleNewGameFromSummary = (): void => {
     advisor.reset();
@@ -724,7 +804,7 @@ export function useGameSession({
       if (pending?.kind === "READY") {
         sendCombatMessage({ type: "SHOP_READY", shopEpoch: pending.shopEpoch, actionId: pending.actionId });
       } else {
-        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: 3,
+        sendCombatMessage({ type: "REQUEST_GAME_START", protocolVersion: ONLINE_PROTOCOL_VERSION,
           roundNumber: currentMancheRef.current, lastSeenShotId: lastSeenShotIdRef.current,
           lastAppliedShopEpoch: lastAppliedShopEpochRef.current });
       }

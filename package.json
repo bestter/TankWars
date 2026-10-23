@@ -1,7 +1,7 @@
 {
   "name": "bestters-tankwars",
   "private": true,
-  "version": "0.9.9",
+  "version": "0.11.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,6 @@
     "preview": "vite preview",
     "doctor": "npx react-doctor@latest",
     "test": "vitest run",
-    "postbuild": "node Scripts/ping-indexnow.js",
     "worker:dev": "cd worker && npx wrangler dev",
     "worker:deploy": "cd worker && npx wrangler deploy"
   },
@@ -36,6 +35,7 @@
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "fake-indexeddb": "^6.2.6",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
     "react-doctor": "^0.9.14",
@@ -52,7 +52,7 @@
   },
   "allowScripts": {
     "msgpackr-extract@3.0.4": true,
-    "workerd@1.20261006.1": true,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "workerd@1.20261019.1": true
   }
 }

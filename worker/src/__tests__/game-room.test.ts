@@ -84,6 +84,94 @@ function reportPlayers(room: GameRoom, deadSlots: boolean[] = []): Player[] {
   return players;
 }
 
+describe('GameRoom combat persistence comparisons', () => {
+  async function bootPersistence() {
+    const setup = createMockCtx();
+    const room = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(room, 'ctx', { value: setup.ctx });
+    await room.fetchCreate(new Request('http://localhost/create', {
+      method: 'POST',
+      body: JSON.stringify({ roomId: 'comparison', numPlayers: 2,
+        slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
+    }));
+    const state = room.getRoster()!;
+    const events: ShotMessage[] = [1, 2, 3, 4].map((id) => ({
+      type: 'SHOT', actionId: `action-${id}`, shotId: id, roundNumber: 1,
+      shotNumberInRound: id, isFirstShotOfRound: id === 1, physicsSeed: id,
+      eventSequence: id, slot: 0, ownerId: 'player-0',
+      command: { angle: 45, power: 60, weaponId: 'MISSILE' },
+    }));
+    const key = (id: number) => `combat:1:event:${id}`;
+    const wrap = (event: ShotMessage) => ({ kind: 'event', key: String(event.eventSequence), value: event });
+    for (const event of events) setup.mockStorage.storageData.set(key(event.eventSequence), structuredClone(wrap(event)));
+    state.combatJournal = structuredClone(events.slice(0, 3));
+    state.combatJournal[2] = { ...events[2], command: { ...events[2].command, power: 70 } };
+    state.combatJournal.push({ ...events[3], eventSequence: 5, shotId: 5 });
+    const storage = (setup.ctx as { storage: { put: ReturnType<typeof vi.fn> } }).storage;
+    const writtenKeys = () => storage.put.mock.calls.flatMap(([batch]) => Object.keys(batch as Record<string, unknown>)).sort();
+    const save = () => (Reflect.get(room, 'saveState') as () => Promise<void>).call(room);
+    storage.put.mockClear();
+    return { ...setup, room, storage, writtenKeys, save, key };
+  }
+
+  it('writes only deeply changed or new combat entries, including after a cold start', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(3), setup.key(5), 'state']);
+    expect(setup.mockStorage.storageData.has(setup.key(4))).toBe(false);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual(['state']);
+
+    const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+    await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+    setup.storage.put.mockClear();
+    await (Reflect.get(restored, 'saveState') as () => Promise<void>).call(restored);
+    expect(setup.writtenKeys()).toEqual(['state']);
+  });
+
+  it('retries changed entries after a failed transaction', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const state = setup.room.getRoster()!;
+    const changed = { ...state.combatJournal[0], eventSequence: 6 };
+    state.combatJournal.push(changed);
+    const before = structuredClone(setup.mockStorage.storageData);
+    setup.storage.put.mockRejectedValueOnce(new Error('disk failure'));
+    await expect(setup.save()).rejects.toThrow('disk failure');
+    expect(setup.mockStorage.storageData).toEqual(before);
+    setup.room.getRoster()!.combatJournal.push(changed);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(6), 'state']);
+  });
+
+  it('serializes each current combat entry only once on warm saves', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      await setup.save();
+      expect(stringify).toHaveBeenCalledTimes(4);
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it('writes an identical entry again after it was removed', async () => {
+    const setup = await bootPersistence();
+    await setup.save();
+    const event = setup.room.getRoster()!.combatJournal.shift()!;
+    await setup.save();
+    expect(setup.mockStorage.storageData.has(setup.key(event.eventSequence))).toBe(false);
+    setup.room.getRoster()!.combatJournal.push(event);
+    setup.storage.put.mockClear();
+    await setup.save();
+    expect(setup.writtenKeys()).toEqual([setup.key(event.eventSequence), 'state']);
+  });
+});
+
 describe('Zeus v3 durable settlement', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -311,12 +399,12 @@ describe('Zeus v3 durable settlement', () => {
   it('requires a new match for an old schema even when its map and physical roster are complete', async () => {
     const { setup, restart, sockets } = await boot();
     const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
-    delete persisted.combatSchemaVersion;
+    persisted.combatSchemaVersion = 3;
     setup.mockStorage.storageData.set('state', persisted);
     const restored = await restart();
     const before = structuredClone(restored.getRoster());
     await (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored, 0,
-      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
+      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
     expect(sockets[0].getLastMessage()).toMatchObject({ type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED' });
     expect(restored.getRoster()).toEqual(before);
     expect(restored.getRoster()!.activeShot).toBeNull();
@@ -411,7 +499,7 @@ describe('Authoritative safe round preparation', () => {
     expect(setup.mockStorage.storageData.get('state')).toMatchObject({ map: first.map, initialRoundPlayers: first.players });
     state.players[1].tank.health = 0;
     state.players[1].tank.isDead = true;
-    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     const retry = sockets[0].getAllMessages<GameStartMessage>().filter((m) => m.type === 'GAME_START').at(-1);
     expect(retry).toEqual(first); // initial combat baseline survives live damage
   });
@@ -464,7 +552,7 @@ describe('Authoritative safe round preparation', () => {
     const retrySend = (slot: number, value: object) => retryHandle.call(retryRoom, slot, JSON.stringify(value));
     const retryState = Reflect.get(retryRoom, 'state') as typeof state;
     if (retry === 'REQUEST_GAME_START') {
-      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 3, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     } else {
       const slot = retry === 'last READY' ? 1 : 0;
       await retrySend(slot, { type: 'SHOP_READY', shopEpoch: epoch, actionId: `ready-${slot}` });
@@ -517,7 +605,7 @@ describe('Authoritative safe round preparation', () => {
     (Reflect.get(restored, 'sockets') as Map<number, WebSocket>).set(0, socket as unknown as WebSocket);
     const handle = Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
     const prepare = vi.spyOn(restored as unknown as { prepareRoomRound: (players: Player[], round: number) => PreparedRound }, 'prepareRoomRound');
-    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 3,
+    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 4,
       roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 }));
     expect(prepare).not.toHaveBeenCalled();
     expect(socket.getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_STATE')).toBe(true);
@@ -1054,7 +1142,7 @@ describe('GameRoom Durable Object', () => {
       expect(ws0.closeCode).toBe(4402);
     });
 
-    it('accepts REQUEST_GAME_START with protocolVersion 3 and still sends catch-up', async () => {
+    it('accepts REQUEST_GAME_START with protocolVersion 4 and still sends catch-up', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -1065,7 +1153,7 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'REQUEST_GAME_START',
-          protocolVersion: 3,
+          protocolVersion: 4,
           roundNumber: 1,
           lastSeenShotId: 0,
           lastAppliedShopEpoch: 0,
@@ -1521,7 +1609,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 3,
+        protocolVersion: 4,
         roundNumber: 1,
         lastSeenShotId: shot?.shotId,
         lastAppliedShopEpoch: 0,
@@ -2166,7 +2254,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 3,
+        protocolVersion: 4,
         roundNumber: 2,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -2427,6 +2515,27 @@ describe('GameRoom Durable Object', () => {
         }),
       );
       expect(res.status).toBe(403);
+    });
+
+    it('does not route sub-path /api/rooms/:id/create or GET /create to fetchCreate', async () => {
+      const subPathRes = await room.fetch(
+        new Request('http://localhost/api/rooms/room-sub/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'room-sub',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          }),
+        }),
+      );
+      expect(subPathRes.status).toBe(400);
+      expect(await subPathRes.text()).toBe('GameRoom: unsupported');
+      expect(room.getRoster()).toBeNull();
+
+      const getCreateRes = await room.fetch(new Request('http://localhost/internal/create'));
+      expect(getCreateRes.status).toBe(400);
+      expect(await getCreateRes.text()).toBe('GameRoom: unsupported');
+      expect(room.getRoster()).toBeNull();
     });
 
     it('rejects FIRE payloads that are not a finite command', async () => {
@@ -2706,7 +2815,7 @@ describe('GameRoom Durable Object', () => {
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 3,
+        protocolVersion: 4,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -2739,7 +2848,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 3,
+        protocolVersion: 4,
         roundNumber: 1,
         lastSeenShotId: 1,
         lastAppliedShopEpoch: 0,

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GameEngine } from '../GameEngine';
 import * as random from '../../../utils/random';
 import { makePlayer, makeTank } from '../../__tests__/helpers';
+import { TERRAIN_MATERIAL } from '../../../types/terrain';
 
 describe('GameEngine online multiplayer', () => {
   let engine: GameEngine;
@@ -135,4 +136,36 @@ describe('GameEngine online multiplayer', () => {
     expect([25, 100, 175].map((x) => engine.getTerrain().getHeightAt(x))).toEqual(terrainBefore);
     expect(applied).toHaveBeenCalledOnce();
   });
+
+  it.each(['NUKE', 'THERMONUCLEAR'] as const)(
+    'keeps ROCK indestructible and immediate blast for %s when setLocalMatch(false) is active',
+    (weaponId) => {
+      engine.setLocalMatch(false);
+      const { host } = twoPlayerSetup();
+      const liveHost = engine.getTankManager().getPlayerById('player-1')!;
+      const liveGuest = engine.getTankManager().getPlayerById('player-2')!;
+      liveHost.inventory[weaponId] = 1;
+      const terrain = engine.getTerrain();
+      terrain.loadHeights(new Array(200).fill(120), new Array(200).fill(TERRAIN_MATERIAL.ROCK));
+      liveHost.tank.position = { x: 40, y: 120 };
+      liveGuest.tank.position = { x: 141, y: 120 };
+
+      engine.fireProjectile(
+        liveHost.tank.position,
+        { angle: 0, power: 50, weaponId },
+        host.id,
+        { shotId: 1, isFirstShotOfRound: true },
+      );
+      const projectile = engine.getActiveProjectiles()[0];
+      projectile.x = 140;
+      projectile.y = 120;
+
+      const stepSimulation = Reflect.get(engine, 'update') as (dt: number) => void;
+      stepSimulation.call(engine, 1 / 120);
+
+      expect(terrain.getHeightAt(140)).toBe(120);
+      expect(engine.getTankManager().anyTankIsFalling()).toBe(false);
+      expect(liveGuest.tank.health).toBeLessThan(liveGuest.tank.maxHealth);
+    },
+  );
 });

@@ -35,7 +35,6 @@ import {
 } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import {
-  ALL_WEAPON_IDS,
   DEFAULT_INVENTORY,
 } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
@@ -59,7 +58,6 @@ import {
   type ShopReadyMessage,
   type ShopStateMessage,
   type ShotEarningsAppliedMessage,
-  type ShotEarningsMessage,
   type EarningsRejectedReason,
   type ShotMessage,
   type ZeusAppointedMessage,
@@ -202,7 +200,6 @@ function secureRandom(): number {
   crypto.getRandomValues(array);
   return array[0] / (0xffffffff + 1);
 }
-
 function seedFromString(value: string): number {
   let seed = 0;
   for (let index = 0; index < value.length; index++) {
@@ -280,6 +277,7 @@ function migrateAcceptedFireActions(
 export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private committedState: RoomState | null = null;
+  private lastCombatStringified = new Map<string, string>();
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
   private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -295,15 +293,6 @@ export class GameRoom extends DurableObject {
    * Settlement timeouts capture the epoch at arm time and no-op if it changed.
    */
   private shotEpoch = 0;
-  /**
-   * Last SHOT broadcast while a shot is in flight. Re-sent on combat WS reconnect so
-   * observers who missed the original message still replay the projectile.
-   */
-  private lastShot: {
-    slot: number;
-    command: { angle: number; power: number; weaponId: WeaponId };
-    ownerId?: string;
-  } | null = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -406,7 +395,7 @@ export class GameRoom extends DurableObject {
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
-        if (this.state.combatSchemaVersion === 3 && this.buildGameStartMessage()) {
+        if (this.state.combatSchemaVersion === ONLINE_PROTOCOL_VERSION && this.buildGameStartMessage()) {
           if (this.state.activeShot) {
             if (!this.state.activeShot.shooterSettled && this.state.slotConfigs[this.state.activeShot.slot]?.type === "human") {
               const shotId = this.state.activeShot.shotId;
@@ -447,16 +436,29 @@ export class GameRoom extends DurableObject {
     }
     for (const [key, value] of Object.entries(processedShopActions)) entries.set(`${prefix}shop:${key}`, { kind: "shop", key, value });
     try {
+      const stringified = new Map<string, string>();
+      for (const [key, value] of entries) stringified.set(key, JSON.stringify(value));
       await this.ctx.storage.transaction(async (txn) => {
         const stored = await txn.list({ prefix: "combat:" });
         const obsolete = [...stored.keys()].filter((key) => !entries.has(key));
-        const changed: Array<[string, unknown]> = [["state", main], ...[...entries].filter(([key, value]) => JSON.stringify(stored.get(key)) !== JSON.stringify(value))];
+        const changed: Array<[string, unknown]> = [["state", main]];
+        // Wrappers are rebuilt on every saveState call, so reference equality cannot detect unchanged entries.
+        for (const [key, value] of entries) {
+          const s = stored.get(key);
+          const valueStr = stringified.get(key)!;
+          const storedStr = this.lastCombatStringified.get(key) ?? JSON.stringify(s);
+          if (s === undefined || storedStr !== valueStr) {
+            changed.push([key, value]);
+          }
+        }
         // Durable Objects batch put/delete accept at most 128 keys. All operations
         // belong to this transaction and complete before any broadcast.
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
       });
+      // Publish only committed serializations; replacing the map also removes obsolete keys.
+      this.lastCombatStringified = stringified;
       this.committedState = snapshot;
     } catch (error) {
       // Discard unpublished mutations; reload the durable state on the next activation.
@@ -486,7 +488,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     if (this.state) this.state.activeShot = null;
     this.shotEpoch++;
   }
@@ -601,7 +602,7 @@ export class GameRoom extends DurableObject {
     }
 
     this.state = {
-      combatSchemaVersion: 3, economicRevision: 0, roundEarningsByPlayer: {},
+      combatSchemaVersion: ONLINE_PROTOCOL_VERSION, economicRevision: 0, roundEarningsByPlayer: {},
       combatJournal: [], earningsResults: {}, nextEventSequence: 1, lastResolvedShotId: 0,
       roomId,
       numPlayers,
@@ -684,7 +685,11 @@ export class GameRoom extends DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === '/internal/create' || url.pathname.endsWith('/create')) {
+    if (
+      (url.pathname === '/internal/create' || url.pathname === '/create') &&
+      request.method === 'POST' &&
+      request.headers.get('Upgrade') !== 'websocket'
+    ) {
       return this.fetchCreate(request);
     }
 
@@ -725,7 +730,9 @@ export class GameRoom extends DurableObject {
         this.sockets.delete(slot);
         try {
           old?.close(4001, 'replaced by new connection for same slot');
-        } catch {}
+        } catch (error: unknown) {
+          console.warn('[GameRoom] Failed to close replaced socket', { slot, error });
+        }
       }
 
       try {
@@ -1023,7 +1030,7 @@ export class GameRoom extends DurableObject {
   }
 
   private buildGameStartMessage(): GameStartMessage | null {
-    if (this.state?.started && this.state.combatSchemaVersion !== 3) return null;
+    if (this.state?.started && this.state.combatSchemaVersion !== ONLINE_PROTOCOL_VERSION) return null;
     if (!this.state?.started || !isRoundMap(this.state.map) ||
       this.state.map.roundNumber !== this.state.roundNumber) return null;
     const message = {
@@ -1138,7 +1145,7 @@ export class GameRoom extends DurableObject {
     this.state.map = prepared.map;
     this.state.currentPlayerIndex = 0;
     this.state.started = true;
-    this.state.combatSchemaVersion = 3;
+    this.state.combatSchemaVersion = ONLINE_PROTOCOL_VERSION;
     this.state.roundEarningsByPlayer = Object.fromEntries(this.state.players.map((p) => [p.id, 0]));
     this.state.startAt = Date.now();
     this.state.authorityOrder = [...humanSlots].sort((left, right) => {
@@ -1334,7 +1341,6 @@ export class GameRoom extends DurableObject {
     const epoch = this.shotEpoch;
     const shotId = this.state.nextShotId++;
     this.state.shotNumberInRound++;
-    this.lastShot = { slot: fromSlot, command, ownerId };
     this.state.activeShot = {
       shotId,
       physicsSeed: seedFromRoomShot(this.state.roomId, this.state.roundNumber, shotId),
@@ -1428,7 +1434,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     this.state.activeShot = null;
     // Invalidate any timeout still racing into this method.
     this.shotEpoch++;
@@ -1551,7 +1556,6 @@ export class GameRoom extends DurableObject {
       this.clearShotSettledTimeout();
       this.shotInFlight = false;
       this.awaitingShotFromSlot = null;
-      this.lastShot = null;
       this.state.activeShot = null;
       this.state.roundEnded = true;
       this.resetZeusRoundState();
@@ -1587,7 +1591,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     this.state.activeShot = null;
     this.shotEpoch++;
     this.state.currentPlayerIndex = zeusSlot;

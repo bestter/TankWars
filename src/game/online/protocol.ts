@@ -18,8 +18,8 @@ import type {
 } from "../shop/shopTransaction";
 import { isValidActionId } from "./actionId";
 
-export const ONLINE_PROTOCOL_VERSION = 3 as const;
-export const MINIMUM_CLIENT_PROTOCOL_VERSION = 3 as const;
+export const ONLINE_PROTOCOL_VERSION = 4 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 4 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
@@ -318,25 +318,34 @@ function isFireCommand(value: unknown): value is FireCommand {
   );
 }
 
+// for...in avoids allocating entry arrays; inputs are plain JSON records
+// with no enumerable inherited properties (Object.prototype must be unpolluted).
 function isInventory(
   value: unknown,
 ): value is Partial<Record<WeaponId, number>> {
   if (!isRecord(value)) return false;
-  return Object.entries(value).every(
-    ([weaponId, stock]) =>
-      isWeaponId(weaponId) && isSafeNonNegativeInteger(stock),
-  );
+  for (const weaponId in value) {
+    if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(value[weaponId])) {
+      return false;
+    }
+  }
+  return true;
 }
 
+// for...in avoids allocating arrays at both levels; the same plain JSON,
+// unpolluted-prototype assumption as isInventory applies to both levels.
 function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
-  return Object.values(value).every((playerCounters) => {
+  for (const playerId in value) {
+    const playerCounters = value[playerId];
     if (!isRecord(playerCounters)) return false;
-    return Object.entries(playerCounters).every(
-      ([weaponId, count]) =>
-        isWeaponId(weaponId) && isSafeNonNegativeInteger(count),
-    );
-  });
+    for (const weaponId in playerCounters) {
+      if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(playerCounters[weaponId])) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const SHOP_DENIALS: readonly ShopDenial[] = [
@@ -371,7 +380,7 @@ const FIRE_REJECTION_REASONS: readonly FireRejectedReason[] = [
   "ILLEGAL_INVENTORY",
 ];
 
-function isFireRejectedReason(value: unknown): value is FireRejectedReason {
+export function isFireRejectedReason(value: unknown): value is FireRejectedReason {
   return (
     typeof value === "string" &&
     FIRE_REJECTION_REASONS.includes(value as FireRejectedReason)
@@ -438,7 +447,15 @@ function isCombatIdentity(value: Record<string, unknown>): boolean {
 }
 
 function isEconomicResult(value: Record<string, unknown>): boolean {
-  return isSafeNonNegativeInteger(value.economicRevision) && isRecord(value.roundEarningsByPlayer) && Object.values(value.roundEarningsByPlayer).every(isSafeNonNegativeInteger);
+  if (!isSafeNonNegativeInteger(value.economicRevision) || !isRecord(value.roundEarningsByPlayer)) {
+    return false;
+  }
+  for (const key in value.roundEarningsByPlayer) {
+    if (!isSafeNonNegativeInteger(value.roundEarningsByPlayer[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isZeusStrike(value: unknown): value is ZeusStrikeMessage {

@@ -55,6 +55,7 @@ foreach ($name in @("WORKER_API_URL", "VITE_API_BASE", "VITE_HOTSEAT_ONLY")) {
 $global:deploymentTestCommandLog = [System.Collections.Generic.List[object]]::new()
 $global:deploymentTestFailureCommand = ""
 $global:deploymentTestDeployOutput = "https://tankwars-api.example.workers.dev"
+$global:deploymentTestDoctorWarning = $false
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -63,6 +64,10 @@ function Assert-True {
 
 function npm {
   $label = "npm " + ($args -join " ")
+  if ($args[1] -eq "doctor" -and $global:deploymentTestDoctorWarning) {
+    Assert-True ($label -eq "npm run doctor --verbose --scope changed --blocking error") "Les avertissements React Doctor doivent être non bloquants."
+    Write-Host "React Doctor : avertissement simulé, aucune erreur."
+  }
   $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path; Api = $env:VITE_API_BASE; Hotseat = $env:VITE_HOTSEAT_ONLY })
   $global:LASTEXITCODE = [int]($label -eq $global:deploymentTestFailureCommand -or ($global:deploymentTestFailureCommand -eq "production-build" -and $label -eq "npm run build" -and $env:VITE_HOTSEAT_ONLY -eq "false"))
 }
@@ -103,6 +108,7 @@ try {
   $validHealth = '{"ok":true,"service":"tankwars-api","protocolVersion":3,"minimumClientProtocolVersion":3}'
   $cases = @(
     @{ Name = "succès et variables absentes"; Success = $true },
+    @{ Name = "avertissement React Doctor visible et non bloquant"; Success = $true; DoctorWarning = $true },
     @{ Name = "succès et variables présentes"; Success = $true; Present = $true; Url = "https://tankwars-api.example.workers.dev:443/" },
     @{ Name = "versions lues dynamiquement"; Success = $true; Protocol = $validProtocol.Replace('3 as const', '4 as const'); Body = $validHealth.Replace(':3', ':4'); Version = 4 },
     @{ Name = "ancien protocole"; Body = $validHealth.Replace(':3', ':2') },
@@ -133,12 +139,13 @@ try {
     "https://tankwars-api.example.workers.dev?SECRET_MARKER", "https://tankwars-api.example.workers.dev#SECRET_MARKER",
     "https://tankwars-api.example.workers.dev.evil.invalid", "https://127.0.0.1", "https://tankwars-api.example.workers.dev/a/.."
   )) { $cases += @{ Name = "URL interdite"; Url = $url; NoCommands = $true } }
-  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --scope changed --blocking warning", "git diff --check")) {
+  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --scope changed --blocking error", "git diff --check")) {
     $cases += @{ Name = "échec $validation"; Failure = $validation; NoProbe = $true; NoWorker = $true }
   }
   foreach ($case in $cases) {
     $global:deploymentTestCommandLog.Clear()
     $global:deploymentTestFailureCommand = $case.Failure
+    $global:deploymentTestDoctorWarning = $case.DoctorWarning -eq $true
     $global:deploymentTestDeployOutput = if ($case.ContainsKey("Output")) { $case.Output } else { "https://tankwars-api.example.workers.dev" }
     [DeploymentProbeHandler]::Body = if ($case.ContainsKey("Body")) { $case.Body } else { $validHealth }
     [DeploymentProbeHandler]::Status = if ($case.ContainsKey("Status")) { $case.Status } else { 200 }
@@ -159,6 +166,7 @@ try {
     Assert-True ($env:VITE_API_BASE -eq $(if ($case.Present) { "original-api" } else { $null })) "API non restaurée."
     Assert-True ($env:VITE_HOTSEAT_ONLY -eq $(if ($case.Present) { "original-hotseat" } else { $null })) "Mode non restauré."
     Assert-True ($output -notmatch 'SECRET_MARKER') "Donnée sensible dans les journaux."
+    if ($case.DoctorWarning) { Assert-True ($output -match 'React Doctor : avertissement simulé, aucune erreur\.') "Diagnostic React Doctor masqué." }
     $labels = @($global:deploymentTestCommandLog | ForEach-Object Label)
     Assert-True (($labels -contains "pages") -eq ($case.Success -eq $true -or $case.PagesAttempted -eq $true)) "Publication Pages inattendue : $($case.Name)."
     foreach ($command in $global:deploymentTestCommandLog) { Assert-True ($command.Location -eq $fixtureRoot) "Commande hors du dépôt." }
@@ -167,7 +175,7 @@ try {
     if ($case.NoProbe) { Assert-True ([DeploymentProbeHandler]::Calls -eq 0) "Sonde après échec préalable." }
     if ($case.Wait) { Assert-True ($elapsed.Elapsed.TotalSeconds -lt 3) "Budget de sonde non respecté." }
     if ($case.Success) {
-      Assert-True (($labels -join '|') -eq 'npm run lint|npm run build|npm run test|npm run doctor --verbose --scope changed --blocking warning|git diff --check|worker|npm run build|pages') "Ordre incorrect : $($labels -join '|')"
+      Assert-True (($labels -join '|') -eq 'npm run lint|npm run build|npm run test|npm run doctor --verbose --scope changed --blocking error|git diff --check|worker|npm run build|pages') "Ordre incorrect : $($labels -join '|')"
       $build = @($global:deploymentTestCommandLog | Where-Object Label -eq 'npm run build')[1]
       Assert-True ($build.Api -eq 'https://tankwars-api.example.workers.dev' -and $build.Hotseat -eq 'false') "Build online incorrect."
       $expectedVersion = if ($case.Version) { $case.Version } else { 3 }
@@ -180,7 +188,7 @@ try {
 finally {
   Set-Location -LiteralPath $originalLocation.Path
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process") }
-  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput -Scope Global -ErrorAction SilentlyContinue
+  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput, deploymentTestDoctorWarning -Scope Global -ErrorAction SilentlyContinue
   # Seul le répertoire temporaire explicitement créé ci-dessus est supprimé.
   $resolvedFixture = [System.IO.Path]::GetFullPath($fixtureRoot)
   $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar

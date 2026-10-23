@@ -11,7 +11,7 @@ import { secureRandom } from "../../utils/random";
  * - Communication with React layer happens exclusively via callbacks
  *   (onProjectileHit, onAllProjectilesSettled, etc.).
  * - Canvas is only ever touched via the `render(ctx)` method called from outside.
- * - AI decisions are injected via the AIStrategy interface (see src/game/entities/ai/).
+ * - AI decisions are handled externally via TurnManager and AIEngine implementations.
  */
 
 import { TerrainManager } from "./Terrain";
@@ -20,11 +20,12 @@ import { launchFromBarrel } from "./projectileMotion";
 import { TankManager } from "../entities/TankManager";
 import { TurnManager } from "./TurnManager";
 import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
+import type { CombatObserver } from "../endurance/types";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
+import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
 import type { Vector2, FireCommand, RoundResult } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
-import type { AIStrategy } from "../entities/ai/AIStrategy";
 import type { AIEngine } from "../entities/ai/AIEngine";
 import i18n from "../../i18n";
 import { rollRoundWind } from "../wind";
@@ -33,6 +34,7 @@ import {
   type CombatDamageEvent,
   type CombatDestructionEvent,
   type ShotRewardResult,
+  type PlayerShotReward,
 } from "../economy/shotRewards";
 import {
   allocateZeusStrike,
@@ -88,6 +90,19 @@ interface ActiveZeusVisual {
   impactApplied: boolean;
   localAuthoritative: boolean;
   result: ZeusStrikeResult | null;
+}
+
+export interface TerrainImpactParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: 1 | 2;
+  color: string;
+  kind: "dust" | "grain" | "shard";
+  material: TerrainMaterial;
 }
 
 type FireworkParticle = {
@@ -169,6 +184,7 @@ export class GameEngine {
 
   public setLocalMatch(local: boolean): void {
     this.localMatch = local;
+    this.physicsEngine.setLocalMatch(local);
   }
 
   public isRoundCombatActive(): boolean {
@@ -180,6 +196,7 @@ export class GameEngine {
     this.roundCombatActive = false;
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
+    this.terrainImpactParticles = [];
     this.clearZeusVisuals();
   }
 
@@ -199,6 +216,10 @@ export class GameEngine {
     color: string;
   }> = [];
   private thermoFlashLife = 0; // short full-screen red flash on thermonuclear impact for "huge" punch
+
+  // Particules VGA dédiées aux impacts terrain/puits (séparées de impactExplosions, jamais de secureRandom/Math.random).
+  private terrainImpactParticles: TerrainImpactParticle[] = [];
+  private terrainVfxSeed = 0x9e3779b9;
 
   // === Registre économique de la manche et de la résolution active ===
   private roundDamageDealt: Record<string, number> = {};
@@ -228,6 +249,7 @@ export class GameEngine {
 
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
+  public combatObserver?: CombatObserver;
   public onAllProjectilesSettled?: () => void;
   /** Fired when a new combat round rolls wind (React HUD). */
   public onWindChange?: (force: number) => void;
@@ -260,10 +282,12 @@ export class GameEngine {
     this.terrain = new TerrainManager(this.width, this.height);
 
     this.physicsEngine = new PhysicsEngine();
+    this.physicsEngine.setLocalMatch(this.localMatch);
     this.tankManager = new TankManager();
 
     // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
     this.tankManager.onPlayerDied = (playerId, cause, details) => {
+      this.combatObserver?.emit({ kind: "death", playerId, cause });
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion" || cause === "zeus") {
         this.playTankDestroyedByExplosionSound();
@@ -272,10 +296,12 @@ export class GameEngine {
       }
     };
     this.tankManager.onDamageApplied = (event) => {
+      this.combatObserver?.emit({ kind: "damage", event });
       if (event.shotId !== this.activeShotLedger?.shotId) return;
       this.activeShotLedger.damageEvents.push(event);
     };
     this.tankManager.onTankDestroyed = (event) => {
+      this.combatObserver?.emit({ kind: "destruction", event });
       if (event.shotId !== this.activeShotLedger?.shotId) return;
       this.activeShotLedger.destructionEvents.push(event);
     };
@@ -324,13 +350,14 @@ export class GameEngine {
     this.physicsEngine.onProjectileHit = (hit) => {
       const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
+      const blastRadius = weapon?.blastRadius ?? 28;
 
       this.onProjectileHit?.({
         x: hit.x,
         y: hit.y,
         weaponId: hit.weaponId,
         ownerId: firer,
-        blastRadius: weapon?.blastRadius ?? 28,
+        blastRadius,
       });
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
@@ -339,6 +366,16 @@ export class GameEngine {
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
       if (hit.weaponId === "THERMONUCLEAR") {
         this.spawnThermonuclearExplosion(hit.x, hit.y);
+      } else if (
+        !this.config.headless &&
+        hit.weaponId !== "BULLDOZER" &&
+        (hit.weaponId === "DRILLER" || blastRadius > 0)
+      ) {
+        this.spawnTerrainImpactParticles(
+          hit.x,
+          hit.y,
+          this.physicsEngine.getLastImpactMaterial(),
+        );
       }
     };
 
@@ -366,6 +403,8 @@ export class GameEngine {
   public getTurnManager(): TurnManager {
     return this.turnManager;
   }
+
+  public getPhysicsEngine(): PhysicsEngine { return this.physicsEngine; }
 
   /** Permet d'injecter une stratégie d'IA (ex: AISimpleStrategy or AIByProfileStrategy for mixed v1/v2). */
   public setAIEngine(aiEngine: AIEngine): void {
@@ -437,10 +476,12 @@ export class GameEngine {
   ): void {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
+      this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "unknown-weapon" });
       console.warn(`Unknown weapon: ${command.weaponId}`);
       return;
     }
     if (this.activeShotLedger !== null) {
+      this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "active-shot" });
       console.warn("[GameEngine] Refus d'un second tir avant la finalisation du tir actif.");
       return;
     }
@@ -449,6 +490,7 @@ export class GameEngine {
     this.currentFirerId = ownerId;
     this.shotNumberInRound++;
     const shotId = identity?.shotId ?? this.nextShotId++;
+    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) return;
     const isFirstShotOfRound = identity?.isFirstShotOfRound ?? this.shotNumberInRound === 1;
     const aliveBeforeShot = this.tankManager.getAlivePlayers().map((player) => player.id);
     this.activeShotLedger = {
@@ -495,6 +537,8 @@ export class GameEngine {
       ownerColor,
       { shotId, munitionId: 0 },
     );
+    this.combatObserver?.emit({ kind: "shot-launched", shotId, playerId: ownerId, command: { ...command },
+      position: { ...from }, launch: { x: launchX, y: launchY } });
   }
 
   /** Associe l'identifiant serveur au tir optimiste encore actif. */
@@ -507,22 +551,6 @@ export class GameEngine {
     for (const event of this.activeShotLedger.destructionEvents) event.shotId = shotId;
     this.tankManager.reassignShotAttribution(previousShotId, shotId);
     this.physicsEngine.reassignShotId(previousShotId, shotId);
-    return true;
-  }
-
-  /**
-   * Optional: Ask an AI strategy to decide and immediately fire.
-   * This keeps AI completely outside the engine core.
-   */
-  public requestAIShot(
-    aiStrategy: AIStrategy,
-    self: import("../../types/player").Player,
-    worldView: import("../entities/ai/AIStrategy").AIWorldView,
-  ): boolean {
-    const decision = aiStrategy.decideShot(self, worldView);
-    if (!decision) return false;
-
-    this.fireProjectile(self.tank.position, decision, self.id);
     return true;
   }
 
@@ -567,6 +595,7 @@ export class GameEngine {
       return null;
     }
     const survivorsAfterShot = this.tankManager.getAlivePlayers().map((player) => player.id);
+    if (this.combatObserver?.emit({ kind: "resolved", shotId: ledger.shotId }) === false) return null;
     const reward = calculateShotRewards({
       ...ledger,
       playerCountAtMatchStart: this.tankManager.getPlayers().length,
@@ -636,7 +665,8 @@ export class GameEngine {
     this.tankManager.clearShotAttribution();
 
     if (this.localMatch) {
-      this.applyResolvedEarnings(preview.shotId, balances);
+      this.applyResolvedEarnings(preview.shotId, balances, preview.awards);
+      this.combatObserver?.emit({ kind: "shot-result", shotId: preview.shotId, awards: structuredClone(preview.awards) });
       const evaluation = evaluateZeusDeadlock(
         this.zeusState,
         this.tankManager.getPlayers(),
@@ -658,6 +688,7 @@ export class GameEngine {
   public applyResolvedEarnings(
     shotId: number,
     balances: ReadonlyArray<{ playerId: string; money: number }>,
+    awards: readonly PlayerShotReward[] = [],
   ): void {
     if (!Number.isSafeInteger(shotId) || shotId <= this.lastAppliedShotId) return;
     const seen = new Set<string>();
@@ -680,6 +711,11 @@ export class GameEngine {
       }
     }
     this.lastAppliedShotId = shotId;
+    const componentsByPlayer = new Map(awards.map(award => [award.playerId, award.components]));
+    for (const update of updates) if (update.delta > 0) this.combatObserver?.emit({ kind: "credit", credit: {
+      source: "shot", causalId: shotId, playerId: update.player.id, amount: update.delta,
+      before: update.money - update.delta, after: update.money,
+      components: structuredClone(componentsByPlayer.get(update.player.id) ?? []) } });
   }
 
   public syncAuthoritativeBalances(
@@ -821,12 +857,17 @@ export class GameEngine {
             player.money +
             (player.id === reward.award.playerId ? reward.award.amount : 0),
         }));
+        const before = this.tankManager.getPlayerById(reward.award.playerId)!.money;
         this.applyZeusBalances(balances);
+        if (reward.award.amount > 0) this.combatObserver?.emit({ kind: "credit", credit: { source: "zeus", causalId: visual.strike.strikeId,
+          playerId: reward.award.playerId, amount: reward.award.amount, before,
+          after: this.tankManager.getPlayerById(reward.award.playerId)!.money, components: [] } });
         visual.result = { ...visual.strike, ...reward, balances };
         this.lastAppliedZeusStrikeId = visual.strike.strikeId;
         this.pendingSpecialRoundOutcome = reward.roundOutcome;
         this.zeusFlashLife = 8;
         this.onZeusStrikeApplied?.(visual.result);
+        this.combatObserver?.emit({ kind: "zeus", result: visual.result });
       }
     }
 
@@ -893,6 +934,7 @@ export class GameEngine {
   public clearRoundCelebration(): void {
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationCenterX = 0;
     this.celebrationColor = "#FFFFFF";
@@ -944,6 +986,7 @@ export class GameEngine {
     this.physicsEngine.clear(false);
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationWinner = null;
@@ -1215,6 +1258,10 @@ export class GameEngine {
 
     if (this.impactExplosions.length > 0) {
       this.drawImpactExplosions(ctx);
+    }
+
+    if (this.terrainImpactParticles.length > 0) {
+      this.drawTerrainImpactParticles(ctx);
     }
 
     // Petit message de victoire sur le canvas seulement pour fin de match
@@ -1981,6 +2028,152 @@ export class GameEngine {
     ctx.globalAlpha = 1;
   }
 
+  public getTerrainImpactParticles(): ReadonlyArray<TerrainImpactParticle> {
+    return this.terrainImpactParticles;
+  }
+
+  public getImpactExplosions(): ReadonlyArray<{
+    x: number;
+    y: number;
+    life: number;
+    maxLife: number;
+    size: number;
+    color: string;
+  }> {
+    return this.impactExplosions;
+  }
+
+  private nextTerrainVfxRandom(): number {
+    let t = (this.terrainVfxSeed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  /**
+   * Génère le nuage de particules VGA selon le matériau de la colonne d'impact lu avant mutation.
+   * N'appelle jamais secureRandom ni Math.random.
+   */
+  private spawnTerrainImpactParticles(
+    x: number,
+    y: number,
+    material: TerrainMaterial,
+  ): void {
+    if (material === TERRAIN_MATERIAL.DIRT) {
+      const palette = [VGA_PALETTE.BROWN, VGA_PALETTE.GREEN] as const;
+      for (let i = 0; i < 8; i++) {
+        const angle = -Math.PI * (0.15 + 0.7 * (i / 7));
+        const speed = 1.1 + this.nextTerrainVfxRandom() * 1.4;
+        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 16,
+          maxLife: 16,
+          size,
+          color: palette[i % palette.length],
+          kind: "dust",
+          material,
+        });
+      }
+      return;
+    }
+
+    if (material === TERRAIN_MATERIAL.SOFT) {
+      const palette = [VGA_PALETTE.YELLOW, VGA_PALETTE.BROWN] as const;
+      for (let i = 0; i < 12; i++) {
+        const angle = -Math.PI * (0.12 + 0.76 * (i / 11));
+        const speed = 1.2 + this.nextTerrainVfxRandom() * 1.6;
+        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 24,
+          maxLife: 24,
+          size,
+          color: palette[i % palette.length],
+          kind: "dust",
+          material,
+        });
+      }
+      for (let i = 0; i < 6; i++) {
+        const angle = -Math.PI * (0.2 + 0.6 * (i / 5));
+        const speed = 1.5 + this.nextTerrainVfxRandom() * 1.3;
+        const size: 1 | 2 = i % 2 === 0 ? 1 : 2;
+        this.terrainImpactParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 24,
+          maxLife: 24,
+          size,
+          color: palette[i % palette.length],
+          kind: "grain",
+          material,
+        });
+      }
+      return;
+    }
+
+    // ROCK : 6 éclats (life = maxLife = 12 frames rendues, palette DARK_GRAY, GRAY)
+    const palette = [VGA_PALETTE.DARK_GRAY, VGA_PALETTE.GRAY] as const;
+    for (let i = 0; i < 6; i++) {
+      const angle = -Math.PI * (0.18 + 0.64 * (i / 5));
+      const speed = 1.6 + this.nextTerrainVfxRandom() * 1.5;
+      const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
+      this.terrainImpactParticles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 12,
+        maxLife: 12,
+        size,
+        color: palette[i % palette.length],
+        kind: "shard",
+        material: TERRAIN_MATERIAL.ROCK,
+      });
+    }
+  }
+
+  /**
+   * Dessine, fait avancer et décrémente les particules d'impact par frame rendue dans render(ctx).
+   * Les grains de sable retombent visuellement sans aucune collision de jeu.
+   */
+  private drawTerrainImpactParticles(ctx: CanvasRenderingContext2D): void {
+    let write = 0;
+    for (let read = 0; read < this.terrainImpactParticles.length; read++) {
+      const p = this.terrainImpactParticles[read];
+      const alpha = Math.max(0.1, p.life / p.maxLife);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.kind === "grain") {
+        p.vy += 0.24;
+      } else if (p.kind === "shard") {
+        p.vy += 0.14;
+      } else {
+        p.vx *= 0.94;
+        p.vy = p.vy * 0.94 + 0.05;
+      }
+      p.life -= 1;
+
+      if (p.life > 0) {
+        this.terrainImpactParticles[write++] = p;
+      }
+    }
+    this.terrainImpactParticles.length = write;
+    ctx.globalAlpha = 1;
+  }
+
   public isGameOver(): boolean {
     return this.gameOver;
   }
@@ -2076,6 +2269,7 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.fireworks = [];
     this.impactExplosions = [];
+    this.terrainImpactParticles = [];
     this.thermoFlashLife = 0;
     this.celebrationWinnerTankId = null;
     this.celebrationWinner = null;

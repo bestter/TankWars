@@ -19,6 +19,10 @@ describe('Worker Entrypoint', () => {
 
     const env: Env = {
       GAME_ROOM: mockNamespace,
+      RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'rate-limit-id' }),
+        get: vi.fn().mockReturnValue({ fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })) }),
+      } as unknown as DurableObjectNamespace,
     };
 
     return { env, mockStub, mockNamespace };
@@ -39,8 +43,8 @@ describe('Worker Entrypoint', () => {
       };
       expect(data.ok).toBe(true);
       expect(data.service).toBe('tankwars-api');
-      expect(data.protocolVersion).toBe(3);
-      expect(data.minimumClientProtocolVersion).toBe(3);
+      expect(data.protocolVersion).toBe(4);
+      expect(data.minimumClientProtocolVersion).toBe(4);
       expectSecurityHeaders(response);
     });
   });
@@ -207,6 +211,39 @@ describe('Worker Entrypoint', () => {
       expect(response.status).toBe(200);
       expect(mockNamespace.idFromName).toHaveBeenCalledWith(validRoomId);
     });
+
+    it('rejects multi-segment path traversal on /join without waking a GameRoom DO', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/extra/join', {
+        method: 'POST',
+      });
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: 'Invalid room ID' });
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+    });
+
+    it('enforces RATE_LIMITER on /api/rooms/:roomId/join before waking a GameRoom DO', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      env.RATE_LIMITER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'rate-limit-id' }),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn().mockResolvedValue(
+            new Response(null, { status: 429, headers: { 'Retry-After': '42' } }),
+          ),
+        }),
+      } as unknown as DurableObjectNamespace;
+
+      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/join', {
+        method: 'POST',
+      });
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get('Retry-After')).toBe('42');
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+    });
   });
 
   describe('/api/rooms/:roomId/ws', () => {
@@ -280,6 +317,16 @@ describe('Worker Entrypoint', () => {
       expect(response.status).toBe(200);
       expect(mockNamespace.idFromName).toHaveBeenCalledWith(validRoomId);
       expect(mockStub.fetch).toHaveBeenCalled();
+    });
+
+    it('rejects WebSocket upgrade with extra path segments without waking a GameRoom DO', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms/test-room-123/extra/ws?slot=1&token=token123');
+      const response = await worker.fetch(request, env);
+
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe('Missing or invalid room/slot/token');
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { makePlayer } from "../../../game/__tests__/helpers";
 import { createEmptyShopSession } from "../../gameCanvasReducer";
+import { fixture } from "../../../game/endurance/__tests__/helpers";
 import {
   processNextShopperIfAI,
   type LocalHotseatShopHost,
@@ -18,6 +19,7 @@ describe("processNextShopperIfAI", () => {
     const finishShopPhase = vi.fn();
     const dispatch = vi.fn();
     const host: LocalHotseatShopHost = {
+      endurance: fixture().run,
       gameMode: "local",
       initialPlayerCount: 4,
       engineRef: { current: null },
@@ -31,6 +33,12 @@ describe("processNextShopperIfAI", () => {
       clearShopAiTimeout: vi.fn(),
       finishShopPhase,
     };
+    const visit = vi.spyOn(host.endurance!, "beginShopVisit").mockReturnValue("visit-1");
+    const applied = vi.spyOn(host.endurance!, "endShopVisit").mockImplementation((_id, player, purchases) => {
+      expect(host.shopPlayersRef.current[0]).toBe(player);
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "APPLY_LOCAL_SHOP_TRANSACTION" }));
+      expect(purchases.length).toBeGreaterThan(0);
+    });
 
     processNextShopperIfAI(host);
 
@@ -53,5 +61,6 @@ describe("processNextShopperIfAI", () => {
       expect.objectContaining({ type: "APPLY_LOCAL_SHOP_TRANSACTION" }),
     );
     expect(finishShopPhase).toHaveBeenCalledOnce();
+    expect(visit).toHaveBeenCalledOnce(); expect(applied).toHaveBeenCalledOnce();
   });
 });

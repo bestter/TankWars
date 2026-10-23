@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject } from "react";
+import type { EnduranceSession } from "../game/endurance/session";
 import type { GameEngine, ResolvedShotPreview } from "../game/engine/GameEngine";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { trackEvent } from "../utils/analytics";
@@ -8,6 +9,7 @@ import { ZEUS_ANNOUNCEMENT_DURATION_MS, type GameCanvasAction } from "./gameCanv
 import { buildOverlayAwards } from "./sessionPresentation";
 
 export function wireEngineSessionCallbacks(opts: {
+  readonly endurance?: EnduranceSession;
   readonly engine: GameEngine;
   readonly dispatch: Dispatch<GameCanvasAction>;
   readonly gameMode: "local" | "online";
@@ -30,6 +32,7 @@ export function wireEngineSessionCallbacks(opts: {
   readonly goToSummary: () => void;
 }): void {
   const { engine, dispatch } = opts;
+  const enduranceBlockId = opts.endurance?.block?.id;
   const tm = engine.getTurnManager();
 
   engine.onWindChange = (wind) => dispatch({ type: "SET_WIND", wind });
@@ -143,6 +146,9 @@ export function wireEngineSessionCallbacks(opts: {
   };
 
   engine.onRoundEnded = (payload) => {
+    if (opts.endurance && (!opts.endurance.ready || opts.endurance.block?.id !== enduranceBlockId)) return;
+    opts.endurance?.completeRound(payload.survivors.map(p => p.id));
+    if (opts.endurance && !opts.endurance.ready) return;
     if (opts.gamePhaseRef.current !== "COMBAT") return;
     opts.clearZeusAnnouncement();
     opts.roundEndFromNetworkRef.current = false;
@@ -167,7 +173,7 @@ export function wireEngineSessionCallbacks(opts: {
       (count, player) => count + (player.isHuman ? 1 : 0),
       0,
     );
-    trackEvent("round_end", {
+    if (!opts.endurance) trackEvent("round_end", {
       roundNumber: opts.currentMancheRef.current,
       winnerId: winner ? winner.id : null,
       winnerType,

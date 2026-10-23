@@ -18,10 +18,11 @@
 
 import { useState, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { randomUUID } from "../utils/randomUUID";
 import type { Player, AiProfile } from "../types/player";
 import { VGA_PALETTE } from "../types/game";
 type Color = (typeof VGA_PALETTE)[keyof typeof VGA_PALETTE];
-import { DEFAULT_INVENTORY } from "../types/weapon";
+import { createLocalPlayers } from "./localPlayers";
 import { MainMenuView } from "./MainMenuView";
 import {
   AI_PROFILE_UI,
@@ -32,6 +33,7 @@ import { getUniqueAiName } from "./playerNameUi";
 import { usePlayerNameValidation } from "./usePlayerNameValidation";
 
 export interface MainMenuProps {
+  onEndurance?: () => void;
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
   onStartGame: (players: Player[]) => void;
   /** Ouvre le lobby multijoueur en ligne (création / URLs) — parallèle au hotseat local */
@@ -62,7 +64,7 @@ const TANK_COLOR_POOL: readonly Color[] = [
   VGA_PALETTE.VOLT_PURPLE, // #B300FF
 ] as const;
 
-export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
+export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuProps) {
   const { t } = useTranslation();
 
   const getDefaultHumanName = (index: number): string => {
@@ -86,7 +88,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
         name: getDefaultHumanName(0),
         isHuman: true,
         color: TANK_COLOR_POOL[0],
-        id: crypto.randomUUID(),
+        id: randomUUID(),
       },
     ];
     initialConfigs.push({
@@ -97,7 +99,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
       ),
       isHuman: false,
       color: TANK_COLOR_POOL[1],
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       aiProfile: DEFAULT_AI_PROFILE,
     });
     return initialConfigs;
@@ -133,7 +135,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
             : getDefaultAiName(defaultAiProfile, next, idx),
           isHuman: defaultIsHuman,
           color: newColor,
-          id: `p-${crypto.randomUUID()}-${idx}`,
+          id: `p-${randomUUID()}-${idx}`,
         };
         if (!defaultIsHuman) {
           newCfg.aiProfile = defaultAiProfile;
@@ -239,34 +241,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
     );
     if (hasEmptyName || !namesAreUnique) return;
 
-    const players: Player[] = playerConfigs.map((cfg, i) => {
-      const color = cfg.color;
-      const id = `player-${i + 1}`;
-      const tankId = `tank-${i + 1}`;
-      const trimmedName = cfg.name.trim();
-
-      return {
-        id,
-        name: trimmedName,
-        isHuman: cfg.isHuman,
-        aiProfile: cfg.isHuman ? undefined : (cfg.aiProfile ?? "v1-random"),
-        tank: {
-          id: tankId,
-          position: { x: 80 + i * 160, y: 280 }, // placeholder (spawnTanks recalcule sur terrain)
-          angle: i < Math.ceil(numPlayers / 2) ? -32 : 32,
-          power: 50,
-          health: 100,
-          maxHealth: 100,
-          shield: 40,
-          maxShield: 40,
-          isDead: false,
-          color,
-          currentWeapon: "MISSILE",
-        },
-        money: 250,
-        inventory: { ...DEFAULT_INVENTORY },
-      };
-    });
+    const players = createLocalPlayers(playerConfigs);
 
     onStartGame(players);
   };
@@ -292,6 +267,7 @@ export function MainMenu({ onStartGame, onPlayOnline }: MainMenuProps) {
       onControllerChange={handleControllerChange}
       onStart={handleStartClick}
       onPlayOnline={onPlayOnline}
+      onEndurance={onEndurance}
     />
   );
 }

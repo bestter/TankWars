@@ -1,4 +1,5 @@
 import { ShotAdvisorPanel } from "./advisor/ShotAdvisorPanel";
+import type { EnduranceSession } from "../game/endurance/session";
 import { type RoundMap } from "../game/round/prepareRound";
 import { useTranslation } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
@@ -28,6 +29,7 @@ const FIRE_REJECTION_KEYS = {
 } as const satisfies Record<FireRejectedReason, string>;
 
 export interface GameCanvasProps {
+  endurance?: EnduranceSession;
   /** Joueurs pré-configurés depuis le MainMenu (phase initiale 'MENU'). Si absent → démo 2 joueurs. */
   initialPlayers?: Player[];
   /** Permet de retourner à l'écran titre (démontage engine + ressources). */
@@ -224,6 +226,7 @@ function NewGameButton({
 }
 
 export function GameCanvas({
+  endurance,
   initialPlayers,
   onReturnToMenu,
   gameMode,
@@ -259,7 +262,7 @@ export function GameCanvas({
     shopDisplayPlayer,
     localShopDone,
     dismissEarningsOverlay,
-  } = useGameSession({ initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialMap, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
+  } = useGameSession({ endurance, initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialMap, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,
@@ -288,7 +291,7 @@ export function GameCanvas({
           {state.roundPreparationError === "EXHAUSTED" && <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button>}
         </div>
       )}
-      <MenuButton canvasWidth={CANVAS_WIDTH} onReturnToMenu={onReturnToMenu} />
+      <MenuButton canvasWidth={CANVAS_WIDTH} onReturnToMenu={endurance ? undefined : onReturnToMenu} />
 
       <div style={{ position: "relative" }}>
         <TransientOverlays
@@ -340,8 +343,8 @@ export function GameCanvas({
           isLocalShopTurn={isLocalShopTurn}
           shopDisplayPlayer={shopDisplayPlayer}
           localShopDone={localShopDone}
-          onNextRound={handleNextRound}
-          onNewGameFromSummary={handleNewGameFromSummary}
+          onNextRound={endurance ? () => {} : handleNextRound}
+          onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
           onShopBuySell={handleShopBuySell}
           onShopReady={handleShopReady}
         />

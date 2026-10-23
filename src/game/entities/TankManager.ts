@@ -57,6 +57,8 @@ export interface ExplosionDamageOptions {
   terrain?: TerrainManager;
   shotId?: number;
   munitionId?: number;
+  canCarveRock?: boolean;
+  directHitTankIds?: ReadonlySet<string>;
 }
 
 /** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
@@ -102,6 +104,7 @@ export class TankManager {
   ) => void;
 
   public onDamageApplied?: (event: CombatDamageEvent) => void;
+  public onBulldozerDisplacement?: (playerId: string, distance: number) => void;
   public onTankDestroyed?: (event: CombatDestructionEvent) => void;
 
   /** Called (throttled by caller) while a tank has downward velocity after losing ground support (for scrape/slide SFX). */
@@ -632,7 +635,61 @@ export class TankManager {
       tank.position.y = currentY;
     }
 
-    return Math.abs(currentX - startX);
+    const distance = Math.abs(currentX - startX);
+    this.onBulldozerDisplacement?.(player.id, distance);
+    return distance;
+  }
+
+  /**
+   * Contrat local NUKE / THERMONUCLEAR (#302), uniquement lorsque localMatch === true.
+   * Qualifie d'abord le coup direct (hitbox 24×15), puis applique une seule fois
+   * les dégâts de projectile sur le terrain déjà creusé, avant toute chute.
+   * Les chutes viennent ensuite. Un tank déjà mort de l'explosion ne reçoit pas
+   * d'impulsion. Un survivant qualifié conserve le diviseur 4 pour ses PV de chute.
+   */
+  public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
+    const {
+      explosionX,
+      explosionY,
+      shooterId,
+      isDirectHit,
+      munitionId,
+    } = options;
+    const directHitTankIds = new Set<string>();
+
+    if (isDirectHit) {
+      const tankWidth = TANK_HITBOX_WIDTH;
+      const tankHeight = TANK_HITBOX_HEIGHT;
+      for (const player of this.players) {
+        const tank = player.tank;
+        if (tank.isDead) continue;
+
+        const pos = tank.position;
+        const isDirectHitOnThisTank =
+          explosionX >= pos.x - tankWidth / 2 &&
+          explosionX <= pos.x + tankWidth / 2 &&
+          explosionY >= pos.y - tankHeight &&
+          explosionY <= pos.y;
+        if (!isDirectHitOnThisTank) continue;
+
+        directHitTankIds.add(player.id);
+        this.markDirectlyAffected(player.id, munitionId);
+        tank.hitReaction = tank.hitReaction ?? {
+          wasDirectHit: false,
+          fallDistance: 0,
+        };
+        tank.hitReaction.wasDirectHit = true;
+        if (shooterId && shooterId !== player.id) {
+          tank.lastDirectAttackerId = shooterId;
+        }
+      }
+    }
+
+    this.applyExplosionDamage({
+      ...options,
+      canCarveRock: true,
+      directHitTankIds,
+    });
   }
 
   /**
@@ -659,6 +716,8 @@ export class TankManager {
       terrain,
       shotId,
       munitionId,
+      canCarveRock = false,
+      directHitTankIds,
     } = options;
     let killsThisExplosion = 0;
 
@@ -674,7 +733,9 @@ export class TankManager {
       let damage: number;
       let isDirectHitOnThisTank = false;
 
-      if (isDirectHit) {
+      if (directHitTankIds !== undefined) {
+        isDirectHitOnThisTank = directHitTankIds.has(player.id);
+      } else if (isDirectHit) {
         const tankWidth = TANK_HITBOX_WIDTH;
         const tankHeight = TANK_HITBOX_HEIGHT;
         isDirectHitOnThisTank =
@@ -701,7 +762,9 @@ export class TankManager {
       const blastBlockedByRock =
         !!terrain &&
         !isDirectHitOnThisTank &&
-        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y);
+        terrain.isBlastOccludedByRock(explosionX, explosionY, pos.x, pos.y, {
+          canCarveRock,
+        });
       if (blastBlockedByRock) continue;
 
       // Calcul des dégâts selon le type de projectile et l'impact direct

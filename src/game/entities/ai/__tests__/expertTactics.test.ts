@@ -2,6 +2,7 @@ import { playerProfileScore } from "../profileScore";
 import { describe, expect, it } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { expertTacticalPoints } from "../expertShotEvaluator";
+import { materialBoundaryPoints } from "../materialCandidates";
 import { ordinaryExpertTarget, possibleExpertThreatWeapons } from "../expertPlanner";
 
 const terrain = flatTerrain(800, 480);
@@ -40,6 +41,75 @@ describe("EXPERT tactical points", () => {
     expect(expertTacticalPoints(self, [edge], "NUKE", terrain, [self, edge]))
       .toEqual([{ x: 5, y: 328.5, kind: "tank" },
         { x: 36, y: 336, kind: "terrain" }]);
+  });
+
+  it("adds only the tank center for a 0-radius weapon", () => {
+    expect(expertTacticalPoints(self, [a], "BULLDOZER", terrain, [self, a]))
+      .toEqual([{ x: 300, y: 328.5, kind: "tank" }]);
+  });
+
+  it("handles out-of-bounds midpoints for 2 targets", () => {
+    const outA = makePlayer({ id: "outA", tank: makeTank("outA", -10, 336) });
+    const outB = makePlayer({ id: "outB", tank: makeTank("outB", -20, 336) });
+    expect(expertTacticalPoints(self, [outA, outB], "BULLDOZER", terrain, [self, outA, outB]))
+      .toEqual([]);
+  });
+
+  it("handles 3 or more targets (no single tank or pair midpoint)", () => {
+    const c = makePlayer({ id: "c", tank: makeTank("c", 400, 316) });
+    expect(expertTacticalPoints(self, [a, b, c], "BULLDOZER", terrain, [self, a, b, c]))
+      .toEqual([]);
+  });
+
+  it("includes material boundary points in own mode", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 800, "ROCK");
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a], "own");
+    // a = 300. radius = 62.
+    // Tank center: 300
+    // Ground - radius/2: 269
+    // Ground + radius/2: 331
+    // Material boundaries added in own mode
+    expect(points).toContainEqual({ x: 300, y: 328.5, kind: "tank" });
+    expect(points).toContainEqual({ x: 269, y: 336, kind: "terrain" });
+    expect(points).toContainEqual({ x: 331, y: 336, kind: "terrain" });
+    expect(points).toContainEqual({ x: 304.5, y: 336, kind: "terrain", origin: "boundary" });
+    expect(points).toContainEqual({ x: 305.5, y: 336, kind: "terrain", origin: "boundary" });
+
+    expect(points.length).toBe(5);
+  });
+
+  it("dedupes coincident points from adjacent material boundaries", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 305, "ROCK");
+    const pointsBeforeDedupe = [
+      ...expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a]),
+      ...materialBoundaryPoints([a], "NUKE", localTerrain, [self, a]),
+    ];
+    const duplicate = { x: 305.5, y: 336, kind: "terrain", origin: "boundary" };
+    expect(pointsBeforeDedupe).toHaveLength(7);
+    expect(pointsBeforeDedupe.filter((point) => point.x === duplicate.x && point.y === duplicate.y))
+      .toEqual([duplicate, duplicate]);
+
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a], "own");
+    expect(points.length).toBeLessThan(pointsBeforeDedupe.length);
+    expect(points).toHaveLength(6);
+    expect(points.filter((point) => point.x === duplicate.x && point.y === duplicate.y))
+      .toEqual([duplicate]);
+    expect(new Set(points.map((point) => JSON.stringify([point.x, point.y]))).size)
+      .toBe(points.length);
+  });
+
+  it("does not add material boundary points in adverse mode by default", () => {
+    const localTerrain = flatTerrain(800, 480);
+    localTerrain.setMaterialRange(305, 800, "ROCK");
+    const points = expertTacticalPoints(self, [a], "NUKE", localTerrain, [self, a]);
+    expect(points).toEqual([
+      { x: 300, y: 328.5, kind: "tank" },
+      { x: 269, y: 336, kind: "terrain" },
+      { x: 331, y: 336, kind: "terrain" },
+    ]);
+    expect(points.some((point) => point.origin === "boundary")).toBe(false);
   });
 });
 

@@ -2,6 +2,7 @@ import { insideTankHitbox } from "../combatConstants";
 import { BALLISTICS_BASE_SPEED, advanceProjectile, projectileOutOfBounds } from "./projectileMotion";
 import { applyBulldozerHit } from "./bulldozerImpact";
 import { secureRandom, createSeededRNG } from '../../utils/random';
+import type { PhysicalObservation } from "../observation";
 /**
  * TankWars - PhysicsEngine
  *
@@ -64,6 +65,7 @@ export interface ProjectileHitEvent {
 }
 
 export class PhysicsEngine {
+  public onPhysicalObserved?: (event: PhysicalObservation) => void;
   private readonly random: () => number;
   private shotRandom: (() => number) | null = null;
 
@@ -74,6 +76,15 @@ export class PhysicsEngine {
 
   private physicalRandom = (): number => (this.shotRandom ?? this.random)();
   private readonly logExplosions: boolean;
+  private localMatch = false;
+
+  public setLocalMatch(localMatch: boolean): void {
+    this.localMatch = localMatch;
+  }
+
+  public isLocalMatch(): boolean {
+    return this.localMatch;
+  }
 
   constructor(
     random: () => number = secureRandom,
@@ -86,6 +97,13 @@ export class PhysicsEngine {
   private projectilePool: Projectile[] = [];
   private nextFallbackShotId = 1;
 
+
+  private lastImpactMaterial: import("../../types/terrain").TerrainMaterial =
+    TERRAIN_MATERIAL.DIRT;
+
+  public getLastImpactMaterial(): import("../../types/terrain").TerrainMaterial {
+    return this.lastImpactMaterial;
+  }
 
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
@@ -297,6 +315,7 @@ export class PhysicsEngine {
     // Explosion PAR DESSUS la roche : souffle réfléchi, +50% de dégâts (portée inchangée).
     // Explosion d'un CÔTÉ : la roche sert de mur (occlusion dans applyExplosionDamage).
     const impactMaterial = terrainManager.getMaterialAt(p.x);
+    this.lastImpactMaterial = impactMaterial;
     const maxDamage =
       impactMaterial === TERRAIN_MATERIAL.ROCK
         ? Math.round(baseDamage * ROCK_EXPLOSION_DAMAGE_MULTIPLIER)
@@ -307,6 +326,10 @@ export class PhysicsEngine {
         `[EXPLOSION] pos=(${p.x.toFixed(1)}, ${p.y.toFixed(1)}) radius=${blastRadius} damage=${maxDamage} material=${impactMaterial} weapon=${p.weaponId} owner=${p.ownerId ?? "unknown"}`,
       );
     }
+
+    const isLocalNuclear =
+      this.localMatch &&
+      (p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR");
 
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
@@ -323,12 +346,30 @@ export class PhysicsEngine {
         blastRadius,
       );
     } else if (blastRadius > 0) {
-      terrainManager.destroyTerrain(p.x, p.y, blastRadius);
+      terrainManager.destroyTerrain(
+        p.x,
+        p.y,
+        blastRadius,
+        isLocalNuclear ? { canCarveRock: true } : undefined,
+      );
     }
 
-    // 2. Dégâts d'explosion (BULLDOZER : 0 HP, pas de wasDirectHit)
+    // 2. Dégâts d'explosion et mise à jour des positions (chutes)
     if (tankManager) {
-      if (p.weaponId !== "BULLDOZER") {
+      if (isLocalNuclear) {
+        tankManager.beginLocalNuclearImpact({
+          explosionX: p.x,
+          explosionY: p.y,
+          radius: blastRadius,
+          maxDamage,
+          shooterId: p.ownerId,
+          weaponId: p.weaponId,
+          isDirectHit,
+          terrain: terrainManager,
+          shotId: p.shotId,
+          munitionId: p.munitionId,
+        });
+      } else if (p.weaponId !== "BULLDOZER") {
         tankManager.applyExplosionDamage({
           explosionX: p.x,
           explosionY: p.y,
@@ -378,11 +419,13 @@ export class PhysicsEngine {
 
     for (let k = 0; k < numSubs; k++) {
       const frac = (k - (numSubs - 1) / 2) / (numSubs - 1);
-      const spread = frac * maxSpreadRad * (0.7 + this.physicalRandom() * 0.6);
+      const spreadDraw = this.physicalRandom();
+      const spread = frac * maxSpreadRad * (0.7 + spreadDraw * 0.6);
       const subDir = dir + spread;
 
       // subs get a fraction of current speed + variation; higher power gives more energetic subs
-      const subSpeed = currentSpeed * (0.5 + this.physicalRandom() * 0.4) * (0.65 + (power / 100) * 0.6);
+      const speedDraw = this.physicalRandom();
+      const subSpeed = currentSpeed * (0.5 + speedDraw * 0.4) * (0.65 + (power / 100) * 0.6);
       const subVx = Math.cos(subDir) * subSpeed;
       const subVy = Math.sin(subDir) * subSpeed;
 
@@ -409,6 +452,8 @@ export class PhysicsEngine {
       sub.bounceCount = undefined;
       sub.hasLeftOwnerHitbox = undefined;
       this.projectiles.push(sub);
+      this.onPhysicalObserved?.({ kind: "cluster", shotId: p.shotId, munitionId: k + 1,
+        draws: [spreadDraw, speedDraw], parameters: { spread, subSpeed, vx: subVx, vy: subVy, x: relX, y: relY } });
     }
 
     // remove the parent (it disperses the bomblets in air; no terrain hit from parent itself)
@@ -436,10 +481,13 @@ export class PhysicsEngine {
 
     const bounceCount = (p.bounceCount ?? 0) + 1;
     p.bounceCount = bounceCount;
+    const before = this.onPhysicalObserved ? { vx: p.vx, vy: p.vy } : null;
+    const draws: number[] = [];
+    const random = this.onPhysicalObserved ? () => { const value = this.physicalRandom(); draws.push(value); return value; } : this.physicalRandom;
 
     const bounce = grenadeBounceParams(
       terrainManager.getMaterialAt(p.x),
-      this.physicalRandom,
+      random,
     );
 
     // Check if this contact should cause detonation rather than another bounce.
@@ -453,6 +501,8 @@ export class PhysicsEngine {
       Math.abs(p.vy) < 2.0;
 
     if (shouldExplode) {
+      this.onPhysicalObserved?.({ kind: "grenade", shotId: p.shotId, munitionId: p.munitionId, draws,
+        parameters: { before, bounceCount, ...bounce, exploded: true, x: p.x, y: p.y } });
       // Detonate at (near) the contact point — same path as normal shells for damage/terrain.
       this.handleImpact(index, p, terrainManager, tankManager);
       return;
@@ -463,20 +513,22 @@ export class PhysicsEngine {
     p.vy = -p.vy * bounce.restitution;
 
     // Horizontal friction on "ground" contact + tiny randomness (irregular terrain effect).
-    p.vx *= bounce.friction + (this.physicalRandom() - 0.5) * 0.06;
+    p.vx *= bounce.friction + (random() - 0.5) * 0.06;
 
     // Tiny extra vertical impulse for lively but diminishing hops.
-    p.vy += (this.physicalRandom() - 0.5) * 0.5;
+    p.vy += (random() - 0.5) * 0.5;
 
     // Guarantee a visible (if small) liftoff even on low-angle or final-ish bounces.
     if (p.vy > -1.0) {
-      p.vy = -1.0 - this.physicalRandom() * 1.2;
+      p.vy = -1.0 - random() * 1.2;
     }
 
     // Clamp absurd horizontal speeds after many skids (safety).
     if (Math.abs(p.vx) > 12) {
       p.vx = Math.sign(p.vx) * 12;
     }
+    this.onPhysicalObserved?.({ kind: "grenade", shotId: p.shotId, munitionId: p.munitionId, draws,
+      parameters: { before, after: { vx: p.vx, vy: p.vy }, bounceCount, ...bounce, exploded: false, x: p.x, y: p.y } });
   }
 
   /**

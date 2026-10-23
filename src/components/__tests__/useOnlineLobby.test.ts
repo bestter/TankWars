@@ -109,9 +109,10 @@ describe('useOnlineLobby', () => {
       onerror: null,
       onclose: null,
     };
-    global.WebSocket = vi.fn().mockImplementation(
-      () => mockWs,
-    ) as unknown as typeof WebSocket;
+    const wsConstructor = vi.fn().mockImplementation(function () {
+      return mockWs;
+    }) as unknown as typeof WebSocket;
+    global.WebSocket = wsConstructor;
 
     const { result } = renderHook(() =>
       useOnlineLobby({
