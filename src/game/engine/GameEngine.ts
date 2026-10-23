@@ -11,7 +11,7 @@ import { secureRandom } from "../../utils/random";
  * - Communication with React layer happens exclusively via callbacks
  *   (onProjectileHit, onAllProjectilesSettled, etc.).
  * - Canvas is only ever touched via the `render(ctx)` method called from outside.
- * - AI decisions are injected via the AIStrategy interface (see src/game/entities/ai/).
+ * - AI decisions are handled externally via TurnManager and AIEngine implementations.
  */
 
 import { TerrainManager } from "./Terrain";
@@ -26,7 +26,6 @@ import { VGA_PALETTE } from "../../types/game";
 import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
 import type { Vector2, FireCommand, RoundResult } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
-import type { AIStrategy } from "../entities/ai/AIStrategy";
 import type { AIEngine } from "../entities/ai/AIEngine";
 import i18n from "../../i18n";
 import { rollRoundWind } from "../wind";
@@ -552,22 +551,6 @@ export class GameEngine {
     for (const event of this.activeShotLedger.destructionEvents) event.shotId = shotId;
     this.tankManager.reassignShotAttribution(previousShotId, shotId);
     this.physicsEngine.reassignShotId(previousShotId, shotId);
-    return true;
-  }
-
-  /**
-   * Optional: Ask an AI strategy to decide and immediately fire.
-   * This keeps AI completely outside the engine core.
-   */
-  public requestAIShot(
-    aiStrategy: AIStrategy,
-    self: import("../../types/player").Player,
-    worldView: import("../entities/ai/AIStrategy").AIWorldView,
-  ): boolean {
-    const decision = aiStrategy.decideShot(self, worldView);
-    if (!decision) return false;
-
-    this.fireProjectile(self.tank.position, decision, self.id);
     return true;
   }
 
