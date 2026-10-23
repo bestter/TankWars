@@ -1596,9 +1596,13 @@ export class GameRoom extends DurableObject {
     this.shotEpoch++;
     this.state.currentPlayerIndex = zeusSlot;
     const rotationSlots: number[] = [];
+    const playerMap = new Map<string, number>();
+    for (let i = 0; i < this.state.players.length; i++) {
+      playerMap.set(this.state.players[i].id, i);
+    }
     for (const playerId of appointment.rotationPlayerIds) {
-      const slot = this.state.players.findIndex((player) => player.id === playerId);
-      if (slot >= 0) rotationSlots.push(slot);
+      const slot = playerMap.get(playerId);
+      if (slot !== undefined) rotationSlots.push(slot);
     }
     this.state.zeusRotationSlots = rotationSlots;
 
