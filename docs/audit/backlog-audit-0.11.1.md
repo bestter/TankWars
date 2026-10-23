@@ -22,6 +22,8 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   2. Supprimer `mulberry32` et `lastShot` (ou documenter explicitement `lastShot` s'il fait partie d'une compatibilité de stockage persisté).
 
 ### IMP-02 — Polling à 100 ms avec `structuredClone` + `JSON.stringify` complet dans le conseiller de tir
+- **Résolution (#320)** : Décision documentée de non-intervention. Le constat initial est précisé : les captures complètes ne surviennent pas pendant toute la partie locale mais uniquement pendant le tour actif d'un joueur humain local sans projectile en vol, frappe Zeus, chute de tank ni verrou. Le coût réel mesuré par benchmark est négligeable (~0,020 ms par capture, soit ~0,20 ms/sec de CPU à 10 Hz ou ~0,02 % d'un seul cœur CPU) et la pression mémoire éphémère (~100 Ko/s) est absorbée en microsecondes par le GC mineur sans impact sur le rendu à 60/120 FPS. Le mécanisme actuel par comparaison `JSON.stringify` offre une garantie infaillible d'invalidation sur 11 dimensions d'état sensibles (terrain, positions, PV, boucliers, stocks, vent, gravité, contexte économique, tour, manche, verrous). Une révision incrémentale ou empreinte légère introduirait un couplage fort et un risque de régression critique (omission d'invalidation et tir périmé) sans gain de performance perceptible. Le constat initial et les pistes ci-dessous sont conservés comme historique.
+- **Analyse et résolution** : Gemini 3.8 Flash.
 - **Fichiers concernés** :
   - `src/components/advisor/useShotAdvisor.ts:L13-L31`
   - `src/components/advisor/AdvisorController.ts:L41-L55`
