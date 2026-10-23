@@ -60,8 +60,10 @@ export default {
       // Cloudflare supplies this header in production. Local/non-proxied requests
       // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      const limiterName = 'rate_limit_' + ip;
 
-      if (ip.length > 256) {
+      // Bound the complete identifier in UTF-8 bytes, including our namespace prefix.
+      if (new TextEncoder().encode(limiterName).byteLength > 256) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
@@ -69,7 +71,7 @@ export default {
       }
 
       try {
-        const id = env.RATE_LIMITER.idFromName('rate_limit_' + ip);
+        const id = env.RATE_LIMITER.idFromName(limiterName);
         const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
           method: 'POST',
         });
