@@ -480,10 +480,17 @@ export function attachOnlineCombat(
     engine.syncAuthoritativeBalances(message.balances);
     engine.restoreRoundEarningsByPlayer(message.roundEarningsByPlayer);
     latestEconomicRevision = message.economicRevision;
-    // isBalances does not enforce unique playerIds: Map keeps the last duplicate, unlike the former .find() (first).
-    const balancesMap = new Map(message.balances.map(b => [b.playerId, b.money]));
-    authoritativeEconomyRef.current = authoritativeEconomyRef.current.map((p) => ({ ...p,
-      money: balancesMap.get(p.id) ?? p.money }));
+    const balancesDict: Record<string, number> = {};
+    for (let i = 0; i < message.balances.length; i++) {
+      balancesDict[message.balances[i].playerId] = message.balances[i].money;
+    }
+    authoritativeEconomyRef.current = authoritativeEconomyRef.current.map((p) => {
+      const val = balancesDict[p.id];
+      return {
+        ...p,
+        money: val !== undefined ? val : p.money,
+      };
+    });
   }
 
   const shotQueue = new AuthoritativeShotQueue({
