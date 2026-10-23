@@ -322,21 +322,26 @@ function isInventory(
   value: unknown,
 ): value is Partial<Record<WeaponId, number>> {
   if (!isRecord(value)) return false;
-  return Object.entries(value).every(
-    ([weaponId, stock]) =>
-      isWeaponId(weaponId) && isSafeNonNegativeInteger(stock),
-  );
+  for (const weaponId in value) {
+    if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(value[weaponId])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
-  return Object.values(value).every((playerCounters) => {
+  for (const playerId in value) {
+    const playerCounters = value[playerId];
     if (!isRecord(playerCounters)) return false;
-    return Object.entries(playerCounters).every(
-      ([weaponId, count]) =>
-        isWeaponId(weaponId) && isSafeNonNegativeInteger(count),
-    );
-  });
+    for (const weaponId in playerCounters) {
+      if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(playerCounters[weaponId])) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const SHOP_DENIALS: readonly ShopDenial[] = [
