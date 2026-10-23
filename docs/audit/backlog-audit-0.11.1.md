@@ -99,10 +99,12 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   1. Allouer un unique tampon `stampOccludedColumns` hors de la boucle `for` et le réinitialiser via `.fill(false)` à chaque pas.
 
 ### AMEL-03 — Nettoyage du contrat legacy `AIStrategy.ts` et des mocks constructeurs Vitest
+- **Résolution (#327, v0.11.2)** : Résolu. Suppression du contrat mort `AIStrategy.ts` et de la méthode `GameEngine.requestAIShot`. Remplacement du mock fléché par une fonction constructible dans `useOnlineLobby.test.ts`, éliminant l'avertissement Vitest et l'erreur d'instanciation silencieuse `TypeError: () => mockWs is not a constructor`.
+- **Analyse et résolution** : Gemini 3.8 Flash.
 - **Fichiers concernés** :
   - `src/game/entities/ai/AIStrategy.ts:L1-L43`
   - `src/game/engine/GameEngine.ts:L562-L572` (`requestAIShot`)
-  - `src/components/__tests__/useOnlineLobby.test.ts:L32-L44`
+  - `src/components/__tests__/useOnlineLobby.test.ts`
 - **Plan d'action** :
   1. Supprimer `AIStrategy.ts` et `GameEngine.requestAIShot` (non utilisés au runtime, remplacés par `AIEngine` et `AIByProfileStrategy`).
   2. Remplacer `vi.fn(() => mockWs)` par `vi.fn(function () { return mockWs; })` dans `useOnlineLobby.test.ts` pour éliminer l'avertissement Vitest sur les mocks constructeurs.
