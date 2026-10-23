@@ -175,6 +175,11 @@ No security impact, strictly an internal performance cache.
 **Learning:** This function was used as the secret for users to join a game room slot, effectively providing authorization for a participant. Short, weak tokens are susceptible to brute force attacks where a malicious actor could intercept or guess an active game room's invitation token.
 **Prevention:** Ensure functions acting as secrets, invite links, and authorization tokens use secure standard methods for generating identifiers, such as standard UUIDv4 by utilizing `crypto.randomUUID()`. Do not reinvent custom cryptographically-weak generators for authorization.
 
+## 2026-10-16 - Predictable PRNG in Authoritative Logic
+**Vulnerability:** The PRNG used for server-side authoritative logic (`mulberry32`) relied on a simple 32-bit state and predictable operations, making it easy to determine future outputs.
+**Learning:** Predictable PRNG used in authoritative contexts enables cheat clients to predict game outcomes and manipulate future random events. Deterministic game features should not expose the main logic's RNG state.
+**Prevention:** Always use cryptographically secure pseudorandom number generators (CSPRNG), such as `crypto.getRandomValues()`, when making authoritative decisions that players could exploit.
+
 ## 2026-10-18 - [DoS via Missing Rate Limiting on Room Creation]
 **Vulnerability:** The `/api/rooms` endpoint in `worker/src/index.ts` allowed unauthenticated users to create an unlimited number of game rooms, each backed by a stateful Durable Object.
 **Learning:** Cloudflare Workers do not have built-in rate limiting unless explicitly configured. Exposing an endpoint that provisions stateful, paid resources (like Durable Objects) without rate limiting makes the application highly susceptible to Denial of Service (DoS) and resource exhaustion attacks.
@@ -183,6 +188,7 @@ No security impact, strictly an internal performance cache.
 ## 2026-10-16 - [Isolate room creation rate limiting]
 **Learning:** Reusing `GameRoom` couples abuse protection to game initialization, and mapping every limiter failure to HTTP 429 blocks legitimate users during outages. Internal fetch URLs must actually use `/internal/rate-limit` as their pathname; `https://internal/rate-limit` has pathname `/rate-limit`.
 **Prevention:** Use the separate `RATE_LIMITER` binding and `RateLimiter` class, atomic persistent sliding windows (5 requests / 60 seconds), validated 429 responses with `Retry-After`, and logged fail-open handling for limiter failures only. Missing Cloudflare IP headers share the documented `unknown` bucket. Refresh a 24-hour cleanup alarm on all attempts and guard cleanup against newer activity. Keep game creation and origin validation unchanged.
+
 ## 2026-10-24 - Rate Limiter DoS bypass & Stack Trace Leak
 **Vulnerability:** Room creation endpoint rate limiter implementation "failed open" when the check resulted in an error (such as when throwing on an oversized IP identifier, or if the Durable Object backend errored). It also logged the raw error object to `console.error`, risking stack trace leaks.
 **Learning:** Bound identifiers derived from request headers before accessing the rate limiter. The application uses a 256-byte UTF-8 budget for the complete `rate_limit_` name; this is an application limit, not a verified Cloudflare API limit. Failing open on rate limits allows circumvention when the limiter fails.
