@@ -35,7 +35,6 @@ import {
 } from '../../src/types/game';
 import type { WeaponId } from '../../src/types/weapon';
 import {
-  ALL_WEAPON_IDS,
   DEFAULT_INVENTORY,
 } from '../../src/types/weapon';
 import { nextLivingPlayerIndex } from '../../src/game/online/turnOrder';
@@ -59,7 +58,6 @@ import {
   type ShopReadyMessage,
   type ShopStateMessage,
   type ShotEarningsAppliedMessage,
-  type ShotEarningsMessage,
   type EarningsRejectedReason,
   type ShotMessage,
   type ZeusAppointedMessage,
@@ -196,16 +194,6 @@ function makeToken(): string {
   return crypto.randomUUID();
 }
 
-// Very lightweight seeded RNG (for future injection of real server sim determinism)
-function mulberry32(seed: number) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function seedFromString(value: string): number {
   let seed = 0;
   for (let index = 0; index < value.length; index++) {
@@ -299,15 +287,6 @@ export class GameRoom extends DurableObject {
    * Settlement timeouts capture the epoch at arm time and no-op if it changed.
    */
   private shotEpoch = 0;
-  /**
-   * Last SHOT broadcast while a shot is in flight. Re-sent on combat WS reconnect so
-   * observers who missed the original message still replay the projectile.
-   */
-  private lastShot: {
-    slot: number;
-    command: { angle: number; power: number; weaponId: WeaponId };
-    ownerId?: string;
-  } | null = null;
 
   // Load state from storage on cold start
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -504,7 +483,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     if (this.state) this.state.activeShot = null;
     this.shotEpoch++;
   }
@@ -748,7 +726,9 @@ export class GameRoom extends DurableObject {
         this.sockets.delete(slot);
         try {
           old?.close(4001, 'replaced by new connection for same slot');
-        } catch {}
+        } catch (error: unknown) {
+          console.warn('[GameRoom] Failed to close replaced socket', { slot, error });
+        }
       }
 
       try {
@@ -1357,7 +1337,6 @@ export class GameRoom extends DurableObject {
     const epoch = this.shotEpoch;
     const shotId = this.state.nextShotId++;
     this.state.shotNumberInRound++;
-    this.lastShot = { slot: fromSlot, command, ownerId };
     this.state.activeShot = {
       shotId,
       physicsSeed: seedFromRoomShot(this.state.roomId, this.state.roundNumber, shotId),
@@ -1451,7 +1430,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     this.state.activeShot = null;
     // Invalidate any timeout still racing into this method.
     this.shotEpoch++;
@@ -1574,7 +1552,6 @@ export class GameRoom extends DurableObject {
       this.clearShotSettledTimeout();
       this.shotInFlight = false;
       this.awaitingShotFromSlot = null;
-      this.lastShot = null;
       this.state.activeShot = null;
       this.state.roundEnded = true;
       this.resetZeusRoundState();
@@ -1615,7 +1592,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.awaitingShotFromSlot = null;
     this.shotInFlight = false;
-    this.lastShot = null;
     this.state.activeShot = null;
     this.shotEpoch++;
     this.state.currentPlayerIndex = zeusSlot;
