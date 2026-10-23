@@ -23,7 +23,10 @@ import {
   type ShopClientSessionState,
 } from '../components/gameCanvasReducer';
 import type { ShopDenial, ShopVisitCounters } from '../game/shop/shopTransaction';
-import type { FireRejectedReason } from '../game/online/protocol';
+import {
+  isFireRejectedReason as isProtocolFireRejectedReason,
+  type FireRejectedReason,
+} from '../game/online/protocol';
 import { isValidActionId } from '../game/online/actionId';
 
 export interface OnlineSessionMeta {
@@ -90,15 +93,6 @@ const VALID_AI_PROFILES: ReadonlySet<string> = new Set<AiProfile>([
 
 const VALID_WEAPON_IDS: ReadonlySet<string> = new Set(ALL_WEAPON_IDS);
 
-const VALID_FIRE_REJECTED_REASONS: ReadonlySet<string> = new Set<FireRejectedReason>([
-  'MALFORMED',
-  'NOT_YOUR_TURN',
-  'SHOT_IN_FLIGHT',
-  'ROUND_ENDED',
-  'NO_AMMO',
-  'ILLEGAL_INVENTORY',
-]);
-
 const VALID_SHOP_DENIALS: ReadonlySet<string> = new Set<ShopDenial>([
   'STOCK_CAP',
   'PURCHASE_LIMIT',
@@ -114,9 +108,7 @@ const VALID_SHOP_DENIALS: ReadonlySet<string> = new Set<ShopDenial>([
   'STALE_SHOP_EPOCH',
 ]);
 
-export function isFireRejectedReason(value: unknown): value is FireRejectedReason {
-  return typeof value === 'string' && VALID_FIRE_REJECTED_REASONS.has(value);
-}
+export const isFireRejectedReason = isProtocolFireRejectedReason;
 
 export function isShopDenial(value: unknown): value is ShopDenial {
   return typeof value === 'string' && VALID_SHOP_DENIALS.has(value);

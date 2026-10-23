@@ -56,6 +56,33 @@ export default {
       });
     };
 
+    const enforceRateLimit = async (): Promise<Response | null> => {
+      // Cloudflare supplies this header in production. Local/non-proxied requests
+      // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
+      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      try {
+        const id = env.RATE_LIMITER.idFromName(ip);
+        const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
+          method: 'POST',
+        });
+        const retryAfter = response.headers.get('Retry-After');
+        if (response.status === 429 && retryAfter !== null && /^[1-9]\d*$/.test(retryAfter)) {
+          return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', 'Retry-After': retryAfter },
+          }));
+        }
+        if (response.status !== 204) {
+          throw new Error(`Unexpected rate limiter response: ${response.status}`);
+        }
+      } catch (error: unknown) {
+        // Fail open only for limiter failures; origin validation and room creation
+        // still run normally. Do not log the IP or expose internal errors to clients.
+        console.error('[Worker] Room creation rate limiter unavailable; allowing request', error);
+      }
+      return null;
+    };
+
     // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
     if (request.method === 'OPTIONS') {
       return withResponseHeaders(new Response(null, {
@@ -91,28 +118,9 @@ export default {
         }));
       }
 
-      // Cloudflare supplies this header in production. Local/non-proxied requests
-      // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
-      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-      try {
-        const id = env.RATE_LIMITER.idFromName(ip);
-        const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
-          method: 'POST',
-        });
-        const retryAfter = response.headers.get('Retry-After');
-        if (response.status === 429 && retryAfter !== null && /^[1-9]\d*$/.test(retryAfter)) {
-          return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
-            status: 429,
-            headers: { 'content-type': 'application/json', 'Retry-After': retryAfter },
-          }));
-        }
-        if (response.status !== 204) {
-          throw new Error(`Unexpected rate limiter response: ${response.status}`);
-        }
-      } catch (error: unknown) {
-        // Fail open only for limiter failures; origin validation and room creation
-        // still run normally. Do not log the IP or expose internal errors to clients.
-        console.error('[Worker] Room creation rate limiter unavailable; allowing request', error);
+      const rateLimitResponse = await enforceRateLimit();
+      if (rateLimitResponse) {
+        return rateLimitResponse;
       }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // Normalize the external payload before forwarding the room configuration to the DO.
@@ -192,12 +200,17 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
-      const roomId = pathname.split('/')[3];
-      if (!roomId || roomId.length > 256) {
+      const parts = pathname.split('/');
+      const roomId = parts[3];
+      if (parts.length !== 5 || !roomId || roomId.length > 256) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid room ID' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
         }));
+      }
+      const rateLimitResponse = await enforceRateLimit();
+      if (rateLimitResponse) {
+        return rateLimitResponse;
       }
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
@@ -234,7 +247,7 @@ export default {
         return withResponseHeaders(new Response('Forbidden: Invalid Origin', { status: 403 }));
       }
 
-      if (!roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
+      if (parts.length !== 5 || !roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
         return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
 
