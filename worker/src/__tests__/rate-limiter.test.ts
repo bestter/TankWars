@@ -74,24 +74,24 @@ describe('Room creation rate limiting', () => {
     const { createRoom, limiters } = createEnv();
     for (let i = 0; i < 5; i++) expect((await createRoom()).status).toBe(200);
     expect((await createRoom()).status).toBe(429);
-    expect(limiters.has('unknown')).toBe(true);
+    expect(limiters.has('rate_limit_unknown')).toBe(true);
     expect((await createRoom('192.0.2.1')).status).toBe(200);
   });
 
-  it.each([200, 403, 500, 429])('logs and fails open on unexpected status %s or malformed denial', async (status) => {
+  it.each([200, 403, 500, 429])('logs and fails closed on unexpected status %s or malformed denial', async (status) => {
     const { createRoom, limiterFetch, roomFetch } = createEnv();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     limiterFetch.mockResolvedValueOnce(new Response('unexpected', { status }));
-    expect((await createRoom('192.0.2.1')).status).toBe(200);
+    expect((await createRoom('192.0.2.1')).status).toBe(500);
     expect(log).toHaveBeenCalledOnce();
-    expect(roomFetch).toHaveBeenCalledOnce();
+    expect(roomFetch).not.toHaveBeenCalled();
   });
 
-  it('logs and fails open on a limiter exception', async () => {
+  it('logs and fails closed on a limiter exception', async () => {
     const { createRoom, limiterFetch } = createEnv();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     limiterFetch.mockRejectedValueOnce(new Error('storage unavailable'));
-    expect((await createRoom()).status).toBe(200);
+    expect((await createRoom()).status).toBe(500);
     expect(log).toHaveBeenCalledOnce();
   });
 

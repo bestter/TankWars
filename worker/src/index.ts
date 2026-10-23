@@ -60,8 +60,16 @@ export default {
       // Cloudflare supplies this header in production. Local/non-proxied requests
       // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+
+      if (ip.length > 256) {
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
+
       try {
-        const id = env.RATE_LIMITER.idFromName(ip);
+        const id = env.RATE_LIMITER.idFromName('rate_limit_' + ip);
         const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
           method: 'POST',
         });
@@ -76,9 +84,14 @@ export default {
           throw new Error(`Unexpected rate limiter response: ${response.status}`);
         }
       } catch (error: unknown) {
-        // Fail open only for limiter failures; origin validation and room creation
-        // still run normally. Do not log the IP or expose internal errors to clients.
-        console.error('[Worker] Room creation rate limiter unavailable; allowing request', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('[Worker] Room creation rate limiter unavailable or failed:', errorMessage);
+
+        // Fail closed for limiter failures to prevent bypassing rate limit
+        return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        }));
       }
       return null;
     };
