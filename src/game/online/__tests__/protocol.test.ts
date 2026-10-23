@@ -10,6 +10,78 @@ import {
 import { MAX_ACTION_ID_LENGTH } from "../actionId";
 
 describe("strict online protocol", () => {
+  describe("isInventory via FIRE_REJECTED", () => {
+    const validateInventory = (inventory: unknown) => isStrictOnlineMessage({
+      type: "FIRE_REJECTED",
+      reason: "MALFORMED",
+      inventory,
+      currentWeapon: "MISSILE",
+    });
+
+    it("accepte un inventaire vide et les quantités entières aux bornes", () => {
+      expect(validateInventory({})).toBe(true);
+      expect(validateInventory({ MISSILE: 0, NUKE: Number.MAX_SAFE_INTEGER })).toBe(true);
+    });
+
+    it("refuse une arme inconnue après une entrée valide", () => {
+      expect(validateInventory({ MISSILE: 1, LASER: 1 })).toBe(false);
+    });
+
+    it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"])(
+      "refuse la quantité invalide %s",
+      (count) => {
+        expect(validateInventory({ MISSILE: 1, NUKE: count })).toBe(false);
+      },
+    );
+
+    it.each([[], null, 1, "inventory", true, undefined])(
+      "refuse un inventaire non-record : %s",
+      (inventory) => {
+        expect(validateInventory(inventory)).toBe(false);
+      },
+    );
+  });
+
+  describe("isShopVisitCounters via SHOP_STATE", () => {
+    const validateCounters = (purchasesByPlayerId: unknown) => isStrictOnlineMessage({
+      type: "SHOP_STATE",
+      shopEpoch: 3,
+      roundNumber: 2,
+      readySlots: [],
+      players: [],
+      purchasesByPlayerId,
+      aiShopApplied: true,
+    });
+
+    // Empty counters and a single player's purchases are covered below.
+    it("accepte plusieurs joueurs, dont un sans achats, et les bornes entières", () => {
+      expect(validateCounters({
+        p1: {},
+        p2: { MISSILE: 0, NUKE: Number.MAX_SAFE_INTEGER },
+        p3: { GRENADE: 2 },
+      })).toBe(true);
+    });
+
+    it.each([[], null, 1, "counters", true, undefined])(
+      "refuse des compteurs non-record au premier ou au deuxième niveau : %s",
+      (counters) => {
+        expect(validateCounters(counters)).toBe(false);
+        expect(validateCounters({ p1: { MISSILE: 1 }, p2: counters })).toBe(false);
+      },
+    );
+
+    it("refuse une arme inconnue après un joueur et une entrée valides", () => {
+      expect(validateCounters({ p1: {}, p2: { MISSILE: 1, LASER: 1 } })).toBe(false);
+    });
+
+    it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"])(
+      "refuse le compteur invalide %s",
+      (count) => {
+        expect(validateCounters({ p1: {}, p2: { MISSILE: 1, NUKE: count } })).toBe(false);
+      },
+    );
+  });
+
   it("accepts a complete SHOT identity", () => {
     expect(isStrictOnlineMessage({
       type: "SHOT",
