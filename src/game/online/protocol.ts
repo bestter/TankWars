@@ -318,6 +318,8 @@ function isFireCommand(value: unknown): value is FireCommand {
   );
 }
 
+// for...in avoids allocating entry arrays; inputs are plain JSON records
+// with no enumerable inherited properties (Object.prototype must be unpolluted).
 function isInventory(
   value: unknown,
 ): value is Partial<Record<WeaponId, number>> {
@@ -330,6 +332,8 @@ function isInventory(
   return true;
 }
 
+// for...in avoids allocating arrays at both levels; the same plain JSON,
+// unpolluted-prototype assumption as isInventory applies to both levels.
 function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
   for (const playerId in value) {
