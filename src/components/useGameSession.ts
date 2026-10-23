@@ -1,7 +1,7 @@
 import { useShotAdvisor } from "./advisor/useShotAdvisor";
 import { startCanvasLoop } from "./canvasLoop";
 import type { EnduranceSession } from "../game/endurance/session";
-import { type RoundMap } from "../game/round/prepareRound";
+import type { RoundMap } from "../game/round/prepareRound";
 import { ONLINE_PROTOCOL_VERSION } from "../game/online/protocol";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";

@@ -275,7 +275,7 @@ export function chooseExpertPlan(
       seenWeapons.add(candidate.weaponId);
       bestByWeapon.push(traceCandidate(candidate));
     }
-    const runnerUp = ranked.find((candidate) => candidate !== selected);
+    const runnerUp = ranked[0] === selected ? ranked[1] : ranked[0];
     onDecision({
       phase,
       transitionReason,
