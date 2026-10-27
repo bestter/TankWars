@@ -7,6 +7,8 @@ import type { GameCanvasProps } from '../components/GameCanvas';
 import { makePlayer, makeTank } from '../game/__tests__/helpers';
 import { createEmptyShopSession } from '../components/gameCanvasReducer';
 import type { PersistedOnlineSession } from '../utils/onlineSession';
+import { StrictMode } from 'react';
+import { persistParticipation, readParticipation } from '../utils/onlineParticipation';
 
 const sessionStorageData = new Map<string, string>();
 const deploymentMode = vi.hoisted(() => ({ hotseatOnly: false }));
@@ -147,8 +149,46 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByText('create_online_game')).toBeDefined();
     expect(screen.getByText('you_are_player_2')).toBeDefined();
     expect(screen.getByRole('button', { name: 'join_room_btn' })).toBeDefined();
+    expect(window.location.search).toBe('');
+    expect(readParticipation()?.token).toBe('TOK77');
 
     window.history.replaceState({}, '', '/');
+  });
+
+  it('restores the unjoined form and edited name after refresh under Strict Mode', () => {
+    const ws = vi.spyOn(window, 'WebSocket');
+    window.history.replaceState({ keep: 1 }, '', '/?room=ROOM77&slot=1&token=TOK77&lang=fr#test');
+    const first = render(<StrictMode><App /></StrictMode>);
+    fireEvent.change(screen.getByPlaceholderText('enter_name_placeholder'), { target: { value: 'Guest' } });
+    first.unmount();
+    render(<StrictMode><App /></StrictMode>);
+    expect((screen.getByPlaceholderText('enter_name_placeholder') as HTMLInputElement).value).toBe('Guest');
+    expect(ws).not.toHaveBeenCalled();
+    expect(window.location.search + window.location.hash).toBe('?lang=fr#test');
+    expect(history.state).toEqual({ keep: 1 });
+    ws.mockRestore();
+  });
+
+  it('keeps the menu open after leaving a direct invitation and refreshing', () => {
+    window.history.replaceState({}, '', '/?room=ROOM77&slot=1&token=TOK77');
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'leave_room' }));
+    expect(screen.getByText('main_title')).toBeDefined();
+    expect(readParticipation()).toBeNull();
+    first.unmount();
+    render(<App />);
+    expect(screen.getByText('main_title')).toBeDefined();
+  });
+
+  it('displays an invalid invitation error instead of restoring an old lobby', () => {
+    persistParticipation({ version: 1, room: 'old', slot: 0, token: 'synthetic',
+      name: 'Host', engaged: false, mode: 'guest', slots: [] });
+    window.history.replaceState({}, '', '/?room=new&slot=9&token=synthetic');
+    render(<App />);
+    expect(screen.getByRole('alert').textContent).toBe('online_invitation_invalid');
+    expect(screen.getByText('main_title')).toBeDefined();
+    expect(readParticipation()).toBeNull();
+    expect(location.search).toBe('');
   });
 
   it.each([

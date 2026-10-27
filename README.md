@@ -65,6 +65,16 @@
 
 ---
 
+## Online invitations and refresh
+
+Valid invitations are captured in a separate, versioned `sessionStorage` lobby record before `room`, `slot` and `token` are removed from the address. Unrelated query parameters, the fragment and history state are preserved. Refresh restores an unjoined guest's form and name without connecting; an engaged guest or host reconnects to the existing room. Hosts retain their invitation links. A new invitation takes priority over incompatible saved combat; an identical invitation can resume combat. Without an invitation, valid combat takes priority over a saved lobby. Invalid invitations show an error and never silently restore a previous room.
+
+If storage fails, a valid invitation stays in the address as a refresh fallback and a private-link warning appears. Hosts receive a restoration warning and keep their invitation links; their credentials are never inserted into the address. Failed address cleanup or storage removal also shows a warning. Leaving voluntarily clears both records and stops owned connections; successful combat persistence replaces the lobby record, and game end clears both. Local-only builds clear online participation without starting a network session.
+
+Cleaning the address reduces exposure; it cannot remove previously copied links, requests or history copies, and does not revoke a token. Invitations and WebSocket URLs still carry private tokens. The Worker compares exact UTF-8 bytes through Cloudflare's `crypto.subtle.timingSafeEqual`, including the documented unequal-length rejection path. This does not make the entire HTTP request constant-time. See the [Cloudflare comparison example](https://developers.cloudflare.com/workers/examples/protect-against-timing-attacks/).
+
+For a local runtime check, start `npm run worker:dev -- --local`, then run `node Scripts/test-online-token-comparison.mjs`. This runs the actual helper in workerd and checks the real WebSocket route, including refusals that preserve a legitimate socket. Node unit tests use a test double for Cloudflare's nonstandard primitive.
+
 ## Controls
 
 | Key / Input  | Action                          |

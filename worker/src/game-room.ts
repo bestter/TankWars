@@ -1,3 +1,4 @@
+import { tokenMatches } from './tokenComparison';
 import { fragmentCombat, type ActiveCombatShot, type CombatEvent } from "../../src/game/online/combatCatchUp";
 import { validateEarnings } from "../../src/game/online/earningsValidation";
 import { prepareRound, isRoundMap, ROUND_WIDTH, ROUND_HEIGHT, type RoundMap } from '../../src/game/round/prepareRound';
@@ -702,7 +703,7 @@ export class GameRoom extends DurableObject {
       if (cfg.type === 'ai') {
         return new Response('AI slots do not use WS connections', { status: 400 });
       }
-      if (this.state.tokens[slot] !== token) {
+      if (!tokenMatches(token, this.state.tokens[slot])) {
         return new Response('Invalid token for slot', { status: 403 });
       }
 

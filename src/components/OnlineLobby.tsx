@@ -35,6 +35,8 @@ export function OnlineLobby(props: OnlineLobbyProps) {
           <GameLogo compact />
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>
 
+          {lobby.storageWarning && <p role="alert">{lobby.storageWarning}</p>}
+
           {error && (
             <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}
               {lobby.roundPreparationFailed && <button type="button" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}

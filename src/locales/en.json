@@ -1,4 +1,9 @@
 {
+  "online_invitation_invalid": "This invitation link is incomplete or invalid. You can return to the menu.",
+  "online_private_url_warning": "Storage is unavailable. The address still contains a private link; avoid sharing it.",
+  "online_restore_unavailable": "Storage is unavailable: participation cannot be restored after a refresh. Invitations remain available.",
+  "online_url_cleanup_failed": "The address could not be cleaned. It may still contain a private link.",
+  "online_storage_clear_failed": "Online storage could not be cleared. Close this tab before refreshing to avoid restoration.",
   "advisor_title": "Suggest a shot",
   "advisor_objective": "Objective",
   "advisor_survival": "SURVIVAL",

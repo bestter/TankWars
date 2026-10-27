@@ -1,3 +1,4 @@
+import type { OnlineParticipation } from '../utils/onlineParticipation';
 import { type RoundMap } from "../game/round/prepareRound";
 import type { Player } from '../types/player';
 
@@ -18,6 +19,7 @@ export interface JoinedInfo {
 
 export interface OnlineLobbyProps {
   /** When provided via URL params we are in "join" mode for that slot */
+  initialParticipation?: OnlineParticipation;
   initialRoomId?: string;
   initialSlot?: number;
   initialToken?: string;

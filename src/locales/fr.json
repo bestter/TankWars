@@ -1,4 +1,9 @@
 {
+  "online_invitation_invalid": "Ce lien de participation est incomplet ou invalide. Vous pouvez revenir au menu.",
+  "online_private_url_warning": "La sauvegarde est indisponible. L’adresse contient encore un lien privé; évitez de la partager.",
+  "online_restore_unavailable": "La sauvegarde est indisponible : la participation ne pourra pas être restaurée après un rafraîchissement. Les invitations restent accessibles.",
+  "online_url_cleanup_failed": "Le nettoyage de l’adresse a échoué. Elle peut encore contenir un lien privé.",
+  "online_storage_clear_failed": "La sauvegarde en ligne n’a pas pu être effacée. Fermez cet onglet avant de rafraîchir pour éviter une restauration.",
   "advisor_title": "Conseiller un tir",
   "advisor_objective": "Objectif",
   "advisor_survival": "SURVIE",
