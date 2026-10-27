@@ -1,4 +1,6 @@
 import { captureOnlineEntry, cleanParticipationUrl, clearParticipation, readOnlineEntry, type OnlineParticipation, type OnlineEntryMessage } from './utils/onlineParticipation';
+import { onlineEntryMessagesReducer } from './utils/onlineEntryMessages';
+import { OnlinePersistenceAlerts } from './components/OnlinePersistenceAlerts';
 import { lazy, Suspense, useEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
@@ -40,6 +42,7 @@ interface AppScreenProps {
   ) => void;
   readonly onHideOnlineLobby: () => void;
   readonly onReturnToMenu: () => void;
+  readonly onPersistenceWarning: (message: OnlineEntryMessage) => void;
 }
 
 function AppScreen({
@@ -55,6 +58,7 @@ function AppScreen({
   onStartOnlineGame,
   onHideOnlineLobby,
   onReturnToMenu,
+  onPersistenceWarning,
   onEndurance,
 }: AppScreenProps) {
   if (!showMenu) {
@@ -84,6 +88,7 @@ function AppScreen({
         initialSlot={isOnlineJoin ? participation!.slot : undefined}
         initialToken={isOnlineJoin ? participation!.token : undefined}
         initialParticipation={participation ?? undefined}
+        onPersistenceWarning={onPersistenceWarning}
         onStartGame={onStartOnlineGame}
         onExitToLocalMenu={onHideOnlineLobby}
       />
@@ -119,13 +124,18 @@ function App() {
   const onlineMultiplayerEnabled = !hotseatOnly;
   const [entry] = useState(() => readOnlineEntry(onlineMultiplayerEnabled));
   const [participation, setParticipation] = useState(entry.participation);
-  const [messages, setMessages] = useReducer((_previous: OnlineEntryMessage[], next: OnlineEntryMessage[]) => next, []);
+  const [messages, setMessages] = useReducer(onlineEntryMessagesReducer, []);
+  const handlePersistenceWarning = (message: OnlineEntryMessage) => {
+    setMessages({ type: 'add', messages: [message] });
+  };
   const captured = useRef(false);
   useEffect(() => {
     const warn = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;
       const key: unknown = event.detail;
-      if (key === 'online_storage_clear_failed' || key === 'online_restore_unavailable') setMessages([key]);
+      if (key === 'online_storage_clear_failed' || key === 'online_restore_unavailable') {
+        setMessages({ type: 'add', messages: [key] });
+      }
     };
     window.addEventListener('online-persistence-warning', warn);
     return () => window.removeEventListener('online-persistence-warning', warn);
@@ -133,7 +143,7 @@ function App() {
   useEffect(() => {
     if (captured.current) return;
     captured.current = true;
-    setMessages(captureOnlineEntry(entry, onlineMultiplayerEnabled));
+    setMessages({ type: 'replace', messages: captureOnlineEntry(entry, onlineMultiplayerEnabled) });
   }, [entry, onlineMultiplayerEnabled]);
   const [state, dispatch] = useReducer(appReducer, entry.session, createInitialAppState);
   const isOnlineJoin = participation !== null;
@@ -168,10 +178,10 @@ function App() {
     const clearedCombat = clearOnlineSession();
     const clearedLobby = clearParticipation();
     const cleaned = cleanParticipationUrl();
-    setMessages([
+    setMessages({ type: 'replace', messages: [
       ...(!clearedCombat || !clearedLobby ? ['online_storage_clear_failed' as const] : []),
       ...(!cleaned ? ['online_url_cleanup_failed' as const] : []),
-    ]);
+    ] });
   };
 
   const handleReturnToLobbyOrMenu = (): void => {
@@ -211,7 +221,7 @@ function App() {
         <LanguageSwitcher />
       </div>
 
-      {messages.map(message => <p role="alert" key={message}>{t(message)}</p>)}
+      <OnlinePersistenceAlerts messages={messages} />
       {showEndurance && EnduranceScreen ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
         onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
         showMenu={showMenu}
@@ -226,6 +236,7 @@ function App() {
         onStartOnlineGame={handleStartOnlineGame}
         onHideOnlineLobby={handleOnlineMenuToggle}
         onReturnToMenu={handleReturnToLobbyOrMenu}
+        onPersistenceWarning={handlePersistenceWarning}
       />}
     </div>
   );

@@ -77,6 +77,7 @@ describe('App component (State and Lifecycle integration)', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -88,6 +89,35 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
     expect(screen.queryByRole('button', { name: 'endurance_title' })).toBeNull();
+  });
+  it('mounts one atomic live region before any warning occurs', () => {
+    render(<App />);
+    const alert = screen.getByRole('alert');
+    expect(alert.getAttribute('aria-atomic')).toBe('true');
+    expect(alert.textContent).toBe('');
+  });
+
+  it('aggregates independent failures without duplicating lobby alerts or reannouncing repeated errors', () => {
+    window.history.replaceState({}, '', '/?room=ROOM77&slot=1&token=TOK77');
+    vi.spyOn(sessionStorageMock, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+    render(<App />);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('online_private_url_warning');
+    fireEvent.change(screen.getByPlaceholderText('enter_name_placeholder'), { target: { value: 'Guest' } });
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(alert.textContent).toBe('online_private_url_warning');
+
+    const warn = () => fireEvent(window, new CustomEvent('online-persistence-warning', { detail: 'online_storage_clear_failed' }));
+    warn();
+    expect(alert.textContent).toBe('online_private_url_warningonline_storage_clear_failed');
+    const mutations = new MutationObserver(() => {});
+    mutations.observe(alert, { childList: true, subtree: true, characterData: true });
+    warn();
+    fireEvent.change(screen.getByPlaceholderText('enter_name_placeholder'), { target: { value: 'Guest 2' } });
+    expect(mutations.takeRecords()).toHaveLength(0);
+    mutations.disconnect();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toBe(alert);
   });
 
   it('transitions from MainMenu to GameCanvas on start local battle, and unmounts MainMenu', () => {

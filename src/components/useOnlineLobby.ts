@@ -1,4 +1,4 @@
-import { parseCreatedParticipation, persistParticipation, type OnlineParticipation } from '../utils/onlineParticipation';
+import { parseCreatedParticipation, persistParticipation, type OnlineEntryMessage, type OnlineParticipation } from '../utils/onlineParticipation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../types/room';
@@ -12,6 +12,7 @@ export function useOnlineLobby({
   initialRoomId,
   initialSlot,
   initialToken,
+  onPersistenceWarning,
   onStartGame,
   onExitToLocalMenu,
 }: OnlineLobbyProps) {
@@ -36,7 +37,7 @@ export function useOnlineLobby({
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [roundPreparationFailed, setRoundPreparationFailed] = useState(false);
-  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<OnlineEntryMessage | null>(null);
   const participationRef = useRef(initialParticipation);
   const [error, setError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
@@ -60,8 +61,10 @@ export function useOnlineLobby({
 
   const saveParticipation = useCallback((value: OnlineParticipation) => {
     participationRef.current = value;
-    setStorageWarning(persistParticipation(value) ? null : t('online_restore_unavailable'));
-  }, [t]);
+    if (persistParticipation(value)) setStorageWarning(null);
+    else if (onPersistenceWarning) onPersistenceWarning('online_restore_unavailable');
+    else setStorageWarning('online_restore_unavailable');
+  }, [onPersistenceWarning]);
 
   const updateName = (name: string) => {
     setMyName(name);

@@ -20,6 +20,7 @@ import { GameLogo } from './GameLogo';
 import { OnlineLobbyCreate } from './OnlineLobbyCreate';
 import { OnlineLobbyWaiting } from './OnlineLobbyWaiting';
 import { useOnlineLobby } from './useOnlineLobby';
+import { OnlinePersistenceAlerts } from './OnlinePersistenceAlerts';
 
 export type { OnlineLobbyProps } from './onlineLobbyTypes';
 
@@ -35,7 +36,7 @@ export function OnlineLobby(props: OnlineLobbyProps) {
           <GameLogo compact />
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>
 
-          {lobby.storageWarning && <p role="alert">{lobby.storageWarning}</p>}
+          {!props.onPersistenceWarning && <OnlinePersistenceAlerts messages={lobby.storageWarning ? [lobby.storageWarning] : []} />}
 
           {error && (
             <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}

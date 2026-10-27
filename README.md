@@ -73,7 +73,7 @@ If storage fails, a valid invitation stays in the address as a refresh fallback 
 
 Cleaning the address reduces exposure; it cannot remove previously copied links, requests or history copies, and does not revoke a token. Invitations and WebSocket URLs still carry private tokens. The Worker compares exact UTF-8 bytes through Cloudflare's `crypto.subtle.timingSafeEqual`, including the documented unequal-length rejection path. This does not make the entire HTTP request constant-time. See the [Cloudflare comparison example](https://developers.cloudflare.com/workers/examples/protect-against-timing-attacks/).
 
-For a local runtime check, start `npm run worker:dev -- --local`, then run `node Scripts/test-online-token-comparison.mjs`. This runs the actual helper in workerd and checks the real WebSocket route, including refusals that preserve a legitimate socket. Node unit tests use a test double for Cloudflare's nonstandard primitive.
+The smoke check is manual and is not included in `npm run test` or CI. In one terminal, start `npm run worker:dev -- --local` and keep it running; in a second terminal at the repository root, run `node Scripts/test-online-token-comparison.mjs`. It requires the local Worker on port 8787. This runs the actual helper in workerd and checks the real WebSocket route, including refusals that preserve a legitimate socket. Node unit tests use a test double for Cloudflare's nonstandard primitive.
 
 ## Controls
 

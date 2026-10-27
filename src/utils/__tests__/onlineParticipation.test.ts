@@ -61,6 +61,21 @@ describe('online participation', () => {
     expect(readOnlineEntry(true).session).toBeNull();
     expect(readOnlineEntry(true).participation).toBeNull();
   });
+  it('rejects an invalid explicit invitation even when valid combat is saved', () => {
+    saveCombat();
+    history.replaceState({}, '', '/?room=synthetic-room&slot=invalid&token=synthetic-token');
+    const entry = readOnlineEntry(true);
+    expect(entry.session).toBeNull();
+    expect(entry.participation).toBeNull();
+    expect(captureOnlineEntry(entry, true)).toContain('online_invitation_invalid');
+    expect(readOnlineSession()).toBeNull();
+  });
+  it('keeps an engaged lobby and its name for an identical invitation without combat', () => {
+    const joined = { ...guest, name: 'Guest', engaged: true };
+    persistParticipation(joined);
+    history.replaceState({}, '', '/?room=synthetic-room&slot=1&token=synthetic-token');
+    expect(readOnlineEntry(true).participation).toEqual(joined);
+  });
   it.each(['slot=4&room=x&token=x', 'slot=-1&room=x&token=x', 'slot=&room=x&token=x',
     'slot=1&room=x', 'slot=1&room=x&token=x&token=y'])('rejects an invalid explicit link instead of restoring old data: %s', query => {
     persistParticipation(guest);
