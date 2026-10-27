@@ -2,12 +2,13 @@
  * Sélection physique SNIPER (#289).
  * Reproduction : npm run test -- src/game/entities/ai/__tests__/sniperPhysicalSelection.test.ts
  * Le retrait du jet BULLET à 50 % décale la séquence globale de secureRandom.
- * Les offsets, réactions et gaffes gardent les valeurs de fallibleAim et aimCorruption.
+ * Les offsets et réactions restent inchangés; BULLET est exemptée de grosse gaffe (#314).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
 import type { Player } from "../../../../types/player";
+import type { AIObservation } from "../../../observation";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../../types/weapon";
 import type { CombatDamageEvent, CombatDestructionEvent } from "../../../economy/shotRewards";
@@ -420,6 +421,96 @@ describe("SNIPER turn wiring", () => {
     expect(search).not.toHaveBeenCalled();
     expect(f.self.inventory).toEqual({ BULLET: 2, DRILLER: 1 });
     expect(f.self.tank.currentWeapon).toBe("BULLET");
+  });
+
+  it.each([
+    { weapon: "BULLET", reaction: false },
+    { weapon: "BULLET", reaction: true },
+    { weapon: "DRILLER", reaction: false },
+    { weapon: "DRILLER", reaction: true },
+    { weapon: "MISSILE", reaction: false },
+    { weapon: "MISSILE", reaction: true },
+  ] as const)("keeps final $weapon gaffe policy and RNG order with reaction=$reaction", async ({ weapon, reaction }) => {
+    const raw = { angle: 45.04, power: 50.2 };
+    const solve = vi.spyOn(sniperAim, "solveSniperAim")
+      .mockReturnValue({ command: raw, complete: true });
+    // Exercise the actual selection: stocked BULLET may be refused, and the
+    // previous weapon deliberately differs from the final choice.
+    vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, candidate) => {
+      if (weapon === "BULLET" && candidate === "BULLET") return bulletProof();
+      if (weapon === "DRILLER" && candidate === "DRILLER") return drillerProof({ fall: 4000 });
+      return forecast();
+    });
+    const selection = vi.spyOn(sniperSelection, "chooseSniperPhysicalShot");
+    const offset = vi.spyOn(fallible, "signedImpactOffset");
+    const gaffeDecision = vi.spyOn(fallible, "maybeGaffe");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const config = ADVANCED_GAFFES["v3-sniper"];
+    const gaffeOccurred = weapon !== "BULLET";
+    const sequence = [0.4, ...(reaction ? [0.1, 0.9] : []), 0.01, ...(gaffeOccurred ? [0.9, 0.1] : [])];
+
+    for (const observe of [false, true]) {
+      const f = fixture();
+      f.self.tank.currentWeapon = weapon === "BULLET" ? "MISSILE" : "BULLET";
+      f.self.tank.hitReaction = { wasDirectHit: reaction, fallDistance: reaction ? 60 : 0 };
+      const intensity = getHitReactionIntensity("v3-sniper", f.self.tank.hitReaction);
+      let draw = 0;
+      const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+        const value = sequence[draw++];
+        if (value === undefined) throw new Error("Unexpected RNG draw");
+        return value;
+      });
+      const details: AIObservation[] = [];
+      const strategy = new AISniperStrategy();
+      if (observe) strategy.onDecisionObserved = (value) => details.push(value);
+      selection.mockClear();
+      offset.mockClear();
+      gaffeDecision.mockClear();
+      solve.mockClear();
+      info.mockClear();
+
+      const shot = await strategy.executeTurn("self", f.state, f.terrain);
+      const reacted = {
+        angle: raw.angle - intensity * config.angleAmplitude,
+        power: raw.power + intensity * config.powerAmplitude,
+      };
+      const corrupted = {
+        angle: reacted.angle + (gaffeOccurred ? config.angleAmplitude : 0),
+        power: reacted.power - (gaffeOccurred ? config.powerAmplitude : 0),
+      };
+      const expected = finalizeAdvancedAim(corrupted);
+      expect(shot).toEqual({ ...expected, weaponId: weapon });
+      expect(draw).toBe(sequence.length);
+      expect(rng).toHaveBeenCalledTimes(sequence.length);
+      expect(gaffeDecision).toHaveBeenCalledExactlyOnceWith(weapon === "BULLET" ? 0 : 0.05);
+      expect(selection).toHaveBeenCalledTimes(1);
+      expect(offset).toHaveBeenCalledExactlyOnceWith(1, "v3-sniper", 1, 1);
+      const choice = selection.mock.results[0].value as sniperSelection.SniperPhysicalChoice;
+      expect(solve).toHaveBeenCalledTimes(choice.trace.searches);
+      if (!reaction && !gaffeOccurred) expect(shot).toEqual({ ...choice.command, weaponId: weapon });
+      expect(f.self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+      expect(f.self.inventory).toEqual({ BULLET: 2, DRILLER: 1 });
+      const line = info.mock.calls.find((call) => call[0] === "[AI SNIPER] Décision");
+      expect(line).toBeDefined();
+      expect(JSON.parse(String(line?.[1]))).toMatchObject({ choice: {
+        weaponId: weapon, reactionIntensity: intensity, gaffeOccurred, finalCommand: expected,
+      } });
+      if (observe) {
+        expect(details).toHaveLength(1);
+        expect(details[0].evaluated).toEqual({ ...choice.command, weaponId: weapon });
+        expect(details[0].steps.map((step) => step.kind)).toEqual(["offset", "reaction", "gaffe", "finalize"]);
+        expect(details[0].steps[1]).toMatchObject({ before: raw, after: reacted, parameters: { intensity } });
+        expect(details[0].steps[2]).toMatchObject({ before: reacted, after: corrupted,
+          parameters: { chance: weapon === "BULLET" ? 0 : 0.05, occurred: gaffeOccurred } });
+        expect(details[0].final).toEqual(shot);
+      }
+
+      // A second turn must not reuse the consumed hit reaction.
+      rng.mockClear().mockReturnValue(0.99);
+      await strategy.executeTurn("self", f.state, f.terrain);
+      expect(rng).toHaveBeenCalledTimes(2); // Offset, then gaffe decision only.
+      rng.mockRestore();
+    }
   });
 
   it("applies reaction then gaffe once to the raw command and skips corruption at intensity zero", async () => {

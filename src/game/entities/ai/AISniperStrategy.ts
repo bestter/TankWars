@@ -178,6 +178,7 @@ export class AISniperStrategy implements AIEngine {
     self.tank.currentWeapon = weaponId;
 
     const gaffe = ADVANCED_GAFFES["v3-sniper"];
+    const gaffeChance = weaponId === "BULLET" ? 0 : gaffe.chance;
     const reactionIntensity = getHitReactionIntensity(
       self.aiProfile ?? "v3-sniper",
       self.tank.hitReaction,
@@ -195,7 +196,8 @@ export class AISniperStrategy implements AIEngine {
       );
       perturbed = true;
     }
-    const gaffeOccurred = maybeGaffe(gaffe.chance);
+    // Keep the decision draw even when BULLET is exempt from corruption.
+    const gaffeOccurred = maybeGaffe(gaffeChance);
     observation?.step("reaction", before, command, { intensity: reactionIntensity });
     before = command;
     if (gaffeOccurred) {
@@ -208,7 +210,7 @@ export class AISniperStrategy implements AIEngine {
     }
 
     consumeHitReaction(self.tank.hitReaction);
-    observation?.step("gaffe", before, command, { chance: gaffe.chance, occurred: gaffeOccurred });
+    observation?.step("gaffe", before, command, { chance: gaffeChance, occurred: gaffeOccurred });
     const fired = perturbed ? finalizeAdvancedAim(command) : choice.command;
     observation?.step("finalize", command, fired);
     observation?.finish({ ...fired, weaponId }, choice.reason, { ...choice.trace, certified: choice.certified,
