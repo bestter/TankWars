@@ -3,6 +3,9 @@ import { EnduranceSession } from "../session";
 import { MemoryStorage, fixture } from "./helpers";
 import type { JournalEntry, JournalStatus } from "../journal";
 import { autoBuyForAI } from "../../entities/ai/aiShopHelper";
+import { AISmartStrategy } from "../../entities/ai/AISmartStrategy";
+import { flatTerrain, makePlayer, makeTank } from "../../__tests__/helpers";
+import { createSeededRNG, getRNG, setRNG } from "../../../utils/random";
 
 class JournalMemory extends MemoryStorage {
   entries: JournalEntry[] = [];
@@ -82,4 +85,72 @@ describe("session journal lifecycle and reconciliation", () => {
     expect(f.players[0].money).toBe(before + 10);
     expect(await run.journalJSONL()).toContain('"kind":"credit"');
   });
+});
+
+
+it("persists #352 reasons with DEV false through ai-detail and JSONL without altering RNG or commands", async () => {
+  vi.stubEnv("DEV", false);
+  const previous = getRNG();
+  try {
+    const self = makePlayer({ id: "s", isHuman: false, aiProfile: "v4-smart", inventory: {}, tank: makeTank("s", 100, 336) });
+    const target = makePlayer({ id: "c", inventory: {}, tank: makeTank("c", 400, 336, { health: 60 }) });
+    const state = { phase: "COMBAT" as const, players: [self, target], currentPlayerIndex: 0, turn: 4, roundNumber: 12,
+      windForce: 0, gravity: 260, localShotContext: { playerCountAtMatchStart: 2, isFirstShotOfRound: false } };
+    const f = fixture(), storage = new JournalMemory(), run = new EnduranceSession(f.config, storage);
+    await run.start(); run.attach(f.host);
+    run.emit({ kind: "decision-start", playerId: self.id });
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const results = [];
+    for (const observe of [false, true]) {
+      const rng = createSeededRNG(12453), draws: number[] = [], targets: string[] = [];
+      setRNG({ next: () => { const value = rng.next(); draws.push(value); return value; } });
+      const strategy = new AISmartStrategy();
+      await strategy.executeTurn("s", structuredClone(state), flatTerrain(800, 480));
+      draws.length = 0;
+      strategy.onTargetSelected = (_id, targetId) => targets.push(targetId);
+      if (observe) strategy.onDecisionObserved = observation => { run.emit({ kind: "ai-detail", observation }); };
+      const snapshot = structuredClone(state);
+      const command = await strategy.executeTurn("s", snapshot, flatTerrain(800, 480));
+      results.push({ command, draws, targets, snapshot });
+    }
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0].targets).toHaveLength(1);
+    await run.stop();
+    const jsonl = await run.journalJSONL();
+    const rows = jsonl.trim().split("\n").map(line => JSON.parse(line) as JournalEntry);
+    const details = rows.filter(row => row.event?.kind === "combat" && row.event.event.kind === "ai-detail");
+    expect(details).toHaveLength(1);
+    expect(JSON.stringify(details)).toContain('"lethalTransition"');
+    expect(JSON.stringify(details)).toContain('"initialTargetId":"c"');
+    expect(JSON.stringify(details)).toContain('"targets":[{"playerId":"c","profile":"human"');
+    expect(JSON.stringify(details)).toContain('"targetSelection":{"source":"main-plan"');
+    expect(JSON.stringify(details)).not.toContain('"offscreenCanvas"');
+    expect(details[0].decisionId).not.toBeNull();
+    expect(log).not.toHaveBeenCalled();
+  } finally { setRNG(previous); vi.unstubAllEnvs(); vi.restoreAllMocks(); }
+});
+
+
+it("exports fallback target and weapon reasons through the endurance JSONL with DEV false", async () => {
+  vi.stubEnv("DEV", false);
+  const previous = getRNG();
+  try {
+    const self = makePlayer({ id: "s", isHuman: false, aiProfile: "v4-smart", inventory: {}, tank: makeTank("s", 100, 336) });
+    const target = makePlayer({ id: "c", inventory: {}, tank: makeTank("c", 400, 336) });
+    const state = { phase: "COMBAT" as const, players: [self, target], currentPlayerIndex: 0, turn: 4, roundNumber: 12,
+      windForce: 0, gravity: 260 };
+    const f = fixture(), storage = new JournalMemory(), run = new EnduranceSession(f.config, storage);
+    await run.start(); run.attach(f.host); run.emit({ kind: "decision-start", playerId: self.id });
+    const strategy = new AISmartStrategy();
+    strategy.onDecisionObserved = observation => { run.emit({ kind: "ai-detail", observation }); };
+    setRNG(createSeededRNG(12453));
+    await strategy.executeTurn("s", state, flatTerrain(800, 480));
+    await run.stop();
+    const rows = (await run.journalJSONL()).trim().split("\n").map(line => JSON.parse(line) as JournalEntry);
+    const detail = rows.find(row => row.event?.kind === "combat" && row.event.event.kind === "ai-detail");
+    expect(detail).toMatchObject({ event: { kind: "combat", event: { kind: "ai-detail", observation: { diagnostics: {
+      planner: { phase: "REPLI" }, targetSelection: { source: "fallback", reason: "ordinary-target-order", targetId: "c" },
+      fallbackChoice: { selectionReason: expect.any(String), rawCommand: expect.any(Object), evaluatedCommand: expect.any(Object) },
+    } } } } });
+  } finally { setRNG(previous); vi.unstubAllEnvs(); }
 });

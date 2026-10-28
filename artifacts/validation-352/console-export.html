@@ -1,0 +1,30 @@
+<!doctype html><html lang="fr"><meta charset="utf-8"><title>Validation des journaux navigateur</title>
+<button id="run">Exécuter une décision EXPERT réelle</button><a id="download" hidden>Télécharger les lignes console</a><pre id="result">Prêt</pre>
+<script type="module">
+import { AISmartStrategy } from '/src/game/entities/ai/AISmartStrategy.ts';
+import { flatTerrain, makePlayer, makeTank } from '/src/game/__tests__/helpers.ts';
+import { createSeededRNG, getRNG, setRNG } from '/src/utils/random.ts';
+document.querySelector('#run').onclick = async () => {
+  const original = console.info, previous = getRNG(), lines = [];
+  console.info = (...args) => { if (String(args[0]).startsWith('[AI EXPERT] Décision')) lines.push(args[0]); original(...args); };
+  try {
+    const self = makePlayer({ id: 'expert', isHuman: false, aiProfile: 'v4-smart', inventory: {}, tank: makeTank('expert', 100, 336) });
+    const human = makePlayer({ id: 'human', inventory: {}, tank: makeTank('human', 400, 336, { health: 60 }) });
+    const ok = makePlayer({ id: 'ok', isHuman: false, aiProfile: 'v2-heuristic', inventory: {}, tank: makeTank('ok', 650, 336) });
+    const state = { phase: 'COMBAT', players: [self, human, ok], currentPlayerIndex: 0, turn: 7, roundNumber: 12,
+      windForce: 0, gravity: 260, localShotContext: { playerCountAtMatchStart: 3, isFirstShotOfRound: false } };
+    const strategy = new AISmartStrategy(); const observations = [];
+    setRNG(createSeededRNG(12453));
+    await strategy.executeTurn('expert', structuredClone(state), flatTerrain(800, 480));
+    strategy.onDecisionObserved = value => observations.push(value);
+    const command = await strategy.executeTurn('expert', structuredClone(state), flatTerrain(800, 480));
+    const link = document.querySelector('#download');
+    link.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'));
+    link.download = 'tankwars-console-validation.txt'; link.hidden = false;
+    document.querySelector('#result').textContent = JSON.stringify({ command, lines: lines.length,
+      maxLineLength: Math.max(...lines.map(line=>line.length)), observations: observations.length,
+      targets: observations[0].diagnostics.planner.targets, targetSelection: observations[0].diagnostics.targetSelection }, null, 2);
+  } catch (error) { document.querySelector('#result').textContent = String(error); }
+  finally { console.info = original; setRNG(previous); }
+};
+</script></html>

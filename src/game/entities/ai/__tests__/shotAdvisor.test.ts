@@ -224,7 +224,7 @@ describe("local advisor shared policies #273", () => {
     const reward = vi.spyOn(rewards, "calculateShotRewards");
     const advice = calculateShotAdvice(f.snapshot, "OPTIMISER_PROFIT");
     expect(advice?.command).toEqual({ angle: 60.4, power: 51, weaponId: "MISSILE" });
-    expect(physics).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "MISSILE", { angle: 60.4, power: 51 });
+    expect(physics).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "MISSILE", { angle: 60.4, power: 51 }, { captureAfterState: true });
     expect(reward).toHaveBeenCalledWith(expect.objectContaining({ playerCountAtMatchStart: 4, isFirstShotOfRound: true }));
   });
 

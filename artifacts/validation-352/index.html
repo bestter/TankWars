@@ -1,0 +1,21 @@
+<!doctype html><html lang="fr"><meta charset="utf-8"><title>Validation du ticket 352</title>
+<button id="run">Mesurer 2–4 joueurs et vérifier le journal compilé</button><pre id="result">Prêt</pre>
+<script type="module">
+import { benchmark, verifyCompiledJournal } from './benchmark.ts';
+document.querySelector('#run').onclick = async () => {
+  const output = document.querySelector('#result'); output.textContent = 'Calcul…';
+  try {
+    let maxFrameGapMs = 0, previous = performance.now(), active = true;
+    const frame = now => { maxFrameGapMs = Math.max(maxFrameGapMs, now - previous); previous = now; if (active) requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const main = await benchmark();
+    await new Promise(resolve => setTimeout(resolve, 30)); active = false;
+    const worker = new Worker(new URL('./benchmark.worker.ts', import.meta.url), { type: 'module' });
+    const background = await new Promise((resolve, reject) => { worker.onmessage = event => event.data.error ? reject(event.data.error) : resolve(event.data.rows); worker.onerror = reject; worker.postMessage({}); });
+    worker.terminate();
+    const journal = await verifyCompiledJournal();
+    output.textContent = JSON.stringify({ main, background, maxFrameGapMs, journal }, null, 2);
+  } catch (error) { output.textContent = String(error); }
+};
+</script></html>

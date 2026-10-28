@@ -1,0 +1,12 @@
+<!doctype html><html lang="fr"><meta charset="utf-8"><title>Validation des motifs d’endurance</title>
+<button>Vérifier les motifs persistés avec DEV faux</button><pre id="result">Prêt</pre>
+<script type="module">
+import { verifyCompiledJournal } from './benchmark.ts';
+document.querySelector('button').onclick = async () => {
+  try { const result = await verifyCompiledJournal();
+    document.querySelector('#result').textContent = JSON.stringify({ dev: result.dev, persisted: result.persisted,
+      transitionRetained: result.transitionRetained, simulatedTerrainLeaked: result.simulatedTerrainLeaked,
+      targets: result.targets, fallbackTarget: result.fallbackTarget, fallbackReason: result.fallback?.selectionReason }, null, 2);
+  } catch (error) { document.querySelector('#result').textContent = String(error); }
+};
+</script></html>
