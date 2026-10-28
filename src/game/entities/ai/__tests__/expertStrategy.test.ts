@@ -1,3 +1,4 @@
+import { decisionJSON } from "../../../__tests__/decisionConsoleHelpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import { AISmartStrategy } from "../AISmartStrategy";
@@ -89,7 +90,7 @@ describe("EXPERT nuclear knowledge", () => {
         rng.mockReset().mockReturnValueOnce(0.42).mockReturnValueOnce(0.75).mockReturnValue(0.99);
         log.mockClear();
         const command = await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
-        const entry = log.mock.calls.find(([label]) => label === "[AI EXPERT] Décision")?.[1];
+        const entry = decisionJSON(log.mock.calls);
         const decision: unknown = JSON.parse(String(entry));
         expect(decision).toMatchObject({ roster: expect.arrayContaining([
           expect.objectContaining({ id: "enemy", inventory }),
@@ -136,7 +137,7 @@ describe("EXPERT nuclear knowledge", () => {
     expect(withStock.enemy.inventory[weapon]).toBe(2);
     expect(evaluate.mock.calls.some((call) => call[2].id === "enemy" &&
       (call[3] === "NUKE" || call[3] === "THERMONUCLEAR"))).toBe(false);
-    expect(log).toHaveBeenCalledTimes(4);
+    expect(log.mock.calls.filter(([line]) => String(line).startsWith("[AI EXPERT] Décision {"))).toHaveLength(4);
   });
 });
 
@@ -684,7 +685,7 @@ describe("EXPERT decision and fallback", () => {
     await strategy.executeTurn("self", f.state, f.terrain);
     log.mockClear();
     const shot = await strategy.executeTurn("self", f.state, f.terrain);
-    const entry = log.mock.calls.find(([label]) => label === "[AI EXPERT] Décision")?.[1];
+    const entry = decisionJSON(log.mock.calls);
     expect(typeof entry).toBe("string");
     const decision = JSON.parse(String(entry)) as {
       phase: string;

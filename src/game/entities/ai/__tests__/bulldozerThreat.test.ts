@@ -185,6 +185,7 @@ describe("bounded threat search, profit and cache", () => {
       createExpertDecisionAim({ currentTargetAttempts: 0 }, 1), evaluate, trace, cache)).toBeNull();
     expect(trace).toHaveBeenCalledOnce();
     expect(trace.mock.calls[0][0]).toEqual({
+      lethalTransition: { reason: "not-applicable", turn: f.state.turn, round: f.state.roundNumber, alternatives: [] },
       phase: "REPLI", transitionReason: "contexte économique absent : plan principal indisponible",
       threats: [], survivalCandidateCount: 0, availableWeapons: [], candidateCount: 0, bestByWeapon: [],
     });

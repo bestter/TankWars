@@ -1,3 +1,6 @@
+import { possibleExpertThreatWeapons } from "./expertThreatWeapons";
+export { possibleExpertThreatWeapons } from "./expertThreatWeapons";
+import { chooseTransitionSafePlan, type TransitionSelectionTrace } from "./lethalTransition";
 import { advisorAdmissible, compareAdvisorOutcomes, type AdvisorObjective } from "./expertPolicy";
 import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
@@ -63,6 +66,29 @@ interface ExpertCandidateTrace extends ExpertConsequences {
 }
 
 export interface ExpertDecisionTrace {
+  readonly advisorFallback?: {
+    readonly targetId: string;
+    readonly targetSelectionReason: string;
+    readonly weaponId: WeaponId;
+    readonly kind: "evaluated" | "ordinary";
+    readonly selectionReason?: string;
+    readonly profit: number | null;
+    readonly refusal: "uncertified" | null;
+  };
+  readonly targets?: readonly {
+    readonly playerId: string;
+    readonly profile: string;
+    readonly dead: boolean;
+    readonly candidateCount: number;
+    readonly reason: "admissible" | "no-admissible-candidate" | "dead";
+    readonly best?: {
+      readonly weaponId: WeaponId;
+      readonly targetIds: readonly string[];
+      readonly profit: number;
+      readonly shooterDestroyed: boolean;
+    };
+  }[];
+  readonly lethalTransition?: TransitionSelectionTrace;
   readonly phase: "SURVIE" | "OPTIMISER_PROFIT" | "REPLI";
   readonly transitionReason: string;
   readonly threats: readonly {
@@ -156,21 +182,6 @@ function selectionReason(
   return "ordre stable des groupes ou des points";
 }
 
-export function possibleExpertThreatWeapons(player: Player): WeaponId[] {
-  let ids: readonly WeaponId[];
-  if (player.isHuman || player.aiProfile === "v4-smart") {
-    ids = ALL_WEAPON_IDS;
-  } else if (player.aiProfile === "v3-sniper") {
-    ids = ["MISSILE", "BULLET", "DRILLER"];
-  } else if (player.aiProfile === "v2-heuristic") {
-    ids = ["MISSILE", "GRENADE", "CLUSTER", "NUKE", "DRILLER"];
-  } else {
-    ids = [player.tank.currentWeapon || "MISSILE"];
-  }
-  // Nuclear stock stays unknown even after an opponent selects or fires it.
-  return ids.filter((id) => id !== "BULLDOZER" && id !== "NUKE" && id !== "THERMONUCLEAR" &&
-    (id === "MISSILE" || (player.inventory[id] ?? 0) > 0));
-}
 
 function nextDelay(state: GameState, player: Player): number {
   const targetIndex = state.players.indexOf(player);
@@ -216,6 +227,7 @@ export function chooseExpertPlan(
 ): ExpertPlan | null {
   if (!state.localShotContext) {
     onDecision?.({
+      lethalTransition: { reason: "not-applicable", turn: state.turn, round: state.roundNumber, alternatives: [] },
       phase: "REPLI",
       transitionReason: "contexte économique absent : plan principal indisponible",
       threats: [], survivalCandidateCount: 0, availableWeapons: [],
@@ -266,6 +278,7 @@ export function chooseExpertPlan(
     transitionReason: string,
     ranked: readonly RankedPlan[],
     selected?: RankedPlan,
+    lethalTransition: TransitionSelectionTrace = { reason: "not-applicable", turn: state.turn, round: state.roundNumber, alternatives: [] },
   ): void => {
     if (!onDecision) return;
     const bestByWeapon: ExpertCandidateTrace[] = [];
@@ -278,6 +291,17 @@ export function chooseExpertPlan(
     const runnerUp = ranked[0] === selected ? ranked[1] : ranked[0];
     onDecision({
       phase,
+      lethalTransition,
+      targets: state.players.filter(player => player.id !== self.id).map(player => {
+        const proposals = ranked.filter(candidate => candidate.primaryTargetId === player.id);
+        const best = proposals[0];
+        return { playerId: player.id, profile: player.isHuman ? "human" : player.aiProfile ?? "unknown",
+          dead: player.tank.isDead, candidateCount: proposals.length,
+          reason: player.tank.isDead ? "dead" as const : best ? "admissible" as const :
+            "no-admissible-candidate" as const,
+          best: best && { weaponId: best.weaponId, targetIds: best.targetIds,
+            profit: best.result.profit, shooterDestroyed: best.result.shooterDestroyed } };
+      }),
       transitionReason,
       threats: threats.map(({ player, weaponId, result }) => ({
         playerId: player.id,
@@ -292,7 +316,8 @@ export function chooseExpertPlan(
       availableWeapons: shooterWeapons,
       candidateCount: ranked.length,
       selected: selected && traceCandidate(selected),
-      selectionReason: selected && selectionReason(phase, selected, runnerUp),
+      selectionReason: selected && (lethalTransition.reason === "alternative-accepted"
+        ? "autre cible sans nouvelle menace avec riposte létale" : selectionReason(phase, selected, runnerUp)),
       runnerUp: runnerUp && traceCandidate(runnerUp),
       bestByWeapon,
     });
@@ -419,8 +444,10 @@ export function chooseExpertPlan(
     a.weaponOrder - b.weaponOrder ||
     a.order - b.order ||
     a.result.pointOrder - b.result.pointOrder);
+  const selection = chooseTransitionSafePlan(candidates, self, state, terrain,
+    advisorObjective !== "SURVIE" && (advisorObjective === "OPTIMISER_PROFIT" || self.aiProfile === "v4-smart"));
   report(candidates.length > 0 ? "OPTIMISER_PROFIT" : "REPLI",
     candidates.length > 0 ? profitTransition : `${profitTransition}; aucun tir prévu admissible`,
-    candidates, candidates[0]);
-  return candidates[0] ?? null;
+    candidates, selection.choice, selection.trace);
+  return selection.choice ?? null;
 }
