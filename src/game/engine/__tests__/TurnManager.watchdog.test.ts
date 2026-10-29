@@ -4,6 +4,7 @@ import { TurnManager } from "../TurnManager";
 import { TankManager } from "../../entities/TankManager";
 import type { TerrainManager } from "../Terrain";
 import type { AIEngine } from "../../entities/ai/AIEngine";
+import type { CombatObserver } from "../../endurance/types";
 import { makePlayer, makeTank } from "../../__tests__/helpers";
 import * as random from "../../../utils/random";
 
@@ -109,6 +110,61 @@ describe("watchdogs de tir IA (#358)", () => {
     expect(self.inventory.DRILLER).toBe(4);
     expect(self.tank.currentWeapon).toBe("DRILLER");
     expect(turns.getCurrentPlayer()?.id).toBe("c");
+  });
+
+  it("laisse la décision armée et n'émet pas de repli si l'observateur refuse le dépassement", () => {
+    silence();
+    const self = makePlayer({
+      id: "s",
+      isHuman: false,
+      inventory: { DRILLER: 5, MISSILE: 99 },
+      tank: makeTank("s", 100, 336, { currentWeapon: "DRILLER", power: 55 }),
+    });
+    const target = makePlayer({ id: "c", isHuman: true, tank: makeTank("c", 600, 336) });
+    const tanks = new TankManager();
+    tanks.setPlayers([self, target]);
+    const fallback = vi.fn(() => ({ angle: 45, power: 50 }));
+    const fire = vi.fn();
+    let allowDecisionTimeout = false;
+    let refusals = 0;
+    const observer: CombatObserver = {
+      emit: (event) => {
+        if (event.kind === "recovery" && event.reason === "decision-timeout") {
+          refusals += 1;
+          return allowDecisionTimeout;
+        }
+        return true;
+      },
+    };
+    const turns = new TurnManager(tanks, {} as TerrainManager, fire, {
+      executeTurn: vi.fn().mockReturnValue(new Promise(() => {})),
+      getResolutionFallback: fallback,
+    });
+    turns.combatObserver = observer;
+
+    turns.startFirstTurn();
+    step((dt) => turns.update(dt), 10.2);
+    step((dt) => turns.update(dt), 0.5);
+
+    expect(refusals).toBeGreaterThan(1);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(fire).not.toHaveBeenCalled();
+    expect(self.inventory.DRILLER).toBe(5);
+    expect(self.tank.power).toBe(55);
+    expect(self.tank.currentWeapon).toBe("DRILLER");
+    expect(turns.getCurrentPlayer()?.id).toBe("s");
+    expect(Reflect.get(turns, "isResolutionSafetyArmed")).toBe(true);
+    expect(Reflect.get(turns, "resolutionPlayer")).toBe(self);
+
+    allowDecisionTimeout = true;
+    turns.update(DT);
+    step((dt) => turns.update(dt), 0.5);
+
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(self.inventory.DRILLER).toBe(4);
+    expect(Reflect.get(turns, "isResolutionSafetyArmed")).toBe(false);
+    expect(turns.getCurrentPlayer()?.id).toBe("s");
   });
 
   it("conserve le stock et le registre quand le moteur refuse le repli", async () => {

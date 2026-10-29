@@ -322,8 +322,9 @@ export class TurnManager {
       this.resolutionAccumulatedTime += dt;
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
         const player = this.resolutionPlayer;
-        this.disarmDecisionWatchdog();
+        // Un refus laisse le délai armé : aucun repli, comme les autres récupérations.
         if (this.combatObserver?.emit({ kind: "recovery", reason: "decision-timeout" }) === false) return;
+        this.disarmDecisionWatchdog();
         console.warn(
           `[TurnManager] AI resolution timeout for (player redacted). Triggering fallback.`,
         );
