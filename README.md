@@ -205,7 +205,9 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.12.1** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.12.2** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+
+Local turn watchdogs (#358) keep their 10 s decision, 12 s turn-lock and 4.5 s settlement limits. An accepted shot leaves the decision phase. A real decision timeout fires at most one fallback and ignores the replaced answer. A refused launch consumes no ammunition and opens no second shot ledger. An in-flight projectile, including a long GRENADE, does not advance the turn. The 4.5 s settlement net does not accumulate time while a projectile is active (`hasActiveProjectiles`). A refused `decision-timeout` recovery leaves the 10 s watchdog armed and fires no fallback.
 
 In the build today:
 
@@ -302,6 +304,10 @@ To explore the codebase:
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
+
+### Filets de sécurité des tours locaux (#358, v0.12.2)
+
+Un tir local accepté quitte la décision : le délai de 10 s est désarmé et ne produit plus de commande pendant le vol ou la stabilisation. Si la décision dépasse vraiment 10 s, un seul repli est émis et la réponse devenue obsolète est ignorée. `fireProjectile` refuse une arme inconnue, un second tir tant que le registre actif existe, ou un événement rejeté par l'observateur avant le lancement. Ce refus ne consomme pas de munition et ne remplace pas le registre. Le watchdog de 12 s n'avance pas le tour tant qu'un projectile est actif. Le filet de stabilisation de 4,5 s n'accumule pas de temps pendant ce vol (`hasActiveProjectiles`). Si l'observateur refuse `decision-timeout`, le délai de 10 s reste armé et aucun repli n'est lancé. Sans projectile, une décision bloquée ou une résolution jamais notifiée reste récupérable. La pause, la boutique et la manche suivante ne réarment pas l'ancien tir. Les seuils restent 10 s, 12 s et 4,5 s. L'IA du Worker n'utilise pas ces filets locaux.
 
 ### Chargement et couverture IA (#212)
 

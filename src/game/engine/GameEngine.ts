@@ -317,7 +317,7 @@ export class GameEngine {
       this.tankManager,
       this.terrain,
       (from, command, ownerId, identity) => {
-        this.fireProjectile(from, command, ownerId ?? "unknown", identity);
+        return this.fireProjectile(from, command, ownerId ?? "unknown", identity);
       },
     );
 
@@ -473,24 +473,24 @@ export class GameEngine {
       suppressEconomyReport?: boolean;
       physicsSeed?: number;
     },
-  ): void {
+  ): boolean {
     const weapon = WEAPON_REGISTRY[command.weaponId];
     if (!weapon) {
       this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "unknown-weapon" });
       console.warn(`Unknown weapon: ${command.weaponId}`);
-      return;
+      return false;
     }
     if (this.activeShotLedger !== null) {
       this.combatObserver?.emit({ kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "active-shot" });
       console.warn("[GameEngine] Refus d'un second tir avant la finalisation du tir actif.");
-      return;
+      return false;
     }
 
     this.physicsEngine.setShotSeed(identity?.physicsSeed);
     this.currentFirerId = ownerId;
     this.shotNumberInRound++;
     const shotId = identity?.shotId ?? this.nextShotId++;
-    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) return;
+    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) return false;
     const isFirstShotOfRound = identity?.isFirstShotOfRound ?? this.shotNumberInRound === 1;
     const aliveBeforeShot = this.tankManager.getAlivePlayers().map((player) => player.id);
     this.activeShotLedger = {
@@ -539,6 +539,7 @@ export class GameEngine {
     );
     this.combatObserver?.emit({ kind: "shot-launched", shotId, playerId: ownerId, command: { ...command },
       position: { ...from }, launch: { x: launchX, y: launchY } });
+    return true;
   }
 
   /** Associe l'identifiant serveur au tir optimiste encore actif. */
