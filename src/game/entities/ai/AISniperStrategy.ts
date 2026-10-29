@@ -16,13 +16,13 @@ import {
   recordAimAttempt,
   resetAimMemoryForRound,
 } from "./aimMemory";
-import { solveSniperAim } from "./sniperAim";
-import { chooseSniperPhysicalShot, type SniperPhysicalChoice } from "./sniperPhysicalSelection";
-import { maybeGaffe, signedImpactOffset } from "./fallibleAim";
+import type { SniperPhysicalChoice } from "./sniperPhysicalSelection";
+import { chooseSniperTransitionShot } from "./sniperTransitionSelection";
+import { maybeGaffe } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 
 type SniperMemory = AimMemory;
-type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible";
+type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible" | "alternative sans nouvelle transition";
 
 function logSniperDecision(build: () => object): void {
   if (!import.meta.env.DEV) return;
@@ -150,30 +150,14 @@ export class AISniperStrategy implements AIEngine {
       })[0];
     }
 
+    const nextAttempts = memory.currentTargetId === target.id ? memory.currentTargetAttempts + 1 : 1;
+    const selected = chooseSniperTransitionShot(self, target, gameState, terrainManager, nextAttempts, Boolean(this.onDecisionObserved));
+    if (selected.target !== target) targetRule = "alternative sans nouvelle transition";
+    target = selected.target;
+    const { attempts, offsetDirection, offset, choice } = selected;
+    recordAimAttempt(memory, target.id);
     this.onTargetSelected?.(self.id, target.id);
     const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
-    const attempts = recordAimAttempt(memory, target.id);
-    const targetX = target.tank.position.x;
-    let offsetDirection = targetX > terrainManager.width - targetX ? -1 : 1;
-    if (attempts === 2) {
-      offsetDirection *= -1;
-    }
-    const offset = signedImpactOffset(
-      attempts,
-      "v3-sniper",
-      gameState.roundNumber,
-      offsetDirection,
-    );
-    const choice = chooseSniperPhysicalShot(
-      self,
-      target,
-      gameState,
-      terrainManager,
-      offset,
-      (point, weapon, variant) => solveSniperAim(
-        self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
-      ),
-    );
     const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
 
@@ -214,11 +198,12 @@ export class AISniperStrategy implements AIEngine {
     const fired = perturbed ? finalizeAdvancedAim(command) : choice.command;
     observation?.step("finalize", command, fired);
     observation?.finish({ ...fired, weaponId }, choice.reason, { ...choice.trace, certified: choice.certified,
-      rawCommand: choice.rawCommand, predictedCommand: choice.command, variant: choice.variant });
-    logSniperDecision(() => sniperDecisionPayload(
+      rawCommand: choice.rawCommand, predictedCommand: choice.command, variant: choice.variant,
+      lethalTransition: selected.trace });
+    logSniperDecision(() => ({ ...sniperDecisionPayload(
       self, target, targetRule, gameState, terrainManager, attempts, offsetDirection, offset, choice,
       reactionIntensity, gaffeOccurred, fired,
-    ));
+    ), lethalTransition: selected.trace }));
     return { ...fired, weaponId };
   }
 

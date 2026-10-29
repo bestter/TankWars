@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="fr"><meta charset="utf-8"><title>Validation SNIPER #353</title>
+<h1>Validation SNIPER #353</h1>
+<button id="run">Mesurer et vérifier le journal</button><pre id="result">Prêt</pre>
+<script type="module">
+import { benchmark, verifyJournal } from './benchmark.ts';
+document.querySelector('#run').onclick = async () => {
+  const output = document.querySelector('#result'); output.textContent = 'Calcul…';
+  try { output.textContent = JSON.stringify({ rows: await benchmark(), journal: await verifyJournal() }, null, 2); }
+  catch (error) { console.error('Validation #353', error); output.textContent = String(error); }
+};
+</script></html>
