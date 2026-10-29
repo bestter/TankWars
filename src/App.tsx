@@ -35,7 +35,8 @@ interface AppScreenProps {
   readonly players: Player[] | null;
   readonly onlineMeta: OnlineMeta | null;
   readonly resumeCanvas: ReturnType<typeof createInitialAppState>["resumeCanvas"];
-  readonly onStartLocalGame: (players: Player[]) => void;
+  readonly freeWeapons: boolean;
+  readonly onStartLocalGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
   readonly onStartOnlineGame: (
     players: Player[],
     meta: OnlineMeta & { gameMode: "online" },
@@ -54,6 +55,7 @@ function AppScreen({
   players,
   onlineMeta,
   resumeCanvas,
+  freeWeapons,
   onStartLocalGame,
   onStartOnlineGame,
   onHideOnlineLobby,
@@ -76,6 +78,7 @@ function AppScreen({
           slot={onlineMeta?.slot}
           token={onlineMeta?.token}
           ws={onlineMeta?.ws}
+          freeWeapons={freeWeapons}
         />
       </div>
     );
@@ -152,8 +155,8 @@ function App() {
     !state.onlineMatchStarted &&
     (isOnlineJoin || state.forceShowOnlineLobby);
 
-  const handleStartGame = (initialPlayers: Player[]): void => {
-    dispatch({ type: "START_LOCAL_GAME", players: initialPlayers });
+  const handleStartGame = (initialPlayers: Player[], options?: { freeWeapons?: boolean }): void => {
+    dispatch({ type: "START_LOCAL_GAME", players: initialPlayers, freeWeapons: options?.freeWeapons ?? false });
   };
 
   const handleStartOnlineGame = (
@@ -232,6 +235,7 @@ function App() {
         players={players}
         onlineMeta={onlineMeta}
         resumeCanvas={resumeCanvas}
+        freeWeapons={state.freeWeapons}
         onStartLocalGame={handleStartGame}
         onStartOnlineGame={handleStartOnlineGame}
         onHideOnlineLobby={handleOnlineMenuToggle}
