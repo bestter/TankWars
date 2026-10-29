@@ -61,7 +61,7 @@ export class TurnManager {
     command: FireCommand,
     ownerId?: string,
     identity?: AuthoritativeShotIdentity,
-  ) => void;
+  ) => boolean | void;
   private aiEngine?: AIEngine;
 
   /** When in online mode, this client only controls this specific player id. */
@@ -239,7 +239,7 @@ export class TurnManager {
       command: FireCommand,
       ownerId?: string,
       identity?: AuthoritativeShotIdentity,
-    ) => void,
+    ) => boolean | void,
     aiEngine?: AIEngine,
   ) {
     this.tankManager = tankManager;
@@ -285,7 +285,8 @@ export class TurnManager {
       this.isInputLocked &&
       !this.isAwaitingFireAuthority &&
       !this.awaitingTankStabilization &&
-      !this.tankManager.anyTankIsFalling()
+      !this.tankManager.anyTankIsFalling() &&
+      !this.hasActiveProjectiles()
     ) {
       this.turnLockAccumulatedTime += dt;
       if (this.turnLockAccumulatedTime >= this.TURN_LOCK_SAFETY_LIMIT) {
@@ -306,21 +307,27 @@ export class TurnManager {
       }
     }
 
-    // 2. Sécurité de résolution de l'IA (si l'IA prend trop de temps à décider)
+    // 2. Décision encore en attente. Un tir déjà accepté ou un projectile actif
+    // a quitté cette phase : le repli ne doit plus se répéter à chaque pas.
     if (
       this.isResolutionSafetyArmed && !this.catchUpLocked &&
       this.isInputLocked &&
       this.resolutionPlayer &&
+      !this.isAwaitingFireAuthority &&
       !this.awaitingTankStabilization &&
-      !this.tankManager.anyTankIsFalling()
+      !this.tankManager.anyTankIsFalling() &&
+      !this.hasUnresolvedShot &&
+      !this.hasActiveProjectiles()
     ) {
       this.resolutionAccumulatedTime += dt;
       if (this.resolutionAccumulatedTime >= this.RESOLUTION_SAFETY_LIMIT) {
-        if (this.combatObserver?.emit({ kind: "recovery", reason: "decision-timeout" }) === false) return;
         const player = this.resolutionPlayer;
+        this.disarmDecisionWatchdog();
+        if (this.combatObserver?.emit({ kind: "recovery", reason: "decision-timeout" }) === false) return;
         console.warn(
           `[TurnManager] AI resolution timeout for (player redacted). Triggering fallback.`,
         );
+        this.invalidatePendingAITurn();
 
         let fallback: { angle: number; power: number } | null = null;
 
@@ -342,10 +349,10 @@ export class TurnManager {
             this.isAwaitingFireAuthority = true;
             this.lastLocalFireCommand = { ...command };
             this.fireIntentHandler(command);
-          } else {
+          } else if (this.acceptedFire(player.tank.position, command, player.id)) {
             this.hasUnresolvedShot = true;
-            this.fireCallback(player.tank.position, command, player.id);
             this.consumeAmmo(player, player.tank.currentWeapon);
+            this.armSettlementSafety(player.id);
           }
         } else {
           if (this.combatObserver?.emit({ kind: "recovery", reason: "skipped" }) === false) return;
@@ -669,14 +676,7 @@ export class TurnManager {
     identity: AuthoritativeShotIdentity | undefined,
     mode: AuthoritativeReplayMode,
   ): void {
-    this.settlingShotWasLocal =
-      mode === "LIVE_LOCAL" ||
-      (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId);
-    this.settlingAuthoritativeShot = identity
-      ? { shotId: identity.shotId, mode }
-      : null;
-    this.hasUnresolvedShot = true;
-    this.fireCallback(
+    const accepted = this.acceptedFire(
       player.tank.position,
       command,
       player.id,
@@ -687,6 +687,14 @@ export class TurnManager {
           }
         : undefined,
     );
+    if (!accepted) return;
+    this.settlingShotWasLocal =
+      mode === "LIVE_LOCAL" ||
+      (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId);
+    this.settlingAuthoritativeShot = identity
+      ? { shotId: identity.shotId, mode }
+      : null;
+    this.hasUnresolvedShot = true;
     if (mode === "LIVE_LOCAL" || mode === "LIVE_REMOTE") {
       this.consumeAmmo(player, command.weaponId);
     }
@@ -747,12 +755,13 @@ export class TurnManager {
       weaponId: tank.currentWeapon,
     };
 
+    if (!this.acceptedFire(tank.position, command, player.id)) return;
+
     // Capture before consumeAmmo (which may auto-switch currentWeapon when stock hits 0).
     this.lastLocalFireCommand = { ...command };
 
     this.settlingShotWasLocal = true;
     this.hasUnresolvedShot = true;
-    this.fireCallback(tank.position, command, player.id);
 
     // Consume 1 from inventory for limited weapons (MISSILE is unlimited).
     // Do this before locking so the HUD snapshot for the resolving turn reflects the spent round.
@@ -1325,7 +1334,10 @@ export class TurnManager {
 
       console.log('[TurnManager] handleAITurnIfNeeded: executing AI strategy...');
       const decisionStarted = this.combatObserver ? performance.now() : 0;
-      if (this.combatObserver?.emit({ kind: "decision-start", playerId: player.id }) === false) return;
+      if (this.combatObserver?.emit({ kind: "decision-start", playerId: player.id }) === false) {
+        this.disarmDecisionWatchdog();
+        return;
+      }
       const decision = await (this.combatObserver ? this.aiEngine.executeTurn(
         player.tank.id, gameState, this.terrainManager,
         isDecisionCurrent,
@@ -1341,7 +1353,10 @@ export class TurnManager {
       }
       if (this.combatObserver?.emit({ kind: "decision", playerId: player.id,
         durationMs: performance.now() - decisionStarted,
-        command: { ...decision, weaponId: decision.weaponId ?? player.tank.currentWeapon } }) === false) return;
+        command: { ...decision, weaponId: decision.weaponId ?? player.tank.currentWeapon } }) === false) {
+        this.disarmDecisionWatchdog();
+        return;
+      }
       console.log('[TurnManager] handleAITurnIfNeeded: AI strategy decided:', decision);
 
       if (decision.weaponId) {
@@ -1369,34 +1384,32 @@ export class TurnManager {
       };
 
       const launchedLocally = this.fireIntentHandler === null;
-      if (this.combatObserver?.emit({ kind: "shot-intent", playerId: player.id, command: { ...command } }) === false) return;
+      if (this.combatObserver?.emit({ kind: "shot-intent", playerId: player.id, command: { ...command } }) === false) {
+        this.disarmDecisionWatchdog();
+        return;
+      }
       if (this.fireIntentHandler) {
         this.isAwaitingFireAuthority = true;
         this.lastLocalFireCommand = { ...command };
         this.fireIntentHandler(command);
+        this.disarmDecisionWatchdog();
+      } else if (!this.acceptedFire(player.tank.position, command, player.id)) {
+        this.disarmDecisionWatchdog();
+        return;
       } else {
         this.hasUnresolvedShot = true;
-        this.fireCallback(player.tank.position, command, player.id);
         this.consumeAmmo(player, player.tank.currentWeapon);
+        this.disarmDecisionWatchdog();
       }
 
-      // If everything goes well, the normal onAllProjectilesSettled → nextTurn() will happen.
-      // The resolution timeout acts as a safety net.
-
-      // Extra safety net for settlement detection edge cases (e.g. unusual trajectories after terrain destruction):
-      // After a successful AI shot, if we are still the current locked player after a few seconds,
-      // force the turn to advance so the human gets their turns reliably.
-      // Store the ID so we can cancel it cleanly on pause/reset (prevents stale forces during SUMMARY/SHOP).
-      // Also guard with generation so a stale safety timer from an aborted turn doesn't fire.
+      // Le tir accepté quitte la décision. La stabilisation réelle avance le tour;
+      // le filet de 4,5 s ne court pas tant qu'un projectile est actif.
       if (this.aiTurnGeneration !== turnGeneration) {
         return;
       }
 
-      if (launchedLocally) {
-        this.clearSettlementSafetyTimeout();
-        this.settlementPlayerId = player.id;
-        this.settlementGeneration = this.aiTurnGeneration;
-        this.isSettlementSafetyArmed = true;
+      if (launchedLocally && this.hasUnresolvedShot) {
+        this.armSettlementSafety(player.id);
       }
     } catch (error) {
       if (this.aiTurnGeneration !== turnGeneration || (this.combatObserver && !isDecisionCurrent())) return;
@@ -1422,6 +1435,31 @@ export class TurnManager {
     this.isResolutionSafetyArmed = true;
   }
 
+  /** Ends the decision phase without clearing an already armed settlement net. */
+  private disarmDecisionWatchdog(): void {
+    this.isResolutionSafetyArmed = false;
+    this.resolutionAccumulatedTime = 0;
+    this.resolutionPlayer = null;
+  }
+
+  /** One post-shot recovery. It does not run while a projectile is still in flight. */
+  private armSettlementSafety(playerId: string): void {
+    this.clearSettlementSafetyTimeout();
+    this.settlementPlayerId = playerId;
+    this.settlementGeneration = this.aiTurnGeneration;
+    this.isSettlementSafetyArmed = true;
+  }
+
+  /** A void callback stays accepted. Only an explicit refusal skips ammo and the ledger. */
+  private acceptedFire(
+    from: { x: number; y: number },
+    command: FireCommand,
+    ownerId?: string,
+    identity?: AuthoritativeShotIdentity,
+  ): boolean {
+    return this.fireCallback(from, command, ownerId, identity) !== false;
+  }
+
   private clearPhysicsSettlementTimeout(): void {
     if (this.physicsSettlementTimeoutId) {
       clearTimeout(this.physicsSettlementTimeoutId);
@@ -1435,9 +1473,7 @@ export class TurnManager {
   }
 
   private clearResolutionTimeout(): void {
-    this.isResolutionSafetyArmed = false;
-    this.resolutionAccumulatedTime = 0;
-    this.resolutionPlayer = null;
+    this.disarmDecisionWatchdog();
     this.clearSettlementSafetyTimeout();
   }
 
