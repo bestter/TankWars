@@ -1,5 +1,13 @@
 # Validation du ticket 352 — TankWars 0.12.0
 
+Note de classement : les résultats ci-dessous sont historiques. Les outils ont été
+déplacés dans [`Scripts/validation-352/`](../../Scripts/validation-352/README.md);
+les commandes de reproduction du banc ci-dessous reflètent ce déplacement.
+Les anciens exports JSON et builds générés ont été supprimés; les commandes de
+validation initiales sont conservées comme trace, sans leurs fichiers de sortie.
+Le [rapport de préparation](../audit/ticket-352-preparation-codage.md) est archivé
+séparément.
+
 28 octobre 2026. État lors des validations initiales : modifications locales sur `main`, avant commit et publication de la PR; aucun déploiement.
 
 ## Implémentation
@@ -33,11 +41,11 @@ Sur le build de production local : menu → combat humain/EXPERT → conseiller 
 Le banc séparé a été compilé en mode endurance :
 
 ```powershell
-npx vite build --config artifacts/validation-352/vite.config.ts --mode endurance
-npx vite preview --config artifacts/validation-352/vite.config.ts --host 127.0.0.1 --port 4174
+npx vite build --config Scripts/validation-352/vite.config.ts --mode endurance
+npx vite preview --config Scripts/validation-352/vite.config.ts --host 127.0.0.1 --port 4174
 ```
 
-Ouvrir `/artifacts/validation-352/index.html`, puis lancer la mesure. Avec DEV faux, une observation réelle EXPERT a été écrite dans IndexedDB, relue et sérialisée en JSONL. Le motif `initial-retained / no-lethal-reply`, les trois recherches et les commandes brute/évaluée sont conservés; aucun terrain simulé complet n'est sérialisé.
+Ouvrir `/Scripts/validation-352/index.html`, puis lancer la mesure. Avec DEV faux, une observation réelle EXPERT a été écrite dans IndexedDB, relue et sérialisée en JSONL. Le motif `initial-retained / no-lethal-reply`, les trois recherches et les commandes brute/évaluée sont conservés; aucun terrain simulé complet n'est sérialisé.
 
 ## Coût mesuré
 
