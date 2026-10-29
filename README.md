@@ -205,7 +205,9 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.12.2** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.13.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+
+Mode « armes gratuites » (#355, v0.13.0) : disponible en jeu local hotseat et en endurance IA (exclut le multijoueur en ligne). À chaque début de manche (manche 1 comprise), les stocks de munitions sont automatiquement réapprovisionnés jusqu'à des cibles fixes selon le profil et le nombre initial de joueurs $N$ (2, 3 ou 4) : SIMPLE ($(N-1)$ GRENADE/CLUSTER), OK ($3N$ GRENADE/CLUSTER, $N$ DRILLER/BULLDOZER, 1 NUKE), SNIPER ($3N$ BULLET, $2N$ DRILLER/BULLDOZER), EXPERT ($3N$ GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR) et Humains (12 BULLET/GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR; MISSILE infini). Les armes nucléaires sont plafonnées (max 2 NUKE, 1 THERMONUCLEAR sans remboursement); les surplus ordinaires et armes hors profil existantes sont conservés. La boutique d'inter-manche est complètement sautée : la fin de manche enchaîne directement du résumé (`RoundSummary`, affichant gains et solde total) vers le combat de la manche suivante (via le bouton « Manche suivante » en local ou le timer de 3 s en endurance). Aucun achat n'est consigné dans le journal d'endurance. Les gains de combat s'accumulent normalement et les stratégies IA (EXPERT, conseiller) continuent d'utiliser les coûts théoriques des munitions pour leurs décisions tactiques.
 
 Local turn watchdogs (#358) keep their 10 s decision, 12 s turn-lock and 4.5 s settlement limits. An accepted shot leaves the decision phase. A real decision timeout fires at most one fallback and ignores the replaced answer. A refused launch consumes no ammunition and opens no second shot ledger. An in-flight projectile, including a long GRENADE, does not advance the turn. The 4.5 s settlement net does not accumulate time while a projectile is active (`hasActiveProjectiles`). A refused `decision-timeout` recovery leaves the 10 s watchdog armed and fires no fallback.
 
@@ -304,6 +306,33 @@ To explore the codebase:
 - Online backend: `worker/src/index.ts`, `worker/src/game-room.ts`
 - Agent guide: [AGENTS.md](./AGENTS.md)
 
+
+### Mode armes gratuites en local et en endurance (#355, v0.13.0)
+
+Le mode « armes gratuites » est configurable via une case à cocher dans le menu principal rétro pour les parties locales (hotseat) et dans la configuration d'endurance IA. Ce mode est strictement local et ne concerne pas le multijoueur en ligne ni le Worker Cloudflare.
+
+- **Réapprovisionnement automatique** : au démarrage du match (manche 1) et au début de chaque manche suivante, chaque joueur voit ses munitions ajustées :
+  - **SIMPLE (`v1-random`)** : $(N-1)$ GRENADE, $(N-1)$ CLUSTER.
+  - **OK (`v2-heuristic`)** : $3N$ GRENADE, $3N$ CLUSTER, $N$ DRILLER, $N$ BULLDOZER, 1 NUKE.
+  - **SNIPER (`v3-sniper`)** : $3N$ BULLET, $2N$ DRILLER, $2N$ BULLDOZER.
+  - **EXPERT (`v4-smart`)** : $3N$ GRENADE, $3N$ CLUSTER, $3N$ DRILLER, $3N$ BULLDOZER, 2 NUKE, 1 THERMONUCLEAR.
+  - **Humain** : 12 BULLET, 12 GRENADE, 12 CLUSTER, 12 DRILLER, 12 BULLDOZER, 2 NUKE, 1 THERMONUCLEAR.
+  - $N$ représente le nombre initial de joueurs dans la partie ($N \in \{2, 3, 4\}$).
+  - Profils inconnus ou absents : repli sur les cibles d'OK (`v2-heuristic`).
+  - MISSILE demeure infini pour tous les joueurs.
+- **Plafonnement et conservation** :
+  - Pour les armes conventionnelles, si le joueur possède déjà un stock supérieur ou égal à la cible, son stock est conservé intact (aucun retrait).
+  - Pour les armes nucléaires, un plafonnement strict est appliqué : au plus 2 NUKE et 1 THERMONUCLEAR (les surplus sont tronqués sans remboursement d'argent).
+  - Les armes hors-profil déjà présentes dans l'inventaire sont préservées sans altération.
+  - L'opération de réapprovisionnement est strictement idempotente.
+- **Saut complet de la boutique** :
+  - La phase `SHOP` n'est jamais visitée.
+  - En fin de manche, le résumé (`RoundSummary`) affiche les gains de la manche et le solde cumulé, avec un bouton rétro « Manche suivante → ».
+  - En endurance IA, le timer habituel de 3 secondes en phase résumé enchaîne directement vers le combat de la manche suivante.
+  - Aucun achat n'est possible, aucune visite de boutique n'est enregistrée dans le journal d'endurance (`shop-start`, `purchase`).
+- **Économie théorique et stratégies IA** :
+  - Les gains de combat s'accumulent normalement sur les soldes des joueurs.
+  - Les stratégies IA (EXPERT, conseiller de tir) conservent intégralement leurs calculs de rentabilité et leurs décisions tactiques basées sur les coûts théoriques des munitions du catalogue, sans modification des algorithmes balistiques.
 
 ### Filets de sécurité des tours locaux (#358, v0.12.2)
 

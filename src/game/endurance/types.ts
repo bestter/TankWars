@@ -12,6 +12,7 @@ export interface EnduranceConfig {
   maxDurationMs: number | null;
   stopOnIncident: boolean;
   limits: { turns: number; roundMs: number; actionMs: number; transitionMs: number };
+  freeWeapons?: boolean;
 }
 
 export const DEFAULT_LIMITS = { turns: 1000, roundMs: 1_800_000, actionMs: 120_000, transitionMs: 30_000 };

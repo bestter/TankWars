@@ -15,6 +15,8 @@ interface MainMenuViewProps {
   nameErrorIds: ReadonlySet<string>;
   emptyNameErrorIds: ReadonlySet<string>;
   nameConflictSourceIds: ReadonlySet<string>;
+  freeWeapons: boolean;
+  onFreeWeaponsChange: (val: boolean) => void;
   canStart: boolean;
   onMenuClickCapture: MouseEventHandler<HTMLDivElement>;
   onNumPlayersChange: (count: 2 | 3 | 4) => void;
@@ -35,6 +37,8 @@ export function MainMenuView({
   nameErrorIds,
   emptyNameErrorIds,
   nameConflictSourceIds,
+  freeWeapons,
+  onFreeWeaponsChange,
   canStart,
   onMenuClickCapture,
   onNumPlayersChange,
@@ -96,6 +100,21 @@ export function MainMenuView({
             {t("color_picker_help_1")}
             <br />
             {t("color_picker_help_2")}
+          </div>
+
+          <div style={{ margin: "10px 0 14px", textAlign: "left", fontSize: 13 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", cursor: "pointer", gap: 8, color: "#FFFF55" }}>
+              <input
+                type="checkbox"
+                checked={freeWeapons}
+                onChange={(e) => onFreeWeaponsChange(e.target.checked)}
+                style={{ cursor: "pointer", accentColor: "#FFFF55" }}
+              />
+              <span>{t("menu_free_weapons")}</span>
+            </label>
+            <div style={{ color: "#AAAAAA", fontSize: 11, marginLeft: 22, marginTop: 2 }}>
+              {t("menu_free_weapons_desc")}
+            </div>
           </div>
 
           <div style={{ textAlign: "center" }}>

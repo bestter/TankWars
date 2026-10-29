@@ -23,10 +23,11 @@ export interface AppState {
   forceShowOnlineLobby: boolean;
   onlineMatchStarted: boolean;
   resumeCanvas: OnlineCanvasSnapshot | null;
+  freeWeapons: boolean;
 }
 
 export type AppAction =
-  | { type: "START_LOCAL_GAME"; players: Player[] }
+  | { type: "START_LOCAL_GAME"; players: Player[]; freeWeapons?: boolean }
   | {
       type: "START_ONLINE_GAME";
       players: Player[];
@@ -46,6 +47,7 @@ export function createInitialAppState(
     forceShowOnlineLobby: false,
     onlineMatchStarted: !!savedSession,
     resumeCanvas: savedSession?.canvas ?? null,
+    freeWeapons: false,
   };
 }
 
@@ -55,6 +57,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         players: action.players,
+        freeWeapons: action.freeWeapons ?? false,
         phase: "COMBAT",
       };
     case "START_ONLINE_GAME":
@@ -65,6 +68,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         resumeCanvas: null,
         onlineMatchStarted: true,
         forceShowOnlineLobby: false,
+        freeWeapons: false,
         phase: "COMBAT",
       };
     case "RETURN_TO_MENU":
@@ -75,6 +79,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         resumeCanvas: null,
         onlineMatchStarted: false,
         forceShowOnlineLobby: false,
+        freeWeapons: false,
         phase: "MENU",
       };
     case "SHOW_ONLINE_LOBBY":

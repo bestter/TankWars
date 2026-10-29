@@ -143,4 +143,14 @@ describe("endurance session contracts", () => {
     f.advance(120000); f.run.tick(); await settled();
     expect(f.run.latestIncident?.reason).toBe("actionMs");
   });
+  it("validates freeWeapons configuration: accepts boolean or absent, rejects non-boolean", () => {
+    const f = fixture();
+    expect(() => new EnduranceSession({ ...f.config, freeWeapons: true }, f.storage)).not.toThrow();
+    expect(() => new EnduranceSession({ ...f.config, freeWeapons: false }, f.storage)).not.toThrow();
+    expect(() => new EnduranceSession({ ...f.config, freeWeapons: undefined }, f.storage)).not.toThrow();
+    expect(() => new EnduranceSession({ ...f.config, freeWeapons: "true" as unknown as boolean }, f.storage))
+      .toThrow("INVALID_ENDURANCE_CONFIG");
+    expect(() => new EnduranceSession({ ...f.config, freeWeapons: 1 as unknown as boolean }, f.storage))
+      .toThrow("INVALID_ENDURANCE_CONFIG");
+  });
 });
