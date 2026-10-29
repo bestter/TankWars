@@ -423,14 +423,14 @@ describe("selected material aim is transported once to the real shot", () => {
     f.self.inventory = { BULLET: 1, DRILLER: 1 };
     f.self.aiProfile = "v3-sniper";
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.1);
-    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    vi.spyOn(fallible, "calculateImpactOffsetMagnitude").mockReturnValue(0);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
     const strategy = new AISniperStrategy();
     await strategy.executeTurn("self", f.state, f.terrain);
     await strategy.executeTurn("self", f.state, f.terrain);
-    // Removing the 50% roll shifts the global sequence; these turns draw neither it nor a substitute.
-    expect(rng).not.toHaveBeenCalled();
+    // Only the primitive amplitudes are drawn; there is no BULLET selection roll.
+    expect(rng).toHaveBeenCalledTimes(2);
   });
 });
 

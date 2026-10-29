@@ -6,9 +6,9 @@ import { finalizeAdvancedAim } from "./aimCorruption";
 import { searchDirectBulldozerSolutions } from "./BallisticsSimulator";
 import { canThreatenWithBulldozer, isBulldozerCorridorSafe } from "./bulldozerThreat";
 import { solveExpertAim } from "./expertAim";
-import { expertTacticalPoints, type ValidExpertShotResult } from "./expertShotEvaluator";
+import { expertTacticalPoints } from "./expertShotEvaluator";
 import { possibleExpertThreatWeapons } from "./expertThreatWeapons";
-import { FORECAST_SHOT_ID, getForecastAfterState, resolveBulldozerImpact, resolvePhysicalShot } from "./physicalShotForecast";
+import { FORECAST_SHOT_ID, getForecastAfterState, resolveBulldozerImpact, resolvePhysicalShot, type PhysicalResolution } from "./physicalShotForecast";
 
 export interface ThreatSearchResult {
   readonly status: "found" | "absent" | "unknown";
@@ -91,7 +91,11 @@ export interface TransitionCandidate {
   readonly primaryTargetId: string;
   readonly weaponId: WeaponId;
   readonly command: { readonly angle: number; readonly power: number };
-  readonly result?: ValidExpertShotResult;
+  readonly certified?: boolean;
+  readonly result?: {
+    readonly forecast?: PhysicalResolution;
+    readonly rawCommand?: { readonly angle: number; readonly power: number };
+  };
 }
 export interface TransitionSelectionTrace {
   readonly reason: string;
@@ -112,6 +116,7 @@ export interface TransitionSelectionTrace {
 /** State identity and oriented pair are both part of this decision-local cache. */
 export class LethalTransitionDetector {
   private readonly cache = new WeakMap<GameState, WeakMap<TerrainManager, Map<string, ThreatSearchResult>>>();
+  readonly counters = { searches: 0, forecasts: 0, cacheHits: 0 };
   private readonly search: typeof searchLethalThreat;
   constructor(search = searchLethalThreat) { this.search = search; }
   private threat(state: GameState, terrain: TerrainManager, actor: Player, target: Player): ThreatSearchResult {
@@ -121,14 +126,18 @@ export class LethalTransitionDetector {
     if (!pairs) { pairs = new Map(); terrains.set(terrain, pairs); }
     const key = JSON.stringify([actor.id, target.id]);
     let value = pairs.get(key);
-    if (!value) { value = this.search(state, terrain, actor, target); pairs.set(key, value); }
+    if (!value) {
+      value = this.search(state, terrain, actor, target); pairs.set(key, value);
+      this.counters.searches += value.searches;
+      this.counters.forecasts += value.forecasts;
+    } else this.counters.cacheHits++;
     return value;
   }
   analyze(candidate: TransitionCandidate, self: Player, state: GameState, terrain: TerrainManager): TransitionAnalysis {
     let initial: ThreatSearchResult | null = null, after: ThreatSearchResult | null = null, reply: ThreatSearchResult | null = null;
     const conclude = (status: TransitionAnalysis["status"], reason: string): TransitionAnalysis => ({ status, reason, initial, after, reply });
     const forecast = candidate.result?.forecast;
-    if (!forecast?.complete) return conclude("unknown", "uncertified");
+    if (candidate.certified === false || !forecast?.complete) return conclude("unknown", "uncertified");
     const target = state.players.find((player) => player.id === candidate.primaryTargetId);
     if (!target || (!target.isHuman && target.aiProfile !== "v4-smart")) return conclude("safe", "target-type");
     if (!forecast.survivors.includes(target.id)) return conclude("safe", "target-destroyed");

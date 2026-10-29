@@ -332,7 +332,7 @@ describe("SNIPER ranking, fallback and bounds", () => {
       ...Array.from({ length: SNIPER_SEARCH_LIMITS.missile }, () => "MISSILE"),
     ]);
     expect(resolve).toHaveBeenCalledTimes(3);
-    expect(resolve).toHaveBeenCalledWith(f.state, f.terrain, f.self, "BULLET", { angle: 40, power: 50 });
+    expect(resolve).toHaveBeenCalledWith(f.state, f.terrain, f.self, "BULLET", { angle: 40, power: 50 }, { captureAfterState: true });
     expect(choice).toMatchObject({ reason: "missile-ordinary", certified: false });
     expect(solve.mock.calls.every((call) => call[0].x >= 300 + 9)).toBe(true);
   });
@@ -410,7 +410,7 @@ describe("SNIPER turn wiring", () => {
       rawCommand: { angle: 45.04, power: 50.2 }, command: { angle: 45, power: 50 },
       certified: true, reason: "bullet", trace: EMPTY_TRACE,
     });
-    const offset = vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(12);
+    const offset = vi.spyOn(fallible, "calculateImpactOffsetMagnitude").mockReturnValue(12);
     const record = vi.spyOn(aimMemory, "recordAimAttempt");
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     const search = vi.spyOn(sniperAim, "solveSniperAim");
@@ -442,7 +442,7 @@ describe("SNIPER turn wiring", () => {
       return forecast();
     });
     const selection = vi.spyOn(sniperSelection, "chooseSniperPhysicalShot");
-    const offset = vi.spyOn(fallible, "signedImpactOffset");
+    const offset = vi.spyOn(fallible, "calculateImpactOffsetMagnitude");
     const gaffeDecision = vi.spyOn(fallible, "maybeGaffe");
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const config = ADVANCED_GAFFES["v3-sniper"];
@@ -484,7 +484,7 @@ describe("SNIPER turn wiring", () => {
       expect(rng).toHaveBeenCalledTimes(sequence.length);
       expect(gaffeDecision).toHaveBeenCalledExactlyOnceWith(weapon === "BULLET" ? 0 : 0.05);
       expect(selection).toHaveBeenCalledTimes(1);
-      expect(offset).toHaveBeenCalledExactlyOnceWith(1, "v3-sniper", 1, 1);
+      expect(offset).toHaveBeenCalledExactlyOnceWith(1, "v3-sniper", 1, 0.4);
       const choice = selection.mock.results[0].value as sniperSelection.SniperPhysicalChoice;
       expect(solve).toHaveBeenCalledTimes(choice.trace.searches);
       if (!reaction && !gaffeOccurred) expect(shot).toEqual({ ...choice.command, weaponId: weapon });
@@ -521,7 +521,7 @@ describe("SNIPER turn wiring", () => {
       weaponId: "DRILLER", point: { x: 381, y: 336, kind: "terrain" }, variant: "full",
       rawCommand: raw, command: normalized, certified: true, reason: "driller", trace: EMPTY_TRACE,
     });
-    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(3);
+    vi.spyOn(fallible, "calculateImpactOffsetMagnitude").mockReturnValue(3);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const calm = await new AISniperStrategy().executeTurn("self", f.state, f.terrain);
@@ -556,7 +556,7 @@ describe("SNIPER turn wiring", () => {
     const strategy = new AISniperStrategy();
     const solve = vi.spyOn(sniperAim, "solveSniperAim")
       .mockReturnValue({ command: { angle: 40, power: 55 }, complete: false });
-    const offset = vi.spyOn(fallible, "signedImpactOffset");
+    const offset = vi.spyOn(fallible, "calculateImpactOffsetMagnitude");
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
     for (const attempt of [1, 2, 3]) {
@@ -568,7 +568,7 @@ describe("SNIPER turn wiring", () => {
       await strategy.executeTurn("self", f.state, f.terrain);
       const sign = f.target.tank.position.x > f.terrain.width - f.target.tank.position.x ? -1 : 1;
       const direction = attempt === 2 ? -sign : sign;
-      expect(offset).toHaveBeenCalledExactlyOnceWith(attempt, "v3-sniper", round, direction);
+      expect(offset).toHaveBeenCalledExactlyOnceWith(attempt, "v3-sniper", round, attempt < 3 ? 0.25 : 0);
       const tankXs = solve.mock.calls.filter((call) => call[2] === 330).map((call) => call[1]);
       expect(new Set(tankXs).size).toBe(1);
       expect(Math.sign((tankXs[0] ?? 0) - 400)).toBe(direction);
@@ -577,7 +577,7 @@ describe("SNIPER turn wiring", () => {
     f.state.players[1] = other;
     offset.mockClear();
     await strategy.executeTurn("self", f.state, f.terrain);
-    expect(offset).toHaveBeenCalledWith(1, "v3-sniper", round, expect.any(Number));
+    expect(offset).toHaveBeenCalledWith(1, "v3-sniper", round, 0.25);
   });
 
   it("logs a JSON fallback when no enemy remains and does not search", async () => {
