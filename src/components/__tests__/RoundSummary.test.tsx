@@ -144,4 +144,12 @@ describe('RoundSummary', () => {
     // Click should be ignored natively if it is a <button disabled> but react-testing-library might still fire
     // unless we check disabled attribute
   });
+
+  it('renders balance and next round button when freeWeapons is enabled', () => {
+    render(<RoundSummary {...defaultProps} freeWeapons={true} />);
+    expect(screen.getByText('btn_next_round')).toBeDefined();
+    expect(screen.queryByText('btn_go_to_shop')).toBeNull();
+    expect(screen.getByText(/round_survivors_free_weapons/)).toBeDefined();
+    expect(screen.getAllByText(/round_summary_balance/)).toHaveLength(2);
+  });
 });

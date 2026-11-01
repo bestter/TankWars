@@ -436,7 +436,7 @@ describe("AI fallibility contracts", () => {
       tank: makeTank("enemy-tank", 400, 336),
     });
     // Isolate first-attempt selection while keeping the solver and physics real.
-    const offset = vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    const offset = vi.spyOn(fallible, "calculateImpactOffsetMagnitude").mockReturnValue(0);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     const gameState = makeGameState(
       { ...shooter, aiProfile: "v3-sniper" },

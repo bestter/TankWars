@@ -13,6 +13,20 @@ import { aggregateExpertConsequences, type ExpertConsequences } from "./expertCo
 const PHYSICS_DT = BALLISTICS_DT;
 export const FORECAST_MAX_STEPS = 2400;
 export const FORECAST_SHOT_ID = 1;
+export interface ForecastAfterState {
+  readonly state: GameState;
+  readonly terrain: TerrainManager;
+}
+// Internal association: never serialize terrain instances or hypothetical rosters.
+const afterStates = new WeakMap<object, ForecastAfterState>();
+export function getForecastAfterState(forecast: object): ForecastAfterState | undefined {
+  return afterStates.get(forecast);
+}
+export function retainForecastAfterState<T extends object>(source: object, result: T): T {
+  const after = afterStates.get(source);
+  if (after) afterStates.set(result, after);
+  return result;
+}
 interface PhysicalResolutionBase {
   readonly hits: readonly ProjectileHitEvent[];
   readonly damage: readonly CombatDamageEvent[];
@@ -38,18 +52,23 @@ function createResolution(state: GameState, terrain: TerrainManager, shooter: Pl
   tanks.onTankDestroyed = (event) => destruction.push(event);
   const supportBefore = state.players.map((player) => terrain.getHeightAt(player.tank.position.x));
   tanks.beginShotAttribution(FORECAST_SHOT_ID, shooter.id, weaponId);
+  const actor = players.find((player) => player.id === shooter.id);
+  if (actor) {
+    actor.tank.currentWeapon = weaponId;
+    if (weaponId !== "MISSILE") actor.inventory[weaponId] = Math.max(0, (actor.inventory[weaponId] ?? 0) - 1);
+  }
   return { players, copiedTerrain, tanks, hits, damage, destruction, supportBefore };
 }
 
 function finishResolution(
-  state: GameState, shooter: Player, resolution: ReturnType<typeof createResolution>, complete: boolean, steps: number,
+  state: GameState, shooter: Player, resolution: ReturnType<typeof createResolution>, complete: boolean, steps: number, captureAfterState = false,
 ): PhysicalResolution {
   const { players, copiedTerrain, tanks, hits, damage, destruction, supportBefore } = resolution;
   if (!complete) {
     return { complete: false, hits: [], damage: [], destruction: [], survivors: [], support: [], steps };
   }
   const survivors = tanks.getAlivePlayers().map((player) => player.id);
-  return {
+  const result: PhysicalResolution = {
     complete: true,
     ...aggregateExpertConsequences(players, FORECAST_SHOT_ID, shooter.id, damage, destruction),
     hits,
@@ -62,13 +81,18 @@ function finishResolution(
     })),
     steps,
   };
+  if (captureAfterState) afterStates.set(result, { terrain: copiedTerrain, state: {
+    ...structuredClone(state), players,
+    ...(state.localShotContext && { localShotContext: { ...state.localShotContext, isFirstShotOfRound: false } }),
+  } });
+  return result;
 }
 
 /** Resolves a normalized ideal command without economics or any live side effects. */
 export function resolvePhysicalShot(
   state: GameState, terrain: TerrainManager, shooter: Player, weaponId: WeaponId,
   command: { angle: number; power: number },
-  options?: { localMatch?: boolean },
+  options?: { localMatch?: boolean; captureAfterState?: boolean },
 ): PhysicalResolution {
   const resolution = createResolution(state, terrain, shooter, weaponId);
   const { tanks, copiedTerrain, hits } = resolution;
@@ -90,7 +114,7 @@ export function resolvePhysicalShot(
       break;
     }
   }
-  return finishResolution(state, shooter, resolution, complete, steps);
+  return finishResolution(state, shooter, resolution, complete, steps, options?.captureAfterState);
 }
 
 /** Direct search has already established the impact: no PhysicsEngine or projectile here. */

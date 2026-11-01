@@ -48,4 +48,28 @@ describe("JSONL downloads through the interface (combat replaced by a fixture)",
     expect(JSON.parse(await blobs[0].text())).toMatchObject({ status: { complete: false } });
     expect(window.__tankwarsEnduranceTest).toBeUndefined(); storage.close();
   });
+
+  it("configures freeWeapons when the checkbox is checked in endurance screen", async () => {
+    language.value = "fr";
+    render(<EnduranceScreen onExit={vi.fn()} />);
+
+    const checkbox = screen.getByRole("checkbox", { name: /Mode armes gratuites/i }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: fr.endurance_start }));
+    const stop = await screen.findByRole("button", { name: fr.endurance_stop });
+    await waitFor(() => expect(window.__tankwarsEnduranceTest).toBeDefined());
+
+    const page = await window.__tankwarsEnduranceTest!.readJournalPage(0, 10);
+    const sessionStart = page.entries.find((e) => e.event.kind === "session-start");
+    expect(
+      sessionStart?.event.kind === "session-start" &&
+        (sessionStart.event.metadata as { config: { freeWeapons?: boolean } }).config.freeWeapons,
+    ).toBe(true);
+
+    fireEvent.click(stop);
+  });
 });

@@ -1,3 +1,4 @@
+import { writeDecisionConsole } from "../../utils/decisionConsole";
 import type { AdvisorObjective } from "../../game/entities/ai/expertPolicy";
 import type { AdvisorSnapshot } from "../../game/entities/ai/shotAdvisor";
 import { isAdvisorResult, type AdvisorResult } from "../../game/entities/ai/advisorProtocol";
@@ -17,11 +18,18 @@ export interface AdvisorWorker {
   onmessage: ((event: MessageEvent<unknown>) => void) | null;
   onerror: ((event: ErrorEvent) => void) | null;
   onmessageerror: ((event: MessageEvent<unknown>) => void) | null;
-  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective }): void;
+  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective; requestId?: number }): void;
   terminate(): void;
 }
 
 export class AdvisorController {
+  private nextRequestId = 0;
+  private pending: { requestId: number; objective: AdvisorObjective; playerId?: string } | null = null;
+  private terminal(status: string, decision?: unknown, summary?: unknown): void {
+    if (!this.pending) return;
+    if (import.meta.env.DEV) writeDecisionConsole("[Shot advisor] Décision", { ...this.pending, status, decision: summary }, { ...this.pending, status, decision });
+    this.pending = null;
+  }
   private preferences = new Map<string, AdvisorObjective>();
   private worker: AdvisorWorker | null = null;
   private key: string | null = null;
@@ -38,6 +46,7 @@ export class AdvisorController {
   }
 
   private stop(): void {
+    this.terminal("cancelled");
     this.worker?.terminate();
     this.worker = null;
   }
@@ -71,6 +80,9 @@ export class AdvisorController {
     const key = this.key;
     const objective = this.view.objective;
     const names = Object.fromEntries(snapshot.state.players.map((player) => [player.id, player.name]));
+    const requestId = ++this.nextRequestId;
+    this.pending = { requestId, objective, playerId: this.view.playerId };
+    if (import.meta.env.DEV) writeDecisionConsole("[Shot advisor] Décision", { ...this.pending, status: "calculating" });
     this.view = { ...this.view, status: "calculating", result: undefined, names };
     this.publish(this.view);
     try {
@@ -79,6 +91,7 @@ export class AdvisorController {
       const fail = (error: unknown) => {
         if (this.worker !== worker) return;
         console.error("[Shot advisor] Worker failed", { error, playerId: this.view.playerId });
+        this.terminal("error");
         this.stop();
         this.view = { ...this.view, status: "error", result: undefined };
         this.publish(this.view);
@@ -95,13 +108,16 @@ export class AdvisorController {
         }
         if (data.advice !== null && (!isAdvisorResult(data.advice) || data.advice.objective !== objective ||
           (objective === "SURVIE" && data.advice.shooterDestroyed))) { fail("INVALID_ADVICE"); return; }
+        this.terminal(data.advice === null ? "empty" : "result", "decision" in data ? data.decision : undefined,
+          { planner: "decisionSummary" in data ? data.decisionSummary : undefined, advice: data.advice });
         this.stop();
         this.view = { ...this.view, status: data.advice === null ? "empty" : "result", result: data.advice ?? undefined };
         this.publish(this.view);
       };
-      worker.postMessage({ snapshot, objective });
+      worker.postMessage({ snapshot, objective, requestId });
     } catch (error) {
       console.error("[Shot advisor] Unable to start worker", error);
+      this.terminal("error");
       this.stop();
       this.view = { ...this.view, status: "error" };
       this.publish(this.view);

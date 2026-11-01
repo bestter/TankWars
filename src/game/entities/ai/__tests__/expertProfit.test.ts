@@ -1,3 +1,4 @@
+import { decisionJSON } from "../../../__tests__/decisionConsoleHelpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
@@ -11,6 +12,7 @@ import { chooseExpertPlan, type ExpertDecisionTrace } from "../expertPlanner";
 import { createExpertDecisionAim } from "../expertDecisionAim";
 import { AISmartStrategy } from "../AISmartStrategy";
 import { MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY } from "../aimSearch";
+import * as tactical from "../expertTacticalWeapon";
 
 const aim = { primaryTargetId: "target", attempts: 2, offset: 0 };
 const consequences = { humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 0, aiDamageMilli: 0 };
@@ -68,6 +70,22 @@ function fallbackFixture(weapon: WeaponId, profit: number, suicide: boolean, mis
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("EXPERT immediate net profit policy #288", () => {
+  it("observes the existing best admissible candidate for each primary target without changing the ranking", () => {
+    const f = fixture();
+    const ok = makePlayer({ id: "ok", isHuman: false, aiProfile: "v2-heuristic", inventory: {},
+      tank: makeTank("ok", 650, 336, { health: 110 }) });
+    f.target.isHuman = true; f.state.players.push(ok);
+    const evaluate: typeof evaluator.evaluateExpertShot = (_s, _t, shooter, weapon, targets) =>
+      shooter.id === "self" && weapon === "MISSILE" && targets.some(player => player.id === "target") ? valid(80) : invalid;
+    const trace = vi.fn<(value: ExpertDecisionTrace) => void>();
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const selected = chooseExpertPlan(f.self, f.state, f.terrain, createExpertDecisionAim({ currentTargetAttempts: 0 }, 6), evaluate, trace);
+    expect(selected?.primaryTargetId).toBe("target");
+    expect(trace.mock.calls[0][0].targets).toEqual([
+      expect.objectContaining({ playerId: "target", profile: "human", reason: "admissible", best: expect.objectContaining({ profit: 80 }) }),
+      expect.objectContaining({ playerId: "ok", profile: "v2-heuristic", reason: "no-admissible-candidate", candidateCount: 0 }),
+    ]);
+  });
   it.each([
     { suicideProfit: 100, safeProfit: 80, winner: "NUKE", reason: "profit net supérieur" },
     { suicideProfit: 100, safeProfit: 100, winner: "MISSILE", reason: "EXPERT survit, contrairement au suivant" },
@@ -155,6 +173,28 @@ describe("EXPERT immediate net profit policy #288", () => {
 });
 
 describe("EXPERT economic fallback #288", () => {
+  it("retains fallback reasons for a production observer without changing the command or drawing extra RNG", async () => {
+    vi.stubEnv("DEV", false);
+    const f = fallbackFixture("GRENADE", -1, false, 0);
+    vi.spyOn(tactical, "chooseExpertTacticalWeapon").mockReturnValue("GRENADE");
+    vi.spyOn(evaluator, "evaluateExpertShot").mockReturnValue(invalid);
+    const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const snapshots = [];
+    for (const observe of [false, true]) {
+      rng.mockClear();
+      const details: unknown[] = [];
+      const strategy = new AISmartStrategy();
+      if (observe) strategy.onDecisionObserved = value => { details.push(value); };
+      const command = await strategy.executeTurn("self", structuredClone(f.state), f.terrain);
+      snapshots.push({ command, draws: rng.mock.calls.length });
+      if (observe) expect(details[0]).toMatchObject({ diagnostics: {
+        targetSelection: { source: "fallback", reason: "ordinary-target-order", targetId: "target" },
+        fallbackChoice: { selectionReason: expect.any(String), conservationReason: expect.stringContaining("conservation") },
+      } });
+    }
+    expect(snapshots[0]).toEqual(snapshots[1]); expect(log).not.toHaveBeenCalled();
+  });
   it.each(["GRENADE", "CLUSTER", "DRILLER", "BULLDOZER"] as const)(
     "%s selects suicidal +100 over surviving +80, but preserves survival at equal profit", (weapon) => {
       const f = fallbackFixture(weapon, 100, true, 80);
@@ -220,7 +260,7 @@ describe("EXPERT economic fallback #288", () => {
     expect(await new AISmartStrategy().executeTurn("self", f.state, f.terrain))
       .toEqual({ angle: 45, power: 50, weaponId: "GRENADE" });
     if (dev) {
-      const trace: unknown = JSON.parse(String(log.mock.calls[0][1]));
+      const trace: unknown = JSON.parse(decisionJSON(log.mock.calls));
       expect(trace).toMatchObject({ selectionReason: "profit net supérieur", fallbackSelectionReason: "profit net supérieur" });
       expect(trace).not.toHaveProperty("conservationReason");
     } else expect(log).not.toHaveBeenCalled();
@@ -245,7 +285,7 @@ describe("EXPERT economic fallback #288", () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     expect(await new AISmartStrategy().executeTurn("self", f.state, f.terrain))
       .toEqual({ angle: 45, power: 50, weaponId: "MISSILE" });
-    const trace: unknown = JSON.parse(String(log.mock.calls[0][1]));
+    const trace: unknown = JSON.parse(decisionJSON(log.mock.calls));
     expect(trace).toMatchObject({ selectionReason: scenario.reason, fallbackSelectionReason: scenario.reason });
     expect(trace).not.toHaveProperty("conservationReason");
   });
@@ -263,7 +303,7 @@ describe("EXPERT economic fallback #288", () => {
     expect(f.self.inventory).toEqual(before);
     expect(rng).toHaveBeenCalledTimes(3);
     if (dev) {
-      const json = String(log.mock.calls[0][1]);
+      const json = decisionJSON(log.mock.calls);
       expect(JSON.parse(json)).toMatchObject({ conservationReason: expect.stringContaining("conservation"),
         rejectedUnprofitableShots: [{ weaponId: "NUKE", targetIds: ["target"], profit: -340, shooterDestroyed: false }],
         realAim: { choiceKind: "evaluated", materialFallback: { profit: 0, useful: false } } });

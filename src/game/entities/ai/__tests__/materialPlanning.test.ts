@@ -1,3 +1,4 @@
+import { LethalTransitionDetector } from "../lethalTransition";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
@@ -191,6 +192,7 @@ describe("enforced local proposal budgets", () => {
 
   it.each([true, false])("bounds a complete EXPERT turn and reuses main forecasts in fallback (useful=%s)", async (useful) => {
     const f = fixture();
+    const risk = vi.spyOn(LethalTransitionDetector.prototype, "analyze");
     f.self.inventory = { DRILLER: 1 };
     f.terrain.setMaterialRange(390, 409, TERRAIN_MATERIAL.SOFT);
     const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
@@ -201,12 +203,17 @@ describe("enforced local proposal budgets", () => {
     vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
     const rng = vi.spyOn(random, "secureRandom");
     await new AISmartStrategy().executeTurn("self", f.state, f.terrain);
-    const ownSearches = search.mock.calls.filter(([config]) => config.sx === 100);
+    const analyses = risk.mock.results.flatMap(value => value.value ?
+      [value.value.initial, value.value.after, value.value.reply].filter(branch => branch !== null) : []);
+    const threatSearches = analyses.reduce((sum, branch) => sum + branch.searches, 0);
+    const ownSearches = search.mock.calls.filter(([config]) => config.sx === 100 && !config.selfHarmPenalty);
     // Seven MISSILE points and eight DRILLER points, three arcs; no final re-solve.
     expect(ownSearches).toHaveLength(45);
     expect(ownSearches.filter(([config]) => config.weaponId === "DRILLER")).toHaveLength(24);
     expect(ownSearches.filter(([config]) => config.weaponId === "MISSILE")).toHaveLength(21);
-    expect(resolve.mock.calls.filter(([, , shooter]) => shooter.id === "self")).toHaveLength(2);
+    expect(search.mock.calls.filter(([config]) => config.sx === 100)).toHaveLength(45 + threatSearches);
+    expect(resolve.mock.calls.filter(([, , shooter]) => shooter.id === "self"))
+      .toHaveLength(2 + analyses.reduce((sum, branch) => sum + branch.forecasts, 0));
     expect(fallback).toHaveBeenCalledTimes(useful ? 0 : 1);
     if (!useful) {
       const cache = fallback.mock.calls[0][5];
@@ -416,14 +423,14 @@ describe("selected material aim is transported once to the real shot", () => {
     f.self.inventory = { BULLET: 1, DRILLER: 1 };
     f.self.aiProfile = "v3-sniper";
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.1);
-    vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(0);
+    vi.spyOn(fallible, "calculateImpactOffsetMagnitude").mockReturnValue(0);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
     vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast());
     const strategy = new AISniperStrategy();
     await strategy.executeTurn("self", f.state, f.terrain);
     await strategy.executeTurn("self", f.state, f.terrain);
-    // Removing the 50% roll shifts the global sequence; these turns draw neither it nor a substitute.
-    expect(rng).not.toHaveBeenCalled();
+    // Only the primitive amplitudes are drawn; there is no BULLET selection roll.
+    expect(rng).toHaveBeenCalledTimes(2);
   });
 });
 

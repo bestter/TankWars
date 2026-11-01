@@ -49,7 +49,7 @@ describe("advisor delayed lifecycle", () => {
     expect(f.view).toMatchObject({ objective: "OPTIMISER_PROFIT", status: "idle" });
     expect(f.worker.terminate).toHaveBeenCalledOnce();
     f.controller.request();
-    expect(f.worker.postMessage).toHaveBeenLastCalledWith({ snapshot: f.snapshot, objective: "OPTIMISER_PROFIT" });
+    expect(f.worker.postMessage).toHaveBeenLastCalledWith({ snapshot: f.snapshot, objective: "OPTIMISER_PROFIT", requestId: 2 });
   });
 
   it("keeps objectives per human across rounds, resets on a new match", () => {
@@ -106,5 +106,22 @@ describe("advisor delayed lifecycle", () => {
     const f = fixture(); f.controller.request(); const late = f.worker.onmessage;
     f.controller.dispose(); f.publish.mockClear(); late?.({ data: { advice: f.result } } as MessageEvent<unknown>);
     expect(f.worker.terminate).toHaveBeenCalledOnce(); expect(f.publish).not.toHaveBeenCalled();
+  });
+
+  it("correlates one terminal conclusion and never cancels a successful completion", () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = fixture(); f.controller.request(); f.reply(); f.controller.refresh(); f.controller.dispose();
+    const traces = log.mock.calls.filter(([line]) => String(line).startsWith("[Shot advisor] Décision {"))
+      .map(([line]) => JSON.parse(String(line).slice("[Shot advisor] Décision ".length)) as { requestId: number; status: string });
+    expect(traces.map((trace) => trace.status)).toEqual(["calculating", "result"]);
+    expect(traces.every((trace) => trace.requestId === 1)).toBe(true);
+  });
+
+  it("records only one cancellation when refresh invalidates a result during onmessage", () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = fixture(); f.controller.request(); f.snapshot!.state.windForce++; f.reply(); f.controller.dispose();
+    const traces = log.mock.calls.filter(([line]) => String(line).startsWith("[Shot advisor] Décision {"))
+      .map(([line]) => JSON.parse(String(line).slice("[Shot advisor] Décision ".length)) as { status: string });
+    expect(traces.map((trace) => trace.status)).toEqual(["calculating", "cancelled"]);
   });
 });

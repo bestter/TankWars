@@ -3,6 +3,7 @@ import type { WeaponId } from "../../../types/weapon";
 import { WEAPON_REGISTRY } from "../../../types/weapon";
 import type { PurchaseObservation } from "../../observation";
 import { getShopPolicy } from "../../shop/shopPolicy";
+import { getAiFreeWeaponsTargets } from "../../shop/freeWeapons";
 import {
   applyShopTransaction,
   type ShopVisitCounters,
@@ -71,37 +72,7 @@ function strategicStockCap(
   weaponId: WeaponId,
   initialPlayerCount: InitialPlayerCount,
 ): number {
-  switch (profile) {
-    case "v1-random":
-      return weaponId === "GRENADE" || weaponId === "CLUSTER"
-        ? initialPlayerCount - 1
-        : 0;
-    case "v2-heuristic":
-      if (weaponId === "GRENADE" || weaponId === "CLUSTER") {
-        return initialPlayerCount * 3;
-      }
-      if (weaponId === "DRILLER" || weaponId === "BULLDOZER") {
-        return initialPlayerCount;
-      }
-      return weaponId === "NUKE" ? 1 : 0;
-    case "v3-sniper":
-      if (weaponId === "BULLET") return initialPlayerCount * 3;
-      if (weaponId === "DRILLER" || weaponId === "BULLDOZER") {
-        return initialPlayerCount * 2;
-      }
-      return 0;
-    case "v4-smart":
-      if (
-        weaponId === "GRENADE" ||
-        weaponId === "CLUSTER" ||
-        weaponId === "DRILLER" ||
-        weaponId === "BULLDOZER"
-      ) {
-        return initialPlayerCount * 3;
-      }
-      if (weaponId === "NUKE") return 2;
-      return weaponId === "THERMONUCLEAR" ? 1 : 0;
-  }
+  return getAiFreeWeaponsTargets(profile, initialPlayerCount)[weaponId] ?? 0;
 }
 
 export interface AutoBuyResult {

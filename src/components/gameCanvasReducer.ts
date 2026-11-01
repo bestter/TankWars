@@ -146,6 +146,11 @@ export type GameCanvasAction =
       shopEpoch?: number;
       nextRoundNumber?: number;
     }
+  | {
+      type: "ADVANCE_ROUND_FREE_WEAPONS";
+      uiPlayers: Player[];
+      nextRoundNumber?: number;
+    }
   | { type: "SET_LAST_COMPLETED_ROUND"; roundNumber: number }
   | { type: "SET_LAST_SEEN_SHOT"; shotId: number }
   | { type: "SET_FIRE_PENDING"; intent: PendingFireIntent | null }
@@ -361,6 +366,23 @@ export function gameCanvasReducer(
           action.shopEpoch === undefined
             ? state.lastAppliedShopEpoch
             : Math.max(state.lastAppliedShopEpoch, action.shopEpoch),
+      };
+    case "ADVANCE_ROUND_FREE_WEAPONS":
+      return {
+        ...state,
+        gamePhase: "COMBAT",
+        lastRoundOutcome: null,
+        roundResult: null,
+        shopPlayers: [],
+        currentShopIndex: 0,
+        uiPlayers: action.uiPlayers,
+        earningsOverlay: null,
+        zeusAnnouncement: null,
+        shopSession: createEmptyShopSession(),
+        currentManche:
+          action.nextRoundNumber === undefined
+            ? state.currentManche
+            : Math.max(state.currentManche, action.nextRoundNumber),
       };
     case "SET_LAST_COMPLETED_ROUND":
       return {

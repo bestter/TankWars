@@ -1,22 +1,25 @@
+import { parseCreatedParticipation, persistParticipation, type OnlineEntryMessage, type OnlineParticipation } from '../utils/onlineParticipation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { CreateRoomResponse, RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../types/room';
+import type { RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../types/room';
 import type { Player } from '../types/player';
 import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
 import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
 import type { JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
 
 export function useOnlineLobby({
+  initialParticipation,
   initialRoomId,
   initialSlot,
   initialToken,
+  onPersistenceWarning,
   onStartGame,
   onExitToLocalMenu,
 }: OnlineLobbyProps) {
   const { t } = useTranslation();
 
-  const [view, setView] = useState<LobbyView>(initialRoomId && initialSlot !== undefined ? 'joining' : 'create');
-  const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
+  const [view, setView] = useState<LobbyView>(initialParticipation?.engaged ? 'waiting' : initialRoomId && initialSlot !== undefined ? 'joining' : 'create');
+  const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(initialParticipation?.mode === 'host' ? initialParticipation.slots.length as 2 | 3 | 4 : 2);
 
   // Host creation config (per slot)
   const [slotConfigs, setSlotConfigs] = useState<RoomSlotConfig[]>([
@@ -27,17 +30,20 @@ export function useOnlineLobby({
   const [roomId, setRoomId] = useState<string | null>(initialRoomId ?? null);
   const mySlotRef = useRef<number | null>(initialSlot ?? null);
   const myTokenRef = useRef<string | null>(initialToken ?? null);
-  const [myName, setMyName] = useState<string>('');
+  const [myName, setMyName] = useState<string>(initialParticipation?.name ?? '');
 
-  const [slotsInfo, setSlotsInfo] = useState<SlotUI[]>([]);
+  const [slotsInfo, setSlotsInfo] = useState<SlotUI[]>(initialParticipation?.slots ?? []);
   const [roster, setRoster] = useState<JoinedInfo[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [roundPreparationFailed, setRoundPreparationFailed] = useState(false);
+  const [storageWarning, setStorageWarning] = useState<OnlineEntryMessage | null>(null);
+  const participationRef = useRef(initialParticipation);
   const [error, setError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
 
   const wsRef = useRef<WebSocket | null>(null);
+  const mountedRef = useRef(false);
   const onStartGameRef = useRef(onStartGame);
   const gameStartedRef = useRef(false);
   const missedGameStartRef = useRef(false);
@@ -52,6 +58,19 @@ export function useOnlineLobby({
   useEffect(() => {
     onStartGameRef.current = onStartGame;
   }, [onStartGame]);
+
+  const saveParticipation = useCallback((value: OnlineParticipation) => {
+    participationRef.current = value;
+    if (persistParticipation(value)) setStorageWarning(null);
+    else if (onPersistenceWarning) onPersistenceWarning('online_restore_unavailable');
+    else setStorageWarning('online_restore_unavailable');
+  }, [onPersistenceWarning]);
+
+  const updateName = (name: string) => {
+    setMyName(name);
+    const value = participationRef.current;
+    if (value) saveParticipation({ ...value, name });
+  };
 
   const clearReconnectTimer = useCallback((): void => {
     if (reconnectTimerRef.current !== null) {
@@ -155,6 +174,8 @@ export function useOnlineLobby({
 
       if (wsRef.current) {
         try {
+          wsRef.current.onclose = null;
+          wsRef.current.onmessage = null;
           wsRef.current.close();
         } catch {
           // ignore close errors
@@ -304,13 +325,31 @@ export function useOnlineLobby({
   // Cleanup WS on unmount
   useEffect(() => {
     const currentWsRef = wsRef;
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       clearReconnectTimer();
+      connectionRef.current = null;
       if (currentWsRef.current && !gameStartedRef.current) {
+        currentWsRef.current.onclose = null;
+        currentWsRef.current.onmessage = null;
+        currentWsRef.current.onopen = null;
+        currentWsRef.current.onerror = null;
         currentWsRef.current.close();
+        currentWsRef.current = null;
       }
     };
   }, [clearReconnectTimer]);
+
+  useEffect(() => {
+    if (!initialParticipation?.engaged) return;
+    const value = initialParticipation;
+    let active = true;
+    queueMicrotask(() => {
+      if (active) connectWebSocketRef.current(value.room, value.slot, value.token, value.name);
+    });
+    return () => { active = false; };
+  }, [initialParticipation]);
 
   // --- Create room (host) ---
   const handleCreateRoom = async () => {
@@ -338,7 +377,11 @@ export function useOnlineLobby({
         throw new Error(text || `HTTP ${res.status}`);
       }
 
-      const data: CreateRoomResponse = await res.json();
+      const response: unknown = await res.json();
+      if (!mountedRef.current) return;
+      const host = parseCreatedParticipation(response, t('default_player_name_1').slice(0, 16));
+      if (!host) throw new Error('Invalid room response');
+      const data = { roomId: host.room, slots: host.slots };
       setRoomId(data.roomId);
       setSlotsInfo(data.slots);
 
@@ -347,7 +390,10 @@ export function useOnlineLobby({
       const hostInfo = data.slots.find((s) => s.slot === hostSlot);
       mySlotRef.current = hostSlot;
       myTokenRef.current = hostInfo?.url ? new URL(hostInfo.url).searchParams.get('token') : null;
-      setMyName(t('default_player_name_1'));
+      setMyName(host.name);
+
+      if (!myTokenRef.current) throw new Error('Missing host credentials');
+      saveParticipation(host);
 
       // Switch to waiting view immediately (host also "joins" their slot via WS)
       setView('waiting');
@@ -355,7 +401,7 @@ export function useOnlineLobby({
       // Auto-connect the host as well (they share their own link conceptually)
       if (hostInfo?.url) {
         const u = new URL(hostInfo.url);
-        connectWebSocket(data.roomId, hostSlot, u.searchParams.get('token') || '', t('default_player_name_1'));
+        connectWebSocket(data.roomId, hostSlot, u.searchParams.get('token') || '', host.name);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -373,6 +419,9 @@ export function useOnlineLobby({
     setError(null);
 
     try {
+      saveParticipation({ version: 1, room: roomId, slot: mySlotRef.current,
+        token: myTokenRef.current, name: myName.trim(), engaged: true,
+        mode: initialParticipation?.mode ?? 'guest', slots: slotsInfo });
       connectWebSocket(roomId, mySlotRef.current, myTokenRef.current, myName.trim());
       setView('waiting');
     } catch (err) {
@@ -405,7 +454,13 @@ export function useOnlineLobby({
   };
 
   const leaveRoom = () => {
-    if (wsRef.current) wsRef.current.close();
+    connectionRef.current = null;
+    clearReconnectTimer();
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     onExitToLocalMenu?.();
   };
 
@@ -426,12 +481,13 @@ export function useOnlineLobby({
     slotConfigs,
     roomId,
     myName,
-    setMyName,
+    setMyName: updateName,
     slotsInfo,
     roster,
     isCreating,
     isJoining,
     error,
+    storageWarning,
     copyFeedback,
     serverGameLive,
     connected,

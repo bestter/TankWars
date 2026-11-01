@@ -111,6 +111,12 @@ export interface SniperPhysicalChoice {
   readonly trace: SniperSelectionTrace;
 }
 
+// Preserve the original forecast identity without exposing it in serialized choices.
+const choiceForecasts = new WeakMap<SniperPhysicalChoice, PhysicalResolution>();
+export function getSniperChoiceForecast(choice: SniperPhysicalChoice): PhysicalResolution | undefined {
+  return choiceForecasts.get(choice);
+}
+
 interface SearchResult {
   readonly point: TacticalPoint;
   readonly variant: AimVariant;
@@ -268,8 +274,9 @@ export function chooseSniperPhysicalShot(
   terrain: TerrainManager,
   offset: number,
   solve: MaterialSolver,
+  observe = false,
 ): SniperPhysicalChoice {
-  const tracing = import.meta.env.DEV;
+  const tracing = import.meta.env.DEV || observe;
   const cache = new Map<string, PhysicalResolution>();
   const refusals: SniperRefusalTrace[] = [];
   let searches = 0;
@@ -328,7 +335,7 @@ export function chooseSniperPhysicalShot(
     if (forecast) cacheHits += 1;
     else {
       forecasts += 1;
-      forecast = resolvePhysicalShot(state, terrain, self, weapon, command);
+      forecast = resolvePhysicalShot(state, terrain, self, weapon, command, { captureAfterState: true });
       cache.set(key, forecast);
     }
     if (!forecast.complete) note(weapon, point, variant, "prévision incomplète", command, forecast);
@@ -368,11 +375,13 @@ export function chooseSniperPhysicalShot(
   else consider("DRILLER", SNIPER_SEARCH_LIMITS.driller, (forecast) => sniperDrillerRefusal(forecast, self, target));
 
   let choice: Omit<SniperPhysicalChoice, "trace"> | undefined;
+  let retainedForecast: PhysicalResolution | null | undefined;
   let selectionReason: SniperSelectionReason;
   let runnerUp: SniperCandidateSummary | undefined;
   if (ranked.length > 0) {
     const picked = pickBest(ranked);
     const best = picked.best;
+    retainedForecast = best.forecast;
     selectionReason = rankedReason(best, picked.runner);
     if (tracing && picked.runner) runnerUp = summarize(picked.runner.weaponId, picked.runner);
     choice = {
@@ -408,6 +417,7 @@ export function chooseSniperPhysicalShot(
       }
     }
     const selected = useful ?? surviving ?? ordinary;
+    retainedForecast = selected?.forecast;
     const tank = ordinaryTankPoint(target);
     if (tracing && surviving && selected !== surviving) {
       note("MISSILE", surviving.point, surviving.variant, "survivant écarté", surviving.command, surviving.forecast);
@@ -438,7 +448,7 @@ export function chooseSniperPhysicalShot(
       };
   }
 
-  return {
+  const result: SniperPhysicalChoice = {
     ...choice,
     trace: {
       selectionReason,
@@ -450,4 +460,6 @@ export function chooseSniperPhysicalShot(
       cacheHits,
     },
   };
+  if (retainedForecast) choiceForecasts.set(result, retainedForecast);
+  return result;
 }

@@ -34,6 +34,9 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   2. Ne construire le clone complet (`captureAdvisorState` + copie des 800 colonnes) que lorsque cette empreinte légère ou la politique choisie change.
 
 ### IMP-03 — Exposition prolongée du `token` de session dans `window.location.search` et comparaison non constante
+- **Implémentation (#321)** : `onlineParticipation.ts` capture les invitations valides dans une sauvegarde de lobby distincte, versionnée et validée, puis nettoie leurs paramètres sans perdre les autres éléments de l’adresse. Restauration du formulaire ou reconnexion selon la jonction engagée, invitations hôte conservées, priorité explicite des invitations sur les combats incompatibles et purge au départ/à la fin de partie. Les erreurs de stockage et d’historique sont signalées; une invitation valide non sauvegardée demeure dans l’adresse comme repli. Aucun jeton hôte n’est ajouté à l’adresse. `tokenComparison.ts` utilise la primitive Cloudflare sur UTF-8 et son modèle documenté de refus des longueurs différentes. Le contrôle local `Scripts/test-online-token-comparison.mjs` couvre la primitive réelle workerd et les refus de la route sans remplacement de la connexion légitime. Les tests Node seuls utilisent un double et ne valident pas cette disponibilité.
+- **Limites** : les liens copiés et les URL WebSocket contiennent toujours le jeton; le nettoyage ne révoque rien et n’efface pas les copies antérieures. Aucune fuite effective ni attaque temporelle exploitable n’a été démontrée. Les constats et références de lignes historiques ci-dessous décrivent l’état antérieur.
+- **Implémentation et documentation** : GPT-6 — Codex.
 - **Fichiers concernés** :
   - `src/App.tsx:L64-L82`, `L189`
   - `src/components/useOnlineLobby.ts:L165`

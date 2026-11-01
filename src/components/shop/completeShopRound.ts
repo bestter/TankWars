@@ -9,6 +9,7 @@ import type { Player } from "../../types/player";
 import type { InitialPlayerCount } from "../../game/entities/ai/aiShopHelper";
 import type { ShopEnterMessage } from "../../game/online/protocol";
 import { normalizeRosterAtShopOpen } from "../../game/shop/shopTransaction";
+import { replenishRosterFreeWeapons } from "../../game/shop/freeWeapons";
 import {
   INITIAL_STATE,
   type GameCanvasAction,
@@ -195,6 +196,73 @@ export function finishShopPhase(
     type: "FINISH_SHOP",
     uiPlayers: nextPlayers,
     shopEpoch: completedShopEpoch,
+    nextRoundNumber,
+  });
+  host.gamePhaseRef.current = "COMBAT";
+  host.shopPlayersRef.current = [];
+  host.currentShopIndexRef.current = 0;
+
+  host.clearCelebrationTimer();
+  host.shopFinishingRef.current = false;
+}
+
+export function advanceToNextRoundDirect(host: CompleteShopRoundHost): void {
+  if (host.shopFinishingRef.current) return;
+  const engine = host.engineRef.current;
+  if (!engine) return;
+
+  host.shopFinishingRef.current = true;
+  host.clearShopAiTimeout();
+  const tm = engine.getTurnManager();
+  const rawRoster = [...engine.getTankManager().getPlayers()];
+  if (rawRoster.length < 2) {
+    host.shopFinishingRef.current = false;
+    endMatchFromShop(host, engine, rawRoster);
+    return;
+  }
+
+  const replenished = replenishRosterFreeWeapons(
+    rawRoster,
+    host.initialPlayerCount,
+  );
+  engine.getTankManager().setPlayers(replenished);
+
+  const nextRoundNumber = host.currentMancheRef.current;
+  try {
+    if (host.endurance && !host.endurance.beginRound(nextRoundNumber)) {
+      host.shopFinishingRef.current = false;
+      return;
+    }
+    if (!engine.startNextRound(undefined, replenished, nextRoundNumber)) {
+      host.shopFinishingRef.current = false;
+      return;
+    }
+  } catch (error) {
+    console.error("[Game] Free weapons round preparation failed", error);
+    host.endurance?.incident(
+      "exception",
+      "ROUND_PREPARATION_FAILED",
+      0,
+      String(error),
+    );
+    tm.pauseForInterRound();
+    host.shopFinishingRef.current = false;
+    host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
+    return;
+  }
+
+  host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
+  host.pendingShopFinishRef.current = null;
+  host.localShopDoneRef.current = false;
+  host.setLocalShopDone(false);
+  engine.setRoundNumber(nextRoundNumber);
+
+  tm.resumeForCombat();
+
+  const nextPlayers = [...engine.getTankManager().getPlayers()];
+  host.dispatch({
+    type: "ADVANCE_ROUND_FREE_WEAPONS",
+    uiPlayers: nextPlayers,
     nextRoundNumber,
   });
   host.gamePhaseRef.current = "COMBAT";

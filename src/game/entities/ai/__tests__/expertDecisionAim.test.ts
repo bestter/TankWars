@@ -1,3 +1,5 @@
+import { decisionJSON } from "../../../__tests__/decisionConsoleHelpers";
+import { LethalTransitionDetector } from "../lethalTransition";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
@@ -210,7 +212,7 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     expect(record).toHaveBeenCalledOnce();
     expect(rng).toHaveBeenCalledTimes(economics ? 4 : 3);
     expect(values).toEqual([]);
-    const trace = JSON.parse(String(vi.mocked(console.info).mock.calls[0][1])) as { realAim: { choiceKind: string; predictedCommand?: object } };
+    const trace = JSON.parse(decisionJSON(vi.mocked(console.info).mock.calls)) as { realAim: { choiceKind: string; predictedCommand?: object } };
     expect(trace.realAim.choiceKind).toBe("ordinary");
     expect(trace.realAim.predictedCommand).toBeUndefined();
   });
@@ -226,6 +228,7 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     await strategy.executeTurn("self", f.state, f.terrain);
     rng.mockClear();
     log.mockClear();
+    const risk = vi.spyOn(LethalTransitionDetector.prototype, "analyze");
     const search = vi.spyOn(ballistics, "searchBallisticSolution");
     const choose = vi.spyOn(planner, "chooseExpertPlan");
     const record = vi.spyOn(aimMemory, "recordAimAttempt");
@@ -233,11 +236,13 @@ describe("EXPERT evaluated command transport in DEV and production", () => {
     const plan = choose.mock.results[0].value as planner.ExpertPlan;
     expect(plan.kind).toBe("evaluated");
     expect(shot).toEqual({ ...plan.command, weaponId: plan.weaponId });
-    expect(search.mock.calls).toHaveLength(choose.mock.calls[0][6]!.search.size);
+    const riskSearches = risk.mock.results.flatMap(value => value.value ?
+      [value.value.initial, value.value.after, value.value.reply] : []).reduce((sum, branch) => sum + (branch?.searches ?? 0), 0);
+    expect(search.mock.calls).toHaveLength(choose.mock.calls[0][6]!.search.size + riskSearches);
     expect(rng).toHaveBeenCalledTimes(3); // amplitude, side, gaffe; no lethal threat here.
     expect(record).toHaveBeenCalledExactlyOnceWith(expect.any(Object), plan.primaryTargetId);
     if (dev) {
-      const trace = JSON.parse(String(log.mock.calls[0][1])) as {
+      const trace = JSON.parse(decisionJSON(log.mock.calls)) as {
         selected: { predictedCommand: object }; realAim: { predictedCommand: object; finalCommand: object };
       };
       expect(trace.selected.predictedCommand).toEqual(plan.command);

@@ -521,6 +521,28 @@ describe('MainMenu (Hotseat configuration)', () => {
     expect(onStartGame).toHaveBeenCalledTimes(1);
     expect(onStartGame.mock.calls[0][0].length).toBe(2);
   });
+
+  it('toggles freeWeapons checkbox and passes it to onStartGame', () => {
+    const onStartGame = vi.fn();
+    render(<MainMenu onStartGame={onStartGame} />);
+
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    // Default start passes freeWeapons: false
+    const startButton = screen.getByRole('button', { name: 'start_battle_button' });
+    fireEvent.click(startButton);
+    expect(onStartGame).toHaveBeenCalledTimes(1);
+    expect(onStartGame.mock.calls[0][1]).toEqual({ freeWeapons: false });
+
+    // Toggle checkbox
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.click(startButton);
+    expect(onStartGame).toHaveBeenCalledTimes(2);
+    expect(onStartGame.mock.calls[1][1]).toEqual({ freeWeapons: true });
+  });
 });
 
 

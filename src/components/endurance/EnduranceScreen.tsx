@@ -28,6 +28,7 @@ function download(filename: string, content: string, type: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function
 function SessionView({ session, onExit }: { session: EnduranceSession; onExit: () => void }) {
   const { t, i18n } = useTranslation();
   useSyncExternalStore(session.subscribe, session.snapshot);
@@ -77,7 +78,7 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
     </div>
     <p>{t("endurance_limits_help")}</p>
     {session.ready && session.block && <EnduranceBoundary key={session.block.id} session={session}>
-      <GameCanvas endurance={session} initialPlayers={structuredClone(session.block.config.players)} gameMode="local" />
+      <GameCanvas endurance={session} initialPlayers={structuredClone(session.block.config.players)} freeWeapons={session.session.config.freeWeapons ?? false} gameMode="local" />
     </EnduranceBoundary>}
     {report && <pre className="endurance-report">{markdownReport(report, i18n.language.startsWith("fr"))}</pre>}
   </section>;
@@ -90,6 +91,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
   const [rounds, setRounds] = useState(2);
   const [blocks, setBlocks] = useState(0);
   const [minutes, setMinutes] = useState(240);
+  const [freeWeapons, setFreeWeapons] = useState(false);
   const [stopOnIncident, setStopOnIncident] = useState(false);
   const [limits, setLimits] = useState({ turns: 1000, roundMs: 1800000, actionMs: 120000, transitionMs: 30000 });
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +105,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
   const start = () => {
     try {
       const players = createLocalPlayers(profiles.slice(0, count).map((profile, index) => ({ name: `${profile}-${index + 1}`, isHuman: false, aiProfile: profile, color: COLORS[index] })));
-      onStart({ ...defaultConfig(players), roundsPerBlock: rounds, maxBlocks: blocks === 0 ? null : blocks,
+      onStart({ ...defaultConfig(players), freeWeapons, roundsPerBlock: rounds, maxBlocks: blocks === 0 ? null : blocks,
         maxDurationMs: minutes === 0 ? null : minutes * 60000, stopOnIncident, limits });
     } catch (e) { setError(`${t("endurance_invalid")}: ${String(e)}`); }
   };
@@ -139,6 +141,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
       <label>{t("endurance_blocks")}<input type="number" min="0" required value={blocks} onChange={e => setBlocks(e.target.valueAsNumber)} /></label>
       <label>{t("endurance_minutes")}<input type="number" min="0" required value={minutes} onChange={e => setMinutes(e.target.valueAsNumber)} /></label>
       {(Object.keys(limits) as Array<keyof typeof limits>).map(key => <label key={key}>{t(`endurance_limit_${key}`)}<input type="number" min="1" required value={limits[key]} onChange={e => setLimits({ ...limits, [key]: e.target.valueAsNumber })} /></label>)}
+      <label><input type="checkbox" checked={freeWeapons} onChange={e => setFreeWeapons(e.target.checked)} />{t("endurance_free_weapons")}</label>
       <label><input type="checkbox" checked={stopOnIncident} onChange={e => setStopOnIncident(e.target.checked)} />{t("endurance_stop_incident")}</label>
       <button type="submit">{t("endurance_start")}</button><button type="button" onClick={onExit}>{t("btn_menu")}</button>
     </form>

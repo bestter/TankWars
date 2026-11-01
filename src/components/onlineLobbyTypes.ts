@@ -1,3 +1,4 @@
+import type { OnlineEntryMessage, OnlineParticipation } from '../utils/onlineParticipation';
 import { type RoundMap } from "../game/round/prepareRound";
 import type { Player } from '../types/player';
 
@@ -18,9 +19,11 @@ export interface JoinedInfo {
 
 export interface OnlineLobbyProps {
   /** When provided via URL params we are in "join" mode for that slot */
+  initialParticipation?: OnlineParticipation;
   initialRoomId?: string;
   initialSlot?: number;
   initialToken?: string;
+  onPersistenceWarning?: (message: OnlineEntryMessage) => void;
 
   /** Called when the game actually starts (server sent GAME_START). Parent transitions to GameCanvas. */
   onStartGame: (players: Player[], meta: {

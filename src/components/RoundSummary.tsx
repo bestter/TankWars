@@ -16,6 +16,7 @@ export interface RoundSummaryProps {
   roundOutcome: RoundEndOutcome | null;
   onNextRound: () => void;
   onNewGame: () => void;
+  freeWeapons?: boolean;
 }
 
 export function RoundSummary({
@@ -25,6 +26,7 @@ export function RoundSummary({
   roundOutcome,
   onNextRound,
   onNewGame,
+  freeWeapons = false,
 }: RoundSummaryProps) {
   const { t } = useTranslation();
   const alivePlayers = players.filter((p) => !p.tank.isDead);
@@ -81,7 +83,9 @@ export function RoundSummary({
       <div
         style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginBottom: 12 }}
       >
-        {t("round_survivors", { alive: alivePlayers.length, total: players.length })}
+        {freeWeapons
+          ? t("round_survivors_free_weapons", { alive: alivePlayers.length, total: players.length })
+          : t("round_survivors", { alive: alivePlayers.length, total: players.length })}
       </div>
 
       <div style={{ marginBottom: 14, textAlign: "left" }}>
@@ -116,8 +120,21 @@ export function RoundSummary({
                 {p.name}
                 {eliminated ? t("ko_indicator") : ""}
               </span>
-              <span style={{ color: VGA_PALETTE.GREEN, marginLeft: "auto" }}>
-                +{roundEarnings}$
+              <span
+                style={{
+                  color: VGA_PALETTE.GREEN,
+                  marginLeft: "auto",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <span>+{roundEarnings}$</span>
+                {freeWeapons && (
+                  <span style={{ color: VGA_PALETTE.YELLOW, fontSize: 11 }}>
+                    {t("round_summary_balance", { amount: p.money })}
+                  </span>
+                )}
               </span>
             </div>
           );
@@ -154,7 +171,7 @@ export function RoundSummary({
           cursor: canContinue ? "pointer" : "not-allowed",
         }}
       >
-        {t("btn_go_to_shop")}
+        {freeWeapons ? t("btn_next_round") : t("btn_go_to_shop")}
       </button>
 
       <button
