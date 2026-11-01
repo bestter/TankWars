@@ -5,7 +5,7 @@ import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { trackEvent } from "../utils/analytics";
 import type { GamePhase } from "../types/game";
 import type { ZeusAppointment, ZeusStrikeResult } from "../game/zeus/zeusDomain";
-import { ZEUS_ANNOUNCEMENT_DURATION_MS, type GameCanvasAction } from "./gameCanvasReducer";
+import type { GameCanvasAction } from "./gameCanvasReducer";
 import { buildOverlayAwards } from "./sessionPresentation";
 
 export function wireEngineSessionCallbacks(opts: {
@@ -98,7 +98,7 @@ export function wireEngineSessionCallbacks(opts: {
     opts.zeusAnnouncementTimerRef.current = setTimeout(() => {
       opts.zeusAnnouncementTimerRef.current = null;
       dispatch({ type: "HIDE_ZEUS_ANNOUNCEMENT" });
-    }, ZEUS_ANNOUNCEMENT_DURATION_MS);
+    }, 3000);
   };
 
   engine.onZeusStrikeApplied = (result: ZeusStrikeResult) => {
