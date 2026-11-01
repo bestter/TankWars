@@ -1,4 +1,3 @@
-import { tokenMatches } from './tokenComparison';
 import { fragmentCombat, type ActiveCombatShot, type CombatEvent } from "../../src/game/online/combatCatchUp";
 import { validateEarnings } from "../../src/game/online/earningsValidation";
 import { prepareRound, isRoundMap, ROUND_WIDTH, ROUND_HEIGHT, type RoundMap } from '../../src/game/round/prepareRound';
@@ -185,7 +184,7 @@ interface RoomState {
   zeusState: ZeusState;
   zeusRotationSlots: number[];
   lastDirectAttackerByPlayerId: Record<string, string>;
-  // zeusRngState is deprecated
+  zeusRngState: number;
   activeZeusStrike: ZeusStrikeMessage | null;
   lastAppliedZeusStrike: ZeusStrikeAppliedMessage | null;
 }
@@ -195,12 +194,15 @@ function makeToken(): string {
   return crypto.randomUUID();
 }
 
-// Secure RNG for authoritative server-side logic
-function secureRandom(): number {
-  const array = new Uint32Array(1);
-  crypto.getRandomValues(array);
-  return array[0] / (0xffffffff + 1);
+function seedFromString(value: string): number {
+  let seed = 0;
+  for (let index = 0; index < value.length; index++) {
+    seed = Math.imul(seed, 31) + value.charCodeAt(index);
+    seed |= 0;
+  }
+  return seed >>> 0;
 }
+
 function makeShopActionKey(
   kind: 'BUY_SELL' | 'READY',
   slot: number,
@@ -373,6 +375,7 @@ export class GameRoom extends DurableObject {
         this.state.zeusState ??= createZeusState();
         this.state.zeusRotationSlots ??= [];
         this.state.lastDirectAttackerByPlayerId ??= {};
+        this.state.zeusRngState ??= seedFromString(this.state.roomId);
         this.state.activeZeusStrike ??= null;
         this.state.lastAppliedZeusStrike ??= null;
         this.shotInFlight = this.state.activeShot !== null;
@@ -628,6 +631,7 @@ export class GameRoom extends DurableObject {
       zeusState: createZeusState(),
       zeusRotationSlots: [],
       lastDirectAttackerByPlayerId: {},
+      zeusRngState: seedFromString(roomId),
       activeZeusStrike: null,
       lastAppliedZeusStrike: null,
     };
@@ -703,7 +707,7 @@ export class GameRoom extends DurableObject {
       if (cfg.type === 'ai') {
         return new Response('AI slots do not use WS connections', { status: 400 });
       }
-      if (!tokenMatches(token, this.state.tokens[slot])) {
+      if (this.state.tokens[slot] !== token) {
         return new Response('Invalid token for slot', { status: 403 });
       }
 
@@ -1570,7 +1574,12 @@ export class GameRoom extends DurableObject {
   }
 
   private nextZeusRandom(): number {
-    return secureRandom();
+    if (!this.state) return 0;
+    this.state.zeusRngState = (this.state.zeusRngState + 0x6d2b79f5) >>> 0;
+    let value = this.state.zeusRngState;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   }
 
   private async applyZeusAppointment(

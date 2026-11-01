@@ -1,4 +1,3 @@
-import { clearParticipation, reportOnlinePersistenceFailure } from '../utils/onlineParticipation';
 import { type RoundMap } from "../game/round/prepareRound";
 import { useEffect, type MutableRefObject } from "react";
 import type { GameEngine } from "../game/engine/GameEngine";
@@ -88,15 +87,13 @@ export function usePersistOnlineCanvas(opts: {
       return;
     }
     if (gamePhase === "GAME_OVER") {
-      const combatCleared = clearOnlineSession();
-      const lobbyCleared = clearParticipation();
-      if (!combatCleared || !lobbyCleared) reportOnlinePersistenceFailure('online_storage_clear_failed');
+      clearOnlineSession();
       return;
     }
     const roster = uiPlayers.length > 0 ? uiPlayers : (initialPlayers ?? []);
     if (roster.length < 2 || !engineRef.current) return;
 
-    const persisted = persistOnlineSession({
+    persistOnlineSession({
       meta: {
         roomId,
         localPlayerId,
@@ -133,9 +130,6 @@ export function usePersistOnlineCanvas(opts: {
         fireRejection,
       },
     });
-    if (persisted) {
-      if (!clearParticipation()) reportOnlinePersistenceFailure('online_storage_clear_failed');
-    } else reportOnlinePersistenceFailure('online_restore_unavailable');
   }, [
     gameMode,
     roomId,

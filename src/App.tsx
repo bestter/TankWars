@@ -1,7 +1,4 @@
-import { captureOnlineEntry, cleanParticipationUrl, clearParticipation, readOnlineEntry, type OnlineParticipation, type OnlineEntryMessage } from './utils/onlineParticipation';
-import { onlineEntryMessagesReducer } from './utils/onlineEntryMessages';
-import { OnlinePersistenceAlerts } from './components/OnlinePersistenceAlerts';
-import { lazy, Suspense, useEffect, useReducer, useRef, useState } from "react";
+import { lazy, Suspense, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
@@ -12,6 +9,7 @@ import type { Player } from "./types/player";
 import { SEO } from './components/SEO';
 import {
   clearOnlineSession,
+  readOnlineSession,
 } from "./utils/onlineSession";
 import {
   appReducer,
@@ -25,25 +23,44 @@ const EnduranceScreen = import.meta.env.MODE === "endurance"
   ? lazy(() => import("./components/endurance/EnduranceScreen").then(module => ({ default: module.EnduranceScreen })))
   : null;
 
+interface OnlineParams {
+  readonly room: string | null;
+  readonly slot: number | null;
+  readonly token: string | null;
+}
+
 interface AppScreenProps {
   readonly onEndurance?: () => void;
   readonly showMenu: boolean;
   readonly showOnlineLobby: boolean;
   readonly isOnlineJoin: boolean;
   readonly onlineMultiplayerEnabled: boolean;
-  readonly participation: OnlineParticipation | null;
+  readonly onlineParams: OnlineParams;
   readonly players: Player[] | null;
   readonly onlineMeta: OnlineMeta | null;
   readonly resumeCanvas: ReturnType<typeof createInitialAppState>["resumeCanvas"];
-  readonly freeWeapons: boolean;
-  readonly onStartLocalGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
+  readonly onStartLocalGame: (players: Player[]) => void;
   readonly onStartOnlineGame: (
     players: Player[],
     meta: OnlineMeta & { gameMode: "online" },
   ) => void;
   readonly onHideOnlineLobby: () => void;
   readonly onReturnToMenu: () => void;
-  readonly onPersistenceWarning: (message: OnlineEntryMessage) => void;
+}
+
+function readOnlineParams(enabled: boolean): OnlineParams {
+  if (!enabled || typeof window === "undefined") {
+    return { room: null, slot: null, token: null };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const slotValue = params.get("slot");
+  const parsedSlot = slotValue === null ? null : Number(slotValue);
+  return {
+    room: params.get("room"),
+    slot: Number.isInteger(parsedSlot) ? parsedSlot : null,
+    token: params.get("token"),
+  };
 }
 
 function AppScreen({
@@ -51,16 +68,14 @@ function AppScreen({
   showOnlineLobby,
   isOnlineJoin,
   onlineMultiplayerEnabled,
-  participation,
+  onlineParams,
   players,
   onlineMeta,
   resumeCanvas,
-  freeWeapons,
   onStartLocalGame,
   onStartOnlineGame,
   onHideOnlineLobby,
   onReturnToMenu,
-  onPersistenceWarning,
   onEndurance,
 }: AppScreenProps) {
   if (!showMenu) {
@@ -78,7 +93,6 @@ function AppScreen({
           slot={onlineMeta?.slot}
           token={onlineMeta?.token}
           ws={onlineMeta?.ws}
-          freeWeapons={freeWeapons}
         />
       </div>
     );
@@ -87,11 +101,9 @@ function AppScreen({
   if (showOnlineLobby) {
     return (
       <OnlineLobby
-        initialRoomId={isOnlineJoin ? participation!.room : undefined}
-        initialSlot={isOnlineJoin ? participation!.slot : undefined}
-        initialToken={isOnlineJoin ? participation!.token : undefined}
-        initialParticipation={participation ?? undefined}
-        onPersistenceWarning={onPersistenceWarning}
+        initialRoomId={isOnlineJoin ? onlineParams.room! : undefined}
+        initialSlot={isOnlineJoin ? onlineParams.slot! : undefined}
+        initialToken={isOnlineJoin ? onlineParams.token! : undefined}
         onStartGame={onStartOnlineGame}
         onExitToLocalMenu={onHideOnlineLobby}
       />
@@ -125,38 +137,30 @@ function App() {
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
   const onlineMultiplayerEnabled = !hotseatOnly;
-  const [entry] = useState(() => readOnlineEntry(onlineMultiplayerEnabled));
-  const [participation, setParticipation] = useState(entry.participation);
-  const [messages, setMessages] = useReducer(onlineEntryMessagesReducer, []);
-  const handlePersistenceWarning = (message: OnlineEntryMessage) => {
-    setMessages({ type: 'add', messages: [message] });
-  };
-  const captured = useRef(false);
-  useEffect(() => {
-    const warn = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const key: unknown = event.detail;
-      if (key === 'online_storage_clear_failed' || key === 'online_restore_unavailable') {
-        setMessages({ type: 'add', messages: [key] });
-      }
-    };
-    window.addEventListener('online-persistence-warning', warn);
-    return () => window.removeEventListener('online-persistence-warning', warn);
-  }, []);
-  useEffect(() => {
-    if (captured.current) return;
-    captured.current = true;
-    setMessages({ type: 'replace', messages: captureOnlineEntry(entry, onlineMultiplayerEnabled) });
-  }, [entry, onlineMultiplayerEnabled]);
-  const [state, dispatch] = useReducer(appReducer, entry.session, createInitialAppState);
-  const isOnlineJoin = participation !== null;
+  const [savedSession] = useState(() => {
+    if (onlineMultiplayerEnabled) return readOnlineSession();
+    clearOnlineSession();
+    return null;
+  });
+  const [state, dispatch] = useReducer(
+    appReducer,
+    savedSession,
+    createInitialAppState,
+  );
+
+  // Parse URL once on mount (supports direct join links and after create)
+  const [onlineParams] = useState(() =>
+    readOnlineParams(onlineMultiplayerEnabled),
+  );
+
+  const isOnlineJoin = !!onlineParams.room && onlineParams.slot !== null && !!onlineParams.token;
   const showOnlineLobby =
     onlineMultiplayerEnabled &&
     !state.onlineMatchStarted &&
     (isOnlineJoin || state.forceShowOnlineLobby);
 
-  const handleStartGame = (initialPlayers: Player[], options?: { freeWeapons?: boolean }): void => {
-    dispatch({ type: "START_LOCAL_GAME", players: initialPlayers, freeWeapons: options?.freeWeapons ?? false });
+  const handleStartGame = (initialPlayers: Player[]): void => {
+    dispatch({ type: "START_LOCAL_GAME", players: initialPlayers });
   };
 
   const handleStartOnlineGame = (
@@ -176,15 +180,14 @@ function App() {
   };
 
   const handleReturnToMenu = (): void => {
+    // Démontage du canvas/engine → libération ressources + retour config
+    const hadOnline = !!state.onlineMeta || !!onlineParams.room;
     dispatch({ type: "RETURN_TO_MENU" });
-    setParticipation(null);
-    const clearedCombat = clearOnlineSession();
-    const clearedLobby = clearParticipation();
-    const cleaned = cleanParticipationUrl();
-    setMessages({ type: 'replace', messages: [
-      ...(!clearedCombat || !clearedLobby ? ['online_storage_clear_failed' as const] : []),
-      ...(!cleaned ? ['online_url_cleanup_failed' as const] : []),
-    ] });
+    clearOnlineSession();
+    // Best effort: clean URL params if we were in an online flow
+    if (typeof window !== 'undefined' && hadOnline) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   };
 
   const handleReturnToLobbyOrMenu = (): void => {
@@ -224,23 +227,20 @@ function App() {
         <LanguageSwitcher />
       </div>
 
-      <OnlinePersistenceAlerts messages={messages} />
       {showEndurance && EnduranceScreen ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
         onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
         showMenu={showMenu}
         showOnlineLobby={showOnlineLobby}
         isOnlineJoin={isOnlineJoin}
         onlineMultiplayerEnabled={onlineMultiplayerEnabled}
-        participation={participation}
+        onlineParams={onlineParams}
         players={players}
         onlineMeta={onlineMeta}
         resumeCanvas={resumeCanvas}
-        freeWeapons={state.freeWeapons}
         onStartLocalGame={handleStartGame}
         onStartOnlineGame={handleStartOnlineGame}
         onHideOnlineLobby={handleOnlineMenuToggle}
         onReturnToMenu={handleReturnToLobbyOrMenu}
-        onPersistenceWarning={handlePersistenceWarning}
       />}
     </div>
   );

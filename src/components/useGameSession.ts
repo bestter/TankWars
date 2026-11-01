@@ -1,7 +1,7 @@
 import { useShotAdvisor } from "./advisor/useShotAdvisor";
 import { startCanvasLoop } from "./canvasLoop";
 import type { EnduranceSession } from "../game/endurance/session";
-import type { RoundMap } from "../game/round/prepareRound";
+import { type RoundMap } from "../game/round/prepareRound";
 import { ONLINE_PROTOCOL_VERSION } from "../game/online/protocol";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
@@ -31,13 +31,11 @@ import {
   createDemoPlayers,
 } from "./sessionPresentation";
 import {
-  advanceToNextRoundDirect,
   applyAuthoritativeShopFinish,
   finishShopPhase,
   startShopPhase,
   type CompleteShopRoundHost,
 } from "./shop/completeShopRound";
-import { replenishRosterFreeWeapons } from "../game/shop/freeWeapons";
 import { shopBuySell, shopReady } from "./shop/shopPlayerActions";
 import { usePersistOnlineCanvas } from "./usePersistOnlineCanvas";
 import { wireEngineSessionCallbacks } from "./wireEngineSession";
@@ -81,7 +79,6 @@ interface UseGameSessionProps {
   slot?: number;
   token?: string;
   ws?: WebSocket;
-  freeWeapons?: boolean;
 }
 
 function useOnlineSessionRefs(resumeCanvas?: OnlineCanvasSnapshot) {
@@ -129,11 +126,7 @@ export function useGameSession({
   slot,
   token,
   ws,
-  freeWeapons = false,
 }: UseGameSessionProps) {
-  const isFreeWeapons = endurance
-    ? (endurance.session.config.freeWeapons ?? false)
-    : freeWeapons;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -485,15 +478,9 @@ export function useGameSession({
     }
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
-    const rawPlayers: Player[] = matchStartRoster(initialPlayersRef.current).map(
+    const players: Player[] = matchStartRoster(initialPlayersRef.current).map(
       (player) => ({ ...player }),
     );
-    const matchPlayerCount = requireInitialPlayerCount(rawPlayers.length);
-    initialPlayerCountRef.current = matchPlayerCount;
-    setInitialPlayerCount(matchPlayerCount);
-    const players: Player[] = isFreeWeapons
-      ? replenishRosterFreeWeapons(rawPlayers, matchPlayerCount)
-      : rawPlayers;
 
     // Online: set local player id BEFORE setPlayers so startFirstTurn locks input correctly.
     engine.setLocalMatch(gameMode !== "online");
@@ -538,6 +525,9 @@ export function useGameSession({
         engine.enterInterRoundPhase();
         dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
       }
+      const matchPlayerCount = requireInitialPlayerCount(players.length);
+      initialPlayerCountRef.current = matchPlayerCount;
+      setInitialPlayerCount(matchPlayerCount);
       const roundNumber = initialMap?.roundNumber ?? 1;
       engine.setRoundNumber(roundNumber);
       currentMancheRef.current = roundNumber;
@@ -727,10 +717,6 @@ export function useGameSession({
 
   const handleNextRound = (): void => {
     if (endurance && !endurance.ready) return;
-    if (isFreeWeapons) {
-      advanceToNextRoundDirect(shopRoundHost);
-      return;
-    }
     startShopPhase(shopRoundHost);
   };
 
@@ -741,13 +727,12 @@ export function useGameSession({
     const timer = setTimeout(() => {
       if (!endurance.ready) return;
       if (endurance.block && endurance.block.roundsCompleted >= endurance.session.config.roundsPerBlock) endurance.finishPresentation();
-      else if (isFreeWeapons) advanceToNextRoundDirect(shopRoundHost);
       else startShopPhase(shopRoundHost);
     }, 3000);
     return () => clearTimeout(timer);
   // The phase timer belongs to this block/phase, not to HUD renders.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endurance, gamePhase, isFreeWeapons]);
+  }, [endurance, gamePhase]);
 
   const handleNewGameFromSummary = (): void => {
     advisor.reset();
@@ -765,12 +750,10 @@ export function useGameSession({
   };
 
   const handleShopBuySell = (weaponId: WeaponId, delta: 1 | -1): void => {
-    if (isFreeWeapons) return;
     shopBuySell(shopRoundHost, weaponId, delta);
   };
 
   const handleShopReady = (): void => {
-    if (isFreeWeapons) return;
     shopReady(shopRoundHost);
   };
 
@@ -795,14 +778,11 @@ export function useGameSession({
     const engine = engineRef.current;
     if (!engine) return;
 
-    const rawNewPlayers = createDemoPlayers();
-    const nextPlayerCount = requireInitialPlayerCount(rawNewPlayers.length);
+    const newPlayers = createDemoPlayers();
+    const nextPlayerCount = requireInitialPlayerCount(newPlayers.length);
     initialPlayerCountRef.current = nextPlayerCount;
     setInitialPlayerCount(nextPlayerCount);
     engine.setAIEngine(new AIByProfileStrategy());
-    const newPlayers = isFreeWeapons
-      ? replenishRosterFreeWeapons(rawNewPlayers, nextPlayerCount)
-      : rawNewPlayers;
     try {
       engine.resetGame(newPlayers);
     } catch (error) {
@@ -836,16 +816,8 @@ export function useGameSession({
     }
     const engine = engineRef.current;
     if (!engine) return;
-    if (isFreeWeapons && currentMancheRef.current > 1) {
-      advanceToNextRoundDirect(shopRoundHost);
-      return;
-    }
     try {
-      const basePlayers = matchStartRoster(initialPlayersRef.current).map((p) => ({ ...p }));
-      const players = isFreeWeapons
-        ? replenishRosterFreeWeapons(basePlayers, initialPlayerCountRef.current)
-        : basePlayers;
-      engine.setPlayers(players);
+      engine.setPlayers(matchStartRoster(initialPlayersRef.current).map((p) => ({ ...p })));
       dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
       dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
       engine.getTurnManager().resumeForCombat();

@@ -1,5 +1,3 @@
-import { writeDecisionConsole } from "../../../utils/decisionConsole";
-import { summarizeExpertDecision } from "./expertDecisionLog";
 import { secureRandom } from "../../../utils/random";
 import type { GameState } from "../../../types/game";
 import { type WeaponId } from "../../../types/weapon";
@@ -55,7 +53,7 @@ export class AISmartStrategy implements AIEngine {
     resetAimMemoryForRound(memory, gameState.roundNumber);
 
     let decisionTrace: ExpertDecisionTrace | undefined;
-    const cache = createExpertForecastCache(import.meta.env.DEV || Boolean(this.onDecisionObserved));
+    const cache = createExpertForecastCache();
     const aim = createExpertDecisionAim(memory, gameState.roundNumber);
     const plan = chooseExpertPlan(self, gameState, terrainManager, aim, undefined,
       import.meta.env.DEV || this.onDecisionObserved ? (trace) => { decisionTrace = trace; } : undefined, cache);
@@ -64,17 +62,14 @@ export class AISmartStrategy implements AIEngine {
       : ordinaryExpertTarget(self, gameState.players, memory);
     if (!target) {
       if (import.meta.env.DEV) {
-        writeDecisionConsole("[AI EXPERT] Décision", {
+        console.info("[AI EXPERT] Décision", JSON.stringify({
           shooterId: self.id, round: gameState.roundNumber, turn: gameState.turn,
           ...decisionTrace, finalReason: "aucun adversaire vivant",
-        });
+        }));
       }
       return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
     }
 
-    const targetSelection = { source: plan ? "main-plan" : "fallback",
-      reason: plan ? "ranked-plan" : memory.currentTargetId === target.id ? "living-memory-target" : "ordinary-target-order",
-      previousTargetId: memory.currentTargetId ?? null, targetId: target.id };
     this.onTargetSelected?.(self.id, target.id);
     const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
     const fallback = plan ? undefined : chooseExpertFallback(
@@ -131,27 +126,15 @@ export class AISmartStrategy implements AIEngine {
       ? finalizeAdvancedAim(command) : choice.command;
     observation?.step("gaffe", before, command, { chance: gaffe.chance, occurred: gaffeOccurred });
     observation?.step("finalize", command, finalAim);
-    const fallbackChoice = import.meta.env.DEV || observation ? fallback && {
-      kind: fallback.kind, targetId: target.id, weaponId, rawCommand: fallback.rawCommand,
-      evaluatedCommand: fallback.command, forecast: fallback.forecast,
-      selectionReason: fallback.selectionReason, conservationReason: fallback.conservationReason,
-    } : undefined;
     observation?.finish({ ...finalAim, weaponId }, plan ? decisionTrace?.selectionReason ?? null : fallback?.selectionReason ?? null,
-      { planner: decisionTrace ?? null, fallback: fallback?.selectionReason ?? null, policy, targetSelection, fallbackChoice });
+      { planner: decisionTrace ?? null, fallback: fallback?.selectionReason ?? null, policy });
     if (import.meta.env.DEV) {
       const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
       const conservationReason = fallback?.conservationReason;
-      writeDecisionConsole("[AI EXPERT] Décision", {
-        shooterId: self.id, round: gameState.roundNumber, turn: gameState.turn,
-        ...summarizeExpertDecision(decisionTrace), targetSelection,
-        selectionReason: plan ? decisionTrace?.selectionReason : fallback?.selectionReason,
-        weaponId, rawCommand: choice.rawCommand, evaluatedCommand: choice.command, finalCommand: finalAim,
-        fallback: fallback && { kind: fallback.kind, profit: fallback.forecast?.profit, useful: fallback.useful },
-      }, {
+      console.info("[AI EXPERT] Décision", JSON.stringify({
         shooterId: self.id,
         round: gameState.roundNumber,
         turn: gameState.turn,
-        targetSelection, fallbackChoice,
         // Keep the economic explanation ahead of roster and large forecast tables.
         rejectedUnprofitableShots,
         conservationReason,
@@ -204,7 +187,7 @@ export class AISmartStrategy implements AIEngine {
           gaffeCommand: gaffeOccurred ? command : undefined,
           finalCommand: finalAim,
         },
-      });
+      }));
     }
     consumeHitReaction(self.tank.hitReaction);
     return { ...finalAim, weaponId };

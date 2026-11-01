@@ -55,7 +55,6 @@ export function chooseLocalMaterialShot(
   let usefulForecast: PhysicalResolution | undefined;
   let survivingForecast: PhysicalResolution | undefined;
   let proposals = 0;
-  const targetIds = new Set([target.id]);
   outer: for (const weaponId of [...new Set(weapons)].filter(has)) {
     for (const point of localMaterialPoints(self, target, weaponId, terrain)) {
       for (const variant of ["full", "high"] as const) {
@@ -74,7 +73,7 @@ export function chooseLocalMaterialShot(
         }
         if (!forecast.complete) { diagnostics?.rejections.push("prévision incomplète"); continue; }
         const safe = forecast.survivors.includes(self.id);
-        const useful = hasPhysicalEffect(forecast, self, targetIds) &&
+        const useful = hasPhysicalEffect(forecast, self, new Set([target.id])) &&
           (weaponId !== "BULLET" || forecast.hits.some((hit) => hit.directTargetId === target.id));
         if (promote && weaponId === "DRILLER" && (!safe || !useful ||
           !forecast.support.some((support) => support.playerId === target.id && support.after > support.before))) {

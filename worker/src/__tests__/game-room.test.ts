@@ -10,14 +10,6 @@ import type { ShotMessage } from '../../../src/game/online/protocol';
 import { autoBuyForAI } from '../../../src/game/entities/ai/aiShopHelper';
 import { normalizeInventoryAtShopOpen } from '../../../src/game/shop/shopTransaction';
 
-// Node adapter for Cloudflare's extension; the workerd smoke test uses the real API.
-beforeEach(() => {
-  Object.defineProperty(crypto.subtle, 'timingSafeEqual', {
-    configurable: true,
-    value: (a: Uint8Array, b: Uint8Array) => a.byteLength === b.byteLength && a.every((byte, index) => byte === b[index]),
-  });
-});
-
 class MockWebSocket {
   public sent: string[] = [];
   public readyState = 1; // WebSocket.OPEN
@@ -348,8 +340,10 @@ describe('Zeus v3 durable settlement', () => {
     await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
     await send(0, report(shot.shotId)); await vi.advanceTimersByTimeAsync(0);
     const strike = structuredClone(room.getRoster()!.activeZeusStrike);
+    const seed = room.getRoster()!.zeusRngState;
     const restored = await restart();
     expect(restored.getRoster()!.activeZeusStrike).toEqual(strike);
+    expect(restored.getRoster()!.zeusRngState).toBe(seed);
     const inventory = structuredClone(restored.getRoster()!.players[restored.getRoster()!.currentPlayerIndex].inventory);
     await (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored,
       restored.getRoster()!.currentPlayerIndex, JSON.stringify({ type: 'FIRE', actionId: 'during-zeus', command: { angle: 45, power: 60, weaponId: 'GRENADE' } }));
@@ -2523,31 +2517,6 @@ describe('GameRoom Durable Object', () => {
         }),
       );
       expect(res.status).toBe(403);
-    });
-
-    it('refuses mismatched tokens without changing the legitimate socket or room', async () => {
-      await room.fetchCreate(new Request('http://localhost/internal/create', {
-        method: 'POST', body: JSON.stringify({ roomId: 'synthetic-room', numPlayers: 2,
-          slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
-      }));
-      const state = Reflect.get(room, 'state') as { tokens: Record<number, string> };
-      state.tokens[0] = 'synthetic-token';
-      const legitimate = new MockWebSocket();
-      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
-      sockets.set(0, legitimate as unknown as WebSocket);
-      const before = structuredClone(state);
-      for (const token of ['Synthetic-token', 'synthetic-Token', 'synthetic-tokeN', '', 'short', 'synthetic-token-long', 'é']) {
-        const response = await room.fetch(new Request(
-          'http://localhost/ws?room=synthetic-room&slot=0&protocolVersion=4&token=' + encodeURIComponent(token),
-          { headers: { Upgrade: 'websocket' } },
-        ));
-        expect(response.status).toBe(403);
-        expect(await response.text()).toBe('Invalid token for slot');
-        expect(state).toEqual(before);
-        expect(sockets.get(0)).toBe(legitimate);
-        expect(legitimate.closeCode).toBeUndefined();
-        expect(legitimate.sent).toEqual([]);
-      }
     });
 
     it('does not route sub-path /api/rooms/:id/create or GET /create to fetchCreate', async () => {

@@ -16,7 +16,6 @@ describe("appReducer", () => {
         forceShowOnlineLobby: false,
         onlineMatchStarted: false,
         resumeCanvas: null,
-        freeWeapons: false,
       });
     });
 
@@ -63,7 +62,6 @@ describe("appReducer", () => {
         forceShowOnlineLobby: false,
         onlineMatchStarted: true,
         resumeCanvas: mockSession.canvas,
-        freeWeapons: false,
       });
     });
   });
@@ -76,7 +74,6 @@ describe("appReducer", () => {
       forceShowOnlineLobby: false,
       onlineMatchStarted: false,
       resumeCanvas: null,
-      freeWeapons: false,
     };
 
     const mockPlayer: Player = {
@@ -104,27 +101,12 @@ describe("appReducer", () => {
       const action: AppAction = {
         type: "START_LOCAL_GAME",
         players: [mockPlayer],
-        freeWeapons: true,
       };
       const newState = appReducer(initialState, action);
 
       expect(newState.phase).toBe("COMBAT");
       expect(newState.players).toEqual([mockPlayer]);
       expect(newState.onlineMeta).toBeNull();
-      expect(newState.freeWeapons).toBe(true);
-    });
-
-    it("should handle START_LOCAL_GAME defaulting freeWeapons to false", () => {
-      const action: AppAction = {
-        type: "START_LOCAL_GAME",
-        players: [mockPlayer],
-      };
-      const newState = appReducer(initialState, action);
-
-      expect(newState.phase).toBe("COMBAT");
-      expect(newState.players).toEqual([mockPlayer]);
-      expect(newState.onlineMeta).toBeNull();
-      expect(newState.freeWeapons).toBe(false);
     });
 
     it("should handle START_ONLINE_GAME", () => {
@@ -156,7 +138,6 @@ describe("appReducer", () => {
         forceShowOnlineLobby: true,
         onlineMatchStarted: true,
         resumeCanvas: null,
-        freeWeapons: true,
       };
 
       const action: AppAction = { type: "RETURN_TO_MENU" };
@@ -170,7 +151,6 @@ describe("appReducer", () => {
         resumeCanvas: null,
         onlineMatchStarted: false,
         forceShowOnlineLobby: false,
-        freeWeapons: false,
       });
     });
 

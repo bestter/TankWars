@@ -35,7 +35,7 @@ import { usePlayerNameValidation } from "./usePlayerNameValidation";
 export interface MainMenuProps {
   onEndurance?: () => void;
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
-  onStartGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
+  onStartGame: (players: Player[]) => void;
   /** Ouvre le lobby multijoueur en ligne (création / URLs) — parallèle au hotseat local */
   onPlayOnline?: () => void;
 }
@@ -82,7 +82,6 @@ export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuPro
   };
 
   const [numPlayers, setNumPlayers] = useState<2 | 3 | 4>(2);
-  const [freeWeapons, setFreeWeapons] = useState(false);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>(() => {
     const initialConfigs: PlayerConfig[] = [
       {
@@ -244,7 +243,7 @@ export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuPro
 
     const players = createLocalPlayers(playerConfigs);
 
-    onStartGame(players, { freeWeapons });
+    onStartGame(players);
   };
 
   return (
@@ -255,8 +254,6 @@ export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuPro
       nameErrorIds={nameValidation.visibleErrorIds}
       emptyNameErrorIds={nameValidation.emptyNameErrorIds}
       nameConflictSourceIds={nameValidation.conflictSourceIds}
-      freeWeapons={freeWeapons}
-      onFreeWeaponsChange={setFreeWeapons}
       canStart={canStart}
       onMenuClickCapture={handleMenuClickCapture}
       onNumPlayersChange={changeNumPlayers}

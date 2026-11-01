@@ -44,7 +44,6 @@ export interface GameCanvasProps {
   slot?: number;
   token?: string;
   ws?: WebSocket;
-  freeWeapons?: boolean;
 }
 
 function MenuButton({
@@ -156,7 +155,6 @@ function RoundPhaseOverlay({
   isLocalShopTurn,
   shopDisplayPlayer,
   localShopDone,
-  freeWeapons,
   onNextRound,
   onNewGameFromSummary,
   onShopBuySell,
@@ -167,7 +165,6 @@ function RoundPhaseOverlay({
   readonly isLocalShopTurn: boolean;
   readonly shopDisplayPlayer: Player | null;
   readonly localShopDone: boolean;
-  readonly freeWeapons?: boolean;
   readonly onNextRound: () => void;
   readonly onNewGameFromSummary: () => void;
   readonly onShopBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
@@ -185,7 +182,6 @@ function RoundPhaseOverlay({
             roundOutcome={state.lastRoundOutcome}
             onNextRound={onNextRound}
             onNewGame={onNewGameFromSummary}
-            freeWeapons={freeWeapons}
           />
           <div className="retro-badge">PHASE: {state.gamePhase}</div>
         </>
@@ -242,7 +238,6 @@ export function GameCanvas({
   slot,
   token,
   ws,
-  freeWeapons,
 }: GameCanvasProps = {}) {
   const { t } = useTranslation();
 
@@ -267,7 +262,7 @@ export function GameCanvas({
     shopDisplayPlayer,
     localShopDone,
     dismissEarningsOverlay,
-  } = useGameSession({ endurance, initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialMap, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws, freeWeapons });
+  } = useGameSession({ endurance, initialPlayers, onReturnToMenu, gameMode, localPlayerId, roomId, initialMap, initialCurrentPlayerIndex, resumeCanvas, slot, token, ws });
 
   const {
     gamePhase,
@@ -348,7 +343,6 @@ export function GameCanvas({
           isLocalShopTurn={isLocalShopTurn}
           shopDisplayPlayer={shopDisplayPlayer}
           localShopDone={localShopDone}
-          freeWeapons={freeWeapons}
           onNextRound={endurance ? () => {} : handleNextRound}
           onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
           onShopBuySell={handleShopBuySell}

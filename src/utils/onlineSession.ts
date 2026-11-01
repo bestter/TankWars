@@ -197,12 +197,11 @@ function normalizePersistedReaction(key: string, value: unknown): unknown {
   return { ...value, fallDistance: Math.min(FALL_DISTANCE_MAX_PX, value.fallDistance) };
 }
 
-export function persistOnlineSession(session: PersistedOnlineSession): boolean {
+export function persistOnlineSession(session: PersistedOnlineSession): void {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session, normalizePersistedReaction));
-    return true;
   } catch {
-    return false;
+    // quota / private mode — ignore
   }
 }
 
@@ -477,11 +476,10 @@ function isEarningsOverlayState(value: unknown): value is EarningsOverlayState {
   );
 }
 
-export function clearOnlineSession(): boolean {
+export function clearOnlineSession(): void {
   try {
     sessionStorage.removeItem(STORAGE_KEY);
-    return true;
   } catch {
-    return false;
+    // ignore
   }
 }

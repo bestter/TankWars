@@ -318,34 +318,25 @@ function isFireCommand(value: unknown): value is FireCommand {
   );
 }
 
-// for...in avoids allocating entry arrays; inputs are plain JSON records
-// with no enumerable inherited properties (Object.prototype must be unpolluted).
 function isInventory(
   value: unknown,
 ): value is Partial<Record<WeaponId, number>> {
   if (!isRecord(value)) return false;
-  for (const weaponId in value) {
-    if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(value[weaponId])) {
-      return false;
-    }
-  }
-  return true;
+  return Object.entries(value).every(
+    ([weaponId, stock]) =>
+      isWeaponId(weaponId) && isSafeNonNegativeInteger(stock),
+  );
 }
 
-// for...in avoids allocating arrays at both levels; the same plain JSON,
-// unpolluted-prototype assumption as isInventory applies to both levels.
 function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
-  for (const playerId in value) {
-    const playerCounters = value[playerId];
+  return Object.values(value).every((playerCounters) => {
     if (!isRecord(playerCounters)) return false;
-    for (const weaponId in playerCounters) {
-      if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(playerCounters[weaponId])) {
-        return false;
-      }
-    }
-  }
-  return true;
+    return Object.entries(playerCounters).every(
+      ([weaponId, count]) =>
+        isWeaponId(weaponId) && isSafeNonNegativeInteger(count),
+    );
+  });
 }
 
 const SHOP_DENIALS: readonly ShopDenial[] = [
