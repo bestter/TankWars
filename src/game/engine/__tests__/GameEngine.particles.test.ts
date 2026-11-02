@@ -354,4 +354,50 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     );
     expect(advice).not.toBeNull();
   });
+
+  it('updates impact explosions in-place without allocating a new array per frame', () => {
+    const engine = new GameEngine(200, 200);
+    const initialArr = engine.getImpactExplosions();
+
+    // 1. When empty, update should short-circuit and preserve the identical array reference
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(engine.getImpactExplosions()).toHaveLength(0);
+
+    // 2. 3+ particles where one in the middle dies -> order preserved, length updated, same reference
+    const internalList = Reflect.get(engine, 'impactExplosions') as Array<{
+      x: number;
+      y: number;
+      life: number;
+      maxLife: number;
+      size: number;
+      color: string;
+    }>;
+
+    internalList.push(
+      { x: 10, y: 10, life: 8, maxLife: 10, size: 2.0, color: '#fff' }, // survives (first), expands (life 7 > 5)
+      { x: 20, y: 20, life: 1, maxLife: 10, size: 2.0, color: '#f00' }, // expires in the middle
+      { x: 30, y: 30, life: 2, maxLife: 10, size: 3.0, color: '#ff0' }, // survives (last), no expansion (life 1 <= 5)
+    );
+
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(internalList).toHaveLength(2);
+    expect(internalList[0].x).toBe(10);
+    expect(internalList[0].life).toBe(7);
+    expect(internalList[0].size).toBeGreaterThan(2.0);
+    expect(internalList[1].x).toBe(30);
+    expect(internalList[1].life).toBe(1);
+    expect(internalList[1].size).toBe(3.0);
+
+    // 3. All remaining particles die -> length 0, same array reference preserved
+    internalList[0].life = 1;
+    internalList[1].life = 1;
+
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(internalList).toHaveLength(0);
+  });
 });
