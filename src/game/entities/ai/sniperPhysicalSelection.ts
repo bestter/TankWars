@@ -96,6 +96,8 @@ export interface SniperSelectionTrace {
   readonly admissible: readonly SniperCandidateSummary[];
   readonly refusals: readonly SniperRefusalTrace[];
   readonly searches: number;
+  readonly solverCalls: number;
+  readonly ballisticCacheHits: number;
   readonly forecasts: number;
   readonly cacheHits: number;
 }
@@ -278,8 +280,13 @@ export function chooseSniperPhysicalShot(
 ): SniperPhysicalChoice {
   const tracing = import.meta.env.DEV || observe;
   const cache = new Map<string, PhysicalResolution>();
+  // Only the three ordinary-flight SNIPER weapons share this evaluation's solver.
+  // Numeric Map keys preserve exact coordinates, including after the shared offset.
+  const ballisticCache = new Map<number, Map<number, Map<AimVariant, ReturnType<MaterialSolver>>>>();
   const refusals: SniperRefusalTrace[] = [];
   let searches = 0;
+  let solverCalls = 0;
+  let ballisticCacheHits = 0;
   let forecasts = 0;
   let cacheHits = 0;
   const proofOf = (
@@ -323,7 +330,18 @@ export function chooseSniperPhysicalShot(
   };
   const searchOne = (point: TacticalPoint, weapon: WeaponId, variant: AimVariant): SearchResult => {
     searches += 1;
-    const solution = solve({ ...point, x: point.x + offset }, weapon, variant);
+    const aimedPoint = { ...point, x: point.x + offset };
+    let byY = ballisticCache.get(aimedPoint.x);
+    if (!byY) { byY = new Map(); ballisticCache.set(aimedPoint.x, byY); }
+    let byArc = byY.get(aimedPoint.y);
+    if (!byArc) { byArc = new Map(); byY.set(aimedPoint.y, byArc); }
+    let solution = byArc.get(variant);
+    if (solution) ballisticCacheHits += 1;
+    else {
+      solverCalls += 1;
+      solution = solve(aimedPoint, weapon, variant);
+      byArc.set(variant, solution);
+    }
     const rawCommand = solution.command;
     const command = finalizeAdvancedAim(rawCommand);
     if (!solution.complete) {
@@ -456,6 +474,8 @@ export function chooseSniperPhysicalShot(
       admissible: tracing ? ranked.map((candidate) => summarize(candidate.weaponId, candidate)) : [],
       refusals,
       searches,
+      solverCalls,
+      ballisticCacheHits,
       forecasts,
       cacheHits,
     },
