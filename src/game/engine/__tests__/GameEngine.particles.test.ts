@@ -364,7 +364,7 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     expect(engine.getImpactExplosions()).toBe(initialArr);
     expect(engine.getImpactExplosions()).toHaveLength(0);
 
-    // 2. Inject test particles to verify in-place compaction and size expansion
+    // 2. 3+ particles where one in the middle dies -> order preserved, length updated, same reference
     const internalList = Reflect.get(engine, 'impactExplosions') as Array<{
       x: number;
       y: number;
@@ -375,17 +375,29 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     }>;
 
     internalList.push(
-      { x: 10, y: 10, life: 1, maxLife: 10, size: 2.0, color: '#fff' }, // expires on tick
-      { x: 20, y: 20, life: 8, maxLife: 10, size: 2.0, color: '#ff0' }, // survives, expands (life 7 > 5)
+      { x: 10, y: 10, life: 8, maxLife: 10, size: 2.0, color: '#fff' }, // survives (first), expands (life 7 > 5)
+      { x: 20, y: 20, life: 1, maxLife: 10, size: 2.0, color: '#f00' }, // expires in the middle
+      { x: 30, y: 30, life: 2, maxLife: 10, size: 3.0, color: '#ff0' }, // survives (last), no expansion (life 1 <= 5)
     );
 
     (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
 
-    // Array reference must remain identical (in-place compaction)
-    expect(Reflect.get(engine, 'impactExplosions')).toBe(internalList);
-    expect(internalList).toHaveLength(1);
-    expect(internalList[0].x).toBe(20);
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(internalList).toHaveLength(2);
+    expect(internalList[0].x).toBe(10);
     expect(internalList[0].life).toBe(7);
     expect(internalList[0].size).toBeGreaterThan(2.0);
+    expect(internalList[1].x).toBe(30);
+    expect(internalList[1].life).toBe(1);
+    expect(internalList[1].size).toBe(3.0);
+
+    // 3. All remaining particles die -> length 0, same array reference preserved
+    internalList[0].life = 1;
+    internalList[1].life = 1;
+
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(internalList).toHaveLength(0);
   });
 });

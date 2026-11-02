@@ -2035,6 +2035,11 @@ export class GameEngine {
     return this.terrainImpactParticles;
   }
 
+  /**
+   * Retourne une vue en lecture seule sur le tampon interne des explosions d'impact.
+   * La référence du tableau est mutée sur place (in-place compaction) lors des mises à jour
+   * et n'est réinitialisée qu'aux transitions de manche.
+   */
   public getImpactExplosions(): ReadonlyArray<{
     x: number;
     y: number;
