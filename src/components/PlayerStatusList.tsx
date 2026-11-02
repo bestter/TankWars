@@ -21,7 +21,7 @@ export const PlayerStatusList = memo(function PlayerStatusList({
 }: PlayerStatusListProps) {
   const { t, i18n } = useTranslation();
   const titleId = useId();
-  const language = i18n.language;
+  const language = i18n.resolvedLanguage ?? i18n.language ?? "fr";
 
   return (
     <section className="player-status" aria-labelledby={titleId}>

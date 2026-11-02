@@ -151,14 +151,22 @@ export function finishShopPhase(
     endMatchFromShop(host, engine, [...roster]);
     return;
   }
+  const phaseBeforeRound = host.gamePhaseRef.current;
+  let combatPhaseOpen = false;
   try {
     if (host.endurance && !host.endurance.beginRound(host.currentMancheRef.current)) { host.shopFinishingRef.current = false; return; }
     if (host.gameMode === "online" && !map) throw new Error("INVALID_ROUND_MAP");
+    // startNextRound publie le HUD du tour 1 avant la fin de cette fonction.
+    host.gamePhaseRef.current = "COMBAT";
+    combatPhaseOpen = true;
     if (!engine.startNextRound(map, finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
+      host.gamePhaseRef.current = phaseBeforeRound;
+      combatPhaseOpen = false;
       host.shopFinishingRef.current = false;
       return;
     }
   } catch (error) {
+    if (combatPhaseOpen) host.gamePhaseRef.current = phaseBeforeRound;
     console.error("[Shop] Round preparation failed", error);
     host.endurance?.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
     tm.pauseForInterRound();
@@ -179,6 +187,7 @@ export function finishShopPhase(
 
   tm.resumeForCombat();
   if (host.gameMode === "online") tm.syncTurn(0);
+  tm.publishHud();
 
   const nextPlayers = [...engine.getTankManager().getPlayers()];
   const completedShopEpoch =
@@ -228,16 +237,24 @@ export function advanceToNextRoundDirect(host: CompleteShopRoundHost): void {
   engine.getTankManager().setPlayers(replenished);
 
   const nextRoundNumber = host.currentMancheRef.current;
+  const phaseBeforeRound = host.gamePhaseRef.current;
+  let combatPhaseOpen = false;
   try {
     if (host.endurance && !host.endurance.beginRound(nextRoundNumber)) {
       host.shopFinishingRef.current = false;
       return;
     }
+    // Le résumé est encore la phase React au moment du premier HUD de manche.
+    host.gamePhaseRef.current = "COMBAT";
+    combatPhaseOpen = true;
     if (!engine.startNextRound(undefined, replenished, nextRoundNumber)) {
+      host.gamePhaseRef.current = phaseBeforeRound;
+      combatPhaseOpen = false;
       host.shopFinishingRef.current = false;
       return;
     }
   } catch (error) {
+    if (combatPhaseOpen) host.gamePhaseRef.current = phaseBeforeRound;
     console.error("[Game] Free weapons round preparation failed", error);
     host.endurance?.incident(
       "exception",
@@ -258,6 +275,7 @@ export function advanceToNextRoundDirect(host: CompleteShopRoundHost): void {
   engine.setRoundNumber(nextRoundNumber);
 
   tm.resumeForCombat();
+  tm.publishHud();
 
   const nextPlayers = [...engine.getTankManager().getPlayers()];
   host.dispatch({

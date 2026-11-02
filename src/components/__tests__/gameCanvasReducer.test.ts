@@ -479,4 +479,24 @@ describe("gameCanvasReducer", () => {
       expect(next.playerStatus).toBeNull();
     }
   });
+
+  it("keeps the aiming list when an error does not close the combat gate", () => {
+    const player = createMockPlayer("p1", "Alice");
+    const armed = gameCanvasReducer(INITIAL_STATE, {
+      type: "SET_PLAYER_STATUS",
+      players: copyLivingPlayerStatus([player]),
+    });
+    const preparation = gameCanvasReducer(armed, {
+      type: "SET_ROUND_PREPARATION_ERROR",
+      reason: "EXHAUSTED",
+    });
+    const mismatch = gameCanvasReducer(armed, {
+      type: "SET_PROTOCOL_MISMATCH",
+      mismatch: { requiredVersion: 4, receivedVersion: 3 },
+    });
+    expect(preparation.playerStatus).toBe(armed.playerStatus);
+    expect(preparation.roundPreparationError).toBe("EXHAUSTED");
+    expect(mismatch.playerStatus).toBe(armed.playerStatus);
+    expect(mismatch.protocolMismatch).toEqual({ requiredVersion: 4, receivedVersion: 3 });
+  });
 });

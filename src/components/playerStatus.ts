@@ -138,7 +138,7 @@ export function playerStatusProfileKey(
 
 export function formatStatusNumber(
   value: number,
-  language: string,
+  language: string | null | undefined,
   role: "current" | "max",
   kind: "health" | "shield",
 ): string {
@@ -147,5 +147,6 @@ export function formatStatusNumber(
     rounded = 0.1;
   }
   const text = role === "max" && Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-  return language.toLowerCase().startsWith("fr") ? text.replace(".", ",") : text;
+  const tag = typeof language === "string" ? language : "fr";
+  return tag.toLowerCase().startsWith("fr") ? text.replace(".", ",") : text;
 }

@@ -131,6 +131,8 @@ describe("player status copy and format", () => {
     expect(formatStatusNumber(72.5, "en", "current", "health")).toBe("72.5");
     expect(formatStatusNumber(0, "en", "current", "shield")).toBe("0.0");
     expect(formatStatusNumber(40.25, "en-US", "max", "shield")).toBe("40.3");
+    expect(formatStatusNumber(72.5, undefined, "current", "health")).toBe("72,5");
+    expect(formatStatusNumber(72.5, null, "current", "health")).toBe("72,5");
   });
 
   it("labels humans without their AI profile and unknown AI as simple", () => {
