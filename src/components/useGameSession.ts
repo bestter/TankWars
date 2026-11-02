@@ -46,7 +46,8 @@ function buildInitialCanvasState(
   resume?: OnlineCanvasSnapshot,
 ): typeof INITIAL_STATE {
   if (!resume) return INITIAL_STATE;
-  return { ...INITIAL_STATE, ...resume };
+  // The aiming list is republished by the next HUD update (#372).
+  return { ...INITIAL_STATE, ...resume, playerStatus: null };
 }
 
 const CANVAS_WIDTH = 800;
@@ -484,6 +485,31 @@ export function useGameSession({
       combatActiveShotIdRef.current = onlineCombat.activeServerShotId;
     }
 
+    // Avant setPlayers / syncTurn : le tour 1 publie le HUD pendant que la phase est déjà connue (#372).
+    wireEngineSessionCallbacks({
+      engine,
+      endurance,
+      dispatch,
+      gameMode,
+      localPlayerId,
+      slot,
+      sendCombatMessage,
+      combatActiveShotId: () => combatActiveShotIdRef.current(),
+      gamePhaseRef,
+      currentMancheRef,
+      lastCompletedRoundNumberRef,
+      lastZeusAppointmentIdRef,
+      lastAppliedZeusStrikeIdRef,
+      zeusAnnouncementTimerRef,
+      celebrationTimerRef,
+      pendingShotPreviewsRef,
+      submitShotEarningsRef,
+      roundEndFromNetworkRef,
+      clearZeusAnnouncement,
+      clearCelebrationTimer,
+      goToSummary,
+    });
+
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===
     const rawPlayers: Player[] = matchStartRoster(initialPlayersRef.current).map(
       (player) => ({ ...player }),
@@ -517,6 +543,8 @@ export function useGameSession({
         tm.setupInputListeners();
         if (typeof initialCurrentPlayerIndex === 'number' && Number.isInteger(initialCurrentPlayerIndex)) {
           tm.syncTurn(initialCurrentPlayerIndex);
+        } else {
+          tm.publishHud();
         }
       } else {
         engine.enterInterRoundPhase();
@@ -570,32 +598,9 @@ export function useGameSession({
       aiProfiles: playerStats.aiProfiles,
     });
 
-    // Inject profile-aware AI (v1-random = IA SIMPLE; v2-heuristic = IA OK).
+    // L'IA locale reste après setPlayers : une décision ne doit pas partir avant
+    // le verrou de rattrapage en ligne. L'endurance a déjà installé la sienne.
     if (!endurance) engine.setAIEngine(new AIByProfileStrategy());
-
-    wireEngineSessionCallbacks({
-      engine,
-      endurance,
-      dispatch,
-      gameMode,
-      localPlayerId,
-      slot,
-      sendCombatMessage,
-      combatActiveShotId: () => combatActiveShotIdRef.current(),
-      gamePhaseRef,
-      currentMancheRef,
-      lastCompletedRoundNumberRef,
-      lastZeusAppointmentIdRef,
-      lastAppliedZeusStrikeIdRef,
-      zeusAnnouncementTimerRef,
-      celebrationTimerRef,
-      pendingShotPreviewsRef,
-      submitShotEarningsRef,
-      roundEndFromNetworkRef,
-      clearZeusAnnouncement,
-      clearCelebrationTimer,
-      goToSummary,
-    });
 
     engineRef.current = engine;
     dispatch({ type: "SET_WIND", wind: engine.getWindForce() });
@@ -803,9 +808,12 @@ export function useGameSession({
     const newPlayers = isFreeWeapons
       ? replenishRosterFreeWeapons(rawNewPlayers, nextPlayerCount)
       : rawNewPlayers;
+    const phaseBeforeReset = gamePhaseRef.current;
+    gamePhaseRef.current = "COMBAT";
     try {
       engine.resetGame(newPlayers);
     } catch (error) {
+      gamePhaseRef.current = phaseBeforeReset;
       console.error("[Game] New match preparation failed", error);
       dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
       return;
@@ -816,6 +824,8 @@ export function useGameSession({
     shopPlayersRef.current = [];
     currentShopIndexRef.current = 0;
     clearCelebrationTimer();
+    // RESET_GAME efface le HUD publié pendant resetGame.
+    engine.getTurnManager().publishHud();
   };
 
   const retryRoundPreparation = (): void => {
@@ -848,7 +858,9 @@ export function useGameSession({
       engine.setPlayers(players);
       dispatch({ type: "SET_UI_PLAYERS", players: [...engine.getTankManager().getPlayers()] });
       dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
-      engine.getTurnManager().resumeForCombat();
+      const tm = engine.getTurnManager();
+      tm.resumeForCombat();
+      tm.publishHud();
     } catch (error) {
       console.error("[Game] Round preparation retry failed", error);
     }

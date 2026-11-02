@@ -1,41 +1,15 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
-import type { WeaponId } from "../types/weapon";
-import { WEAPON_REGISTRY } from "../types/weapon";
+import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+import { WEAPON_I18N_KEYS, weaponShortLabel } from "./weaponShortLabel";
 
 export interface GameHUDProps {
   turnInfo: CurrentTurnInfo | null;
   /** Called when human clicks a weapon button. Parent wires to TurnManager.selectWeapon */
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
-
-const WEAPON_ORDER: readonly WeaponId[] = ['MISSILE', 'GRENADE', 'CLUSTER', 'NUKE', 'THERMONUCLEAR', 'DRILLER', 'BULLET', 'BULLDOZER'] as const;
-
-function getShortLabel(id: WeaponId): string {
-  switch (id) {
-    case 'MISSILE': return 'MIS';
-    case 'GRENADE': return 'GRE';
-    case 'CLUSTER': return 'CLS';
-    case 'NUKE': return 'NUK';
-    case 'THERMONUCLEAR': return 'THM';
-    case 'DRILLER': return 'DRL';
-    case 'BULLET': return 'BLT';
-    case 'BULLDOZER': return 'BLD';
-  }
-}
-
-const WEAPON_KEYS: Record<WeaponId, "weapons.MISSILE" | "weapons.GRENADE" | "weapons.CLUSTER" | "weapons.NUKE" | "weapons.THERMONUCLEAR" | "weapons.DRILLER" | "weapons.BULLET" | "weapons.BULLDOZER"> = {
-  MISSILE: "weapons.MISSILE",
-  GRENADE: "weapons.GRENADE",
-  CLUSTER: "weapons.CLUSTER",
-  NUKE: "weapons.NUKE",
-  THERMONUCLEAR: "weapons.THERMONUCLEAR",
-  DRILLER: "weapons.DRILLER",
-  BULLET: "weapons.BULLET",
-  BULLDOZER: "weapons.BULLDOZER",
-};
 
 function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
   if (!turnInfo) {
@@ -128,7 +102,7 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: GameHUDProps) {
       }}
     >
       <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
-      {WEAPON_ORDER.map((weaponId) => {
+      {ALL_WEAPON_IDS.map((weaponId) => {
         const definition = WEAPON_REGISTRY[weaponId];
         const ammo = inventory[weaponId] ?? 0;
         const isCurrent = currentWeapon === weaponId;
@@ -160,9 +134,9 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: GameHUDProps) {
               cursor: selectable ? "pointer" : "default",
               opacity: hasAmmo ? 1 : 0.55,
             }}
-            title={t(WEAPON_KEYS[weaponId])}
+            title={t(WEAPON_I18N_KEYS[weaponId])}
           >
-            {getShortLabel(weaponId)}:{weaponId === "MISSILE" ? "∞" : ammo}
+            {weaponShortLabel(weaponId)}:{weaponId === "MISSILE" ? "∞" : ammo}
           </button>
         );
       })}
@@ -223,7 +197,7 @@ export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameH
             minWidth: 52,
           }}
         >
-          {currentWeapon ? t(WEAPON_KEYS[currentWeapon]) : ""}
+          {currentWeapon ? t(WEAPON_I18N_KEYS[currentWeapon]) : ""}
         </div>
       )}
     </div>

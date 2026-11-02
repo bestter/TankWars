@@ -413,7 +413,8 @@
   shape-rendering: crispEdges;
 }
 
-.retro-logo-text {
+.retro-logo-text,
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -877,6 +878,127 @@ canvas {
   }
 }
 
+
+.player-status {
+  width: 100%;
+  max-width: 800px;
+  box-sizing: border-box;
+  margin: 8px 0;
+  padding: 8px;
+  border: 2px solid #55ffff;
+  background: #000000;
+  color: #ffffff;
+  font: 12px/1.35 monospace;
+  text-align: left;
+}
+
+.player-status-title {
+  margin: 0 0 8px;
+  color: #55ffff;
+  font: inherit;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.player-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player-status-card {
+  background: #111111;
+  border: 2px solid #555555;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.player-status-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.player-status-swatch {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #ffffff;
+  flex: 0 0 auto;
+}
+
+.player-status-name {
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+.player-status-profile {
+  color: #aaaaaa;
+}
+
+.player-status-you {
+  color: #000000;
+  background: #ffff55;
+  border: 1px solid #ffff55;
+  padding: 0 4px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+}
+
+.player-status-meters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+}
+
+.player-status-weapons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.player-status-chip {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  min-width: 42px;
+  box-sizing: border-box;
+  text-align: center;
+  border: 2px solid #aaaaaa;
+  background: #111111;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+.player-status-lock {
+  min-height: 44px;
+  align-self: flex-start;
+  background: #111111;
+  color: #ffffff;
+  border: 2px solid #555555;
+  font: inherit;
+  padding: 6px 10px;
+  cursor: default;
+}
+
+.player-status-lock:disabled {
+  opacity: 0.55;
+}
+
+.player-status :focus-visible {
+  outline: 2px solid #ffff55;
+  outline-offset: 2px;
+}
 
 .shot-advisor {
   border: 2px solid #55ffff;

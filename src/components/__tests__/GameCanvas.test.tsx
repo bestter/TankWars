@@ -9,6 +9,7 @@ import type { Player } from "../../types/player";
 import type { WeaponId } from "../../types/weapon";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
 import { createEmptyShopSession } from "../gameCanvasReducer";
+import type { PlayerStatusCard } from "../playerStatus";
 import fr from "../../locales/fr.json";
 import en from "../../locales/en.json";
 
@@ -27,10 +28,12 @@ vi.mock("react-i18next", async () => {
         }
         return key;
       },
+      i18n: { language: language.current },
     }),
     Trans: ({ i18nKey, values }: { i18nKey: string; values?: Record<string, unknown> }) => (
       <span data-testid="trans-component">{i18nKey} {values ? JSON.stringify(values) : ""}</span>
     ),
+    i18n: language,
   };
 });
 
@@ -90,6 +93,7 @@ describe("GameCanvas component", () => {
     pendingFireIntent: null,
     fireRejection: null,
     protocolMismatch: null,
+    playerStatus: null as readonly PlayerStatusCard[] | null,
   };
 
   let mockHandlers: {
@@ -526,5 +530,76 @@ describe("GameCanvas component", () => {
     render(<GameCanvas />);
     fireEvent.click(screen.getByRole("button", { name: "btn_retry" }));
     expect(mockHandlers.retryRoundPreparation).toHaveBeenCalledOnce();
+  });
+
+  const livingStatus: PlayerStatusCard[] = [
+    {
+      id: "p1",
+      name: "Player 1",
+      color: "#ff0000",
+      isHuman: true,
+      aiProfile: null,
+      health: 100,
+      maxHealth: 100,
+      shield: 40,
+      maxShield: 40,
+      inventory: { MISSILE: 1 },
+    },
+    {
+      id: "p2",
+      name: "CPU 2",
+      color: "#00ff00",
+      isHuman: false,
+      aiProfile: "v1-random",
+      health: 80,
+      maxHealth: 100,
+      shield: 0,
+      maxShield: 40,
+      inventory: {},
+    },
+  ];
+
+  function renderSession(state: typeof defaultSessionState) {
+    vi.mocked(useGameSession).mockReturnValue({
+      advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      canvasRef: { current: null },
+      state,
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+    render(<GameCanvas />);
+  }
+
+  it("hides the tank status list when no copy is published", () => {
+    render(<GameCanvas />);
+    expect(screen.queryByRole("region", { name: "player_status_title" })).toBeNull();
+  });
+
+  it("shows the tank status list before the advisor while the aim is open", () => {
+    renderSession({ ...defaultSessionState, playerStatus: livingStatus });
+    const list = screen.getByRole("region", { name: "player_status_title" });
+    const advisor = document.querySelector(".shot-advisor");
+    expect(advisor).not.toBeNull();
+    expect(list.compareDocumentPosition(advisor as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(list);
+    fireEvent.click(screen.getByRole("button", { name: "player_status_lock_name_CPU 2" }));
+    expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
+    expect(mockHandlers.handleAdjustAngle).not.toHaveBeenCalled();
+    expect(mockHandlers.handleAdjustPower).not.toHaveBeenCalled();
+    expect(mockHandlers.handleWeaponSelect).not.toHaveBeenCalled();
+    expect(mockHandlers.handleFire).not.toHaveBeenCalled();
+  });
+
+  it("hides the tank status list while the turn is locked", () => {
+    renderSession({
+      ...defaultSessionState,
+      playerStatus: livingStatus,
+      turnInfo: { ...defaultTurnInfo, isInputLocked: true },
+    });
+    expect(screen.queryByRole("region", { name: "player_status_title" })).toBeNull();
   });
 });

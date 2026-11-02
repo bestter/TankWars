@@ -1124,6 +1124,11 @@ export class TurnManager {
     }
   }
 
+  /** Republie tout de suite le tour courant, même si le cliché structurel n'a pas changé. */
+  public publishHud(): void {
+    this.notifyHudUpdate(true);
+  }
+
   private notifyHudUpdate(immediate = false): void {
     const info = this.getCurrentTurnInfo();
     if (!info) return;

@@ -181,9 +181,9 @@ export function dispatchCombatMessage(
       ctx.gamePhaseRef.current === "COMBAT" &&
       !tm.isInterRoundPaused()
     ) {
+      if (strictMessage.players) ctx.syncWireEconomy(strictMessage.players);
       tm.syncTurn(strictMessage.currentPlayerIndex);
       if (engine.getTankManager().getPlayers()[strictMessage.currentPlayerIndex]?.id === engine.getActiveZeusId()) tm.lockSpecialTurn();
-      if (strictMessage.players) ctx.syncWireEconomy(strictMessage.players);
       if (typeof msg.wind === "number" && Number.isFinite(msg.wind)) {
         engine.setWindForce(msg.wind);
       }

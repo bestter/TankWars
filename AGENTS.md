@@ -73,6 +73,7 @@ Si l’interface ou le moteur change, vérifier manuellement le parcours concern
 
 - `GameEngine` utilise un pas physique fixe de `1/120 s`; `requestAnimationFrame` cadence le rendu selon l’écran. Injecter entrées et configuration par refs et méthodes reliées dans `useEffect`.
 - Le Canvas est démonté en `MENU`. `App.tsx` et `appReducer.ts` possèdent l’entrée/sortie de session; `GameCanvas.tsx` orchestre les phases internes définies dans `src/types/game.ts`.
+- Liste d’état des tanks (#372, v0.13.2) : pendant la visée humaine locale (`COMBAT`, `turnInfo.isHuman`, commandes déverrouillées, tanks stables), `PlayerStatusList` sous le Canvas et avant le conseiller affiche vie, bouclier et stocks réels de chaque vivant, tireur compris. La copie vient de `getPlayers()` dans `onTurnHudUpdate`, jamais de `uiPlayers` ni d’une lecture moteur au rendu. MISSILE reste `∞`; les autres armes n’apparaissent que si le stock fini est strictement positif. Le bouton « Verrouiller la cible » est désactivé en local, absent en ligne et sur le tireur, sans clic ni mémoire (#375). Hors de cette porte, `playerStatus` est `null`, y compris `RESET_COMBAT_PROGRESS` et `RESUME_CANVAS`. Protocole, jauges Canvas, HUD d’armes, IA et conseiller inchangés.
 - Rendu Canvas2D, terrain heightmap sans tunnels ni moteur physique externe. Employer `VGA_PALETTE` et `src/game/rendering/tankSprite.ts`.
 - Conserver le style rétro monospace dans `src/App.css` et `src/index.css`; aucune bibliothèque UI, Tailwind ou MUI.
 - `worker/tsconfig.json` est référencé par le projet racine : une erreur de type Worker fait échouer le build. Les types de plateforme existants, dont `DurableObjectNamespace`, sont globaux.
@@ -143,6 +144,7 @@ Les chemins ci-dessous sont relatifs à la racine du dépôt. Chercher les tests
 | Besoin | Points d’entrée |
 | --- | --- |
 | Phases et session React | `src/App.tsx`, `src/appReducer.ts`, `src/components/GameCanvas.tsx`, `src/components/useGameSession.ts` |
+| État des tanks en visée | `src/components/PlayerStatusList.tsx`, `src/components/playerStatus.ts`, `src/components/weaponShortLabel.ts` |
 | Physique, tours, terrain, audio | `src/game/engine/` (`GameEngine.ts`, `PhysicsEngine.ts`, `projectileMotion.ts`, `bulldozerImpact.ts`, `TurnManager.ts`, `Terrain.ts`), `src/game/entities/TankManager.ts` |
 | Armes, matériaux, rendu | `src/types/weapon.ts`, `src/types/terrain.ts`, `src/game/combatConstants.ts`, `src/game/rendering/tankSprite.ts` |
 | IA, visée et achats IA | `src/game/entities/ai/` (stratégies, tactiques, `BallisticsSimulator.ts`, `bulldozerThreat.ts`, `physicalShotForecast.ts`, `aiShopHelper.ts` et tests) |
