@@ -1994,18 +1994,20 @@ export class GameEngine {
   }
 
   private updateImpactExplosions(): void {
-    const next: typeof this.impactExplosions = [];
-    for (const p of this.impactExplosions) {
+    if (this.impactExplosions.length === 0) return;
+    let write = 0;
+    for (let read = 0; read < this.impactExplosions.length; read++) {
+      const p = this.impactExplosions[read];
       p.life -= 1;
       if (p.life > 0) {
         // subtle expansion on the way out for "blast wave" feel (first half of life)
         if (p.life > p.maxLife * 0.5) {
           p.size = p.size * 1.012 + 0.04;
         }
-        next.push(p);
+        this.impactExplosions[write++] = p;
       }
     }
-    this.impactExplosions = next;
+    this.impactExplosions.length = write;
   }
 
   private drawImpactExplosions(ctx: CanvasRenderingContext2D): void {

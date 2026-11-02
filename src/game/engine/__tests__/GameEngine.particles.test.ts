@@ -354,4 +354,38 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
     );
     expect(advice).not.toBeNull();
   });
+
+  it('updates impact explosions in-place without allocating a new array per frame', () => {
+    const engine = new GameEngine(200, 200);
+    const initialArr = engine.getImpactExplosions();
+
+    // 1. When empty, update should short-circuit and preserve the identical array reference
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(engine.getImpactExplosions()).toHaveLength(0);
+
+    // 2. Inject test particles to verify in-place compaction and size expansion
+    const internalList = Reflect.get(engine, 'impactExplosions') as Array<{
+      x: number;
+      y: number;
+      life: number;
+      maxLife: number;
+      size: number;
+      color: string;
+    }>;
+
+    internalList.push(
+      { x: 10, y: 10, life: 1, maxLife: 10, size: 2.0, color: '#fff' }, // expires on tick
+      { x: 20, y: 20, life: 8, maxLife: 10, size: 2.0, color: '#ff0' }, // survives, expands (life 7 > 5)
+    );
+
+    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+
+    // Array reference must remain identical (in-place compaction)
+    expect(Reflect.get(engine, 'impactExplosions')).toBe(internalList);
+    expect(internalList).toHaveLength(1);
+    expect(internalList[0].x).toBe(20);
+    expect(internalList[0].life).toBe(7);
+    expect(internalList[0].size).toBeGreaterThan(2.0);
+  });
 });
