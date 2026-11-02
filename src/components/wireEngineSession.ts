@@ -6,6 +6,7 @@ import { trackEvent } from "../utils/analytics";
 import type { GamePhase } from "../types/game";
 import type { ZeusAppointment, ZeusStrikeResult } from "../game/zeus/zeusDomain";
 import { ZEUS_ANNOUNCEMENT_DURATION_MS, type GameCanvasAction } from "./gameCanvasReducer";
+import { copyLivingPlayerStatus, isAimingInspectionVisible } from "./playerStatus";
 import { buildOverlayAwards } from "./sessionPresentation";
 
 export function wireEngineSessionCallbacks(opts: {
@@ -72,6 +73,16 @@ export function wireEngineSessionCallbacks(opts: {
 
   engine.onTurnHudUpdate = (info: CurrentTurnInfo) => {
     dispatch({ type: "SET_TURN_INFO", info });
+    const visible = isAimingInspectionVisible({
+      gamePhase: opts.gamePhaseRef.current,
+      turnInfo: info,
+    });
+    dispatch({
+      type: "SET_PLAYER_STATUS",
+      players: visible
+        ? copyLivingPlayerStatus(engine.getTankManager().getPlayers())
+        : null,
+    });
   };
 
   engine.onZeusAppointed = (appointment: ZeusAppointment) => {

@@ -9,6 +9,7 @@ import { VGA_PALETTE } from "../../types/game";
 import type { Player } from "../../types/player";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
 import type { RoundResult } from "../../types/game";
+import { copyLivingPlayerStatus } from "../playerStatus";
 
 // Helper function to create a minimal valid Player object for testing
 function createMockPlayer(id: string, name: string): Player {
@@ -402,5 +403,80 @@ describe("gameCanvasReducer", () => {
     expect(nextState.currentShopIndex).toBe(0);
     // Note: wind is not reset by RESET_GAME in the reducer, it retains its value (or gets set separately)
     expect(nextState.wind).toBe(20);
+    expect(nextState.playerStatus).toBeNull();
+  });
+
+  it("keeps the same state when the displayed tank status is unchanged", () => {
+    const player = createMockPlayer("p1", "Alice");
+    const first = gameCanvasReducer(INITIAL_STATE, {
+      type: "SET_PLAYER_STATUS",
+      players: copyLivingPlayerStatus([player]),
+    });
+    player.tank.angle = 120;
+    player.tank.power = 10;
+    const same = gameCanvasReducer(first, {
+      type: "SET_PLAYER_STATUS",
+      players: copyLivingPlayerStatus([player]),
+    });
+    expect(same).toBe(first);
+    expect(gameCanvasReducer(INITIAL_STATE, { type: "SET_PLAYER_STATUS", players: null })).toBe(INITIAL_STATE);
+
+    player.tank.health = 40;
+    const changed = gameCanvasReducer(same, {
+      type: "SET_PLAYER_STATUS",
+      players: copyLivingPlayerStatus([player]),
+    });
+    expect(changed.playerStatus?.[0]?.health).toBe(40);
+  });
+
+  it("clears tank status when combat stops being aimable", () => {
+    const player = createMockPlayer("p1", "Alice");
+    const armed = gameCanvasReducer(INITIAL_STATE, {
+      type: "SET_PLAYER_STATUS",
+      players: copyLivingPlayerStatus([player]),
+    });
+    const roundResult: RoundResult = {
+      damageDealt: {},
+      earningsByPlayer: {},
+      terrainDestroyed: 0,
+      survivors: ["p1"],
+    };
+    const cleared = [
+      gameCanvasReducer(armed, { type: "GO_TO_SUMMARY" }),
+      gameCanvasReducer(armed, {
+        type: "START_CELEBRATION",
+        payload: { roundWinner: player, roundResult, uiPlayers: [player] },
+      }),
+      gameCanvasReducer(armed, { type: "START_SHOP", roster: [player] }),
+      gameCanvasReducer(armed, {
+        type: "APPLY_SHOP_STATE",
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [],
+        players: [player],
+        counters: {},
+        aiShopApplied: false,
+      }),
+      gameCanvasReducer(armed, { type: "END_MATCH_FROM_SHOP", winner: player }),
+      gameCanvasReducer(armed, { type: "RESET_COMBAT_PROGRESS", roundNumber: 2 }),
+      gameCanvasReducer(armed, { type: "RESET_GAME", newPlayers: [player] }),
+      gameCanvasReducer(armed, {
+        type: "RESUME_CANVAS",
+        snapshot: {
+          gamePhase: "COMBAT",
+          currentManche: 2,
+          uiPlayers: [player],
+          shopPlayers: [],
+          currentShopIndex: 0,
+          roundResult: null,
+          lastRoundOutcome: null,
+          wind: 1,
+          earningsOverlay: null,
+        },
+      }),
+    ];
+    for (const next of cleared) {
+      expect(next.playerStatus).toBeNull();
+    }
   });
 });

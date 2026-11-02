@@ -1,4 +1,6 @@
-import { ShotAdvisorPanel } from "./advisor/ShotAdvisorPanel";
+import { ShotAdvisorPanel, type ShotAdvisorPanelProps } from "./advisor/ShotAdvisorPanel";
+import { PlayerStatusList } from "./PlayerStatusList";
+import { isAimingInspectionVisible } from "./playerStatus";
 import type { EnduranceSession } from "../game/endurance/session";
 import { type RoundMap } from "../game/round/prepareRound";
 import { useTranslation } from "react-i18next";
@@ -68,6 +70,46 @@ function MenuButton({
       </button>
     </div>
   );
+}
+
+function AimingPlayerStatus({
+  players,
+  gamePhase,
+  turnInfo,
+  gameMode,
+}: {
+  readonly players: GameCanvasState["playerStatus"];
+  readonly gamePhase: GameCanvasState["gamePhase"];
+  readonly turnInfo: GameCanvasState["turnInfo"];
+  readonly gameMode: GameCanvasProps["gameMode"];
+}) {
+  if (!players || !turnInfo || !isAimingInspectionVisible({ gamePhase, turnInfo })) return null;
+  return (
+    <PlayerStatusList
+      players={players}
+      currentPlayerId={turnInfo.playerId}
+      gameMode={gameMode === "online" ? "online" : "local"}
+    />
+  );
+}
+
+function CombatAdvisor({
+  gameMode,
+  gamePhase,
+  turnInfo,
+  advisor,
+}: {
+  readonly gameMode: GameCanvasProps["gameMode"];
+  readonly gamePhase: GameCanvasState["gamePhase"];
+  readonly turnInfo: GameCanvasState["turnInfo"];
+  readonly advisor: ShotAdvisorPanelProps;
+}) {
+  const open =
+    gameMode !== "online" &&
+    gamePhase === "COMBAT" &&
+    (!turnInfo || (turnInfo.isHuman && !turnInfo.isInputLocked && !turnInfo.tanksAreFalling));
+  if (!open) return null;
+  return <ShotAdvisorPanel {...advisor} />;
 }
 
 function CombatControls({
@@ -339,8 +381,19 @@ export function GameCanvas({
           onFire={handleFire}
         />
 
-        {gameMode !== "online" && gamePhase === "COMBAT" &&
-          (!turnInfo || turnInfo.isHuman && !turnInfo.isInputLocked && !turnInfo.tanksAreFalling) && <ShotAdvisorPanel {...advisor} />}
+        <AimingPlayerStatus
+          players={state.playerStatus}
+          gamePhase={gamePhase}
+          turnInfo={turnInfo}
+          gameMode={gameMode}
+        />
+
+        <CombatAdvisor
+          gameMode={gameMode}
+          gamePhase={gamePhase}
+          turnInfo={turnInfo}
+          advisor={advisor}
+        />
 
         <RoundPhaseOverlay
           state={state}

@@ -46,7 +46,8 @@ function buildInitialCanvasState(
   resume?: OnlineCanvasSnapshot,
 ): typeof INITIAL_STATE {
   if (!resume) return INITIAL_STATE;
-  return { ...INITIAL_STATE, ...resume };
+  // The aiming list is republished by the next HUD update (#372).
+  return { ...INITIAL_STATE, ...resume, playerStatus: null };
 }
 
 const CANVAS_WIDTH = 800;

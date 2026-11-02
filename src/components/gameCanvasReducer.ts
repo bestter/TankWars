@@ -2,6 +2,7 @@ import type { FireCommand, GamePhase, RoundResult } from "../types/game";
 import type { Player } from "../types/player";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import type { WeaponId } from "../types/weapon";
+import { playerStatusEqual, type PlayerStatusCard } from "./playerStatus";
 import type {
   ShopDenial,
   ShopVisitCounters,
@@ -79,6 +80,7 @@ export interface GameCanvasState {
   gamePhase: GamePhase;
   wind: number;
   turnInfo: CurrentTurnInfo | null;
+  playerStatus: readonly PlayerStatusCard[] | null;
   winner: Player | null;
   showNewGameButton: boolean;
   roundResult: RoundResult | null;
@@ -108,6 +110,7 @@ export type GameCanvasAction =
   | { type: "SET_CURRENT_MANCHE"; roundNumber: number }
   | { type: "SET_WIND"; wind: number }
   | { type: "SET_TURN_INFO"; info: CurrentTurnInfo | null }
+  | { type: "SET_PLAYER_STATUS"; players: readonly PlayerStatusCard[] | null }
   | { type: "SET_UI_PLAYERS"; players: Player[] }
   | { type: "SHOW_EARNINGS"; overlay: EarningsOverlayState }
   | { type: "HIDE_EARNINGS" }
@@ -196,6 +199,7 @@ export const INITIAL_STATE: GameCanvasState = {
   gamePhase: "COMBAT",
   wind: 0,
   turnInfo: null,
+  playerStatus: null,
   winner: null,
   showNewGameButton: false,
   roundResult: null,
@@ -228,6 +232,9 @@ export function gameCanvasReducer(
       return { ...state, wind: action.wind };
     case "SET_TURN_INFO":
       return { ...state, turnInfo: action.info };
+    case "SET_PLAYER_STATUS":
+      if (playerStatusEqual(state.playerStatus, action.players)) return state;
+      return { ...state, playerStatus: action.players };
     case "SET_UI_PLAYERS":
       return { ...state, uiPlayers: action.players };
     case "SHOW_EARNINGS":
@@ -253,11 +260,13 @@ export function gameCanvasReducer(
         uiPlayers: action.payload.uiPlayers,
         earningsOverlay: null,
         zeusAnnouncement: null,
+        playerStatus: null,
       };
     case "GO_TO_SUMMARY":
       return {
         ...state,
         gamePhase: "SUMMARY",
+        playerStatus: null,
       };
     case "START_SHOP":
       {
@@ -270,6 +279,7 @@ export function gameCanvasReducer(
           uiPlayers: action.roster,
           currentShopIndex: 0,
           zeusAnnouncement: null,
+          playerStatus: null,
           lastCompletedRoundNumber:
             action.completedRoundNumber ?? state.lastCompletedRoundNumber,
           shopSession: {
@@ -287,6 +297,7 @@ export function gameCanvasReducer(
         gamePhase: "SHOP",
         shopPlayers: action.players,
         uiPlayers: action.players,
+        playerStatus: null,
         currentManche: Math.max(
           state.currentManche,
           action.roundNumber + 1,
@@ -400,7 +411,13 @@ export function gameCanvasReducer(
     case "SET_FIRE_PENDING":
       return { ...state, pendingFireIntent: action.intent };
     case "RESET_COMBAT_PROGRESS":
-      return { ...state, gamePhase: "COMBAT", currentManche: action.roundNumber, lastSeenShotId: 0 };
+      return {
+        ...state,
+        gamePhase: "COMBAT",
+        currentManche: action.roundNumber,
+        lastSeenShotId: 0,
+        playerStatus: null,
+      };
     case "SET_NETWORK_ERROR":
       return { ...state, networkError: action.key };
     case "SET_FIRE_REJECTION":
@@ -415,6 +432,7 @@ export function gameCanvasReducer(
         winner: action.winner,
         showNewGameButton: false,
         zeusAnnouncement: null,
+        playerStatus: null,
         shopSession: createEmptyShopSession(),
         lastAppliedShopEpoch: 0,
         lastCompletedRoundNumber: 0,
@@ -435,6 +453,7 @@ export function gameCanvasReducer(
         winner: null,
         showNewGameButton: false,
         turnInfo: null,
+        playerStatus: null,
         roundResult: null,
         currentManche: 1,
         uiPlayers: action.newPlayers,
@@ -470,6 +489,7 @@ export function gameCanvasReducer(
         lastSeenShotId: action.snapshot.lastSeenShotId ?? 0,
         pendingFireIntent: action.snapshot.pendingFireIntent ?? null,
         fireRejection: action.snapshot.fireRejection ?? null,
+        playerStatus: null,
       };
     default:
       return state;
