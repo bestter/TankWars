@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, isInaccessible, render, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { I18nextProvider } from "react-i18next";
 import fr from "../../locales/fr.json";
@@ -76,11 +76,13 @@ describe("PlayerStatusList", () => {
 
   it("lists missile as unlimited and hides empty stocks, including nukes only when positive", async () => {
     await show("fr");
-    const chips = Array.from(document.querySelectorAll(".player-status-chip")).map((node) => node.textContent);
+    const chips = Array.from(document.querySelectorAll(".player-status-chip [aria-hidden='true']")).map((node) => node.textContent);
     expect(chips).toEqual(["MIS:∞", "NUK:1", "THM:2", "MIS:∞", "DRL:3"]);
-    expect(screen.getByLabelText("Mini-Nuke 1").tagName).toBe("SPAN");
-    expect(screen.getAllByLabelText("Missile ∞").every((node) => node.tagName === "SPAN")).toBe(true);
-    expect(screen.queryByLabelText(/Grenade/)).toBeNull();
+    expect(isInaccessible(screen.getByText("Mini-Nuke 1"))).toBe(false);
+    const missiles = screen.getAllByText("Missile ∞");
+    expect(missiles).toHaveLength(2);
+    expect(missiles.some(isInaccessible)).toBe(false);
+    expect(screen.queryByText(/Grenade/)).toBeNull();
     expect(screen.queryByText(/BLT/)).toBeNull();
   });
 

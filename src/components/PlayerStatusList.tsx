@@ -68,12 +68,9 @@ export const PlayerStatusList = memo(function PlayerStatusList({
                 {weapons.map((weapon) => {
                   const quantity = weapon.quantity === null ? "∞" : String(weapon.quantity);
                   return (
-                    <span
-                      key={weapon.id}
-                      className="player-status-chip"
-                      aria-label={`${t(WEAPON_I18N_KEYS[weapon.id])} ${quantity}`}
-                    >
-                      {weaponShortLabel(weapon.id)}:{quantity}
+                    <span key={weapon.id} className="player-status-chip">
+                      <span aria-hidden="true">{weaponShortLabel(weapon.id)}:{quantity}</span>
+                      <span className="visually-hidden">{t(WEAPON_I18N_KEYS[weapon.id])} {quantity}</span>
                     </span>
                   );
                 })}
