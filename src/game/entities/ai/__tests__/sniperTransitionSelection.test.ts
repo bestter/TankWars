@@ -31,7 +31,7 @@ function choice(reason: selection.SniperChoiceReason = "bullet", angle = 40): se
   return { weaponId: reason === "bullet" ? "BULLET" : reason === "driller" ? "DRILLER" : "MISSILE",
     reason, certified: reason !== "missile-ordinary", point: { x: 400, y: 330, kind: "tank" }, variant: "full",
     rawCommand: { angle: angle + 0.04, power: 50 }, command: { angle, power: 50 },
-    trace: { selectionReason: "seul candidat", admissible: [], refusals: [], searches: 2, forecasts: 1, cacheHits: 1 } };
+    trace: { selectionReason: "seul candidat", admissible: [], refusals: [], searches: 2, solverCalls: 1, ballisticCacheHits: 1, forecasts: 1, cacheHits: 1 } };
 }
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -181,7 +181,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       (attempts >= 3 ? 4 : attempts === 1 ? 41 : 22.5));
     expect(pick.mock.calls[1][4]).toBe(-41); expect(pick.mock.calls[2][4]).toBe(-41);
     expect(analyze).toHaveBeenCalledTimes(3);
-    expect(result.trace.selectionCounters).toEqual({ searches: 6, forecasts: 3, cacheHits: 3 });
+    expect(result.trace.selectionCounters).toEqual({ searches: 6, solverCalls: 3, ballisticCacheHits: 3, forecasts: 3, cacheHits: 3 });
     expect(f.self.tank.currentWeapon).toBe("MISSILE");
   });
 

@@ -44,7 +44,8 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
     result: { forecast: getSniperChoiceForecast(value.choice), rawCommand: value.choice.rawCommand },
   }, self, state, terrain);
   const initial = evaluate(initialTarget, initialAttempts);
-  const selectionCounters = { searches: initial.choice.trace.searches, forecasts: initial.choice.trace.forecasts, cacheHits: initial.choice.trace.cacheHits };
+  const selectionCounters = { searches: initial.choice.trace.searches, solverCalls: initial.choice.trace.solverCalls,
+    ballisticCacheHits: initial.choice.trace.ballisticCacheHits, forecasts: initial.choice.trace.forecasts, cacheHits: initial.choice.trace.cacheHits };
   const analysis = analyze(initial);
   const alternatives: { choice: ReturnType<typeof summary>; accepted: boolean; analysis: TransitionAnalysis | null }[] = [];
   let selected = initial;
@@ -57,6 +58,8 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
       if (amplitude === undefined) { amplitude = secureRandom(); extraAmplitude = amplitude; }
       const alternative = evaluate(target, 1);
       selectionCounters.searches += alternative.choice.trace.searches;
+      selectionCounters.solverCalls += alternative.choice.trace.solverCalls;
+      selectionCounters.ballisticCacheHits += alternative.choice.trace.ballisticCacheHits;
       selectionCounters.forecasts += alternative.choice.trace.forecasts;
       selectionCounters.cacheHits += alternative.choice.trace.cacheHits;
       const useful = ["bullet", "driller", "missile-useful"].includes(alternative.choice.reason);

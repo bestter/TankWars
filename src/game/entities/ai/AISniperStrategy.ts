@@ -76,6 +76,8 @@ function sniperDecisionPayload(
     admissible: choice.trace.admissible,
     refusals: choice.trace.refusals,
     searches: choice.trace.searches,
+    solverCalls: choice.trace.solverCalls,
+    ballisticCacheHits: choice.trace.ballisticCacheHits,
     forecasts: choice.trace.forecasts,
     cacheHits: choice.trace.cacheHits,
   };

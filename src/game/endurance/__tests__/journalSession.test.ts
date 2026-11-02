@@ -4,6 +4,7 @@ import { MemoryStorage, fixture } from "./helpers";
 import type { JournalEntry, JournalStatus } from "../journal";
 import { autoBuyForAI } from "../../entities/ai/aiShopHelper";
 import { AISmartStrategy } from "../../entities/ai/AISmartStrategy";
+import { AISniperStrategy } from "../../entities/ai/AISniperStrategy";
 import { flatTerrain, makePlayer, makeTank } from "../../__tests__/helpers";
 import { createSeededRNG, getRNG, setRNG } from "../../../utils/random";
 
@@ -15,6 +16,44 @@ class JournalMemory extends MemoryStorage {
   async journalStatus() { return this.meta; }
 }
 async function settled() { for (let i = 0; i < 100; i++) await Promise.resolve(); }
+
+it("exports #370 ballistic counters through endurance JSONL with DEV false", async () => {
+  vi.stubEnv("DEV", false);
+  const previous = getRNG();
+  try {
+    const f = fixture(), run = new EnduranceSession(f.config, new JournalMemory());
+    await run.start(); run.attach(f.host);
+    const self = makePlayer({ id: "s", isHuman: false, aiProfile: "v3-sniper",
+      inventory: { BULLET: 2, DRILLER: 1 }, tank: makeTank("s", 100, 336) });
+    const target = makePlayer({ id: "c", tank: makeTank("c", 400, 336) });
+    const state = { phase: "COMBAT" as const, players: [self, target], currentPlayerIndex: 0,
+      turn: 1, roundNumber: 1, windForce: 0, gravity: 260 };
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const results = [];
+    for (const observe of [false, true]) {
+      const rng = createSeededRNG(12453), draws: number[] = [];
+      setRNG({ next: () => { const value = rng.next(); draws.push(value); return value; } });
+      const strategy = new AISniperStrategy();
+      if (observe) {
+        run.emit({ kind: "decision-start", playerId: self.id });
+        strategy.onDecisionObserved = observation => { run.emit({ kind: "ai-detail", observation }); };
+      }
+      const command = await strategy.executeTurn("s", structuredClone(state), flatTerrain(800, 480));
+      results.push({ command, draws });
+    }
+    expect(results[0]).toEqual(results[1]);
+    await run.stop();
+    const rows = (await run.journalJSONL()).trim().split("\n").map(line => JSON.parse(line) as JournalEntry);
+    const details = rows.filter(row => row.event?.kind === "combat" && row.event.event.kind === "ai-detail");
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({ event: { kind: "combat", event: { kind: "ai-detail", observation: {
+      diagnostics: { searches: 9, solverCalls: 5, ballisticCacheHits: 4,
+        lethalTransition: { selectionCounters: { searches: 9, solverCalls: 5, ballisticCacheHits: 4 } } },
+    } } } });
+    expect(log).not.toHaveBeenCalled();
+  } finally { setRNG(previous); vi.unstubAllEnvs(); vi.restoreAllMocks(); }
+});
+
 describe("session journal lifecycle and reconciliation", () => {
   it("reconciles 20 rounds of applied credits and unit purchases, skips the final shop and resets the next block", async () => {
     const f = fixture(), storage = new JournalMemory(); const players = f.players;
