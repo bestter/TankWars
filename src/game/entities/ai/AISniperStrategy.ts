@@ -22,7 +22,7 @@ import { maybeGaffe } from "./fallibleAim";
 import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 
 type SniperMemory = AimMemory;
-type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible" | "alternative sans nouvelle transition";
+type TargetRule = "mémoire" | "ia la plus faible" | "humain le plus faible" | "alternative sans nouvelle transition" | "repli vers un autre tank";
 
 function logSniperDecision(build: () => object): void {
   if (!import.meta.env.DEV) return;
@@ -155,7 +155,8 @@ export class AISniperStrategy implements AIEngine {
 
     const nextAttempts = memory.currentTargetId === target.id ? memory.currentTargetAttempts + 1 : 1;
     const selected = chooseSniperTransitionShot(self, target, gameState, terrainManager, nextAttempts, Boolean(this.onDecisionObserved));
-    if (selected.target !== target) targetRule = "alternative sans nouvelle transition";
+    if (selected.target !== target) targetRule = selected.trace.reason === "fallback-target-accepted"
+      ? "repli vers un autre tank" : "alternative sans nouvelle transition";
     target = selected.target;
     const { attempts, offsetDirection, offset, choice } = selected;
     recordAimAttempt(memory, target.id);

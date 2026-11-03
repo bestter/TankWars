@@ -5,6 +5,7 @@ import type { TerrainManager } from "../../engine/Terrain";
 import { calculateImpactOffsetMagnitude } from "./fallibleAim";
 import { LethalTransitionDetector, type TransitionAnalysis } from "./lethalTransition";
 import { solveSniperAim } from "./sniperAim";
+import { searchSniperFallbacks } from "./sniperFallbackSelection";
 import { chooseSniperPhysicalShot, getSniperChoiceForecast, type SniperPhysicalChoice } from "./sniperPhysicalSelection";
 
 interface VirtualChoice {
@@ -50,12 +51,35 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
   const alternatives: { choice: ReturnType<typeof summary>; accepted: boolean; analysis: TransitionAnalysis | null }[] = [];
   let selected = initial;
   let reason = "initial-retained";
-  if (analysis.status === "risk") {
+  let fallbackTargets: ReturnType<typeof searchSniperFallbacks>["evaluations"] = [];
+  const others = state.players.filter(player => player.id !== self.id && player.id !== initialTarget.id && !player.tank.isDead)
+    .toSorted((a, b) => Number(a.isHuman) - Number(b.isHuman) || a.tank.health - b.tank.health);
+  const ensureAmplitude = () => {
+    if (amplitude === undefined) { amplitude = secureRandom(); extraAmplitude = amplitude; }
+    return amplitude;
+  };
+  if (["missile-surviving", "missile-ordinary"].includes(initial.choice.reason)) {
+    const fallback = searchSniperFallbacks(self, others, state, terrain, target => {
+      const x = target.tank.position.x;
+      const offsetDirection = x > terrain.width - x ? -1 : 1;
+      return { offsetDirection, offset: offsetDirection * calculateImpactOffsetMagnitude(1, "v3-sniper", state.roundNumber, ensureAmplitude()) };
+    }, observe);
+    fallbackTargets = fallback.evaluations;
+    for (const candidate of fallback.candidates) {
+      const alternative: VirtualChoice = { target: candidate.target, attempts: 1, offset: candidate.offset,
+        offsetDirection: candidate.offsetDirection, choice: fallback.withBullet(candidate) };
+      const evaluated = analyze(alternative);
+      const accepted = evaluated.status !== "risk";
+      alternatives.push({ choice: summary(alternative), accepted, analysis: evaluated });
+      if (accepted) { selected = alternative; reason = "fallback-target-accepted"; break; }
+    }
+    for (const key of Object.keys(selectionCounters) as (keyof typeof selectionCounters)[]) {
+      selectionCounters[key] += fallback.counters[key];
+    }
+  } else if (analysis.status === "risk") {
     reason = "initial-retained-no-alternative";
-    const others = state.players.filter(player => player.id !== self.id && player.id !== initialTarget.id && !player.tank.isDead)
-      .toSorted((a, b) => Number(a.isHuman) - Number(b.isHuman) || a.tank.health - b.tank.health);
     for (const target of others) {
-      if (amplitude === undefined) { amplitude = secureRandom(); extraAmplitude = amplitude; }
+      ensureAmplitude();
       const alternative = evaluate(target, 1);
       selectionCounters.searches += alternative.choice.trace.searches;
       selectionCounters.solverCalls += alternative.choice.trace.solverCalls;
@@ -69,7 +93,7 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
       if (accepted) { selected = alternative; reason = "alternative-accepted"; break; }
     }
   }
-  return { ...selected, trace: { reason, initial: summary(initial), final: summary(selected), analysis, alternatives,
+  return { ...selected, trace: { reason, initial: summary(initial), final: summary(selected), analysis, alternatives, fallbackTargets,
     shooterStock: { MISSILE: self.inventory.MISSILE ?? 0, BULLET: self.inventory.BULLET ?? 0, DRILLER: self.inventory.DRILLER ?? 0 },
     selectionCounters, detectionCounters: { ...detector.counters }, extraAmplitude, elapsedMs: performance.now() - started } };
 }

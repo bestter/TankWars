@@ -189,6 +189,46 @@ describe("SNIPER physical proofs", () => {
 });
 
 describe("SNIPER ranking, fallback and bounds", () => {
+  it.each([false, true])("rejects fallback self damage unless the aimed target is destroyed, lethal=%s", lethal => {
+    const f = fixture({ bullet: 0, driller: 0 });
+    const resolve = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({
+      damage: [damage("MISSILE"), damage("MISSILE", { victimId: "self", shieldLostMilli: 18850, healthDamageMilli: 0 }),
+        damage("MISSILE", { victimId: "self", source: "fall", healthDamageMilli: 68000 })],
+      destruction: lethal ? [destroyed("MISSILE", "health-zero")] : [],
+    }));
+    const result = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solver());
+    expect(result.reason).toBe(lethal ? "missile-useful" : "missile-ordinary");
+    expect(result.certified).toBe(lethal);
+    expect(result.trace.refusals.some(value => value.refusal === "autodégâts")).toBe(!lethal);
+    expect(resolve).toHaveBeenCalled();
+  });
+
+  it("counts only attributed self health and shield loss, never absorption or foreign events", () => {
+    const f = fixture();
+    const value = forecast({ damage: [
+      damage("MISSILE", { victimId: "self", healthDamageMilli: 2, shieldLostMilli: 3, shieldAbsorbedMilli: 100 }),
+      damage("MISSILE", { victimId: "self", source: "fall", healthDamageMilli: 7 }),
+      damage("MISSILE", { victimId: "self", shotId: 2 }),
+      damage("MISSILE", { victimId: "self", shooterId: "other" }), damage("MISSILE"),
+    ] });
+    expect(sniperSelection.selfLoss(value, f.self)).toBe(12);
+    // The new restriction never changes the principal proofs.
+    const bullet = bulletProof();
+    expect(sniperBulletRefusal({ ...bullet, damage: [...bullet.damage,
+      damage("BULLET", { victimId: "self" })] }, f.self, f.target)).toBeNull();
+    const driller = drillerProof({ fall: 5000 });
+    expect(sniperDrillerRefusal({ ...driller, damage: [...driller.damage,
+      damage("DRILLER", { victimId: "self" })] }, f.self, f.target)).toBeNull();
+  });
+
+  it("keeps a later harmless surviving missile instead of a harmful ordinary one", () => {
+    const f = fixture({ bullet: 0, driller: 0 });
+    vi.spyOn(physical, "resolvePhysicalShot").mockReturnValueOnce(forecast({ damage: [damage("MISSILE", { victimId: "self" })] }))
+      .mockReturnValue(forecast());
+    const result = chooseSniperPhysicalShot(f.self, f.target, f.state, f.terrain, 0, solver());
+    expect(result).toMatchObject({ reason: "missile-surviving", variant: "high", certified: true });
+    expect(result.trace.refusals).toContainEqual(expect.objectContaining({ refusal: "autodégâts", variant: "full" }));
+  });
   it("measures complete ballistic searches on the deterministic shared-point fixture", () => {
     const f = fixture();
     const search = vi.spyOn(ballistics, "searchBallisticSolution");

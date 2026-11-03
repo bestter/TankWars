@@ -37,6 +37,7 @@ export type SniperRefusal =
   | "recherche incomplète"
   | "prévision incomplète"
   | "tireur détruit"
+  | "autodégâts"
   | "pas d'impact direct"
   | "interception"
   | "absorption seule"
@@ -128,7 +129,7 @@ interface SearchResult {
 }
 
 interface RankedCandidate extends SearchResult {
-  readonly weaponId: "BULLET" | "DRILLER";
+  readonly weaponId: "BULLET" | "DRILLER" | "MISSILE";
   readonly destroyed: boolean;
   readonly loss: number;
 }
@@ -147,14 +148,14 @@ function attributed(
     event.weaponId === weapon && event.victimId === target.id;
 }
 
-function targetLoss(forecast: PhysicalResolution, self: Player, target: Player, weapon: WeaponId): number {
+export function targetLoss(forecast: PhysicalResolution, self: Player, target: Player, weapon: WeaponId): number {
   if (!forecast.complete) return 0;
   return forecast.damage.reduce((sum, event) => (
     attributed(event, self, target, weapon) ? sum + event.healthDamageMilli + event.shieldLostMilli : sum
   ), 0);
 }
 
-function targetDestroyed(forecast: PhysicalResolution, self: Player, target: Player, weapon: WeaponId): boolean {
+export function targetDestroyed(forecast: PhysicalResolution, self: Player, target: Player, weapon: WeaponId): boolean {
   return forecast.complete && forecast.destruction.some((event) => attributed(event, self, target, weapon));
 }
 
@@ -223,7 +224,7 @@ export function sniperDrillerRefusal(
   return damagingFall || burial ? null : drillerConsequenceRefusal(forecast, self, target);
 }
 
-function prefer(candidate: RankedCandidate, current: RankedCandidate): boolean {
+export function prefer(candidate: { destroyed: boolean; loss: number; weaponId: WeaponId }, current: { destroyed: boolean; loss: number; weaponId: WeaponId }): boolean {
   if (candidate.destroyed !== current.destroyed) return candidate.destroyed;
   if (candidate.loss !== current.loss) return candidate.loss > current.loss;
   if (candidate.weaponId !== current.weaponId) return candidate.weaponId === "BULLET";
@@ -252,17 +253,35 @@ function rankedReason(best: RankedCandidate, runner: RankedCandidate | undefined
   return "point ou arc antérieur";
 }
 
-function ordinaryTankPoint(target: Player): TacticalPoint {
+export function ordinaryTankPoint(target: Player): TacticalPoint {
   return { x: target.tank.position.x, y: target.tank.position.y - 6, kind: "tank" };
+}
+
+export function selfLoss(forecast: PhysicalResolution, self: Player): number {
+  return forecast.damage.reduce((sum, event) => event.shotId === FORECAST_SHOT_ID &&
+    event.shooterId === self.id && event.victimId === self.id
+    ? sum + event.healthDamageMilli + event.shieldLostMilli : sum, 0);
+}
+
+/** Applies only to fallback; the principal BULLET/DRILLER proofs stay unchanged. */
+export function sniperFallbackRefusal(forecast: PhysicalResolution, self: Player, target: Player, weapon: WeaponId): SniperRefusal | null {
+  if (!forecast.complete) return "prévision incomplète";
+  if (!forecast.survivors.includes(self.id)) return "tireur détruit";
+  return selfLoss(forecast, self) > 0 && !targetDestroyed(forecast, self, target, weapon) ? "autodégâts" : null;
+}
+
+export function retainSniperChoiceForecast(choice: SniperPhysicalChoice, forecast: PhysicalResolution): void {
+  choiceForecasts.set(choice, forecast);
 }
 
 function missileUseful(forecast: PhysicalResolution, self: Player, target: Player): boolean {
   return forecast.complete && forecast.survivors.includes(self.id) &&
-    hasPhysicalEffect(forecast, self, new Set([target.id]));
+    hasPhysicalEffect(forecast, self, new Set([target.id])) &&
+    sniperFallbackRefusal(forecast, self, target, "MISSILE") === null;
 }
 
 function missileSurviving(forecast: PhysicalResolution, self: Player): boolean {
-  return forecast.complete && forecast.survivors.includes(self.id);
+  return forecast.complete && forecast.survivors.includes(self.id) && selfLoss(forecast, self) === 0;
 }
 
 /**
@@ -431,7 +450,8 @@ export function chooseSniperPhysicalShot(
         if (!surviving && missileSurviving(found.forecast, self)) surviving = found;
         else if (found.forecast.complete && !found.forecast.survivors.includes(self.id)) {
           note("MISSILE", point, variant, "tireur détruit", found.command, found.forecast);
-        } else if (found.forecast.complete) note("MISSILE", point, variant, "sans effet", found.command, found.forecast);
+        } else if (found.forecast.complete) note("MISSILE", point, variant,
+          sniperFallbackRefusal(found.forecast, self, target, "MISSILE") ?? "sans effet", found.command, found.forecast);
       }
     }
     const selected = useful ?? surviving ?? ordinary;
