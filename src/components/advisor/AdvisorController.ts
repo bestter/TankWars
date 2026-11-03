@@ -4,6 +4,8 @@ import type { AdvisorSnapshot } from "../../game/entities/ai/shotAdvisor";
 import { isAdvisorResult, type AdvisorResult } from "../../game/entities/ai/advisorProtocol";
 
 export interface AdvisorHost {
+  observing?(): boolean;
+  observe?(event: { requestId: number; status: string; detail: unknown }): void;
   capture(): AdvisorSnapshot | null;
   apply(result: AdvisorResult): boolean;
 }
@@ -18,15 +20,18 @@ export interface AdvisorWorker {
   onmessage: ((event: MessageEvent<unknown>) => void) | null;
   onerror: ((event: ErrorEvent) => void) | null;
   onmessageerror: ((event: MessageEvent<unknown>) => void) | null;
-  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective; requestId?: number }): void;
+  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective; requestId?: number; observe?: boolean }): void;
   terminate(): void;
 }
 
 export class AdvisorController {
   private nextRequestId = 0;
+  private resultRequestId: number | null = null;
   private pending: { requestId: number; objective: AdvisorObjective; playerId?: string } | null = null;
   private terminal(status: string, decision?: unknown, summary?: unknown): void {
     if (!this.pending) return;
+    this.host.observe?.({ requestId: this.pending.requestId, status, detail: { ...this.pending, decision } });
+    if (status === "result") this.resultRequestId = this.pending.requestId;
     if (import.meta.env.DEV) writeDecisionConsole("[Shot advisor] Décision", { ...this.pending, status, decision: summary }, { ...this.pending, status, decision });
     this.pending = null;
   }
@@ -56,6 +61,9 @@ export class AdvisorController {
     const snapshot = this.host.capture();
     const key = snapshot ? JSON.stringify(snapshot) : null;
     if (key !== this.key) {
+      if (this.resultRequestId !== null) {
+        this.host.observe?.({ requestId: this.resultRequestId, status: "expired", detail: null }); this.resultRequestId = null;
+      }
       this.stop();
       this.key = key;
       const playerId = snapshot?.state.players[snapshot.state.currentPlayerIndex]?.id;
@@ -81,7 +89,10 @@ export class AdvisorController {
     const objective = this.view.objective;
     const names = Object.fromEntries(snapshot.state.players.map((player) => [player.id, player.name]));
     const requestId = ++this.nextRequestId;
+    if (this.resultRequestId !== null) this.host.observe?.({ requestId: this.resultRequestId, status: "replaced", detail: null });
+    this.resultRequestId = null;
     this.pending = { requestId, objective, playerId: this.view.playerId };
+    this.host.observe?.({ requestId, status: "calculating", detail: { state: snapshot.state, width: snapshot.width, height: snapshot.height, objective, playerId: this.view.playerId } });
     if (import.meta.env.DEV) writeDecisionConsole("[Shot advisor] Décision", { ...this.pending, status: "calculating" });
     this.view = { ...this.view, status: "calculating", result: undefined, names };
     this.publish(this.view);
@@ -114,7 +125,7 @@ export class AdvisorController {
         this.view = { ...this.view, status: data.advice === null ? "empty" : "result", result: data.advice ?? undefined };
         this.publish(this.view);
       };
-      worker.postMessage({ snapshot, objective, requestId });
+      worker.postMessage({ snapshot, objective, requestId, ...(this.host.observing?.() ? { observe: true } : {}) });
     } catch (error) {
       console.error("[Shot advisor] Unable to start worker", error);
       this.terminal("error");
@@ -129,7 +140,9 @@ export class AdvisorController {
     const result = this.view.result;
     this.refresh();
     if (!result || this.key !== key || this.view.result !== result) return;
-    if (!this.host.apply(result)) {
+    const applied = this.host.apply(result);
+    if (this.resultRequestId !== null) this.host.observe?.({ requestId: this.resultRequestId, status: applied ? "applied" : "expired", detail: result });
+    if (!applied) {
       this.view = { ...this.view, status: "expired", result: undefined };
       this.publish(this.view);
     }

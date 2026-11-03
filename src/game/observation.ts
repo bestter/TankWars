@@ -5,11 +5,13 @@ import type { WeaponId } from "../types/weapon";
 
 export type Aim = Pick<FireCommand, "angle" | "power">;
 export interface AIObservation {
+  initial?: { state: import("../types/game").GameState; memory: unknown; opponentNuclearStocks: "archived-only-never-known" };
   playerId: string | null; tankId: string; profile: Player["aiProfile"] | null;
   shooter: Player | null;
   target: { playerId: string; tankId: string; position: { x: number; y: number } } | null;
   point: { x: number; y: number } | null;
   nominal: FireCommand | null; evaluated: FireCommand | null; final: FireCommand;
+  raw?: FireCommand | null;
   environment: { windForce: number; gravity: number } | null;
   steps: Array<{ kind: "offset" | "reaction" | "gaffe" | "direction-error" | "power-error" | "finalize";
     before: Aim | null; after: Aim | null; parameters: Record<string, unknown> }>;

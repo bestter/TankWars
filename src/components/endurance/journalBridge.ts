@@ -1,6 +1,8 @@
 import type { EnduranceSession } from "../../game/endurance/session";
 
 export interface EnduranceTestBridge {
+  readArchive(): ReturnType<EnduranceSession["exportArchive"]>;
+  readArchiveMetrics(): EnduranceSession["archiveMetrics"];
   readJournalPage(after?: number, limit?: number): ReturnType<EnduranceSession["journalPage"]>;
 }
 declare global {
@@ -10,7 +12,8 @@ declare global {
 /** Browser/Playwright IPC only: no HTTP endpoint or third-party transport. */
 export function installJournalBridge(session: EnduranceSession): () => void {
   if (import.meta.env.MODE !== "endurance") return () => {};
-  const bridge: EnduranceTestBridge = { readJournalPage: (after = 0, limit = 256) => session.journalPage(after, limit) };
+  const bridge: EnduranceTestBridge = { readJournalPage: (after = 0, limit = 256) => session.journalPage(after, limit),
+    readArchive: () => session.exportArchive(), readArchiveMetrics: () => session.archiveMetrics };
   window.__tankwarsEnduranceTest = bridge;
   return () => { if (window.__tankwarsEnduranceTest === bridge) delete window.__tankwarsEnduranceTest; };
 }

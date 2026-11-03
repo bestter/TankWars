@@ -5,7 +5,7 @@ import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
 import type { AIObserver } from "../../observation";
-import { DecisionObservation, observedFallback } from "./decisionObservation";
+import { DecisionObservation, observedFallback, captureDecisionInitial } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -103,6 +103,7 @@ export class AISniperStrategy implements AIEngine {
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
+    const initial = this.onDecisionObserved ? captureDecisionInitial(gameState, self ? this.memories.get(self.id) : null) : undefined;
     if (!self || self.tank.isDead) {
       logSniperDecision(() => ({
         choice: { weaponId: "MISSILE", certified: false, finalCommand: { angle: 45, power: 50 } },
@@ -111,7 +112,7 @@ export class AISniperStrategy implements AIEngine {
         round: gameState.roundNumber,
         turn: gameState.turn,
       }));
-      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable", initial);
     }
 
     const memory = this.getMem(self.id);
@@ -130,7 +131,7 @@ export class AISniperStrategy implements AIEngine {
         windForce: gameState.windForce,
         gravity: gameState.gravity,
       }));
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
     const remembered = memory.currentTargetId
@@ -159,7 +160,7 @@ export class AISniperStrategy implements AIEngine {
     const { attempts, offsetDirection, offset, choice } = selected;
     recordAimAttempt(memory, target.id);
     this.onTargetSelected?.(self.id, target.id);
-    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
     const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
 
@@ -171,6 +172,7 @@ export class AISniperStrategy implements AIEngine {
     );
     let perturbed = false;
     let command = choice.rawCommand;
+    observation?.proposed({ ...command, weaponId });
     observation?.evaluated({ ...choice.command, weaponId }, choice.point);
     observation?.step("offset", null, null, { offset, offsetDirection, aimedPoint: { x: choice.point.x + offset, y: choice.point.y } });
     let before = command;

@@ -1,8 +1,11 @@
 import type { EnduranceEvent, Incident } from "./types";
 import type { Player } from "../../types/player";
 import type { PurchaseObservation } from "../observation";
+import type { ArchiveWrite } from "../diagnostics/types";
+import { byteSize, QUEUE_BYTES } from "../diagnostics/archive";
 
 export type JournalEvent =
+  | { kind: "archive"; write: ArchiveWrite }
   | { kind: "combat"; event: EnduranceEvent }
   | { kind: "incident"; incident: Incident }
   | { kind: "session-start"; metadata: unknown }
@@ -31,6 +34,10 @@ export class EnduranceJournal {
   readonly status: JournalStatus;
   private queue: JournalEntry[] = [];
   private inFlight = 0;
+  private queuedBytes = 0;
+  private flightBytes = 0;
+  get pendingBytes(): number { return this.queuedBytes + this.flightBytes; }
+  get pendingCount(): number { return this.queue.length + this.inFlight; }
   private work: Promise<void> | null = null;
   private writable = true;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -46,7 +53,12 @@ export class EnduranceJournal {
     const sequence = ++this.status.emitted;
     if (this.status.error) return;
     if (this.queue.length + this.inFlight >= 2048) { this.failed(new Error("JOURNAL_BACKPRESSURE")); return; }
-    try { this.queue.push(structuredClone({ ...entry, schemaVersion: 1, sequence, sessionId: this.status.sessionId })); }
+    try {
+      const copy = structuredClone({ ...entry, schemaVersion: 1 as const, sequence, sessionId: this.status.sessionId });
+      const bytes = byteSize(copy);
+      if (bytes + this.pendingBytes > QUEUE_BYTES) { this.failed(new Error("JOURNAL_BYTE_BACKPRESSURE")); return; }
+      this.queue.push(copy); this.queuedBytes += bytes;
+    }
     catch (error) { this.failed(error); return; }
     if (this.queue.length >= 256) void this.flush();
     else if (this.timer === undefined) this.timer = setTimeout(() => { this.timer = undefined; void this.flush(); }, 1000);
@@ -70,12 +82,13 @@ export class EnduranceJournal {
   private async drain(): Promise<void> {
     while (this.queue.length && this.writable) {
       const batch = this.queue.splice(0, 256); this.inFlight = batch.length;
+      this.flightBytes = batch.reduce((sum, row) => sum + byteSize(row), 0); this.queuedBytes -= this.flightBytes;
       const persisted = batch[batch.length - 1].sequence;
       // Batches deliberately share one transaction lane; acknowledgements must precede the next batch.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       try { await this.write(batch, { ...this.status, persisted }); this.status.persisted = persisted; }
-      catch (error) { this.queue.unshift(...batch); this.failed(error, true); }
-      finally { this.inFlight = 0; }
+      catch (error) { this.queue.unshift(...batch); this.queuedBytes += this.flightBytes; this.failed(error, true); }
+      finally { this.inFlight = 0; this.flightBytes = 0; }
     }
   }
   async finish(): Promise<void> {

@@ -1,4 +1,6 @@
 import { ShotAdvisorPanel, type ShotAdvisorPanelProps } from "./advisor/ShotAdvisorPanel";
+import { lazy, Suspense } from "react";
+const DiagnosticPanel = import.meta.env.DEV || import.meta.env.MODE === "endurance" ? lazy(() => import("./diagnostics/DiagnosticPanel")) : null;
 import { PlayerStatusList } from "./PlayerStatusList";
 import { isAimingInspectionVisible } from "./playerStatus";
 import type { EnduranceSession } from "../game/endurance/session";
@@ -289,6 +291,7 @@ export function GameCanvas({
   const { t } = useTranslation();
 
   const {
+    diagnostics,
     advisor,
     canvasRef,
     state,
@@ -331,6 +334,7 @@ export function GameCanvas({
         gap: 8,
       }}
     >
+      {!endurance && gameMode === "local" && diagnostics && DiagnosticPanel && <Suspense fallback={null}><DiagnosticPanel source={diagnostics} /></Suspense>}
       {state.networkError && <div role="alert">{t(state.networkError, { defaultValue: state.networkError })} <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button></div>}
       {state.roundPreparationError && (
         <div role="alert">

@@ -1,4 +1,5 @@
 import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type PreparedRound } from "../round/prepareRound";
+import type { DiagnosticInput, DiagnosticState } from "../diagnostics/types";
 import { secureRandom } from "../../utils/random";
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
@@ -24,7 +25,7 @@ import type { CombatObserver } from "../endurance/types";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
 import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
-import type { Vector2, FireCommand, RoundResult } from "../../types/game";
+import type { Vector2, FireCommand, RoundResult, GamePhase } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
 import type { AIEngine } from "../entities/ai/AIEngine";
 import i18n from "../../i18n";
@@ -142,6 +143,21 @@ const FIREWORKS_TICK_DT = 1 / 60;
 const MAX_FIREWORKS = 250;
 
 export class GameEngine {
+  public diagnosticSink?: (input: DiagnosticInput) => void;
+  public diagnosticPhase?: () => GamePhase;
+  public diagnosticFreeWeapons = false;
+  private diagnosticStep = 0;
+  public captureDiagnosticState(): DiagnosticState {
+    const state = this.turnManager.captureDiagnosticContext();
+    state.phase = this.diagnosticPhase?.() ?? state.phase;
+    return { state, motion: this.tankManager.capturePhysicsState(),
+      width: this.terrain.width, height: this.terrain.height,
+      heights: [...this.terrain.getHeightmap()], materials: [...this.terrain.getMaterials()],
+      localMatch: this.localMatch, freeWeapons: this.diagnosticFreeWeapons,
+      initialPlayerCount: this.tankManager.getPlayers().length,
+      projectiles: structuredClone([...this.physicsEngine.getProjectiles()]), step: this.diagnosticStep,
+      inProgress: this.physicsEngine.hasActiveProjectiles() || this.tankManager.anyTankIsFalling() };
+  }
   public readonly width: number;
   public readonly height: number;
 
@@ -348,6 +364,7 @@ export class GameEngine {
 
     // Forward hit events from PhysicsEngine for VFX/audio.
     this.physicsEngine.onProjectileHit = (hit) => {
+      this.diagnosticSink?.({ kind: "impact", hit: structuredClone(hit), step: this.diagnosticStep, material: this.terrain.getMaterialAt(hit.x) });
       const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
       const blastRadius = weapon?.blastRadius ?? 28;
@@ -490,8 +507,13 @@ export class GameEngine {
     this.currentFirerId = ownerId;
     this.shotNumberInRound++;
     const shotId = identity?.shotId ?? this.nextShotId++;
-    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) return false;
+    if (this.combatObserver?.emit({ kind: "shot", shotId, playerId: ownerId, command: { ...command } }) === false) {
+      this.diagnosticSink?.({ kind: "combat", event: { kind: "shot-refused", playerId: ownerId, command: { ...command }, reason: "observer" } });
+      return false;
+    }
     const isFirstShotOfRound = identity?.isFirstShotOfRound ?? this.shotNumberInRound === 1;
+    this.diagnosticSink?.({ kind: "pre-shot", snapshot: this.captureDiagnosticState(),
+      shot: { shotId, playerId: ownerId, command: { ...command }, origin: { ...from }, isFirstShotOfRound } });
     const aliveBeforeShot = this.tankManager.getAlivePlayers().map((player) => player.id);
     this.activeShotLedger = {
       shotId,
@@ -537,6 +559,10 @@ export class GameEngine {
       ownerColor,
       { shotId, munitionId: 0 },
     );
+    if (this.diagnosticSink) {
+      const projectile = this.physicsEngine.getProjectiles().find(p => p.shotId === shotId && p.munitionId === 0);
+      if (projectile) this.diagnosticSink({ kind: "projectile-launched", projectile: structuredClone(projectile), step: this.diagnosticStep });
+    }
     this.combatObserver?.emit({ kind: "shot-launched", shotId, playerId: ownerId, command: { ...command },
       position: { ...from }, launch: { x: launchX, y: launchY } });
     return true;
@@ -668,6 +694,7 @@ export class GameEngine {
     if (this.localMatch) {
       this.applyResolvedEarnings(preview.shotId, balances, preview.awards);
       this.combatObserver?.emit({ kind: "shot-result", shotId: preview.shotId, awards: structuredClone(preview.awards) });
+      this.diagnosticSink?.({ kind: "settled", snapshot: this.captureDiagnosticState() });
       const evaluation = evaluateZeusDeadlock(
         this.zeusState,
         this.tankManager.getPlayers(),
@@ -1068,6 +1095,7 @@ export class GameEngine {
   };
 
   private update(dt: number): void {
+    this.diagnosticStep++;
     // SUMMARY / SHOP: freeze combat simulation (tanks were dying during boutique → false draws)
     if (this.turnManager.isInterRoundPaused()) {
       this.updateFireworks(dt);

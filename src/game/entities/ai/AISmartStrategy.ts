@@ -6,7 +6,7 @@ import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
 import type { AIObserver } from "../../observation";
-import { DecisionObservation, observedFallback } from "./decisionObservation";
+import { DecisionObservation, observedFallback, captureDecisionInitial } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -47,8 +47,9 @@ export class AISmartStrategy implements AIEngine {
     terrainManager: TerrainManager,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
+    const initial = this.onDecisionObserved ? captureDecisionInitial(gameState, self ? this.memories.get(self.id) : null) : undefined;
     if (!self || self.tank.isDead) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable", initial);
     }
 
     const memory = this.getMem(self.id);
@@ -69,14 +70,14 @@ export class AISmartStrategy implements AIEngine {
           ...decisionTrace, finalReason: "aucun adversaire vivant",
         });
       }
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
     const targetSelection = { source: plan ? "main-plan" : "fallback",
       reason: plan ? "ranked-plan" : memory.currentTargetId === target.id ? "living-memory-target" : "ordinary-target-order",
       previousTargetId: memory.currentTargetId ?? null, targetId: target.id };
     this.onTargetSelected?.(self.id, target.id);
-    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
     const fallback = plan ? undefined : chooseExpertFallback(
       gameState, terrainManager, self, target, adjustWeaponForMaterial(
         chooseExpertTacticalWeapon(self, target, terrainManager, gameState),
@@ -98,6 +99,7 @@ export class AISmartStrategy implements AIEngine {
     self.tank.currentWeapon = weaponId;
 
     let command = choice.rawCommand;
+    observation?.proposed({ ...command, weaponId });
     observation?.evaluated({ ...choice.command, weaponId }, point);
     observation?.step("offset", null, null, { offset: choice.offset, aimedPoint: choice.requestedPoint });
 
@@ -137,7 +139,8 @@ export class AISmartStrategy implements AIEngine {
       selectionReason: fallback.selectionReason, conservationReason: fallback.conservationReason,
     } : undefined;
     observation?.finish({ ...finalAim, weaponId }, plan ? decisionTrace?.selectionReason ?? null : fallback?.selectionReason ?? null,
-      { planner: decisionTrace ?? null, fallback: fallback?.selectionReason ?? null, policy, targetSelection, fallbackChoice });
+      { planner: decisionTrace ?? null, fallback: fallback?.selectionReason ?? null, policy, targetSelection, fallbackChoice,
+        exploration: cache.diagnostics });
     if (import.meta.env.DEV) {
       const rejectedUnprofitableShots = cache.diagnostics?.rejectedUnprofitableShots;
       const conservationReason = fallback?.conservationReason;

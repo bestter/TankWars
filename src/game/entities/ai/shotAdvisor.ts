@@ -59,7 +59,7 @@ export function calculateShotAdvice(snapshot: AdvisorSnapshot, objective: Adviso
     cache, aim.forTarget(target.id), { objective });
   const choice = plan ?? fallback;
   const forecast = plan?.result?.forecast ?? fallback?.forecast;
-  if (decision) onDecision?.({ ...decision, advisorFallback: fallback && {
+  if (decision) onDecision?.({ ...decision, exploration: cache.diagnostics, advisorFallback: fallback && {
     targetId: target.id, targetSelectionReason: "neutral-health-roster-order",
     weaponId: fallback.weaponId, kind: fallback.kind, selectionReason: fallback.selectionReason,
     profit: fallback.forecast?.profit ?? null, refusal: fallback.kind === "ordinary" ? "uncertified" : null,

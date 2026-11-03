@@ -2,6 +2,9 @@ import type { BlockRecord, EnduranceExport, Incident, RoundRecord, SessionRecord
 import { metrics } from "./metrics";
 import { isPlayers } from "../online/protocol";
 import type { JournalEntry, JournalStatus, JournalStorage } from "./journal";
+import type { ArchiveFilter } from "../diagnostics/export";
+import { byteSize } from "../diagnostics/archive";
+import type { ArchiveRecord, ArchiveWrite, TerrainRecord, ShotListPage } from "../diagnostics/types";
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -40,6 +43,8 @@ export interface Checkpoint {
   incident?: Incident;
 }
 export interface EnduranceStorage {
+  readArchive?(sessionId: string, upper: number, filter?: ArchiveFilter): Promise<ArchiveWrite[]>;
+  listShots?(sessionId: string, upper: number, query: string, page: number): Promise<ShotListPage>;
   appendJournal?: JournalStorage["appendJournal"];
   readJournal?: JournalStorage["readJournal"];
   journalStatus?: JournalStorage["journalStatus"];
@@ -55,7 +60,7 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
   private connection: Promise<IDBDatabase> | null = null;
   private db(): Promise<IDBDatabase> {
     return this.connection ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open("tankwars-endurance", 2);
+      const request = indexedDB.open("tankwars-endurance", 3);
       request.onupgradeneeded = () => {
         for (const name of STORES) {
           if (request.result.objectStoreNames.contains(name)) continue;
@@ -65,6 +70,8 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
         }
         if (!request.result.objectStoreNames.contains("journal")) request.result.createObjectStore("journal", { keyPath: ["sessionId", "sequence"] });
         if (!request.result.objectStoreNames.contains("journalMeta")) request.result.createObjectStore("journalMeta", { keyPath: "sessionId" });
+        if (!request.result.objectStoreNames.contains("captures")) request.result.createObjectStore("captures", { keyPath: ["sessionId", "sequence"] });
+        if (!request.result.objectStoreNames.contains("terrains")) request.result.createObjectStore("terrains", { keyPath: "id" });
       };
       request.onsuccess = () => {
         request.result.onversionchange = () => request.result.close();
@@ -90,10 +97,24 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
   async appendJournal(entries: readonly JournalEntry[], status: JournalStatus): Promise<void> {
     const db = await this.db();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(["journal", "journalMeta"], "readwrite");
+      const tx = db.transaction(["journal", "journalMeta", "captures", "terrains"], "readwrite");
       tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error ?? new Error("JOURNAL_WRITE_FAILED"));
       tx.onerror = () => reject(tx.error ?? new Error("JOURNAL_WRITE_FAILED"));
-      for (const entry of entries) tx.objectStore("journal").add(entry);
+      for (const entry of entries) {
+        if (entry.event.kind === "archive") {
+          const { record, terrains } = entry.event.write;
+          tx.objectStore("captures").add({ sessionId: entry.sessionId, sequence: entry.sequence, record });
+          for (const terrain of terrains) {
+            const store = tx.objectStore("terrains");
+            const request = store.get(terrain.id);
+            request.onsuccess = () => {
+              if (request.result === undefined) store.add(terrain);
+              else if (JSON.stringify(request.result) !== JSON.stringify(terrain)) tx.abort();
+            };
+          }
+          tx.objectStore("journal").add({ ...entry, event: { kind: "archive", write: { record, terrains: [] } } });
+        } else tx.objectStore("journal").add(entry);
+      }
       tx.objectStore("journalMeta").put(status);
     });
   }
@@ -113,6 +134,116 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
       };
       request.onerror = () => reject(request.error);
     });
+  }
+  /** Short transactions yield to the writer; each page is bounded by count and serialized bytes. */
+  private async capturePage(sessionId: string, upper: number, after: number, reverse = false): Promise<Array<{ key: number; record: ArchiveRecord }>> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("captures"), rows: Array<{ key: number; record: ArchiveRecord }> = [];
+      let bytes = 0;
+      const range = reverse ? IDBKeyRange.bound([sessionId, 0], [sessionId, Math.min(upper, after)], false, after <= upper) :
+        IDBKeyRange.bound([sessionId, after], [sessionId, upper], true);
+      const request = tx.objectStore("captures").openCursor(range, reverse ? "prev" : "next");
+      request.onsuccess = () => {
+        try {
+          const cursor = request.result; if (!cursor || rows.length >= 128 || bytes >= 1024 * 1024) return;
+          const value: unknown = cursor.value;
+          if (!object(value) || !Number.isSafeInteger(value.sequence) || !object(value.record) || !object(value.record.input) ||
+            typeof value.record.input.kind !== "string" || !Number.isSafeInteger(value.record.sequence)) throw new Error("INVALID_STORED_CAPTURE");
+          bytes += byteSize(value);
+          rows.push({ key: Number(value.sequence), record: value.record as unknown as ArchiveRecord }); cursor.continue();
+        } catch (error) { reject(error); tx.abort(); }
+      };
+      tx.oncomplete = () => resolve(rows); tx.onerror = () => reject(tx.error ?? new Error("ARCHIVE_READ_FAILED"));
+      tx.onabort = () => reject(tx.error ?? new Error("ARCHIVE_READ_FAILED"));
+    });
+  }
+  async readArchive(sessionId: string, upper: number, filter?: ArchiveFilter): Promise<ArchiveWrite[]> {
+    if (!Number.isSafeInteger(upper) || upper < 0) throw new Error("INVALID_ARCHIVE_BOUNDARY");
+    const writes: ArchiveWrite[] = [], seen = new Set<number>(), terrainIds = new Set<string>();
+    let group: ArchiveRecord[] = [], context = "", wanted = false, last: ArchiveRecord | undefined, after = 0;
+    const selecting = filter && (filter.shotKey !== undefined || filter.from !== undefined || filter.to !== undefined || filter.incidents);
+    const append = (record: ArchiveRecord) => {
+      if (seen.has(record.sequence)) return;
+      seen.add(record.sequence); writes.push({ record, terrains: [] });
+      if ("snapshot" in record.input) {
+        if (!object(record.input.snapshot) || typeof record.input.snapshot.terrainId !== "string") throw new Error("INVALID_STORED_CAPTURE");
+        terrainIds.add(record.input.snapshot.terrainId);
+      }
+    };
+    const flush = () => { if (wanted) for (const record of group) append(record); group = []; wanted = false; };
+    while (after < upper) {
+      // Each short transaction starts after the preceding confirmed page, leaving the writer free between pages.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const rows = await this.capturePage(sessionId, upper, after);
+      if (!rows.length) break;
+      for (const { record } of rows) {
+        last = record;
+        if (!selecting) { append(record); continue; }
+        if (record.input.kind === "boundary" && record.input.status === "archive-manifest") append(record);
+        const key = `${record.blockId}/${record.round}/${record.turn}`;
+        if (key !== context) { flush(); context = key; }
+        group.push(record);
+        const incident = (record.input.kind === "combat" && ["failure", "recovery", "shot-refused"].includes(record.input.event.kind)) ||
+          (record.input.kind === "boundary" && ["incident", "manual-incident"].includes(record.input.status));
+        if ((filter.shotKey !== undefined && record.shotKey === filter.shotKey) || (filter.incidents && incident) ||
+          ((filter.from !== undefined || filter.to !== undefined) && record.sequence >= (filter.from ?? 0) && record.sequence <= (filter.to ?? Infinity))) wanted = true;
+      }
+      after = rows[rows.length - 1].key;
+    }
+    flush(); if (last) append(last); // Preserve the stable archive upper sequence, even for a filtered export.
+    const db = await this.db(), ids = [...terrainIds];
+    for (let offset = 0; offset < ids.length; offset += 128) {
+      // Dependencies are immutable; bounded transactions need no combat lock.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const terrains = await new Promise<TerrainRecord[]>((resolve, reject) => {
+        const tx = db.transaction("terrains"), records: TerrainRecord[] = [];
+        for (const id of ids.slice(offset, offset + 128)) {
+          const request = tx.objectStore("terrains").get(id);
+          request.onsuccess = () => {
+            const value: unknown = request.result;
+            if (!object(value) || value.id !== id) { tx.abort(); return; }
+            records.push(value as unknown as TerrainRecord);
+          };
+        }
+        tx.oncomplete = () => resolve(records); tx.onabort = () => reject(tx.error ?? new Error("ARCHIVE_DEPENDENCY_MISSING"));
+        tx.onerror = () => reject(tx.error ?? new Error("ARCHIVE_READ_FAILED"));
+      });
+      if (writes[0]) writes[0].terrains.push(...terrains);
+    }
+    return writes;
+  }
+  async listShots(sessionId: string, upper: number, query: string, page: number): Promise<ShotListPage> {
+    if (!Number.isSafeInteger(page) || page < 0 || !Number.isSafeInteger(upper) || upper < 0) throw new Error("INVALID_ARCHIVE_PAGE");
+    const result: ShotListPage = { rows: [], total: 0, firstSequence: 0, lastSequence: 0, evicted: 0 };
+    let after = Number.MAX_SAFE_INTEGER, terminalKey = "", terminalStatus = "";
+    for (;;) {
+      // Read newest first so a shot's terminal status precedes its launch; at most one active shot exists.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const rows = await this.capturePage(sessionId, upper, after, true); if (!rows.length) break;
+      for (const { record } of rows) {
+        result.firstSequence = record.sequence; result.lastSequence = Math.max(result.lastSequence, record.sequence);
+        const input = record.input;
+        if (result.captureInProgress === undefined && "snapshot" in input) {
+          if (!object(input.snapshot) || typeof input.snapshot.inProgress !== "boolean") throw new Error("INVALID_STORED_CAPTURE");
+          result.captureInProgress = input.snapshot.inProgress;
+        }
+        if (record.shotKey && (input.kind === "settled" || input.kind === "interrupted")) {
+          if (terminalKey !== record.shotKey || input.kind === "settled") { terminalKey = record.shotKey; terminalStatus = input.kind; }
+        }
+        if (input.kind !== "pre-shot" || !record.shotKey) continue;
+        if (!object(input.snapshot) || !object(input.snapshot.state) || !isPlayers(input.snapshot.state.players) || !object(input.shot)) throw new Error("INVALID_STORED_CAPTURE");
+        const player = input.snapshot.state.players.find(p => p.id === input.shot.playerId);
+        const row = { key: record.shotKey, label: `${player?.name ?? input.shot.playerId} · ${record.blockId ?? "DEV"}/${record.round}/${record.turn} · #${record.sequence} · ${record.shotKey}`,
+          status: terminalKey === record.shotKey ? terminalStatus : "in-progress" };
+        terminalKey = ""; terminalStatus = "";
+        if (!`${row.label} ${row.status}`.toLowerCase().includes(query.toLowerCase())) continue;
+        if (result.total >= page * 20 && result.rows.length < 20) result.rows.push(row);
+        result.total++;
+      }
+      after = rows[rows.length - 1].key; if (after === 0) break;
+    }
+    return result;
   }
   async journalStatus(sessionId: string): Promise<JournalStatus | null> {
     const db = await this.db();

@@ -4,7 +4,7 @@ import type { WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
 import type { AIObserver } from "../../observation";
-import { DecisionObservation, observedFallback } from "./decisionObservation";
+import { DecisionObservation, observedFallback, captureDecisionInitial } from "./decisionObservation";
 import {
   finalizeSimpleAim,
   interpolateAimCommands,
@@ -71,8 +71,9 @@ export class AISimpleStrategy implements AIEngine {
     isCurrent: () => boolean = () => true,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const self = gameState.players.find((player) => player.tank.id === tankId);
+    const initial = this.onDecisionObserved ? captureDecisionInitial(gameState, self ? this.memories.get(self.id) : null) : undefined;
     if (!self || self.tank.isDead) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable", initial);
     }
 
     const memory = this.getMem(self.id);
@@ -81,7 +82,7 @@ export class AISimpleStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
     let target = memory.currentTargetId
@@ -95,11 +96,12 @@ export class AISimpleStrategy implements AIEngine {
       )[0];
     }
     if (!target) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
+    const targetReason = target.id === memory.currentTargetId ? "memory" : "weakest-ai-before-human";
     this.onTargetSelected?.(self.id, target.id);
-    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
     const attempts = recordAimAttempt(memory, target.id);
     const weaponId = self.tank.currentWeapon || "MISSILE";
     self.tank.currentWeapon = weaponId;
@@ -115,7 +117,7 @@ export class AISimpleStrategy implements AIEngine {
       const final = { ...finalizeSimpleAim(sampled), weaponId };
       observation?.step("gaffe", null, sampled, { chance: chances.gaffe, occurred: true, shortCircuit: true });
       observation?.step("finalize", sampled, final);
-      observation?.finish(final, "early-gaffe");
+      observation?.finish(final, "early-gaffe", { targetReason, chances, weaponSource: "currentWeapon-or-missile", unexamined: "early-gaffe" });
       return final;
     }
     observation?.step("gaffe", null, null, { chance: chances.gaffe, occurred: false, shortCircuit: true });
@@ -134,6 +136,7 @@ export class AISimpleStrategy implements AIEngine {
       terrainManager,
     );
     observation?.step("offset", null, null, { offset: aimX - target.tank.position.x, aimedPoint: { x: aimX, y: target.tank.position.y - 6 } });
+    observation?.proposed({ ...command, weaponId });
     observation?.evaluated({ ...command, weaponId }, { x: target.tank.position.x, y: target.tank.position.y - 6 });
 
     let before = command;
@@ -163,7 +166,7 @@ export class AISimpleStrategy implements AIEngine {
     consumeHitReaction(self.tank.hitReaction);
     const final = { ...finalizeSimpleAim(command), weaponId };
     observation?.step("finalize", command, final);
-    observation?.finish(final);
+    observation?.finish(final, "local-simple", { targetReason, chances, weaponSource: "currentWeapon-or-missile", unexamined: "not-evaluated" });
     return final;
   }
 

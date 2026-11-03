@@ -1,11 +1,25 @@
 import { useShotAdvisor } from "./advisor/useShotAdvisor";
+import { ShotRecorder } from "../game/diagnostics/archive";
+import { filterArchive } from "../game/diagnostics/export";
+import type { ArchiveFilter } from "../game/diagnostics/export";
 import { startCanvasLoop } from "./canvasLoop";
 import type { EnduranceSession } from "../game/endurance/session";
+import type { CombatObserver } from "../game/endurance/types";
 import type { RoundMap } from "../game/round/prepareRound";
 import { ONLINE_PROTOCOL_VERSION } from "../game/online/protocol";
 import { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import { GameEngine, type ResolvedShotPreview } from "../game/engine/GameEngine";
 import { AIByProfileStrategy } from "../game/entities/ai/AIByProfileStrategy";
+
+function observedStrategy(strategy: AIByProfileStrategy, observer?: CombatObserver): AIByProfileStrategy {
+  if (observer) {
+    strategy.onDecisionObserved = observation => { observer.emit({ kind: "ai-detail", observation }); };
+    strategy.onTargetSelected = (playerId, targetId) => {
+      if (!observer.emit({ kind: "target", playerId, targetId })) throw new Error("LOCAL_TARGET_OBSERVATION_REJECTED");
+    };
+  }
+  return strategy;
+}
 import {
   isInitialPlayerCount,
   type InitialPlayerCount,
@@ -137,6 +151,7 @@ export function useGameSession({
     : freeWeapons;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
+  const diagnosticsRef = useRef<ShotRecorder | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const gameWsRef = useRef<WebSocket | null>(null);
   const initialWsRef = useRef(ws);
@@ -409,6 +424,11 @@ export function useGameSession({
     const stopExecution = () => {
       if (stopped) return;
       stopped = true;
+      if (engine.diagnosticSink && engine.getTankManager().getPlayers().length >= 2) {
+        const snapshot = engine.captureDiagnosticState();
+        engine.diagnosticSink({ kind: snapshot.inProgress ? "interrupted" : "current", snapshot });
+        engine.diagnosticSink({ kind: "boundary", status: "execution-stopped", detail: { inProgress: snapshot.inProgress } });
+      }
       clearShopAiTimeout(); clearCelebrationTimer();
       if (zeusAnnouncementTimerRef.current !== null) clearTimeout(zeusAnnouncementTimerRef.current);
       if (fireRejectionTimerRef.current !== null) clearTimeout(fireRejectionTimerRef.current);
@@ -420,23 +440,32 @@ export function useGameSession({
       }
     };
     const enduranceHost = {
+      captureCurrent: () => engine.diagnosticSink?.({ kind: "current", snapshot: engine.captureDiagnosticState() }),
       stop: stopExecution,
       context: () => ({ players: structuredClone([...engine.getTankManager().getPlayers()]),
         heights: [...engine.getTerrain().getHeightmap()], materials: [...engine.getTerrain().getMaterials()], phase: gamePhaseRef.current, windForce: engine.getWindForce() }),
     };
-    if (endurance) {
-      const blockId = endurance.block?.id;
-      const observer = { emit: (event: Parameters<EnduranceSession["emit"]>[0]) =>
-        !stopped && endurance.block?.id === blockId && endurance.emit(event) };
-      endurance.attach(enduranceHost);
+    let diagnosticStrategy: AIByProfileStrategy | null = null;
+    if ((import.meta.env.DEV || import.meta.env.MODE === "endurance") && (endurance || gameMode === "local")) {
+      if (!endurance && !diagnosticsRef.current) diagnosticsRef.current = new ShotRecorder(crypto.randomUUID());
+      const recorder = endurance?.recorder ?? diagnosticsRef.current!;
+      engine.diagnosticFreeWeapons = isFreeWeapons;
+      engine.diagnosticPhase = () => gamePhaseRef.current;
+      engine.diagnosticSink = input => {
+        if (endurance) endurance.diagnostic(input);
+        else recorder.record(input);
+      };
+      const blockId = endurance?.block?.id;
+      const observer = { emit: (event: Parameters<EnduranceSession["emit"]>[0]) => {
+        if (stopped) return false;
+        if (endurance) return endurance.block?.id === blockId && endurance.emit(event);
+        recorder.record({ kind: "combat", event }); return true;
+      } };
+      endurance?.attach(enduranceHost);
       engine.combatObserver = observer; tm.combatObserver = observer;
       engine.getPhysicsEngine().onPhysicalObserved = observation => { observer.emit({ kind: "physical", observation }); };
-      const strategy = new AIByProfileStrategy(() => !stopped && endurance.running);
-      strategy.onDecisionObserved = observation => { observer.emit({ kind: "ai-detail", observation }); };
-      strategy.onTargetSelected = (playerId, targetId) => {
-        if (!observer.emit({ kind: "target", playerId, targetId })) throw new Error("ENDURANCE_TARGET_REJECTED");
-      };
-      engine.setAIEngine(strategy);
+      diagnosticStrategy = observedStrategy(new AIByProfileStrategy(() => !stopped && (!endurance || endurance.running)), observer);
+      if (endurance) engine.setAIEngine(diagnosticStrategy);
       engine.getTankManager().onBulldozerDisplacement = (playerId, distance) => {
         observer.emit({ kind: "displacement", playerId, distance, recoil: tm.getCurrentPlayer()?.id === playerId });
       };
@@ -600,7 +629,7 @@ export function useGameSession({
 
     // L'IA locale reste après setPlayers : une décision ne doit pas partir avant
     // le verrou de rattrapage en ligne. L'endurance a déjà installé la sienne.
-    if (!endurance) engine.setAIEngine(new AIByProfileStrategy());
+    if (!endurance) engine.setAIEngine(diagnosticStrategy ?? new AIByProfileStrategy());
 
     engineRef.current = engine;
     dispatch({ type: "SET_WIND", wind: engine.getWindForce() });
@@ -804,7 +833,8 @@ export function useGameSession({
     const nextPlayerCount = requireInitialPlayerCount(rawNewPlayers.length);
     initialPlayerCountRef.current = nextPlayerCount;
     setInitialPlayerCount(nextPlayerCount);
-    engine.setAIEngine(new AIByProfileStrategy());
+    if (diagnosticsRef.current) diagnosticsRef.current.context(crypto.randomUUID());
+    engine.setAIEngine(observedStrategy(new AIByProfileStrategy(), engine.combatObserver));
     const newPlayers = isFreeWeapons
       ? replenishRosterFreeWeapons(rawNewPlayers, nextPlayerCount)
       : rawNewPlayers;
@@ -891,6 +921,22 @@ export function useGameSession({
   };
 
   return {
+    diagnostics: (import.meta.env.DEV || import.meta.env.MODE === "endurance") ? {
+      read: async (filter?: ArchiveFilter) => endurance ? endurance.exportArchive(filter) :
+        diagnosticsRef.current ? filterArchive(diagnosticsRef.current.export(), filter) : null,
+      capture: () => {
+        const engine = engineRef.current;
+        engine?.diagnosticSink?.({ kind: "current", snapshot: engine.captureDiagnosticState() });
+      },
+      mark: () => {
+        if (endurance) endurance.markDiagnostic();
+        else {
+          const engine = engineRef.current;
+          engine?.diagnosticSink?.({ kind: "current", snapshot: engine.captureDiagnosticState() });
+          engine?.diagnosticSink?.({ kind: "boundary", status: "manual-incident", detail: null });
+        }
+      },
+    } : undefined,
     advisor,
     canvasRef,
     state,

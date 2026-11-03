@@ -797,6 +797,13 @@ export class TurnManager {
     return state;
   }
 
+  public captureDiagnosticContext(): GameState {
+    return structuredClone({ phase: "COMBAT", players: [...this.tankManager.getPlayers()],
+      currentPlayerIndex: this.currentPlayerIndex, turn: this.turnNumber,
+      windForce: this.currentWindForce, gravity: this.currentGravity,
+      roundNumber: this.currentRoundNumber, localShotContext: this.localShotContextProvider?.() });
+  }
+
   /** Validate everything before changing anything; selecting the current weapon succeeds. */
   public applyAdvisorCommand(command: FireCommand): boolean {
     if (!this.captureAdvisorState() || !ALL_WEAPON_IDS.includes(command.weaponId) ||
@@ -1288,7 +1295,7 @@ export class TurnManager {
   private async handleAITurnIfNeeded(player: Player): Promise<void> {
     console.log('[TurnManager] handleAITurnIfNeeded: player=(player redacted), isHuman=' + player.isHuman + ', isProcessingAI=' + this.isProcessingAI + ', isMatchEnded=' + this.isMatchEnded());
     if (this.isProcessingAI || this.isMatchEnded()) return;
-    if (this.combatObserver?.emit({ kind: "turn", playerId: player.id, turn: this.turnNumber }) === false) return;
+    if (this.combatObserver?.emit({ kind: "turn", playerId: player.id, turn: this.turnNumber, roundNumber: this.currentRoundNumber }) === false) return;
     if (this.onSpecialTurn?.(player)) {
       this.lockSpecialTurn();
       return;

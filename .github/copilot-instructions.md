@@ -16,6 +16,7 @@
 ## Références selon la tâche
 
 - [Journaux et erreurs](../AGENTS.md#journaux-et-erreurs).
+- [Diagnostics et rejeu de tirs locaux](../AGENTS.md#diagnostics-et-rejeu-de-tirs-locaux-373-v0133).
 - [Architecture à préserver](../AGENTS.md#architecture-à-préserver).
 - [Contrats sensibles](../AGENTS.md#contrats-sensibles).
 - [Commandes](../AGENTS.md#commandes) et [Validation](../AGENTS.md#validation), dont React Doctor obligatoire dans chaque batterie de validation, même sans changement React.
