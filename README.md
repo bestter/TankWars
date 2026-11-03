@@ -309,7 +309,28 @@ To explore the codebase:
 
 ### Archives de diagnostic et rejeu local / Local shot diagnostics (#373, v0.13.3)
 
+#### Démarrer l’endurance / Start endurance
+
+Pour tester le mode endurance avec **DEV faux**, lancer ces deux commandes dans l’ordre : / To run endurance with **DEV false**, run these two commands in order:
+
+```sh
+npm run build -- --mode endurance
+npm run preview -- --host 127.0.0.1 --port 4173
+```
+
+Ouvrir **http://127.0.0.1:4173/**, cliquer **Endurance IA**, configurer puis démarrer la session. Garder l’onglet actif. Aucun Worker n’est nécessaire pour ce parcours local. Un simple `npm run build` produit le build public, sans ce mode.
+
+Open **http://127.0.0.1:4173/**, select **AI endurance**, configure and start the session. Keep the tab active. This local workflow requires no Worker. Plain `npm run build` produces the public build without endurance.
+
+**Limites du rejeu / Replay limits :** un tir à la fois, depuis sa capture exacte; aucune reprise du combat après crash ni rejeu déterministe de toute la partie. L’original exige sa bande physique complète. Une alternative exige un état initial stabilisé, utilise le RNG fixe **0,5** et s’arrête à **2 400 pas** : atteindre ce plafond signifie « incomplet ».
+
+Replay covers one shot from its exact capture, without crash-time combat recovery or deterministic whole-match replay. Original replay requires its complete physical tape. Alternatives require a stable starting state, use fixed RNG **0.5** and stop after **2,400 steps**; reaching the limit means **incomplete**.
+
 En développement (`npm run dev`), le panneau **Archives des tirs locaux** est disponible dans les parties locales, pendant le combat et au résumé. Il conserve au plus 128 tours/tirs et 32 Mio sérialisés, terrains compris; les évictions et séquences conservées sont affichées. Une capture trop grosse est évincée au complet. Exporter avant de quitter : cette mémoire DEV ne survit pas au démontage du Canvas. Le build public normal n’installe ni collecte lourde ni panneau. Les traces console tactiques demeurent réservées au développement.
+
+Les bandeaux jaunes **DERNIÈRE CAPTURE LUE : EN COURS** et **ARCHIVE PARTIELLE** décrivent le dernier rafraîchissement ou export. Les tirs portent des badges **EN COURS**, **INTERROMPU — INCOMPLET** ou **RÉSOLU**. Une archive en cours de collecte peut être partielle tout en contenant des tirs résolus rejouables.
+
+Yellow **LAST CAPTURE READ: IN PROGRESS** and **PARTIAL ARCHIVE** notices describe the latest refresh or export. Shot badges distinguish **IN PROGRESS**, **INTERRUPTED — INCOMPLETE** and **RESOLVED**. An ongoing archive can be partial while already containing replayable resolved shots.
 
 Le mode endurance (`npm run build -- --mode endurance`) conserve progressivement tous les tirs admis dans IndexedDB, sans éviction persistée, même avec DEV faux. La base v3 ajoute les magasins `captures` et `terrains` sans supprimer les résultats ou journaux existants. Les terrains sont immuables et dédupliqués par empreinte avec vérification du contenu; les événements `ai-detail` ne contiennent pas de Terrain. Les stocks réels archivés, dont les nucléaires adverses, ne deviennent jamais des informations tactiques accessibles aux stratégies. Les propositions EXPERT et du conseiller conservent les points/arcs réellement visités, commandes, complétude, coût/profit et motifs de refus; une branche non visitée n’est pas reconstruite. Le conseiller peut demander ces détails avec DEV faux dans le build endurance, y compris en hotseat local hors de l’écran d’endurance.
 

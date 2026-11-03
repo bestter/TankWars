@@ -1,4 +1,11 @@
 {
+  "diagnostics_capture_in_progress": "DERNIÈRE CAPTURE LUE : EN COURS",
+  "diagnostics_capture_in_progress_help": "Un projectile ou une chute était actif. Cet état ne permet pas de comparer une autre commande depuis un départ stabilisé.",
+  "diagnostics_archive_incomplete": "ARCHIVE PARTIELLE",
+  "diagnostics_archive_incomplete_help": "Collecte en cours ou interrompue au dernier relevé. Les tirs déjà résolus restent rejouables; un tir incomplet n’a pas de résultat final certifié.",
+  "diagnostics_shot_in_progress": "EN COURS",
+  "diagnostics_shot_interrupted": "INTERROMPU — INCOMPLET",
+  "diagnostics_shot_settled": "RÉSOLU",
   "diagnostics_previous": "Page précédente",
   "diagnostics_next": "Page suivante",
   "diagnostics_metrics": "Mesures de l’archive",

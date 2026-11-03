@@ -15,20 +15,27 @@ export default function DiagnosticPanel({ source }: { source: DiagnosticSource }
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<Array<{ key: string; label: string; status: string }>>([]);
   const [summary, setSummary] = useState("");
+  const [indicators, setIndicators] = useState<{ inProgress: boolean; incomplete: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
+  const inspect = (archive: ShotArchive) => {
+    const latest = archive.records.findLast(record => "snapshot" in record.input)?.input;
+    setIndicators({ inProgress: Boolean(latest && "snapshot" in latest && latest.snapshot.inProgress), incomplete: !archive.complete });
+  };
   const read = async (nextPage = page) => {
     setBusy(true); setError(null);
     try {
       if (source.list) {
         const result = await source.list(query, nextPage);
         setRows(result.rows); setPage(nextPage);
+        setIndicators({ inProgress: Boolean(result.captureInProgress), incomplete: Boolean(result.incomplete) });
         setSummary(`${result.firstSequence}–${result.lastSequence} · ${t("diagnostics_evicted")}: ${result.evicted} · ${result.total}`);
         return;
       }
       const archive = await source.read(); if (!archive) return;
+      inspect(archive);
       const terminal = new Map<string, string>();
       for (const r of archive.records) if (r.shotKey && ["settled", "interrupted"].includes(r.input.kind)) terminal.set(r.shotKey, r.input.kind);
       const shots = archive.records.flatMap(r => {
@@ -43,11 +50,13 @@ export default function DiagnosticPanel({ source }: { source: DiagnosticSource }
   };
   const save = async (filter?: ArchiveFilter) => {
     setBusy(true); setError(null);
-    try { const archive = await source.read(filter); if (archive) download(archive); }
+    try { const archive = await source.read(filter); if (archive) { inspect(archive); download(archive); } }
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
   return <details className="diagnostic-panel">
     <summary>{t("diagnostics_title")}</summary><p>{summary}</p>
+    {indicators?.inProgress && <p role="status" className="diagnostic-warning"><strong>{t("diagnostics_capture_in_progress")}</strong> {t("diagnostics_capture_in_progress_help")}</p>}
+    {indicators?.incomplete && <p role="status" className="diagnostic-warning"><strong>{t("diagnostics_archive_incomplete")}</strong> {t("diagnostics_archive_incomplete_help")}</p>}
     <label>{t("diagnostics_filter")} <input value={query} onChange={e => setQuery(e.target.value)} /></label>
     <button type="button" disabled={busy} onClick={() => void read(0)}>{t("diagnostics_refresh")}</button>
     <button type="button" disabled={busy} onClick={() => { source.capture(); void read(0); }}>{t("diagnostics_capture")}</button>
@@ -57,7 +66,9 @@ export default function DiagnosticPanel({ source }: { source: DiagnosticSource }
     <div><label>{t("diagnostics_from")} <input type="number" min="1" value={from} onChange={e => setFrom(e.target.value)} /></label>
       <label>{t("diagnostics_to")} <input type="number" min="1" value={to} onChange={e => setTo(e.target.value)} /></label>
       <button type="button" disabled={busy || (!from && !to)} onClick={() => void save({ from: from ? Number(from) : undefined, to: to ? Number(to) : undefined })}>{t("diagnostics_range")}</button></div>
-    <ul>{rows.map(row => <li key={row.key}>{row.label} · {row.status} <button type="button" disabled={busy} onClick={() => void save({ shotKey: row.key })}>{t("diagnostics_export_shot")}</button></li>)}</ul>
+    <ul>{rows.map(row => <li key={row.key}>{row.label} · <strong className={row.status === "settled" ? "diagnostic-status" : "diagnostic-status diagnostic-status-warning"}>
+      {row.status === "in-progress" ? t("diagnostics_shot_in_progress") : row.status === "interrupted" ? t("diagnostics_shot_interrupted") : row.status === "settled" ? t("diagnostics_shot_settled") : row.status}
+    </strong> <button type="button" disabled={busy} onClick={() => void save({ shotKey: row.key })}>{t("diagnostics_export_shot")}</button></li>)}</ul>
     <button type="button" aria-label={t("diagnostics_previous")} disabled={busy || page === 0} onClick={() => void read(page - 1)}>←</button>
     <span> {page + 1} </span><button type="button" aria-label={t("diagnostics_next")} disabled={busy || rows.length < 20} onClick={() => void read(page + 1)}>→</button>
     {error && <p role="alert">{error}</p>}

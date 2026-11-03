@@ -1,4 +1,11 @@
 {
+  "diagnostics_capture_in_progress": "LAST CAPTURE READ: IN PROGRESS",
+  "diagnostics_capture_in_progress_help": "A projectile or fall was active. This state cannot support an alternative command from a stable starting point.",
+  "diagnostics_archive_incomplete": "PARTIAL ARCHIVE",
+  "diagnostics_archive_incomplete_help": "Collection was ongoing or interrupted at the last read. Resolved shots remain replayable; an incomplete shot has no certified final result.",
+  "diagnostics_shot_in_progress": "IN PROGRESS",
+  "diagnostics_shot_interrupted": "INTERRUPTED — INCOMPLETE",
+  "diagnostics_shot_settled": "RESOLVED",
   "diagnostics_previous": "Previous page",
   "diagnostics_next": "Next page",
   "diagnostics_metrics": "Archive metrics",

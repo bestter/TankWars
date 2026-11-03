@@ -215,6 +215,7 @@ describe("durable, content-addressed captures", () => {
     const first = await storage.listShots(archive.sessionId, journal.status.persisted, "", 0);
     expect(first.rows).toHaveLength(20); expect(first.total).toBe(41); expect(first.rows[0].key).toBe(`${archive.sessionId}:1:41`);
     expect(first.rows.every(row => row.status === "settled")).toBe(true);
+    expect(first.captureInProgress).toBe(false);
     const last = await storage.listShots(archive.sessionId, journal.status.persisted, "", 2);
     expect(last.rows).toHaveLength(1); expect(last.rows[0].key).toBe(`${archive.sessionId}:1:1`);
     const filtered = await exportStoredArchive(storage, archive.sessionId, undefined, { shotKey: `${archive.sessionId}:1:21` });
@@ -222,6 +223,19 @@ describe("durable, content-addressed captures", () => {
     expect(filtered.records).toHaveLength(template.records.length - 1);
     expect(filtered.records.every(r => r.turn === 21)).toBe(true); expect(validateArchive(filtered).terrains.length).toBeGreaterThan(0);
     storage.close();
+  });
+  it("confirms a just-requested current capture before returning its panel indicators", async () => {
+    const f = fixture(), storage = new IndexedEnduranceStorage();
+    const run = new EnduranceSession(f.config, storage); await run.start(); run.attach(f.host);
+    const { archive } = realShot(), before = archive.records.find(r => r.input.kind === "pre-shot")!.input;
+    if (before.kind !== "pre-shot") throw new Error("MISSING_TEST_CAPTURE");
+    const terrain = archive.terrains.find(t => t.id === before.snapshot.terrainId)!;
+    const snapshot = { ...before.snapshot, heights: terrain.heights, materials: terrain.materials, inProgress: true };
+    run.diagnostic({ kind: "current", snapshot });
+    expect(await run.listShots("", 0)).toMatchObject({ captureInProgress: true, incomplete: true, rows: [] });
+    run.diagnostic({ kind: "current", snapshot: { ...snapshot, inProgress: false } });
+    await run.stop();
+    expect(await run.listShots("", 0)).toMatchObject({ captureInProgress: false, incomplete: false }); storage.close();
   });
   it("freezes diagnostic duration once the session has stopped", async () => {
     const f = fixture(); await f.run.start(); f.advance(1000); await f.run.stop();

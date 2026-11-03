@@ -45,4 +45,5 @@ export type ArchiveWrite = { record: ArchiveRecord; terrains: TerrainRecord[] };
 export interface ShotListPage {
   rows: Array<{ key: string; label: string; status: string }>;
   total: number; firstSequence: number; lastSequence: number; evicted: number;
+  captureInProgress?: boolean; incomplete?: boolean;
 }

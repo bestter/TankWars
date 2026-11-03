@@ -9,6 +9,38 @@ import { makePlayer, makeTank } from "../../game/__tests__/helpers";
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("diagnostic archive controls", () => {
+  it("highlights partial and in-progress metadata, then clears notices after resolution", async () => {
+    const source = { read: vi.fn(async () => null), capture: vi.fn(), list: vi.fn(async () => ({
+      rows: [{ key: "shot", label: "Alice", status: "interrupted" }], total: 1, firstSequence: 1, lastSequence: 10, evicted: 0,
+      captureInProgress: true, incomplete: true,
+    })) };
+    render(<DiagnosticPanel source={source} />); fireEvent.click(screen.getByText("diagnostics_title"));
+    fireEvent.click(screen.getByRole("button", { name: "diagnostics_refresh" }));
+    expect(await screen.findByText("diagnostics_capture_in_progress")).toBeTruthy();
+    expect(screen.getByText("diagnostics_archive_incomplete")).toBeTruthy();
+    expect(screen.getByText("diagnostics_shot_interrupted").className).toContain("diagnostic-status-warning");
+    source.list.mockResolvedValue({ rows: [{ key: "shot", label: "Alice", status: "settled" }], total: 1, firstSequence: 1, lastSequence: 11,
+      evicted: 0, captureInProgress: false, incomplete: false });
+    fireEvent.click(screen.getByRole("button", { name: "diagnostics_refresh" }));
+    await waitFor(() => expect(screen.queryByText("diagnostics_capture_in_progress")).toBeNull());
+    expect(screen.queryByText("diagnostics_archive_incomplete")).toBeNull();
+    expect(screen.getByText("diagnostics_shot_settled").className).not.toContain("diagnostic-status-warning");
+    expect(source.read).not.toHaveBeenCalled();
+  });
+  it("shows the current in-progress capture even before any shot exists", async () => {
+    const recorder = new ShotRecorder("current");
+    recorder.record({ kind: "current", snapshot: {
+      state: { players: [makePlayer({ id: "a" }), makePlayer({ id: "b" })], phase: "COMBAT", currentPlayerIndex: 0, turn: 1, windForce: 0, gravity: 260 },
+      motion: { velocities: [], fallenDistances: [], isVoidFall: [], fallAttributions: [] }, width: 2, height: 480,
+      heights: [300, 300], materials: ["DIRT", "DIRT"], localMatch: true, freeWeapons: false, initialPlayerCount: 2,
+      projectiles: [], step: 1, inProgress: true,
+    } });
+    const source = { read: vi.fn(async () => recorder.export()), capture: vi.fn() };
+    render(<DiagnosticPanel source={source} />); fireEvent.click(screen.getByText("diagnostics_title"));
+    fireEvent.click(screen.getByRole("button", { name: "diagnostics_capture" }));
+    expect(await screen.findByText("diagnostics_capture_in_progress")).toBeTruthy();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0); expect(source.capture).toHaveBeenCalledOnce();
+  });
   it("uses the bounded endurance index instead of loading the full archive to list shots", async () => {
     const source = { read: vi.fn(async () => null), capture: vi.fn(), list: vi.fn(async () => ({
       rows: [{ key: "shot", label: "Alice", status: "settled" }], total: 1, firstSequence: 1, lastSequence: 1000, evicted: 0,

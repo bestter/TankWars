@@ -224,6 +224,10 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
       for (const { record } of rows) {
         result.firstSequence = record.sequence; result.lastSequence = Math.max(result.lastSequence, record.sequence);
         const input = record.input;
+        if (result.captureInProgress === undefined && "snapshot" in input) {
+          if (!object(input.snapshot) || typeof input.snapshot.inProgress !== "boolean") throw new Error("INVALID_STORED_CAPTURE");
+          result.captureInProgress = input.snapshot.inProgress;
+        }
         if (record.shotKey && (input.kind === "settled" || input.kind === "interrupted")) {
           if (terminalKey !== record.shotKey || input.kind === "settled") { terminalKey = record.shotKey; terminalStatus = input.kind; }
         }

@@ -71,8 +71,10 @@ export class EnduranceSession implements CombatObserver {
   }
   async listShots(query: string, page: number) {
     if (!this.storage.listShots) throw new Error("ARCHIVE_CAPABILITY_UNAVAILABLE");
+    await this.journal?.flush();
     const status = await this.storage.journalStatus?.(this.session.id);
-    return this.storage.listShots(this.session.id, status?.persisted ?? 0, query, page);
+    const shots = await this.storage.listShots(this.session.id, status?.persisted ?? 0, query, page);
+    return { ...shots, incomplete: !status?.complete };
   }
   private admitArchive(): boolean {
     if (this.resolutionReported) this.closeReservation();
