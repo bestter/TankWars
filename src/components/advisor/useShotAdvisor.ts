@@ -10,6 +10,13 @@ export function useShotAdvisor(engineRef: RefObject<GameEngine | null>, phaseRef
   const [view, setView] = useState<AdvisorView>({ objective: "SURVIE", status: "idle" });
   useEffect(() => {
     const controller = new AdvisorController({
+      observing: () => Boolean(engineRef.current?.diagnosticSink),
+      observe(event) {
+        const engine = engineRef.current;
+        if (!engine?.diagnosticSink) return;
+        if (event.status === "calculating") engine.diagnosticSink({ kind: "current", snapshot: engine.captureDiagnosticState(), requestId: event.requestId });
+        engine.diagnosticSink({ kind: "advisor", ...event });
+      },
       capture() {
         const engine = engineRef.current;
         if (gameMode !== "local" || phaseRef.current !== "COMBAT" || !engine ||

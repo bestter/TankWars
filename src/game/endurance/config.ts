@@ -9,7 +9,8 @@ export function validateConfig(config: EnduranceConfig): EnduranceConfig {
     (config.maxDurationMs !== null && !positive(config.maxDurationMs)) ||
     !Object.values(config.limits).every(positive) || config.players.length < 2 || config.players.length > 4 ||
     config.players.some(p => p.isHuman || !["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"].includes(p.aiProfile ?? "")) ||
-    (config.freeWeapons !== undefined && typeof config.freeWeapons !== "boolean")) {
+    (config.freeWeapons !== undefined && typeof config.freeWeapons !== "boolean") ||
+    (config.archiveBudgetMiB !== undefined && (!Number.isSafeInteger(config.archiveBudgetMiB) || config.archiveBudgetMiB < 64 || config.archiveBudgetMiB > 4096))) {
     throw new Error("INVALID_ENDURANCE_CONFIG");
   }
   assertRoster(config.players);

@@ -19,6 +19,10 @@ export interface LocalMaterialChoice {
   readonly variant: AimVariant;
   readonly reason: "useful" | "surviving" | "ordinary";
 }
+export interface MaterialProposalObservation {
+  weaponId: WeaponId; point: TacticalPoint; variant: AimVariant;
+  command: AimCommand | null; reason: string; forecast: PhysicalResolution | null;
+}
 
 export function hasAppliedPhysicalDamage(event: CombatDamageEvent, shooterId: string, victimIds: ReadonlySet<string>): boolean {
   return event.shotId === FORECAST_SHOT_ID && event.shooterId === shooterId &&
@@ -37,6 +41,7 @@ export function hasPhysicalEffect(forecast: PhysicalResolution, shooter: Player,
 export function chooseLocalMaterialShot(
   profile: "v2-heuristic", self: Player, target: Player, state: GameState,
   terrain: TerrainManager, ordinaryWeapon: WeaponId, solve: MaterialSolver,
+  observe?: (proposal: MaterialProposalObservation) => void,
 ): LocalMaterialChoice {
   const material = terrain.getMaterialAt(target.tank.position.x);
   const has = (weapon: WeaponId) => weapon === "MISSILE" || (self.inventory[weapon] ?? 0) > 0;
@@ -63,7 +68,7 @@ export function chooseLocalMaterialShot(
         proposals++;
         if (diagnostics) { diagnostics.proposals++; diagnostics.searches++; }
         const solution = solve(point, weaponId, variant);
-        if (!solution.complete) { diagnostics?.rejections.push("recherche incomplète"); continue; }
+        if (!solution.complete) { observe?.({ weaponId, point, variant, command: solution.command, reason: "recherche incomplète", forecast: null }); diagnostics?.rejections.push("recherche incomplète"); continue; }
         const command = finalizeAdvancedAim(solution.command);
         const key = JSON.stringify([weaponId, command.angle, command.power]);
         let forecast = cache.get(key);
@@ -72,10 +77,11 @@ export function chooseLocalMaterialShot(
           forecast = resolvePhysicalShot(state, terrain, self, weaponId, command);
           cache.set(key, forecast);
         }
-        if (!forecast.complete) { diagnostics?.rejections.push("prévision incomplète"); continue; }
+        if (!forecast.complete) { observe?.({ weaponId, point, variant, command, reason: "prévision incomplète", forecast }); diagnostics?.rejections.push("prévision incomplète"); continue; }
         const safe = forecast.survivors.includes(self.id);
         const useful = hasPhysicalEffect(forecast, self, targetIds) &&
           (weaponId !== "BULLET" || forecast.hits.some((hit) => hit.directTargetId === target.id));
+        observe?.({ weaponId, point, variant, command, reason: !safe ? "tireur détruit" : useful ? "useful" : "surviving", forecast });
         if (promote && weaponId === "DRILLER" && (!safe || !useful ||
           !forecast.support.some((support) => support.playerId === target.id && support.after > support.before))) {
           diagnostics?.rejections.push("promotion SOFT non démontrée"); continue;

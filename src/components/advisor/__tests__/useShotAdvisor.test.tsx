@@ -24,9 +24,20 @@ function fixture(gameMode: "local" | "online" = "local", phase: GamePhase = "COM
   act(() => vi.advanceTimersByTime(100));
   return { engine, worker, create, phaseRef, ...hook };
 }
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("advisor browser integration", () => {
+  it("requests diagnostics with DEV false and captures request terrain separately from advisor detail", () => {
+    vi.stubEnv("DEV", false);
+    const f = fixture(); const observations: import("../../../game/diagnostics/types").DiagnosticInput[] = [];
+    f.engine.diagnosticSink = input => observations.push(input);
+    act(() => f.result.current.request());
+    expect(f.worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({ observe: true, requestId: 1 }));
+    expect(observations[0]).toMatchObject({ kind: "current", requestId: 1, snapshot: { width: 800, height: 480 } });
+    const request = observations.find(o => o.kind === "advisor");
+    expect(request).toMatchObject({ kind: "advisor", requestId: 1, status: "calculating" });
+    if (request?.kind === "advisor") expect(request.detail).not.toHaveProperty("snapshot");
+  });
   it("posts an isolated snapshot with the initial match count to a module worker", () => {
     const f = fixture();
     expect(f.result.current.view.playerId).toBe("self");

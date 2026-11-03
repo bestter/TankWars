@@ -38,7 +38,7 @@ describe("additive IndexedDB journal migration", () => {
     expect(await storage.journalStatus("s")).toEqual(status);
     await expect(storage.readJournal("s", -1, 256)).rejects.toThrow("INVALID_JOURNAL_PAGE");
     await expect(storage.readJournal("s", 0, 257)).rejects.toThrow("INVALID_JOURNAL_PAGE");
-    const check = await new Promise<IDBDatabase>(resolve => { const r = indexedDB.open("tankwars-endurance", 2); r.onsuccess = () => resolve(r.result); });
+    const check = await new Promise<IDBDatabase>(resolve => { const r = indexedDB.open("tankwars-endurance", 3); r.onsuccess = () => resolve(r.result); });
     const legacy = await new Promise<unknown>(resolve => { const r = check.transaction("blocks").objectStore("blocks").get("legacy"); r.onsuccess = () => resolve(r.result); });
     expect(legacy).toEqual({ id: "legacy", sessionId: "old", marker: 1 }); check.close(); storage.close();
   });

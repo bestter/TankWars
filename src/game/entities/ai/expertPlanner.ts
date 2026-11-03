@@ -66,6 +66,7 @@ interface ExpertCandidateTrace extends ExpertConsequences {
 }
 
 export interface ExpertDecisionTrace {
+  readonly exploration?: ExpertForecastCache["diagnostics"];
   readonly advisorFallback?: {
     readonly targetId: string;
     readonly targetSelectionReason: string;

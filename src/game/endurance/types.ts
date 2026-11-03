@@ -13,6 +13,7 @@ export interface EnduranceConfig {
   stopOnIncident: boolean;
   limits: { turns: number; roundMs: number; actionMs: number; transitionMs: number };
   freeWeapons?: boolean;
+  archiveBudgetMiB?: number;
 }
 
 export const DEFAULT_LIMITS = { turns: 1000, roundMs: 1_800_000, actionMs: 120_000, transitionMs: 30_000 };
@@ -25,7 +26,7 @@ export type EnduranceEvent =
   | { kind: "shot-intent"; playerId: string; command: FireCommand }
   | { kind: "shot-launched"; shotId: number; playerId: string; command: FireCommand; position: { x: number; y: number }; launch: { x: number; y: number } }
   | { kind: "shot-refused"; playerId: string; command: FireCommand; reason: string }
-  | { kind: "turn"; playerId: string; turn: number }
+  | { kind: "turn"; playerId: string; turn: number; roundNumber?: number }
   | { kind: "decision-start"; playerId: string }
   | { kind: "target"; playerId: string; targetId: string }
   | { kind: "decision"; playerId: string; durationMs: number; command: FireCommand }

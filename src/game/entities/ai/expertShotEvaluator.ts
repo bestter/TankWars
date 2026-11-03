@@ -65,6 +65,15 @@ export interface ExpertUnprofitableShot {
   readonly shooterDestroyed: boolean;
 }
 
+/** Existing search results only; no hypothetical terrain or full simulated roster. */
+export interface ExpertProposalObservation {
+  mode: "own" | "adverse"; shooterId: string; weaponId: WeaponId; targetIds: string[];
+  point: ExpertPoint | null; requestedPoint: { x: number; y: number } | null;
+  policy: AimSearchPolicy | null; rawCommand: AimCommand | null; command: AimCommand | null;
+  searchComplete: boolean | null; forecastComplete: boolean | null; profit: number | null; ammunitionCost: number | null;
+  shooterSurvives: boolean | null; status: string;
+}
+
 /** One cache belongs to one immutable decision snapshot. No entries survive the decision. */
 export interface ExpertForecastCache {
   readonly bulldozer: Map<string, BulldozerThreatSearch>;
@@ -72,12 +81,12 @@ export interface ExpertForecastCache {
   readonly physics: Map<string, DecisionForecast>;
   readonly survivors: WeakMap<DecisionForecast, ReadonlySet<string>>;
   readonly diagnostics?: { ownProposals: number; adverseProposals: number; drillerRockRejections: number;
-    rejectedUnprofitableShots: ExpertUnprofitableShot[] };
+    rejectedUnprofitableShots: ExpertUnprofitableShot[]; proposals: ExpertProposalObservation[] };
 }
 
 export function createExpertForecastCache(collectDiagnostics = import.meta.env.DEV): ExpertForecastCache {
   return { bulldozer: new Map(), search: new Map(), physics: new Map(), survivors: new WeakMap(), diagnostics: collectDiagnostics
-    ? { ownProposals: 0, adverseProposals: 0, drillerRockRejections: 0, rejectedUnprofitableShots: [] } : undefined };
+    ? { ownProposals: 0, adverseProposals: 0, drillerRockRejections: 0, rejectedUnprofitableShots: [], proposals: [] } : undefined };
 }
 
 /** Compact DEV summary: keep the best rejected profit per weapon, group and survival outcome. */
@@ -200,7 +209,7 @@ function* expertProposals(
   state: GameState, terrain: TerrainManager, shooter: Player, weaponId: WeaponId,
   targets: readonly Player[], isFirstShotOfRound: boolean, cache: ExpertForecastCache,
   context: ExpertEvaluationContext,
-): Generator<ExpertEvaluatedAim & { point: ExpertPoint; pointOrder: number; forecast: DecisionForecast }> {
+): Generator<ExpertEvaluatedAim & { point: ExpertPoint; pointOrder: number; forecast: DecisionForecast; observation?: ExpertProposalObservation }> {
   const { mode } = context;
   const aim = mode === "own" ? context.aim : { primaryTargetId: targets[0].id, attempts: 0, offset: 0 };
   const points = weaponId === "BULLDOZER" ? [bulldozerPoint(targets[0])] :
@@ -222,6 +231,13 @@ function* expertProposals(
         solution = solveExpertAim(shooter, requestedPoint.x, requestedPoint.y, state.windForce, state.gravity, terrain, weaponId, policy);
         cache.search.set(searchKey, solution);
       }
+      const observation: ExpertProposalObservation | undefined = cache.diagnostics ? {
+        mode, shooterId: shooter.id, weaponId, targetIds: targets.map(t => t.id), point, requestedPoint, policy,
+        rawCommand: solution.command, command: null, searchComplete: solution.complete, forecastComplete: null,
+        profit: null, ammunitionCost: state.localShotContext ? weaponId === "MISSILE" ? 0 : WEAPON_REGISTRY[weaponId].price : null,
+        shooterSurvives: null, status: solution.complete ? "search-complete" : "search-incomplete",
+      } : undefined;
+      if (observation) cache.diagnostics!.proposals.push(observation);
       if (!solution.complete) continue;
       const command = finalizeAdvancedAim(solution.command);
       const physicsKey = JSON.stringify([shooter.id, weaponId, command.angle, command.power,
@@ -236,8 +252,12 @@ function* expertProposals(
           : { ...resolvePhysicalShot(state, terrain, shooter, weaponId, command), profit: null };
         cache.physics.set(physicsKey, forecast);
       }
+      if (observation) Object.assign(observation, { command, forecastComplete: forecast.complete,
+        profit: forecast.complete ? forecast.profit : null,
+        shooterSurvives: forecast.complete ? forecast.survivors.includes(shooter.id) : null,
+        status: forecast.complete ? "evaluated" : "forecast-incomplete" });
       yield { ...aim, kind: "evaluated", point, requestedPoint, pointOrder, policy,
-        rawCommand: solution.command, command, forecast };
+        rawCommand: solution.command, command, forecast, observation };
     }
   }
 }
@@ -259,13 +279,19 @@ export function evaluateExpertShot(
       !state.localShotContext || targets.length < 1 || targets.length > 2) return INVALID;
   if (mode === "own" && weaponId === "DRILLER" && targets.some((target) =>
     terrain.getMaterialAt(Math.floor(target.tank.position.x)) === TERRAIN_MATERIAL.ROCK)) {
-    if (cache.diagnostics) cache.diagnostics.drillerRockRejections++;
+    if (cache.diagnostics) {
+      cache.diagnostics.drillerRockRejections++;
+      cache.diagnostics.proposals.push({ mode, shooterId: shooter.id, weaponId, targetIds: targets.map(t => t.id),
+        point: null, requestedPoint: null, policy: null, rawCommand: null, command: null,
+        searchComplete: null, forecastComplete: null, profit: null, ammunitionCost: WEAPON_REGISTRY[weaponId].price,
+        shooterSurvives: null, status: "rock-veto" });
+    }
     return INVALID;
   }
   let best = INVALID;
   const enemyIds = new Set(state.players.filter((player) => player.id !== shooter.id).map((player) => player.id));
   const targetIds = new Set([targets[0].id]);
-  for (const { point, pointOrder, forecast, ...evaluatedAim } of expertProposals(
+  for (const { point, pointOrder, forecast, observation, ...evaluatedAim } of expertProposals(
     state, terrain, shooter, weaponId, targets, isFirstShotOfRound, cache, context,
   )) {
     if (!forecast.complete || forecast.profit === null) continue;
@@ -276,7 +302,10 @@ export function evaluateExpertShot(
       event.victimId !== shooter.id && event.shooterId === shooter.id &&
       event.shieldAbsorbedMilli + event.healthDamageMilli > 0) ||
       [...destroyedIds].some((id) => id !== shooter.id);
-    if (!hasEnemyEffect || (requireTargetDestruction && !destroyedIds.has(targets[0].id))) continue;
+    if (!hasEnemyEffect || (requireTargetDestruction && !destroyedIds.has(targets[0].id))) {
+      if (observation) observation.status = !hasEnemyEffect ? "no-enemy-effect" : "target-not-destroyed";
+      continue;
+    }
     const pointMatches = point.kind === "tank"
       ? forecast.hits.some((hit) => hit.directTargetId === targets[0].id) ||
         forecast.damage.some((event) => mode === "own"
@@ -285,7 +314,7 @@ export function evaluateExpertShot(
         destroyedIds.has(targets[0].id)
       : forecast.hits.some((hit) => Math.hypot(hit.x - point.x, hit.y - point.y) <=
           Math.max(24, WEAPON_REGISTRY[weaponId].blastRadius));
-    if (!pointMatches) continue;
+    if (!pointMatches) { if (observation) observation.status = "point-not-reached"; continue; }
     const candidate: ValidExpertShotResult = {
       ...evaluatedAim,
       humanDestroyedCount: forecast.humanDestroyedCount,
@@ -300,7 +329,10 @@ export function evaluateExpertShot(
       forecast,
     };
     const advisor = context.mode === "own" ? context.advisor : undefined;
-    if (advisor && !advisorAdmissible(advisor, weaponId, candidate.profit, candidate.shooterDestroyed)) continue;
+    if (advisor && !advisorAdmissible(advisor, weaponId, candidate.profit, candidate.shooterDestroyed)) {
+      if (observation) observation.status = "advisor-policy"; continue;
+    }
+    if (observation) observation.status = "ranked-candidate";
     const optimizeProfit = context.mode === "own" && context.selectionPolicy === "OPTIMISER_PROFIT";
     const survivalComparison = Number(candidate.shooterDestroyed) - Number(best.shooterDestroyed);
     const profitComparison = best.profit - candidate.profit;
@@ -349,24 +381,28 @@ export function chooseExpertFallback(
     for (const proposal of expertProposals(
       state, terrain, self, weaponId, [target], state.localShotContext?.isFirstShotOfRound ?? false, cache, { mode: "own", aim, advisor },
     )) {
-      const { point, forecast } = proposal;
+      const { point, forecast, observation, ...evaluatedProposal } = proposal;
       if (!forecast.complete) continue;
       const shooterDestroyed = !forecastSurvives(forecast, self.id, cache);
       const useful = hasPhysicalEffect(forecast, self, victims);
-      if (advisor && (forecast.profit === null || !advisorAdmissible(advisor, weaponId, forecast.profit, shooterDestroyed))) continue;
+      if (advisor && (forecast.profit === null || !advisorAdmissible(advisor, weaponId, forecast.profit, shooterDestroyed))) {
+        if (observation) observation.status = "advisor-policy"; continue;
+      }
       if (economic) {
         if (forecast.profit === null) continue;
         if (weaponId !== "MISSILE" && forecast.profit < 0) {
+          if (observation) observation.status = "negative-profit";
           if (useful && cache.diagnostics) recordUnprofitableExpertShot(cache, {
             weaponId, targetIds: [target.id], profit: forecast.profit, shooterDestroyed,
           });
           continue;
         }
-      } else if (shooterDestroyed) continue;
+      } else if (shooterDestroyed) { if (observation) observation.status = "shooter-destroyed"; continue; }
       const commandKey = JSON.stringify([weaponId, proposal.command.angle, proposal.command.power]);
-      if (seenCommands.has(commandKey)) continue;
+      if (seenCommands.has(commandKey)) { if (observation) observation.status = "duplicate-command"; continue; }
       seenCommands.add(commandKey);
-      choices.push({ ...proposal, weaponId, point, useful, forecast, insertionIndex: choices.length });
+      if (observation) observation.status = "admissible-fallback";
+      choices.push({ ...evaluatedProposal, weaponId, point, useful, forecast, insertionIndex: choices.length });
     }
   }
   choices.sort((a, b) => {
@@ -405,9 +441,13 @@ export function chooseExpertFallback(
   // No evaluated choice exists. This single ordinary search certifies no outcome.
   const solution = solveExpertAim(self, requestedPoint.x, requestedPoint.y,
     state.windForce, state.gravity, terrain, "MISSILE", ORDINARY_AIM_POLICY);
+  const command = finalizeAdvancedAim(solution.command);
+  cache.diagnostics?.proposals.push({ mode: "own", shooterId: self.id, weaponId: "MISSILE", targetIds: [target.id],
+    point, requestedPoint, policy: ORDINARY_AIM_POLICY, rawCommand: solution.command, command, searchComplete: solution.complete,
+    forecastComplete: null, profit: null, ammunitionCost: economic ? 0 : null, shooterSurvives: null, status: "uncertified-ordinary-fallback" });
   return { ...aim, kind: "ordinary", weaponId: "MISSILE", point, requestedPoint,
     policy: ORDINARY_AIM_POLICY, useful: false, rawCommand: solution.command,
-    command: finalizeAdvancedAim(solution.command), searchComplete: solution.complete,
+    command, searchComplete: solution.complete,
     conservationReason,
     selectionReason: cache.diagnostics ? "dernier MISSILE ordinaire non certifié" : undefined };
 }

@@ -46,6 +46,14 @@ interface FallAttribution {
   classification: HitClassification;
 }
 
+/** Exact nonvisual state for isolated single-shot diagnostics, never a network contract. */
+export interface TankPhysicsState {
+  velocities: Array<[string, number]>;
+  fallenDistances: Array<[string, number]>;
+  isVoidFall: Array<[string, boolean]>;
+  fallAttributions: Array<[string, FallAttribution]>;
+}
+
 export interface ExplosionDamageOptions {
   explosionX: number;
   explosionY: number;
@@ -72,6 +80,17 @@ export const TANK_GAUGE_BAR_HEIGHT = 3;
 export const TANK_GAUGE_BORDER_WIDTH = 0.5;
 
 export class TankManager {
+  public capturePhysicsState(): TankPhysicsState {
+    return structuredClone({ velocities: [...this.velocities], fallenDistances: [...this.fallenDistances],
+      isVoidFall: [...this.isVoidFall], fallAttributions: [...this.fallAttributions] });
+  }
+
+  public restorePhysicsState(state: TankPhysicsState): void {
+    this.velocities = new Map(state.velocities);
+    this.fallenDistances = new Map(state.fallenDistances);
+    this.isVoidFall = new Map(state.isVoidFall);
+    this.fallAttributions = new Map(structuredClone(state.fallAttributions));
+  }
   private players: Player[] = [];
   private playersMap: Map<string, Player> = new Map();
 

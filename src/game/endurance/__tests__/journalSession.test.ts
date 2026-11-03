@@ -76,7 +76,7 @@ describe("session journal lifecycle and reconciliation", () => {
         }
       }
     }
-    const final = structuredClone(players); run.finishPresentation(); await settled();
+    const final = structuredClone(players); run.finishPresentation(); await vi.waitFor(() => expect(run.block?.index).toBe(2));
     expect(run.block?.index).toBe(2);
     expect(run.block?.config.players).toEqual(initial);
     await run.stop();

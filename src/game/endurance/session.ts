@@ -1,4 +1,7 @@
 import { version } from "../../../package.json";
+import { ShotRecorder, ACTION_RESERVE, CLOSURE_RESERVE, MIB, QUEUE_BYTES, byteSize, emptyArchive } from "../diagnostics/archive";
+import { exportStoredArchive, filterArchive, type ArchiveFilter } from "../diagnostics/export";
+import type { DiagnosticInput, ShotArchive } from "../diagnostics/types";
 import { randomUUID } from "../../utils/randomUUID";
 import { assertRoster, validateConfig } from "./config";
 import { addMetrics, groups, RoundCollector } from "./metrics";
@@ -10,6 +13,7 @@ import { EnduranceJournal, type JournalEvent, type JournalEntry, type JournalSta
 import type { PurchaseObservation } from "../observation";
 
 export interface EnduranceHost {
+  captureCurrent?(): void;
   stop(): void;
   context(): { players: Player[]; heights: readonly number[]; materials: readonly string[]; phase: string; windForce?: number };
 }
@@ -18,6 +22,75 @@ const clock: EnduranceClock = { now: () => performance.now(), date: () => new Da
   id: randomUUID, seed: () => crypto.getRandomValues(new Uint32Array(1))[0] };
 
 export class EnduranceSession implements CombatObserver {
+  readonly recorder: ShotRecorder;
+  private archiveBytes = 0;
+  private actionBytes = 0;
+  private reserved = false;
+  private resolutionReported = false;
+  private diagnosticFailed = false;
+  private archiveLimit = 512 * MIB;
+  private actionReserve = ACTION_RESERVE;
+  private maxActionBytes = 0;
+  private exportMs = 0;
+  get archiveMetrics() { return { limit: this.archiveLimit, reserve: this.actionReserve, maxActionBytes: this.maxActionBytes,
+    pendingBytes: this.journal?.pendingBytes ?? 0, ...this.recorder.stats, totalBytes: this.archiveBytes, exportMs: this.exportMs,
+    confirmedSequence: this.journal?.status.persisted ?? 0, emittedSequence: this.journal?.status.emitted ?? 0,
+    durationMs: this.running ? this.time.now() - this.started : this.session.durationMs, status: this.session.status, reason: this.session.reason }; }
+  diagnostic(input: DiagnosticInput): void {
+    if (this.diagnosticFailed) return;
+    this.recorder.context(this.block?.id ?? null, this.roundNumber, this.turn);
+    try {
+      this.recorder.record(input);
+      if (input.kind === "settled") this.closeReservation();
+    }
+    catch (error) { this.diagnosticFailed = true; queueMicrotask(() => this.storageFailed(error)); }
+  }
+  async exportArchive(filter?: ArchiveFilter) {
+    const started = performance.now();
+    await this.journal?.flush();
+    let archive: ShotArchive;
+    try { archive = await exportStoredArchive(this.storage, this.session.id, this.session.build, filter); }
+    catch (error) {
+      if (!this.journal?.status.error) throw error;
+      archive = emptyArchive(this.session.id, this.session.build);
+      archive.error = `CONFIRMED_ARCHIVE_UNAVAILABLE: ${String(error)}`;
+    }
+    if (this.journal?.status.error) {
+      const pending = this.journal.pending().flatMap(row => row.event.kind === "archive" ? [row.event.write] : []);
+      const seen = new Set(archive.records.map(r => r.sequence));
+      for (const write of pending) {
+        if (!seen.has(write.record.sequence)) archive.records.push(write.record);
+        for (const terrain of write.terrains) if (!archive.terrains.some(t => t.id === terrain.id)) archive.terrains.push(terrain);
+      }
+      archive.records.sort((a, b) => a.sequence - b.sequence);
+      archive.lastSequence = archive.records.at(-1)?.sequence ?? 0;
+      archive.firstSequence = archive.records[0]?.sequence ?? 0;
+      archive.complete = false; archive.error = [archive.error, this.journal.status.error].filter(Boolean).join("; ");
+    }
+    const result = filterArchive(archive, filter); this.exportMs = performance.now() - started; this.changed(); return result;
+  }
+  async listShots(query: string, page: number) {
+    if (!this.storage.listShots) throw new Error("ARCHIVE_CAPABILITY_UNAVAILABLE");
+    const status = await this.storage.journalStatus?.(this.session.id);
+    return this.storage.listShots(this.session.id, status?.persisted ?? 0, query, page);
+  }
+  private admitArchive(): boolean {
+    if (this.resolutionReported) this.closeReservation();
+    if (this.reserved) return true;
+    if (this.archiveBytes + this.actionReserve + CLOSURE_RESERVE > this.archiveLimit) {
+      void this.stop("archive-budget"); return false;
+    }
+    if ((this.journal?.pendingBytes ?? 0) + this.actionReserve + CLOSURE_RESERVE > QUEUE_BYTES || (this.journal?.pendingCount ?? 0) > 1024) {
+      this.journal?.invalidate(new Error("ARCHIVE_ADMISSION_BACKPRESSURE")); return false;
+    }
+    this.reserved = true; this.actionBytes = 0; return true;
+  }
+  private closeReservation(): void {
+    this.actionReserve = Math.max(ACTION_RESERVE, this.maxActionBytes * 2 + CLOSURE_RESERVE);
+    this.reserved = false; this.resolutionReported = false;
+  }
+  captureCurrent(): void { this.host?.captureCurrent?.(); }
+  markDiagnostic(): void { this.captureCurrent(); this.incident("warning", "MANUAL_DIAGNOSTIC"); }
   readonly session: SessionRecord;
   block: BlockRecord | null = null;
   ready = false;
@@ -39,6 +112,7 @@ export class EnduranceSession implements CombatObserver {
   private roundDate = "";
   private collector: RoundCollector | null = null;
   private recent: RecentEvent[] = [];
+  private recentBytes = 0;
   private sequence = 0;
   private revision = 0;
   private listeners = new Set<() => void>();
@@ -58,6 +132,7 @@ export class EnduranceSession implements CombatObserver {
   private readonly time: EnduranceClock;
   constructor(config: EnduranceConfig, storage: EnduranceStorage, time = clock, build = import.meta.env.VITE_BUILD_ID ?? "development") {
     this.storage = storage; this.time = time;
+    this.archiveLimit = (config.archiveBudgetMiB ?? 512) * MIB;
     this.started = time.now();
     this.session = { runtime: { width: 800, height: 480, gravity: 260, baseShotSpeed: 420, localMatch: true, weapons: structuredClone(WEAPON_REGISTRY) },
       schemaVersion: 1, id: time.id(), gameVersion: version, build, config: validateConfig(config),
@@ -65,6 +140,7 @@ export class EnduranceSession implements CombatObserver {
       abandoned: 0, interrupted: 0, suspect: 0, roundsStarted: 0, roundsCompleted: 0, incidents: 0,
       collection: "incomplete", storageError: null, completedMetrics: groups(), partialMetrics: groups(),
       retention: { recentEvents: 256, checkpointMs: 15000, fullEventHistory: false } };
+    this.recorder = new ShotRecorder(this.session.id, write => this.recordJournal({ kind: "archive", write }));
     if (storage.appendJournal && storage.readJournal) this.journal = new EnduranceJournal(this.session.id,
       (entries, status) => {
         const operation = this.writes.then(async () => {
@@ -85,12 +161,27 @@ export class EnduranceSession implements CombatObserver {
   get journalStatus(): JournalStatus | null { return this.journal ? { ...this.journal.status } : null; }
   private recordJournal(event: JournalEvent, snapshot = false): void {
     if (!this.journal) return;
+    if (event.kind !== "archive" && event.kind !== "combat") this.diagnostic({ kind: "boundary", status: event.kind,
+      detail: event.kind === "incident" ? { id: event.incident.id, kind: event.incident.kind, reason: event.incident.reason,
+        lastCaptureSequence: this.recorder.stats.sequence } : event });
     let context: ReturnType<EnduranceHost["context"]> | null = null, contextError: string | null = null;
     try { context = snapshot ? this.host?.context() ?? null : null; } catch (error) { contextError = String(error); }
-    this.journal.append({ at: this.time.date(), atMs: this.time.now() - this.started,
+    const entry = { at: this.time.date(), atMs: this.time.now() - this.started,
       blockId: this.block?.id ?? null, blockIndex: this.block?.index ?? 0, seed: this.block?.seed ?? null,
       round: this.roundNumber, turn: this.turn, phase: this.phase, decisionId: this.decisionId, event,
-      context: context ? { players: context.players, windForce: context.windForce ?? null } : null, contextError });
+      context: context ? { players: context.players, windForce: context.windForce ?? null } : null, contextError };
+    // Conservative serialized budget includes capture duplication in the journal index and key overhead.
+    const size = byteSize(entry) * (event.kind === "archive" ? 2 : 1) + 2048;
+    this.archiveBytes += size;
+    if (this.reserved) {
+      this.actionBytes += size;
+      this.maxActionBytes = Math.max(this.maxActionBytes, this.actionBytes);
+      if (this.actionBytes > this.actionReserve) {
+        this.journal.invalidate(new Error("ARCHIVE_ACTION_RESERVATION_EXCEEDED"));
+        return;
+      }
+    }
+    this.journal.append(entry);
   }
   async journalPage(after = 0, limit = 256): Promise<{ status: JournalStatus | null; entries: JournalEntry[] }> {
     await this.journal?.flush();
@@ -136,6 +227,14 @@ export class EnduranceSession implements CombatObserver {
     return (c.maxDurationMs !== null && this.time.now() - this.started >= c.maxDurationMs);
   }
   async start(): Promise<void> {
+    if (typeof navigator !== "undefined" && navigator.storage?.estimate) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        if (estimate.quota !== undefined && estimate.usage !== undefined) {
+          this.archiveLimit = Math.min(this.archiveLimit, Math.max(0, Math.floor((estimate.quota - estimate.usage) * 0.8)));
+        }
+      } catch (error) { console.warn("[Endurance] Storage estimate unavailable", error); }
+    }
     this.recordJournal({ kind: "session-start", metadata: { gameVersion: this.session.gameVersion, build: this.session.build,
       config: this.session.config, coordinates: "pixels; x right, y down; angle degrees: 0 right, 90 up, 180 left",
       unavailable: "null; nominal aim, target or reasoning are never reconstructed", runtime: this.session.runtime } });
@@ -149,7 +248,7 @@ export class EnduranceSession implements CombatObserver {
     }
     this.blockStarted = this.time.now();
     this.transitionStarted = this.blockStarted;
-    this.phase = "PREPARATION"; this.roundNumber = 0; this.turn = 0; this.sequence = 0; this.recent = [];
+    this.phase = "PREPARATION"; this.roundNumber = 0; this.turn = 0; this.sequence = 0; this.recent = []; this.recentBytes = 0;
     this.decisionId = null; this.decisionState = null;
     this.block = { id: this.time.id(), sessionId: this.session.id, index: ++this.session.attempted, seed: this.time.seed(),
       config: structuredClone(this.session.config), gameVersion: this.session.gameVersion, build: this.session.build,
@@ -193,7 +292,9 @@ export class EnduranceSession implements CombatObserver {
   }
   emit(event: EnduranceEvent): boolean {
     if (!this.active || this.stopped) return false;
+    if ((event.kind === "decision-start" || event.kind === "shot") && !this.admitArchive()) return false;
     if (this.limitReached()) { void this.stop("duration"); return false; }
+    if (event.kind === "turn" && this.reserved) this.closeReservation();
     try {
       if (event.kind === "turn" || event.kind === "decision-start") {
         if (this.decisionId && (this.decisionState === "computing" || this.decisionState === "ready")) {
@@ -223,14 +324,19 @@ export class EnduranceSession implements CombatObserver {
         if (event.targetId === event.playerId || !players.some(p => p.id === event.targetId && !p.tank.isDead)) throw new Error("INVALID_EXPLICIT_TARGET");
       }
       this.collector?.observe(event);
+      this.diagnostic({ kind: "combat", event });
       this.recordJournal({ kind: "combat", event }, ["decision-start", "shot-launched", "shot-result", "zeus"].includes(event.kind));
       const recent = { sequence: ++this.sequence, atMs: this.time.now() - this.blockStarted, round: this.roundNumber, event: structuredClone(event) };
-      this.recent.push(recent); if (this.recent.length > 256) this.recent.shift();
+      this.recent.push(recent); this.recentBytes += byteSize(recent);
+      while (this.recent.length > 256 || this.recentBytes > 512 * 1024) this.recentBytes -= byteSize(this.recent.shift()!);
       if (event.kind === "recovery") this.incident("warning", `SAFETY_${event.reason}`);
       if (event.kind === "failure") { this.incident("exception", event.reason, 0, event.error); return false; }
       // Keep the action deadline until the next turn or inter-round transition: a resolved
       // projectile/Zeus result alone does not prove that turn finalization advanced.
       if (event.kind === "resolved" || event.kind === "zeus") this.validate();
+      if (event.kind === "shot-result") {
+        this.resolutionReported = true;
+      }
       return true;
     } catch (error) { this.incident("invariant", error instanceof Error ? error.message : String(error)); return false; }
   }
@@ -367,6 +473,7 @@ export class EnduranceSession implements CombatObserver {
     if (this.block?.status === "running") await this.finishBlock("interrupted", reason);
     else { try { this.halt(); } catch (error) { this.session.storageError = `Cleanup: ${String(error)}`; } }
     this.session.collection = this.session.storageError ? "incomplete" : "complete";
+    this.recorder.finish(this.session.storageError);
     this.recordJournal({ kind: "session-stop", reason, players: [] });
     await this.journal?.finish();
     await this.save(); this.finalizing = false; this.changed();

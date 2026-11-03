@@ -5,7 +5,7 @@ import { type WeaponId } from "../../../types/weapon";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AIEngine } from "./AIEngine";
 import type { AIObserver } from "../../observation";
-import { DecisionObservation, observedFallback } from "./decisionObservation";
+import { DecisionObservation, observedFallback, captureDecisionInitial } from "./decisionObservation";
 import {
   ADVANCED_GAFFES,
   applySignedCorruption,
@@ -49,8 +49,9 @@ export class AIHeuristicStrategy implements AIEngine {
       playerById.set(player.id, player);
       if (player.tank.id === tankId) self = player;
     }
+    const initial = this.onDecisionObserved ? captureDecisionInitial(gameState, self ? this.memories.get(self.id) : null) : undefined;
     if (!self || self.tank.isDead) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable");
+      return observedFallback(this.onDecisionObserved, self, tankId, "shooter-unavailable", initial);
     }
 
     const memory = this.getMem(self.id);
@@ -60,7 +61,7 @@ export class AIHeuristicStrategy implements AIEngine {
       (player) => player.id !== self.id && !player.tank.isDead,
     );
     if (enemies.length === 0) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
     let target: Player | undefined;
@@ -97,16 +98,18 @@ export class AIHeuristicStrategy implements AIEngine {
       })[0];
     }
     if (!target) {
-      return observedFallback(this.onDecisionObserved, self, tankId, "no-target");
+      return observedFallback(this.onDecisionObserved, self, tankId, "no-target", initial);
     }
 
+    const targetReason = target.id === revengeId ? "revenge" : target.id === memory.currentTargetId ? "memory" : "weakest-ai-before-human";
     this.onTargetSelected?.(self.id, target.id);
-    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState) : undefined;
+    const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
     const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
+    const proposals: import("./localMaterialPlanner").MaterialProposalObservation[] | undefined = observation ? [] : undefined;
     const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
       ordinaryWeapon, (point, weapon, variant) => solveHeuristicAim(
         self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
-      ));
+      ), proposals ? proposal => proposals.push(proposal) : undefined);
     const attempts = recordAimAttempt(memory, target.id);
     const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
@@ -130,6 +133,7 @@ export class AIHeuristicStrategy implements AIEngine {
     );
 
     const gaffe = ADVANCED_GAFFES["v2-heuristic"];
+    observation?.proposed({ ...command, weaponId });
     observation?.evaluated({ ...command, weaponId }, choice.point);
     observation?.step("offset", null, null, { offset: aimX - choice.point.x, aimedPoint: { x: aimX, y: choice.point.y } });
     const reactionIntensity = getHitReactionIntensity(
@@ -159,7 +163,8 @@ export class AIHeuristicStrategy implements AIEngine {
     consumeHitReaction(self.tank.hitReaction);
     const finalized = finalizeAdvancedAim(command);
     observation?.step("finalize", command, finalized);
-    observation?.finish({ ...finalized, weaponId }, choice.reason, { variant: choice.variant, point: choice.point });
+    observation?.finish({ ...finalized, weaponId }, choice.reason, { variant: choice.variant, point: choice.point,
+      proposals, ordinaryWeapon, searchLimit: 12, unexamined: "not-evaluated", targetReason });
     return { ...finalized, weaponId };
   }
 

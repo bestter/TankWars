@@ -146,6 +146,7 @@ describe("GameCanvas component", () => {
     };
 
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: defaultSessionState,
@@ -174,6 +175,7 @@ describe("GameCanvas component", () => {
 
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -244,6 +246,7 @@ describe("GameCanvas component", () => {
 
   it("renders RoundSummary during SUMMARY phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -273,6 +276,7 @@ describe("GameCanvas component", () => {
 
   it("renders Celebration banner during CELEBRATION phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -293,6 +297,7 @@ describe("GameCanvas component", () => {
 
   it("renders WeaponShop when human player is shopping in SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -315,6 +320,7 @@ describe("GameCanvas component", () => {
 
   it("renders AI shopping overlay when AI is shopping in local SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -337,6 +343,7 @@ describe("GameCanvas component", () => {
 
   it("waits for the authoritative shop state online", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, gamePhase: "SHOP" },
@@ -354,6 +361,7 @@ describe("GameCanvas component", () => {
 
   it("renders the local player's authoritative shop online", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -381,6 +389,7 @@ describe("GameCanvas component", () => {
     [true, "shop_waiting_others"],
   ])("renders the online waiting state when localShopDone is %s", (localShopDone, expected) => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -405,6 +414,7 @@ describe("GameCanvas component", () => {
 
   it("renders GameOverOverlay during GAME_OVER phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -427,6 +437,7 @@ describe("GameCanvas component", () => {
 
   it("renders New Game button when showNewGameButton is true and handles click", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -456,6 +467,7 @@ describe("GameCanvas component", () => {
 
   it("renders fireRejection alert toast during COMBAT phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -480,6 +492,7 @@ describe("GameCanvas component", () => {
 
   it("renders a blocking protocol mismatch overlay", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: {
@@ -507,6 +520,7 @@ describe("GameCanvas component", () => {
     language.current = locale;
     const onReturnToMenu = vi.fn();
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, roundPreparationError: "NEW_GAME_REQUIRED" },
@@ -522,6 +536,7 @@ describe("GameCanvas component", () => {
 
   it("keeps complete catch-up retry available on a network error", () => {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null }, state: { ...defaultSessionState, networkError: "round_preparation_failed" },
       CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
@@ -561,6 +576,7 @@ describe("GameCanvas component", () => {
 
   function renderSession(state: typeof defaultSessionState) {
     vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
       advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
       canvasRef: { current: null },
       state,

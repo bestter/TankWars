@@ -45,6 +45,20 @@ function complete(suicide = false): Extract<physical.PhysicalResolution, { compl
 }
 afterEach(() => vi.restoreAllMocks());
 
+it("observes every examined advisor proposal with DEV false without changing advice or consuming live RNG", () => {
+  vi.stubEnv("DEV", false);
+  try {
+    const f = advisorFixture();
+    vi.spyOn(random, "secureRandom").mockImplementation(() => { throw new Error("LIVE_RNG_USED"); });
+    const plain = calculateShotAdvice(f.snapshot, "OPTIMISER_PROFIT");
+    let trace: import("../expertPlanner").ExpertDecisionTrace | undefined;
+    const observed = calculateShotAdvice(f.snapshot, "OPTIMISER_PROFIT", value => { trace = value; });
+    expect(observed).toEqual(plain);
+    expect(trace?.exploration?.proposals.length).toBeGreaterThan(0);
+    expect(trace?.exploration?.proposals.some(p => p.rawCommand !== null && p.searchComplete !== null)).toBe(true);
+  } finally { vi.unstubAllEnvs(); }
+});
+
 describe("local advisor shared policies #273", () => {
   it("SURVIE neutralizes without a roll and without using profit (EXPERT keeps profit)", () => {
     const f = advisorFixture();
