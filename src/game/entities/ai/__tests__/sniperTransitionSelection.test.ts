@@ -347,14 +347,23 @@ describe("SNIPER virtual alternatives and random sequence", () => {
     expect(pick).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["safe", "unknown"] as const)("keeps the initial %s analysis without examining alternatives", status => {
+  it.each([
+    ["safe", "bullet"], ["safe", "driller"], ["safe", "missile-useful"],
+    ["unknown", "bullet"], ["unknown", "driller"], ["unknown", "missile-useful"],
+  ] as const)("keeps the initial %s %s without examining alternatives", (status, reason) => {
     const f = transitionFixture(4);
-    const pick = vi.spyOn(selection, "chooseSniperPhysicalShot").mockReturnValue(choice());
+    const initial = choice(reason);
+    const pick = vi.spyOn(selection, "chooseSniperPhysicalShot").mockReturnValue(initial);
     const detector = new LethalTransitionDetector();
     vi.spyOn(detector, "analyze").mockReturnValue(analysis(status));
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.3);
     const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 3, false, detector);
     expect(result.target).toBe(f.target); expect(pick).toHaveBeenCalledTimes(1); expect(rng).not.toHaveBeenCalled();
+    expect(result.choice).toBe(initial);
+    expect(result.trace.alternatives).toEqual([]);
+    expect(result.trace.fallbackTargets).toEqual([]);
+    expect(result.trace.selectionCounters).toEqual({ searches: initial.trace.searches, solverCalls: initial.trace.solverCalls,
+      ballisticCacheHits: initial.trace.ballisticCacheHits, forecasts: initial.trace.forecasts, cacheHits: initial.trace.cacheHits });
   });
 
   it.each([1, 2, 3, 4])("shares exactly one amplitude on alternative examination, initial attempt %s", attempts => {

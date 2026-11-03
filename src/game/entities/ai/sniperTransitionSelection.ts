@@ -52,14 +52,14 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
   let selected = initial;
   let reason = "initial-retained";
   let fallbackTargets: ReturnType<typeof searchSniperFallbacks>["evaluations"] = [];
-  const others = state.players.filter(player => player.id !== self.id && player.id !== initialTarget.id && !player.tank.isDead)
+  const getOthers = () => state.players.filter(player => player.id !== self.id && player.id !== initialTarget.id && !player.tank.isDead)
     .toSorted((a, b) => Number(a.isHuman) - Number(b.isHuman) || a.tank.health - b.tank.health);
   const ensureAmplitude = () => {
     if (amplitude === undefined) { amplitude = secureRandom(); extraAmplitude = amplitude; }
     return amplitude;
   };
   if (["missile-surviving", "missile-ordinary"].includes(initial.choice.reason)) {
-    const fallback = searchSniperFallbacks(self, others, state, terrain, target => {
+    const fallback = searchSniperFallbacks(self, getOthers(), state, terrain, target => {
       const x = target.tank.position.x;
       const offsetDirection = x > terrain.width - x ? -1 : 1;
       return { offsetDirection, offset: offsetDirection * calculateImpactOffsetMagnitude(1, "v3-sniper", state.roundNumber, ensureAmplitude()) };
@@ -78,7 +78,7 @@ export function chooseSniperTransitionShot(self: Player, initialTarget: Player, 
     }
   } else if (analysis.status === "risk") {
     reason = "initial-retained-no-alternative";
-    for (const target of others) {
+    for (const target of getOthers()) {
       ensureAmplitude();
       const alternative = evaluate(target, 1);
       selectionCounters.searches += alternative.choice.trace.searches;
