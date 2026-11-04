@@ -1,6 +1,6 @@
 # Bestter's TankWars
 
-Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382) : [commandes, dépendances, seuils, preuves et codes / commands, dependencies, objectives, evidence and exit codes](Scripts/endurance/README.md).
+Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382/#383) : [commandes, dépendances, seuils, preuves, secours et codes / commands, dependencies, objectives, evidence, recovery and exit codes](Scripts/endurance/README.md).
 
 > A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
 

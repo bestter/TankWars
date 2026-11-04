@@ -10,7 +10,6 @@ from native import (
     JournalCollector,
     compare_binary_journal,
     compare_binary_files,
-    export_native_archive_atomic,
 )
 
 
@@ -160,51 +159,6 @@ class TestNativeCollector(unittest.TestCase):
         lines = (self.tmp_path / "decisions.jsonl").read_text(encoding="utf-8").strip().split("\n")
         sequences = [json.loads(line)["sequence"] for line in lines]
         self.assertEqual(sequences, [1, 2, 3, 4, 5])
-
-    def test_atomic_archive_download_success_and_failure(self):
-        archive_file = self.tmp_path / "shots-latest.json"
-
-        # Initial valid archive
-        initial_content = json.dumps({"records": [{"sequence": 1}], "terrains": [], "complete": True})
-        archive_file.write_text(initial_content, encoding="utf-8")
-
-        class MockDownload:
-            def __init__(self, data: str):
-                self.data = data
-            def save_as(self, target_path: str):
-                Path(target_path).write_text(self.data, encoding="utf-8")
-
-        class MockButton:
-            def click(self): pass
-
-        class MockPageSuccess:
-            def get_by_role(self, *args, **kwargs): return MockButton()
-            def expect_download(self, timeout=60000):
-                class Context:
-                    def __enter__(self_ctx):
-                        class ValueHolder:
-                            value = MockDownload(json.dumps({"records": [{"sequence": 1}, {"sequence": 2}], "terrains": [{"id": "t1"}], "complete": True}))
-                        return ValueHolder()
-                    def __exit__(self_ctx, *args): pass
-                return Context()
-
-        class MockPageFailure:
-            def get_by_role(self, *args, **kwargs): return MockButton()
-            def expect_download(self, timeout=60000):
-                class Context:
-                    def __enter__(self_ctx): raise TimeoutError("DOWNLOAD_TIMEOUT")
-                    def __exit__(self_ctx, *args): pass
-                return Context()
-
-        # Success replaces destination
-        stats = export_native_archive_atomic(MockPageSuccess(), archive_file)
-        self.assertEqual(stats, {"records": 2, "terrains": 1, "complete": True})
-        self.assertEqual(json.loads(archive_file.read_text(encoding="utf-8"))["records"], [{"sequence": 1}, {"sequence": 2}])
-
-        # Failure preserves existing destination and does not overwrite it
-        with self.assertRaises(TimeoutError):
-            export_native_archive_atomic(MockPageFailure(), archive_file)
-        self.assertEqual(json.loads(archive_file.read_text(encoding="utf-8"))["records"], [{"sequence": 1}, {"sequence": 2}])
 
     def test_strict_binary_comparisons(self):
         copied_path = self.tmp_path / "decisions.jsonl"

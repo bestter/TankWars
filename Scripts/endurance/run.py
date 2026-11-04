@@ -2,11 +2,15 @@
 import argparse
 import asyncio
 import json
+import math
 import re
 import signal
+import sys
+import uuid
 from pathlib import Path
 
 from ledger import Ledger
+from lifecycle import Lifecycle
 from model import Status, positive, require, targets
 from native import JournalCollector
 from verify import archive_manifest, closed_session, compare, journal, read, recovery
@@ -15,8 +19,14 @@ ROOT = Path(__file__).resolve().parents[2]
 PROFILES = {"v1-random", "v2-heuristic", "v3-sniper", "v4-smart"}
 
 
+class ArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, self.prog + ": " + message + "\n")
+
+
 def arguments(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-build", required=True, help="Exact session build identity, including timestamp")
@@ -39,7 +49,7 @@ def arguments(argv=None):
         require(type(config["freeWeapons"]) is bool and type(config["stopOnIncident"]) is bool, "INVALID_FLAGS")
         require(set(config["limits"]) == {"turns", "roundMs", "actionMs", "transitionMs"} and
                 all(type(v) is int and v > 0 for v in config["limits"].values()), "INVALID_LIMITS")
-    except (ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
     args.config_data = config
     return args
@@ -54,10 +64,15 @@ class Driver:
         self.ledger = Ledger()
         self.cancelled = False
         self.stop_requested = False
+        self.lifecycle = Lifecycle(args.finalization_seconds)
 
     async def metrics(self, page):
         metrics = await page.evaluate("() => window.__tankwarsEnduranceTest.readArchiveMetrics()")
         require("stoppedAtDurationMs" in metrics, "FROZEN_DURATION_CAPABILITY_REQUIRED")
+        frozen = metrics["stoppedAtDurationMs"]
+        require(frozen is None or type(frozen) in (int, float) and math.isfinite(frozen) and frozen >= 0, "INVALID_STOP_MEASUREMENT")
+        previous = self.status.data["stoppedAtDurationMs"]
+        require(previous is None or previous == frozen, "STOP_MEASUREMENT_CHANGED")
         self.status.data.update(archiveMetrics=metrics, nativeReason=metrics["reason"],
                                 stoppedAtDurationMs=metrics["stoppedAtDurationMs"])
         self.status.publish()
@@ -66,7 +81,19 @@ class Driver:
     async def collect(self, page, final=False):
         while True:
             result = await page.evaluate("after => window.__tankwarsEnduranceTest.readJournalText(after, 256)", self.collector.journal_sequence)
-            count, _ = self.collector.process_page(result, self.ledger)
+            before = self.collector.journal_sequence
+            try:
+                count, _ = self.collector.process_page(result, self.ledger)
+            finally:
+                self.status.data.update(journalCopied=self.collector.journal_sequence, journalVerified=self.collector.verified_sequence,
+                    analysisFailedSequence=self.collector.analysis_failed_sequence,
+                    journalStatus=self.collector.latest_status, journalSha256=self.collector.sha256.hexdigest())
+                if self.collector.journal_sequence > before:
+                    self.status.proof("raw-copy", [self.collector.decisions_file], self.collector.journal_sequence,
+                                      prefix_bytes=self.collector.copied_bytes)
+                    self.status.proof("ledger-prefix", [self.collector.decisions_file], self.collector.verified_sequence,
+                                      prefix_bytes=self.collector.verified_bytes)
+                self.status.publish()
             meta = result["status"]
             self.status.data.update(journalCopied=self.collector.journal_sequence, journalVerified=self.collector.verified_sequence,
                                     journalStatus=meta, journalSha256=self.collector.sha256.hexdigest())
@@ -78,9 +105,9 @@ class Driver:
             journal(meta, self.collector)
             self.status.proof("journal", [self.collector.decisions_file], self.collector.journal_sequence)
 
-    async def download(self, page, button, filename):
+    async def download(self, page, button, filename, validate=None):
         path = self.status.output / filename
-        candidate = path.with_name(path.name + ".candidate")
+        candidate = path.with_name(path.name + "." + uuid.uuid4().hex + ".candidate")
         async with page.expect_download() as event:
             await button.click()
         download = await event.value
@@ -88,6 +115,15 @@ class Driver:
         require(await download.failure() is None, "DOWNLOAD_FAILED: " + filename)
         if filename.endswith(".json"):
             read(candidate)
+        if validate is not None:
+            await validate(candidate)
+        # Published files are immutable. A later attempt cannot destroy prior evidence.
+        attested = any(p["state"] == "verified" and any(f["path"] == str(path.resolve()) for f in p["files"])
+                       for p in self.status.data["proofs"])
+        if path.exists() and attested:
+            require(path.read_bytes() == candidate.read_bytes(), "CANDIDATE_DIVERGES: " + filename)
+            candidate.unlink()
+            return path
         candidate.replace(path)
         return path
 
@@ -100,7 +136,9 @@ class Driver:
             panel = page.locator("details.diagnostic-panel")
             await panel.evaluate("el => { el.open = true; }")
             scope = panel
-        path = await self.download(page, scope.get_by_role("button", name="Exporter les tirs", exact=True), filename)
+        return await self.download(page, scope.get_by_role("button", name="Exporter les tirs", exact=True), filename, self.validate_shots)
+
+    async def validate_shots(self, path):
         archive_manifest(read(path), read(self.status.output / "final.json")["session"])
         process = await asyncio.create_subprocess_exec("node", str(ROOT / "Scripts/endurance/validate-archive.mjs"), str(path.resolve()),
                                                        cwd=ROOT, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -109,7 +147,6 @@ class Driver:
         except BaseException:
             process.kill(); await process.wait(); raise
         require(process.returncode == 0, "ARCHIVE_VALIDATION: " + stderr.decode(errors="replace"))
-        return path
 
     async def configure(self, page):
         await page.goto(self.args.url)
@@ -149,7 +186,11 @@ class Driver:
         if not self.stop_requested:
             self.stop_requested = True
             self.status.data["trigger"] = trigger
-            await page.get_by_role("button", name="Arrêter et sauvegarder", exact=True).click()
+            self.lifecycle.begin()
+            # Atomic DOM check/click: the native duration may stop the session between
+            # observing a completed-block objective and submitting this UI command.
+            await page.get_by_role("button", name="Arrêter et sauvegarder", exact=True).evaluate(
+                "el => { if (!el.disabled) el.click(); }")
 
     async def finalize(self, page):
         self.status.data["phase"] = "finalization"
@@ -158,48 +199,72 @@ class Driver:
             await asyncio.sleep(.1)
         metrics = await self.metrics(page)
         require(metrics["status"] == "stopped" and metrics["stoppedAtDurationMs"] is not None, "MISSING_STOP_MEASUREMENT")
-        session = await self.summary(page)
+        session = read(self.status.output / "final.json")["session"] if self.status.has_proof("closure") else await self.summary(page)
         require(session["id"] == self.status.data["sessionId"], "SESSION_CHANGED")
         self.status.data.update(counters=closed_session(session), nativeReason=session["reason"])
         self.status.proof("closure", [self.status.output / "final.json"])
         await self.collect(page, final=True)
-        await self.download(page, page.get_by_role("button", name="JSONL", exact=True), "journal-final.jsonl")
-        meta = json.loads((self.status.output / "journal-final.jsonl").open(encoding="utf-8").readline())
+        if not self.status.has_proof("journal-binary"):
+            await self.download(page, page.get_by_role("button", name="JSONL", exact=True), "journal-final.jsonl")
+        with (self.status.output / "journal-final.jsonl").open(encoding="utf-8") as stream:
+            meta = json.loads(stream.readline())
         require(meta["kind"] == "journal-status" and meta["status"] == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
         compare(self.status, "journal-binary", self.collector.decisions_file, self.status.output / "journal-final.jsonl", True)
-        await self.shots(page, "shots-final.json")
-        self.status.proof("archive", [self.status.output / "shots-final.json"], self.collector.journal_sequence)
+        if not self.status.has_proof("archive"):
+            await self.shots(page, "shots-final.json")
+            self.status.proof("archive", [self.status.output / "shots-final.json"], self.collector.journal_sequence)
 
     async def launch(self, playwright):
         return await playwright.chromium.launch_persistent_context(str(self.status.output / "browser-profile"),
             headless=True, locale="fr-CA", timezone_id="America/Toronto", accept_downloads=True,
             viewport={"width": 1280, "height": 1000})
 
+    async def new_resource(self, playwright, stage):
+        require(all(r.closed for r in self.lifecycle.resources), "PERSISTENT_PROFILE_STILL_OWNED")
+        resource = self.lifecycle.own(await self.launch(playwright), stage)
+        # Explicitly own this page. Never index context.pages or guess resource liveness.
+        resource.own_page(await resource.context.new_page())
+        resource.page.set_default_timeout(min(15000, self.args.finalization_seconds * 1000))
+        return resource
+
+    async def screenshot(self, resource):
+        if not resource.usable():
+            self.status.warning("screenshot", RuntimeError("PAGE_UNAVAILABLE"))
+            return
+        try:
+            await self.lifecycle.begin().call(lambda: resource.page.screenshot(path=str(self.status.output / "diagnostic.png"), timeout=1000))
+        except Exception as error:
+            self.status.warning("screenshot", error)
+
+    async def execute(self, resource):
+        page = resource.page
+        await page.add_init_script("localStorage.setItem('i18nextLng', 'fr');")
+        await self.configure(page)
+        self.status.data["phase"] = "execution"
+        while True:
+            metrics = await self.metrics(page)
+            if metrics["status"] == "stopped":
+                self.lifecycle.begin()
+                break
+            await self.collect(page)
+            if self.cancelled:
+                await self.stop(page, "voluntary-signal"); break
+            if self.args.completed_blocks is not None:
+                session = await self.summary(page, "progress.json")
+                if session["completed"] >= self.args.completed_blocks:
+                    await self.stop(page, "objective"); break
+            await asyncio.sleep(.25)
+        await self.lifecycle.begin().call(lambda: self.finalize(page))
+
     async def run_browser(self, playwright):
-        context = await self.launch(playwright)
-        try:
-            page = await context.new_page()
-            await page.add_init_script("localStorage.setItem('i18nextLng', 'fr');")
-            await self.configure(page)
-            self.status.data["phase"] = "execution"
-            while True:
-                metrics = await self.metrics(page)
-                await self.collect(page)
-                if metrics["status"] == "stopped":
-                    break
-                if self.cancelled:
-                    await self.stop(page, "voluntary-signal"); break
-                if self.args.completed_blocks is not None:
-                    session = await self.summary(page, "progress.json")
-                    if session["completed"] >= self.args.completed_blocks:
-                        await self.stop(page, "objective"); break
-                await asyncio.sleep(.25)
-            await asyncio.wait_for(self.finalize(page), self.args.finalization_seconds)
-        finally:
-            await context.close()
-        context = await self.launch(playwright)
-        try:
-            page = await context.new_page()
+        resource = await self.new_resource(playwright, "session")
+        await self.execute(resource)
+        await self.screenshot(resource)
+        await resource.close(self.lifecycle.begin())
+        # Reopening is planned verification, performed only once after confirmed close.
+        resource = await self.lifecycle.begin().call(lambda: self.new_resource(playwright, "recovery"))
+        async def recover():
+            page = resource.page
             await page.goto(self.args.url)
             await page.get_by_role("button", name="Endurance IA", exact=True).click()
             scope = page.locator(".endurance-screen > p").filter(has_text=self.status.data["sessionId"])
@@ -208,8 +273,54 @@ class Driver:
             await self.download(page, scope.get_by_role("button", name="JSONL", exact=True), "recovered.jsonl")
             await self.shots(page, "recovered-shots.json", scope)
             recovery(self.status)
+        await self.lifecycle.begin().call(recover)
+        await resource.close(self.lifecycle.begin())
+        await self.after_recovery()
+
+    async def after_recovery(self):
+        """Injection seam for the regression test: no browser accesses beyond this point."""
+
+    async def rescue(self):
+        life = self.lifecycle
+        if life.rescuing or life.rescued:
+            return
+        life.rescuing = True
+        life.rescued = True
+        try:
+            resource = life.resources[-1] if life.resources else None
+            if resource is None or resource.stage != "session" or not resource.usable():
+                self.status.proof("rescue", state="unverified", reason="session page unavailable; local evidence retained")
+                return
+            async def preserve():
+                metrics = await self.metrics(resource.page)
+                if metrics["status"] != "stopped":
+                    await self.stop(resource.page, "failure-rescue")
+                # A pending stop is awaited; never submit a second stop command.
+                try:
+                    await self.finalize(resource.page)
+                except Exception as error:
+                    self.status.error("rescue-finalization", error)
+                    # Independent exports may remain usable after an analysis failure.
+                    # Never re-export a complete archive already attested at this bound.
+                    for control, operation in (
+                        ("journal-binary", lambda: self.download(resource.page,
+                            resource.page.get_by_role("button", name="JSONL", exact=True), "journal-final.jsonl")),
+                        ("archive", lambda: self.shots(resource.page, "shots-final.json")),
+                    ):
+                        if not self.status.has_proof(control) and resource.usable():
+                            try:
+                                path = await life.begin().call(operation)
+                                if control == "archive":
+                                    self.status.proof(control, [path], self.collector.journal_sequence)
+                                else:
+                                    compare(self.status, control, self.collector.decisions_file, path, True)
+                            except Exception as secondary:
+                                self.status.error("rescue-" + control, secondary)
+            await life.begin().call(preserve)
+        except Exception as error:
+            self.status.error("rescue", error)
         finally:
-            await context.close()
+            life.rescuing = False
 
     async def run(self, playwright):
         self.status.publish()
@@ -217,6 +328,13 @@ class Driver:
             await asyncio.wait_for(self.run_browser(playwright), self.args.safety_seconds)
         except Exception as error:
             self.status.error(self.status.data["phase"], error)
+            try:
+                self.status.publish()
+                await self.rescue()
+            except Exception as secondary:
+                self.status.error("rescue-publication", secondary)
+        finally:
+            await self.lifecycle.cleanup(self.status)
         return self.status.finish()
 
 
@@ -227,8 +345,16 @@ async def main(args):
         driver.cancelled = True
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, cancel)
-    async with async_playwright() as playwright:
-        return await driver.run(playwright)
+    driver.status.publish()
+    async def managed():
+        async with async_playwright() as playwright:
+            return await driver.run(playwright)
+    try:
+        return await asyncio.wait_for(managed(), args.safety_seconds)
+    except Exception as error:
+        driver.status.error("browser-runtime", error)
+        await driver.lifecycle.cleanup(driver.status)
+        return driver.status.finish()
 
 
 if __name__ == "__main__":

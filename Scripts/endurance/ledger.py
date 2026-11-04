@@ -4,12 +4,20 @@ class Ledger:
 
     def __init__(self):
         self.ledger = {}
+        self.free_weapons = False
+        self.stock_boundary_pending = False
 
     def __call__(self, row):
         ledger = self.ledger
         'Check applied money and stocks against boundary snapshots with a bounded roster ledger.'
         event = row.get('event', {})
         kind = event.get('kind')
+        if kind == 'session-start':
+            self.free_weapons = event['metadata']['config'].get('freeWeapons', False)
+        if kind == 'round-start' and self.free_weapons:
+            # Refill policy is outside this transaction audit. The first native
+            # roster after the round boundary supplies opening stock balances.
+            self.stock_boundary_pending = True
         if kind == 'block-start':
             ledger.clear()
             for player in event.get('players', []):
@@ -48,5 +56,9 @@ class Ledger:
             if player['id'] in ledger:
                 account = ledger[player['id']]
                 require(account['money'] == player['money'], 'Money reconciliation failed')
+                if self.stock_boundary_pending:
+                    account['inventory'] = dict(player['inventory'])
                 for weapon in account['inventory'].keys() | player['inventory'].keys():
                     require(account['inventory'].get(weapon, 0) == player['inventory'].get(weapon, 0), 'Stock reconciliation failed')
+        if players:
+            self.stock_boundary_pending = False

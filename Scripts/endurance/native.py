@@ -11,6 +11,8 @@ class JournalCollector:
         self.session_id = session_id
         self.journal_sequence = 0
         self.verified_sequence = 0
+        self.verified_bytes = 0
+        self.analysis_failed_sequence = None
         self.copied_bytes = 0
         self.sha256 = hashlib.sha256()
         self.journal_counts: Dict[str, int] = {}
@@ -70,6 +72,9 @@ class JournalCollector:
         if last_seq != self.journal_sequence + count:
             raise ValueError(f"SEQUENCE_DISORDER: expected last {self.journal_sequence + count}, got {last_seq}")
 
+        if last_seq > persisted:
+            raise ValueError("UNCONFIRMED_SEQUENCE")
+
         # Step 1: Write binary without BOM, CRLF or transformation
         # Write to actual append file directly or atomic append
         with self.decisions_file.open("ab") as stream:
@@ -81,8 +86,13 @@ class JournalCollector:
         self.sha256.update(raw_bytes)
         self.journal_sequence = last_seq
 
+        # Preserve the contiguous verified prefix after a prior analysis failure.
+        if self.analysis_failed_sequence is not None:
+            return count, len(raw_bytes)
+
         # Step 3: Parse lines with json.loads for business reconciliation
         for expected, line in enumerate(lines[:-1], first_seq):
+            self.analysis_failed_sequence = expected
             row = json.loads(line)
             if row.get("sessionId") != self.session_id:
                 raise ValueError(f"ENTRY_SESSION_MISMATCH: {row.get('sessionId')} != {self.session_id}")
@@ -91,44 +101,14 @@ class JournalCollector:
             if reconcile_fn:
                 reconcile_fn(row)
             self.verified_sequence = expected
+            self.verified_bytes += len((line + "\n").encode("utf-8"))
+            self.analysis_failed_sequence = None
             event = row.get("event", {})
             kind = event.get("event", {}).get("kind") if event.get("kind") == "combat" else event.get("kind")
             if kind:
                 self.journal_counts[kind] = self.journal_counts.get(kind, 0) + 1
 
         return count, len(raw_bytes)
-
-
-def export_native_archive_atomic(
-    page: Any,
-    output_path: Path,
-    button_name: str = "Exporter les tirs",
-    timeout_ms: int = 60000,
-) -> Dict[str, Any]:
-    """Downloads native archive with save_as to a temporary file, then atomically replaces destination."""
-    temp_path = output_path.parent / (output_path.name + ".tmp")
-    # Ensure details panel is open if present
-    button = None
-    if hasattr(page, "locator"):
-        panel = page.locator("details.diagnostic-panel")
-        if panel.count() > 0:
-            if not panel.first.evaluate("el => el.open"):
-                panel.first.locator("summary").click()
-            button = panel.first.get_by_role("button", name=button_name, exact=True)
-    if button is None:
-        button = page.get_by_role("button", name=button_name, exact=True)
-
-    with page.expect_download(timeout=timeout_ms) as download_info:
-        button.click()
-    download = download_info.value
-    download.save_as(str(temp_path))
-    temp_path.replace(output_path)
-    data = json.loads(output_path.read_text(encoding="utf-8"))
-    return {
-        "records": len(data.get("records", [])),
-        "terrains": len(data.get("terrains", [])),
-        "complete": bool(data.get("complete", False)),
-    }
 
 
 def compare_binary_journal(copied_path: Path, native_jsonl_path: Path) -> Tuple[bool, str]:

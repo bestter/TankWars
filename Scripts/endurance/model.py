@@ -42,12 +42,22 @@ def objective(requested, duration, completed):
     return dict(durationReached=duration_reached, completedBlocksReached=blocks_reached, objectiveReached=reached)
 
 
-def fingerprint(path):
+def fingerprint(path, prefix_bytes=None):
     digest = hashlib.sha256()
+    remaining = prefix_bytes
     with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        while remaining is None or remaining > 0:
+            chunk = stream.read(1024 * 1024 if remaining is None else min(1024 * 1024, remaining))
+            if not chunk:
+                break
             digest.update(chunk)
-    return {"path": str(Path(path).resolve()), "bytes": Path(path).stat().st_size, "sha256": digest.hexdigest()}
+            if remaining is not None:
+                remaining -= len(chunk)
+    require(remaining is None or remaining == 0, "ATTESTED_PREFIX_MISSING")
+    result = {"path": str(Path(path).resolve()), "bytes": Path(path).stat().st_size if prefix_bytes is None else prefix_bytes, "sha256": digest.hexdigest()}
+    if prefix_bytes is not None:
+        result["prefix"] = True
+    return result
 
 
 def atomic(path, text):
@@ -82,11 +92,34 @@ class Status:
         self.data.update(result=None, expectedExitCode=None)
         print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
 
-    def proof(self, control, files=(), sequence=None, state="verified", reason=None):
+    def proof(self, control, files=(), sequence=None, state="verified", reason=None, prefix_bytes=None):
         self.data["proofs"].append(dict(control=control, sessionId=self.data["sessionId"],
-            stage=self.data["phase"], at=now(), state=state, files=[fingerprint(p) for p in files],
+            stage=self.data["phase"], at=now(), state=state, files=[fingerprint(p, prefix_bytes) for p in files],
             sequence=sequence, sequenceReason="not a journal control" if sequence is None else None, reason=reason))
         self.publish()
+
+    def warning(self, stage, error):
+        record = dict(stage=stage, type=type(error).__name__, message=str(error), at=now())
+        self.data["warnings"].append(record)
+        print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    def has_proof(self, control):
+        return any(p["control"] == control and p["state"] == "verified" and
+                   p["sessionId"] == self.data["sessionId"] and
+                   (p["sequence"] is None or p["sequence"] == self.data.get("journalCopied"))
+                   for p in self.data["proofs"])
+
+    def check_files(self):
+        for proof in list(self.data["proofs"]):
+            if proof["state"] != "verified":
+                continue
+            for recorded in proof["files"]:
+                try:
+                    require(fingerprint(recorded["path"], recorded["bytes"] if recorded.get("prefix") else None) == recorded,
+                            "ATTESTED_FILE_CHANGED: " + recorded["path"])
+                except Exception as error:
+                    self.error("proof-availability", error)
+                    self.data["proofs"].append({**proof, "at": now(), "state": "failed", "reason": str(error)})
 
     def publish(self):
         self.data["updatedAt"] = now()
@@ -102,9 +135,10 @@ class Status:
 
     def finish(self):
         d = self.data
+        self.check_files()
         flags = objective(d["requested"], d["stoppedAtDurationMs"], None if d["counters"] is None else d["counters"]["completed"])
         d.update(flags)
-        verified = {p["control"] for p in d["proofs"] if p["state"] == "verified"}
+        verified = {control for control in REQUIRED if self.has_proof(control)}
         if d["primaryError"] is None:
             try:
                 require(REQUIRED <= verified, "MISSING_REQUIRED_PROOF: " + str(REQUIRED - verified))

@@ -67,7 +67,11 @@ def main(argv=None):
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
-                raw = process.wait()
+                try:
+                    raw = process.wait(timeout=args.termination_seconds)
+                except subprocess.TimeoutExpired:
+                    # The intervention is confirmed, even if death is not yet observable.
+                    raw = None
     try:
         state = json.loads((output / "status.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -79,7 +83,11 @@ def main(argv=None):
             repaired.data = state
         repaired.error("supervision", RuntimeError(verdict.get("reason", "DRIVER_PROTOCOL_ERROR")))
         repaired.data["supervision"] = dict(rawExitCode=raw, intervention=intervention)
-        repaired.finish()
+        try:
+            repaired.finish()
+        except OSError as error:
+            # Keep process-exit independently publishable even when status.json is locked.
+            print("SUPERVISOR_STATUS_PUBLICATION_FAILED: " + str(error), file=sys.stderr, flush=True)
     verdict.update(runId=run_id, intervention=intervention, elapsedSeconds=time.monotonic() - started)
     atomic(output / "process-exit.json", json.dumps(verdict, indent=2) + "\n")
     with (output / "process.log").open("a", encoding="utf-8") as log:
