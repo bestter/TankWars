@@ -56,7 +56,7 @@ class TestNativeCollector(unittest.TestCase):
     def test_binary_copy_fidelity(self):
         collector = JournalCollector(self.tmp_path)
         # Page with unicode accents and special chars
-        page = make_page("sess-1", 1, 5, sample="MontrÃ©al & QuÃ©bec â€” ðŸ’¥")
+        page = make_page("sess-1", 1, 5, sample="Montréal & Québec — 💥")
         count, written_bytes = collector.process_page(page)
 
         self.assertEqual(count, 5)

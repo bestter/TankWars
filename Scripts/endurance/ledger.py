@@ -25,6 +25,7 @@ class Ledger:
                 ledger[player['id']] = {'money': player['money'], 'inventory': dict(player.get('inventory', {}))}
         elif kind == 'purchase':
             purchase = event['purchase']
+            require(purchase['playerId'] in ledger, 'ECONOMIC_RECONCILIATION_FAILED')
             account = ledger[purchase['playerId']]
             require(account['money'] == purchase['moneyBefore'], 'ECONOMIC_RECONCILIATION_FAILED')
             require(purchase['moneyAfter'] == purchase['moneyBefore'] - purchase['price'], 'ECONOMIC_RECONCILIATION_FAILED')
@@ -38,12 +39,14 @@ class Ledger:
             c_kind = combat.get('kind')
             if c_kind == 'credit':
                 credit = combat['credit']
+                require(credit['playerId'] in ledger, 'ECONOMIC_RECONCILIATION_FAILED')
                 account = ledger[credit['playerId']]
                 require(account['money'] == credit['before'], 'ECONOMIC_RECONCILIATION_FAILED')
                 require(credit['after'] - credit['before'] == credit['amount'], 'ECONOMIC_RECONCILIATION_FAILED')
                 account['money'] = credit['after']
             elif c_kind == 'ammo-consumed':
                 require(combat['after'] == combat['before'] - (0 if combat['weaponId'] == 'MISSILE' else 1), 'ECONOMIC_RECONCILIATION_FAILED')
+                require(combat['playerId'] in ledger, 'ECONOMIC_RECONCILIATION_FAILED')
                 account = ledger[combat['playerId']]
                 require(account['inventory'].get(combat['weaponId'], 0) == combat['before'], 'ECONOMIC_RECONCILIATION_FAILED')
                 account['inventory'][combat['weaponId']] = combat['after']

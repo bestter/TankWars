@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from lifecycle import Deadline, Lifecycle, Resource
 from model import REQUIRED, Status, fingerprint, targets
 from native import JournalCollector
-from run import Driver, main
+from run import Driver, arguments, main
 from test_native import make_page
 from verify import recovery
 
@@ -381,6 +381,32 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(driver.status.has_proof("journal-binary"))
         self.assertIn("NATIVE_JOURNAL_STATUS_MISMATCH", str(driver.status.data["secondaryErrors"]))
 
+    async def test_rescue_attests_journal_binary_after_analysis_failure(self):
+        driver = self.driver()
+        resource = driver.lifecycle.own(FakeContext(), "session")
+        resource.own_page(SimpleNamespace(is_closed=lambda: False, on=lambda *_: None, get_by_role=lambda *_, **__: None))
+        def analyze(row):
+            if row["sequence"] == 2:
+                raise RuntimeError("analysis failure")
+        page = make_page("s", 1, 3, persisted=3)
+        page["status"]["complete"] = True
+        with self.assertRaises(RuntimeError):
+            driver.collector.process_page(page, analyze)
+        self.assertEqual(driver.collector.journal_sequence, 3)
+        self.assertEqual(driver.collector.verified_sequence, 1)
+        driver.status.data.update(sessionId="s", journalCopied=3)
+        path = self.root / "journal-final.jsonl"
+        header = json.dumps(dict(kind="journal-status", status=driver.collector.latest_status)) + "\n"
+        path.write_bytes(header.encode("utf-8") + driver.collector.decisions_file.read_bytes())
+        driver.metrics = AsyncMock(return_value={"status": "stopped"})
+        driver.finalize = AsyncMock(side_effect=RuntimeError("finalize failed on journal mismatch"))
+        driver.download = AsyncMock(return_value=path)
+        driver.shots = AsyncMock(side_effect=RuntimeError("shots unavailable"))
+        await driver.rescue()
+        self.assertTrue(driver.status.has_proof("journal-binary"))
+        self.assertFalse(driver.status.has_proof("journal"))
+        self.assertNotIn("rescue-journal-binary", [e["stage"] for e in driver.status.data["secondaryErrors"]])
+
     async def test_archive_rescue_uses_initial_identity_without_final_summary(self):
         driver = self.driver()
         driver.status.data["sessionId"] = "s"
@@ -416,3 +442,40 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         driver.rescue.assert_awaited_once()
         self.assertTrue(resource.closed)
         self.assertEqual(resource.context.close_calls, 1)
+
+    def test_argument_validation(self):
+        valid_cfg = self.root / "valid.json"
+        valid_cfg.write_text(json.dumps({
+            "profiles": ["v1-random", "v2-heuristic"],
+            "roundsPerBlock": 5,
+            "archiveBudgetMiB": 128,
+            "freeWeapons": False,
+            "stopOnIncident": True,
+            "limits": {"turns": 100, "roundMs": 60000, "actionMs": 5000, "transitionMs": 3000}
+        }))
+        base_argv = ["--url", "http://127.0.0.1:4173/", "--output", str(self.root / "out"),
+                     "--expected-build", "build-id", "--config", str(valid_cfg),
+                     "--duration-ms", "1000", "--safety-seconds", "10", "--finalization-seconds", "2"]
+        # Valid parses cleanly
+        parsed = arguments(base_argv)
+        self.assertEqual(parsed.config_data["roundsPerBlock"], 5)
+
+        # Invalid URL scheme or netloc
+        for bad_url in ("ftp://127.0.0.1/", "http://", "not-a-url"):
+            with self.subTest(bad_url=bad_url), self.assertRaises(SystemExit):
+                arguments(["--url", bad_url, *base_argv[2:]])
+
+        # Non-safe integer or bad type in config
+        bad_cfg = self.root / "bad.json"
+        for bad_rounds in (9007199254740992, "five", 0):
+            with self.subTest(bad_rounds=bad_rounds):
+                bad_cfg.write_text(json.dumps({
+                    "profiles": ["v1-random", "v2-heuristic"],
+                    "roundsPerBlock": bad_rounds,
+                    "archiveBudgetMiB": 128,
+                    "freeWeapons": False,
+                    "stopOnIncident": True,
+                    "limits": {"turns": 100, "roundMs": 60000, "actionMs": 5000, "transitionMs": 3000}
+                }))
+                with self.assertRaises(SystemExit):
+                    arguments(["--config", str(bad_cfg), *base_argv[2:6], *base_argv[8:]])

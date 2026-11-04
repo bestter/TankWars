@@ -6,6 +6,7 @@ import math
 import re
 import signal
 import sys
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -39,16 +40,19 @@ def arguments(argv=None):
     args = parser.parse_args(argv)
     try:
         targets(args.duration_ms, args.completed_blocks)
+        parsed = urllib.parse.urlparse(args.url)
+        require(parsed.scheme in ("http", "https") and bool(parsed.netloc), "INVALID_URL")
         require(positive(args.finalization_seconds) and positive(args.safety_seconds), "INVALID_TECHNICAL_TIMEOUT")
         require(args.safety_seconds > args.duration_ms / 1000 + args.finalization_seconds, "SAFETY_MUST_INCLUDE_FINALIZATION")
         config = read(args.config)
+        require(isinstance(config, dict), "INVALID_CONFIG")
         require(set(config) == {"profiles", "roundsPerBlock", "archiveBudgetMiB", "freeWeapons", "stopOnIncident", "limits"}, "INVALID_CONFIG_KEYS")
-        require(2 <= len(config["profiles"]) <= 4 and all(p in PROFILES for p in config["profiles"]), "INVALID_PROFILES")
-        require(type(config["roundsPerBlock"]) is int and config["roundsPerBlock"] > 0, "INVALID_ROUNDS")
+        require(type(config["profiles"]) is list and 2 <= len(config["profiles"]) <= 4 and all(p in PROFILES for p in config["profiles"]), "INVALID_PROFILES")
+        require(type(config["roundsPerBlock"]) is int and 0 < config["roundsPerBlock"] <= 9007199254740991, "INVALID_ROUNDS")
         require(type(config["archiveBudgetMiB"]) is int and 64 <= config["archiveBudgetMiB"] <= 4096, "INVALID_ARCHIVE_BUDGET")
         require(type(config["freeWeapons"]) is bool and type(config["stopOnIncident"]) is bool, "INVALID_FLAGS")
-        require(set(config["limits"]) == {"turns", "roundMs", "actionMs", "transitionMs"} and
-                all(type(v) is int and v > 0 for v in config["limits"].values()), "INVALID_LIMITS")
+        require(isinstance(config["limits"], dict) and set(config["limits"]) == {"turns", "roundMs", "actionMs", "transitionMs"} and
+                all(type(v) is int and 0 < v <= 9007199254740991 for v in config["limits"].values()), "INVALID_LIMITS")
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
     args.config_data = config
@@ -214,11 +218,17 @@ class Driver:
             await self.shots(page, "shots-final.json")
             self.status.proof("archive", [self.status.output / "shots-final.json"], self.collector.journal_sequence)
 
-    def verify_journal(self, path):
+    def verify_journal(self, path, *, require_verified=True):
         with path.open(encoding="utf-8") as stream:
             meta = json.loads(stream.readline())
-        require(meta["kind"] == "journal-status" and meta["status"] == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
-        journal(meta["status"], self.collector)
+        require(isinstance(meta, dict) and meta.get("kind") == "journal-status" and meta.get("status") == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
+        status = meta["status"]
+        require(status is not None and status.get("complete") is True and not status.get("error"), "INCOMPLETE_JOURNAL")
+        require(status.get("sessionId") == self.collector.session_id, "JOURNAL_SESSION_MISMATCH")
+        if require_verified:
+            require(self.collector.journal_sequence == self.collector.verified_sequence == status.get("persisted") == status.get("emitted"), "JOURNAL_CURSOR_MISMATCH")
+        else:
+            require(self.collector.journal_sequence == status.get("persisted") == status.get("emitted"), "JOURNAL_CURSOR_MISMATCH")
         compare(self.status, "journal-binary", self.collector.decisions_file, path, True)
 
     async def launch(self, playwright):
@@ -277,6 +287,7 @@ class Driver:
         resource = await self.lifecycle.begin().call(lambda: self.new_resource(playwright, "recovery"))
         async def recover():
             page = resource.page
+            await page.add_init_script("localStorage.setItem('i18nextLng', 'fr');")
             await page.goto(self.args.url)
             await page.get_by_role("button", name="Endurance IA", exact=True).click()
             scope = page.locator(".endurance-screen > p").filter(has_text=self.status.data["sessionId"])
@@ -325,7 +336,7 @@ class Driver:
                                 if control == "archive":
                                     self.status.proof(control, [path], self.collector.journal_sequence)
                                 else:
-                                    self.verify_journal(path)
+                                    self.verify_journal(path, require_verified=False)
                             except Exception as secondary:
                                 self.status.error("rescue-" + control, secondary)
             await life.begin().call(preserve)
@@ -345,9 +356,12 @@ class Driver:
             self.status.error(self.status.data["phase"], error)
             try:
                 self.status.publish()
-                await self.rescue()
             except Exception as secondary:
                 self.status.error("rescue-publication", secondary)
+            try:
+                await self.rescue()
+            except Exception as secondary:
+                self.status.error("rescue", secondary)
         finally:
             # The global guard can expire after browser work, while cleanup is
             # already closing a context. Keep that unique cleanup task alive.
@@ -379,10 +393,11 @@ async def main(args):
     try:
         return await asyncio.wait_for(managed(), args.safety_seconds)
     except Exception as error:
-        driver.status.error("browser-runtime", error)
         if not run_entered:
+            driver.status.error("browser-runtime", error)
             await driver.lifecycle.cleanup(driver.status)
-        return driver.status.finish()
+            return driver.status.finish()
+        return driver.status.data.get("expectedExitCode", 1)
 
 
 if __name__ == "__main__":

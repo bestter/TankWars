@@ -123,16 +123,20 @@ class Status:
         return False
 
     def check_files(self):
+        cache = {}
         for proof in list(self.data["proofs"]):
             if proof["state"] != "verified":
                 continue
             for recorded in proof["files"]:
                 try:
-                    require(fingerprint(recorded["path"], recorded["bytes"] if recorded.get("prefix") else None) == recorded,
-                            "ATTESTED_FILE_CHANGED: " + recorded["path"])
+                    key = (recorded["path"], recorded["bytes"] if recorded.get("prefix") else None)
+                    if key not in cache:
+                        cache[key] = fingerprint(key[0], key[1])
+                    require(cache[key] == recorded, "ATTESTED_FILE_CHANGED: " + recorded["path"])
                 except Exception as error:
                     self.error("proof-availability", error)
                     self.data["proofs"].append({**proof, "at": now(), "state": "failed", "reason": str(error)})
+                    break
 
     def publish(self):
         self.data["updatedAt"] = now()

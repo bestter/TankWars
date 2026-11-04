@@ -15,7 +15,10 @@ WINDOWS = os.name == "nt"
 
 def forward_signal(process, signum):
     if process.poll() is None:
-        process.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signum)
+        try:
+            process.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signum)
+        except (ProcessLookupError, OSError):
+            pass
 
 
 def observe(status, raw_code, run_id, intervention=None, terminated=True):
@@ -63,17 +66,25 @@ def main(argv=None):
             raw = process.wait(timeout=args.safety_seconds)
         except subprocess.TimeoutExpired:
             intervention = "supervisor-deadline"
-            if not WINDOWS:
-                os.killpg(process.pid, signal.SIGTERM)
-            else:
-                process.terminate()
+            try:
+                if not WINDOWS:
+                    os.killpg(process.pid, signal.SIGTERM)
+                elif hasattr(process, "send_signal") and hasattr(signal, "CTRL_BREAK_EVENT"):
+                    process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    process.terminate()
+            except (ProcessLookupError, OSError):
+                pass
             try:
                 raw = process.wait(timeout=args.termination_seconds)
             except subprocess.TimeoutExpired:
-                if not WINDOWS:
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    process.kill()
+                try:
+                    if not WINDOWS:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                except (ProcessLookupError, OSError):
+                    pass
                 try:
                     raw = process.wait(timeout=args.termination_seconds)
                 except subprocess.TimeoutExpired:
