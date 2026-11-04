@@ -1,0 +1,127 @@
+"""Shared evidence-first result protocol. No browser or process is started on import."""
+import hashlib
+import json
+import math
+import os
+import sys
+import traceback
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+CODES = {"completed": 0, "protected-stop": 2, "interrupted": 3, "error": 1}
+LABELS = {"completed": "Terminé / Completed", "protected-stop": "Écourté par protection / Protected stop",
+          "interrupted": "Interrompu / Interrupted", "error": "Erreur / Error"}
+REQUIRED = {"build", "configuration", "closure", "journal", "archive", "journal-binary",
+            "recovered-journal", "recovered-archive", "recovered-summary"}
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def positive(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+
+def targets(duration_ms, blocks):
+    require(positive(duration_ms) and int(duration_ms) == duration_ms, "POSITIVE_DURATION_REQUIRED")
+    require(blocks is None or type(blocks) is int and blocks > 0, "INVALID_COMPLETED_BLOCKS_TARGET")
+    return {"durationMs": duration_ms, "completedBlocks": blocks}
+
+
+def objective(requested, duration, completed):
+    duration_reached = None if duration is None else duration >= requested["durationMs"]
+    blocks_reached = None if completed is None else (requested["completedBlocks"] is not None and completed >= requested["completedBlocks"])
+    reached = None if duration_reached is None or blocks_reached is None else duration_reached or blocks_reached
+    return dict(durationReached=duration_reached, completedBlocksReached=blocks_reached, objectiveReached=reached)
+
+
+def fingerprint(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": str(Path(path).resolve()), "bytes": Path(path).stat().st_size, "sha256": digest.hexdigest()}
+
+
+def atomic(path, text):
+    path = Path(path)
+    candidate = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with candidate.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        candidate.replace(path)
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+class Status:
+    def __init__(self, output, requested, run_id=None):
+        self.output = Path(output)
+        self.output.mkdir(parents=True, exist_ok=True)
+        self.data = dict(schemaVersion=1, runId=run_id or uuid.uuid4().hex, phase="preparation", result=None,
+                         nativeReason=None, trigger=None, sessionId=None, stoppedAtDurationMs=None,
+                         counters=None, requested=requested, proofs=[], primaryError=None, secondaryErrors=[], warnings=[],
+                         expectedExitCode=None, **objective(requested, None, None))
+
+    def error(self, stage, error):
+        record = dict(stage=stage, type=type(error).__name__, message=str(error), at=now(),
+                      traceback="".join(traceback.format_exception(error)))
+        if self.data["primaryError"] is None:
+            self.data["primaryError"] = record
+        else:
+            self.data["secondaryErrors"].append(record)
+        self.data.update(result=None, expectedExitCode=None)
+        print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    def proof(self, control, files=(), sequence=None, state="verified", reason=None):
+        self.data["proofs"].append(dict(control=control, sessionId=self.data["sessionId"],
+            stage=self.data["phase"], at=now(), state=state, files=[fingerprint(p) for p in files],
+            sequence=sequence, sequenceReason="not a journal control" if sequence is None else None, reason=reason))
+        self.publish()
+
+    def publish(self):
+        self.data["updatedAt"] = now()
+        text = json.dumps(self.data, ensure_ascii=False, indent=2) + "\n"
+        # Both artifacts embed the exact same result. status.json is the commit marker.
+        summary = "# Endurance\n\n" + LABELS.get(self.data["result"], "En cours / In progress") + "\n\n```json\n" + text + "```\n\nSigné : Codex — GPT-6\n"
+        try:
+            atomic(self.output / "summary.md", summary)
+            atomic(self.output / "status.json", text)
+        except Exception as error:
+            self.error("status-publication", error)
+            raise
+
+    def finish(self):
+        d = self.data
+        flags = objective(d["requested"], d["stoppedAtDurationMs"], None if d["counters"] is None else d["counters"]["completed"])
+        d.update(flags)
+        verified = {p["control"] for p in d["proofs"] if p["state"] == "verified"}
+        if d["primaryError"] is None:
+            try:
+                require(REQUIRED <= verified, "MISSING_REQUIRED_PROOF: " + str(REQUIRED - verified))
+                require(d["stoppedAtDurationMs"] is not None, "FROZEN_DURATION_CAPABILITY_REQUIRED")
+                reason = d["nativeReason"]
+                if reason == "archive-budget":
+                    result = "protected-stop"
+                elif reason in ("duration", "block-limit", "manual") and flags["objectiveReached"] and (reason != "manual" or d["trigger"] == "objective"):
+                    result = "completed"
+                elif reason in ("manual", "environment-hidden", "environment-pagehide"):
+                    result = "interrupted"
+                else:
+                    raise ValueError("UNEXPECTED_STOP: " + str(reason))
+            except Exception as error:
+                self.error("classification", error)
+        if d["primaryError"] is not None:
+            result = "error"
+        d.update(phase="end", result=result, expectedExitCode=CODES[result])
+        self.publish()
+        return CODES[result]

@@ -1,5 +1,7 @@
 # Bestter's TankWars
 
+Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382) : [commandes, dépendances, seuils, preuves et codes / commands, dependencies, objectives, evidence and exit codes](Scripts/endurance/README.md).
+
 > A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
 
 **Classic Scorched Earth / Worms-style gameplay** — no external physics engines, no game frameworks. Pure custom terrain algorithms, projectile simulation, and a strict decoupled architecture.
