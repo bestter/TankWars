@@ -5,12 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from lifecycle import Deadline, Lifecycle, Resource
 from model import REQUIRED, Status, fingerprint, targets
 from native import JournalCollector
-from run import Driver
+from run import Driver, main
 from test_native import make_page
 from verify import recovery
 
@@ -277,3 +277,142 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(status.data["proofs"][0]["state"], "verified")
                 self.assertEqual(status.data["proofs"][-1]["state"], "failed")
                 self.assertIsNotNone(status.data["primaryError"])
+
+    async def test_main_safety_timeout_rescues_and_cleans_once(self):
+        driver = self.driver()
+        driver.args.safety_seconds = .03
+        resource = driver.lifecycle.own(FakeContext(), "session")
+        resource.own_page(FakePage())
+        async def blocked(_):
+            await asyncio.Event().wait()
+        driver.run_browser = blocked
+        driver.rescue = AsyncMock()
+        driver.lifecycle.cleanup = AsyncMock(wraps=driver.lifecycle.cleanup)
+        class Runtime:
+            async def __aenter__(self):
+                return None
+            async def __aexit__(self, *_):
+                return False
+        with patch("run.Driver", return_value=driver), patch("run.signal.signal"), patch("playwright.async_api.async_playwright", return_value=Runtime()):
+            self.assertEqual(await main(driver.args), 1)
+        driver.rescue.assert_awaited_once()
+        driver.lifecycle.cleanup.assert_awaited_once()
+        self.assertEqual(resource.context.close_calls, 1)
+        self.assertEqual(driver.status.data["primaryError"]["type"], "CancelledError")
+
+    async def test_main_startup_timeout_cleans_without_rescue(self):
+        driver = self.driver()
+        driver.args.safety_seconds = .03
+        driver.rescue = AsyncMock()
+        driver.lifecycle.cleanup = AsyncMock(wraps=driver.lifecycle.cleanup)
+        class Runtime:
+            async def __aenter__(self):
+                await asyncio.Event().wait()
+            async def __aexit__(self, *_):
+                return False
+        with patch("run.Driver", return_value=driver), patch("run.signal.signal"), patch("playwright.async_api.async_playwright", return_value=Runtime()):
+            self.assertEqual(await main(driver.args), 1)
+        driver.rescue.assert_not_awaited()
+        driver.lifecycle.cleanup.assert_awaited_once()
+
+    async def test_collection_checkpoints_are_bounded_incremental_and_published_once(self):
+        driver = self.driver()
+        driver.status.data["sessionId"] = "s"
+        driver.status.publish = Mock()
+        for sequence in range(1, 101):
+            page = SimpleNamespace(evaluate=AsyncMock(return_value=make_page("s", sequence, 1, persisted=sequence)))
+            with patch("model.fingerprint", side_effect=AssertionError("collection must not reread prefixes")):
+                await driver.collect(page)
+        self.assertEqual(len(driver.status.data["proofs"]), 4)
+        self.assertEqual(driver.status.publish.call_count, 100)
+        for proof in driver.status.data["proofs"]:
+            recorded = proof["files"][0]
+            self.assertEqual(recorded, fingerprint(recorded["path"], recorded["bytes"]))
+        driver.status.check_files()
+        self.assertIsNone(driver.status.data["primaryError"])
+
+    async def test_collection_analysis_failure_preserves_distinct_incremental_hashes(self):
+        driver = self.driver()
+        def analyze(row):
+            if row["sequence"] == 2:
+                raise RuntimeError("analysis")
+        driver.ledger = analyze
+        page = SimpleNamespace(evaluate=AsyncMock(return_value=make_page("s", 1, 3, persisted=3)))
+        with self.assertRaisesRegex(RuntimeError, "analysis"):
+            await driver.collect(page)
+        for proof in driver.status.data["proofs"]:
+            recorded = proof["files"][0]
+            self.assertEqual(recorded, fingerprint(recorded["path"], recorded["bytes"]))
+        self.assertEqual([p["sequence"] for p in driver.status.data["proofs"]], [3, 1])
+
+    async def test_execute_exports_only_on_new_block_end_and_uses_native_completed(self):
+        driver = self.driver()
+        driver.args.completed_blocks = 2
+        driver.configure = AsyncMock()
+        driver.metrics = AsyncMock(return_value={"status": "running"})
+        ends = iter([0, 0, 1, 1, 2, 2, 3])
+        async def collect(_):
+            driver.collector.journal_counts["block-end"] = next(ends)
+        driver.collect = collect
+        driver.summary = AsyncMock(side_effect=[{"completed": 0}, {"completed": 1}, {"completed": 2}])
+        driver.stop = AsyncMock()
+        driver.finalize = AsyncMock()
+        with patch("run.asyncio.sleep", new=AsyncMock()):
+            await driver.execute(SimpleNamespace(page=SimpleNamespace(add_init_script=AsyncMock())))
+        self.assertEqual(driver.summary.await_count, 3)
+        driver.stop.assert_awaited_once()
+        driver.finalize.assert_awaited_once()
+
+    async def test_rescue_rejects_wrong_journal_header(self):
+        driver = self.driver()
+        resource = driver.lifecycle.own(FakeContext(), "session")
+        resource.own_page(SimpleNamespace(is_closed=lambda: False, on=lambda *_: None, get_by_role=lambda *_, **__: None))
+        page = make_page("s", 1, 1, persisted=1)
+        page["status"]["complete"] = True
+        driver.collector.process_page(page)
+        driver.status.data.update(sessionId="s", journalCopied=1)
+        path = self.root / "journal-final.jsonl"
+        path.write_bytes(b'{"kind":"wrong","status":null}\n' + driver.collector.decisions_file.read_bytes())
+        driver.metrics = AsyncMock(return_value={"status": "stopped"})
+        driver.finalize = AsyncMock(side_effect=RuntimeError("injected"))
+        driver.download = AsyncMock(return_value=path)
+        driver.shots = AsyncMock(side_effect=RuntimeError("unavailable"))
+        await driver.rescue()
+        self.assertFalse(driver.status.has_proof("journal-binary"))
+        self.assertIn("NATIVE_JOURNAL_STATUS_MISMATCH", str(driver.status.data["secondaryErrors"]))
+
+    async def test_archive_rescue_uses_initial_identity_without_final_summary(self):
+        driver = self.driver()
+        driver.status.data["sessionId"] = "s"
+        (self.root / "initial.json").write_text(json.dumps({"session": {"id": "s", "build": "build"}}))
+        path = self.root / "shots.json"
+        path.write_text(json.dumps(dict(sessionId="s", build="build", complete=True, error=None, evicted=0)))
+        process = SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+        with patch("run.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)) as launch:
+            await driver.validate_shots(path)
+            launch.assert_awaited_once()
+        self.assertFalse((self.root / "final.json").exists())
+
+    async def test_global_timeout_during_cleanup_keeps_unique_close_alive(self):
+        driver = self.driver()
+        driver.args.safety_seconds = .03
+        resource = driver.lifecycle.own(FakeContext(), "session")
+        async def slow_close():
+            resource.context.close_calls += 1
+            await asyncio.sleep(.06)
+            resource.context.callbacks["close"]()
+        resource.context.close = slow_close
+        driver.run_browser = AsyncMock()
+        driver.rescue = AsyncMock()
+        driver.lifecycle.cleanup = AsyncMock(wraps=driver.lifecycle.cleanup)
+        class Runtime:
+            async def __aenter__(self):
+                return None
+            async def __aexit__(self, *_):
+                return False
+        with patch("run.Driver", return_value=driver), patch("run.signal.signal"), patch("playwright.async_api.async_playwright", return_value=Runtime()):
+            self.assertEqual(await main(driver.args), 1)
+        driver.lifecycle.cleanup.assert_awaited_once()
+        driver.rescue.assert_awaited_once()
+        self.assertTrue(resource.closed)
+        self.assertEqual(resource.context.close_calls, 1)

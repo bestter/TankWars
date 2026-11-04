@@ -8,8 +8,8 @@ class Ledger:
         self.stock_boundary_pending = False
 
     def __call__(self, row):
+        """Check applied money and stocks against boundary snapshots with a bounded roster ledger."""
         ledger = self.ledger
-        'Check applied money and stocks against boundary snapshots with a bounded roster ledger.'
         event = row.get('event', {})
         kind = event.get('kind')
         if kind == 'session-start':
@@ -19,6 +19,7 @@ class Ledger:
             # roster after the round boundary supplies opening stock balances.
             self.stock_boundary_pending = True
         if kind == 'block-start':
+            self.stock_boundary_pending = False
             ledger.clear()
             for player in event.get('players', []):
                 ledger[player['id']] = {'money': player['money'], 'inventory': dict(player.get('inventory', {}))}

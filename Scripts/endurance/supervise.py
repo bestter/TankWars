@@ -1,4 +1,4 @@
-"""Linux-compatible bounded supervisor; public exit codes follow the shared result protocol."""
+"""Cross-platform bounded supervisor; public exit codes follow the shared result protocol."""
 import argparse
 import json
 import os
@@ -9,6 +9,13 @@ import time
 import uuid
 from pathlib import Path
 from model import CODES, Status, atomic, positive, require, targets
+
+WINDOWS = os.name == "nt"
+
+
+def forward_signal(process, signum):
+    if process.poll() is None:
+        process.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signum)
 
 
 def observe(status, raw_code, run_id, intervention=None, terminated=True):
@@ -45,25 +52,25 @@ def main(argv=None):
     started = time.monotonic()
     with (output / "process.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("run.py")), *command],
-                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=not WINDOWS,
+                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0)
         def voluntary(signum, _):
             # Forward user cancellation without calling it a safety intervention.
-            if process.poll() is None:
-                process.send_signal(signum)
+            forward_signal(process, signum)
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, voluntary)
         try:
             raw = process.wait(timeout=args.safety_seconds)
         except subprocess.TimeoutExpired:
             intervention = "supervisor-deadline"
-            if os.name != "nt":
+            if not WINDOWS:
                 os.killpg(process.pid, signal.SIGTERM)
             else:
                 process.terminate()
             try:
                 raw = process.wait(timeout=args.termination_seconds)
             except subprocess.TimeoutExpired:
-                if os.name != "nt":
+                if not WINDOWS:
                     os.killpg(process.pid, signal.SIGKILL)
                 else:
                     process.kill()
@@ -76,7 +83,7 @@ def main(argv=None):
         state = json.loads((output / "status.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         state = None
-    verdict = observe(state, raw, run_id, intervention)
+    verdict = observe(state, raw, run_id, intervention, terminated=raw is not None)
     if verdict["result"] == "error" and (state is None or state.get("result") != "error" or intervention):
         repaired = Status(output, targets(driver_args.duration_ms, driver_args.completed_blocks), run_id)
         if state is not None and state.get("runId") == run_id:
@@ -93,7 +100,7 @@ def main(argv=None):
     with (output / "process.log").open("a", encoding="utf-8") as log:
         log.write(json.dumps(verdict) + "\n")
     print(json.dumps(verdict))
-    return verdict["expectedExitCode"]
+    return verdict["expectedExitCode"] if type(verdict["expectedExitCode"]) is int else 1
 
 
 if __name__ == "__main__":

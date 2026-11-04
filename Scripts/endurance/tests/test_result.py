@@ -75,3 +75,25 @@ class ResultTests(unittest.TestCase):
             self.assertEqual(observe(status, code, "run", "supervisor-deadline")["result"], "error")
         self.assertEqual(observe(None, 0, "run")["result"], "error")
         self.assertEqual(observe(None, None, "run", terminated=False)["observation"], "unknown")
+
+    def test_objective_with_partial_measurements_and_strict_duration(self):
+        self.assertTrue(objective(targets(1000, None), 1000, None)["objectiveReached"])
+        self.assertFalse(objective(targets(1000, None), 999, None)["objectiveReached"])
+        self.assertTrue(objective(targets(1000, 2), None, 2)["objectiveReached"])
+        self.assertIsNone(objective(targets(1000, 2), 999, None)["objectiveReached"])
+        for duration in (1000.0, True, 9007199254740992):
+            with self.assertRaises(ValueError):
+                targets(duration, None)
+
+    def test_latest_relevant_proof_supersedes_success(self):
+        status = self.status()
+        status.data.update(sessionId="s", journalCopied=3)
+        status.proof("archive", sequence=3)
+        status.proof("archive", sequence=2, state="failed")
+        self.assertTrue(status.has_proof("archive"))
+        status.proof("archive", sequence=3, state="failed")
+        self.assertFalse(status.has_proof("archive"))
+        status.data["sessionId"] = "other"
+        status.proof("archive", sequence=3)
+        status.data["sessionId"] = "s"
+        self.assertFalse(status.has_proof("archive"))

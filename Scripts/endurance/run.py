@@ -90,14 +90,11 @@ class Driver:
                     journalStatus=self.collector.latest_status, journalSha256=self.collector.sha256.hexdigest())
                 if self.collector.journal_sequence > before:
                     self.status.proof("raw-copy", [self.collector.decisions_file], self.collector.journal_sequence,
-                                      prefix_bytes=self.collector.copied_bytes)
+                                      prefix_bytes=self.collector.copied_bytes, prefix_sha256=self.collector.sha256.hexdigest(), publish=False)
                     self.status.proof("ledger-prefix", [self.collector.decisions_file], self.collector.verified_sequence,
-                                      prefix_bytes=self.collector.verified_bytes)
+                                      prefix_bytes=self.collector.verified_bytes, prefix_sha256=self.collector.verified_sha256.hexdigest(), publish=False)
                 self.status.publish()
             meta = result["status"]
-            self.status.data.update(journalCopied=self.collector.journal_sequence, journalVerified=self.collector.verified_sequence,
-                                    journalStatus=meta, journalSha256=self.collector.sha256.hexdigest())
-            self.status.publish()
             require(meta is not None and not meta["error"], "JOURNAL_UNAVAILABLE_OR_FAILED")
             if not count or self.collector.journal_sequence >= meta["persisted"]:
                 break
@@ -139,7 +136,13 @@ class Driver:
         return await self.download(page, scope.get_by_role("button", name="Exporter les tirs", exact=True), filename, self.validate_shots)
 
     async def validate_shots(self, path):
-        archive_manifest(read(path), read(self.status.output / "final.json")["session"])
+        # Rescue may preserve a complete archive before the final summary exists.
+        summary = self.status.output / "final.json"
+        if not summary.exists():
+            summary = self.status.output / "initial.json"
+        session = read(summary)["session"]
+        require(session["id"] == self.status.data["sessionId"], "SESSION_CHANGED")
+        archive_manifest(read(path), session)
         process = await asyncio.create_subprocess_exec("node", str(ROOT / "Scripts/endurance/validate-archive.mjs"), str(path.resolve()),
                                                        cwd=ROOT, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -206,13 +209,17 @@ class Driver:
         await self.collect(page, final=True)
         if not self.status.has_proof("journal-binary"):
             await self.download(page, page.get_by_role("button", name="JSONL", exact=True), "journal-final.jsonl")
-        with (self.status.output / "journal-final.jsonl").open(encoding="utf-8") as stream:
-            meta = json.loads(stream.readline())
-        require(meta["kind"] == "journal-status" and meta["status"] == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
-        compare(self.status, "journal-binary", self.collector.decisions_file, self.status.output / "journal-final.jsonl", True)
+        self.verify_journal(self.status.output / "journal-final.jsonl")
         if not self.status.has_proof("archive"):
             await self.shots(page, "shots-final.json")
             self.status.proof("archive", [self.status.output / "shots-final.json"], self.collector.journal_sequence)
+
+    def verify_journal(self, path):
+        with path.open(encoding="utf-8") as stream:
+            meta = json.loads(stream.readline())
+        require(meta["kind"] == "journal-status" and meta["status"] == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
+        journal(meta["status"], self.collector)
+        compare(self.status, "journal-binary", self.collector.decisions_file, path, True)
 
     async def launch(self, playwright):
         return await playwright.chromium.launch_persistent_context(str(self.status.output / "browser-profile"),
@@ -241,6 +248,7 @@ class Driver:
         await page.add_init_script("localStorage.setItem('i18nextLng', 'fr');")
         await self.configure(page)
         self.status.data["phase"] = "execution"
+        checked_block_ends = 0
         while True:
             metrics = await self.metrics(page)
             if metrics["status"] == "stopped":
@@ -249,8 +257,12 @@ class Driver:
             await self.collect(page)
             if self.cancelled:
                 await self.stop(page, "voluntary-signal"); break
-            if self.args.completed_blocks is not None:
+            block_ends = self.collector.journal_counts.get("block-end", 0)
+            if self.args.completed_blocks is not None and block_ends > checked_block_ends:
+                # block-end also includes abandoned/interrupted blocks; only
+                # the native summary establishes the completed-block objective.
                 session = await self.summary(page, "progress.json")
+                checked_block_ends = block_ends
                 if session["completed"] >= self.args.completed_blocks:
                     await self.stop(page, "objective"); break
             await asyncio.sleep(.25)
@@ -313,7 +325,7 @@ class Driver:
                                 if control == "archive":
                                     self.status.proof(control, [path], self.collector.journal_sequence)
                                 else:
-                                    compare(self.status, control, self.collector.decisions_file, path, True)
+                                    self.verify_journal(path)
                             except Exception as secondary:
                                 self.status.error("rescue-" + control, secondary)
             await life.begin().call(preserve)
@@ -322,11 +334,14 @@ class Driver:
         finally:
             life.rescuing = False
 
-    async def run(self, playwright):
+    async def run(self, playwright, *, guarded=False):
         self.status.publish()
         try:
-            await asyncio.wait_for(self.run_browser(playwright), self.args.safety_seconds)
-        except Exception as error:
+            if guarded:
+                await self.run_browser(playwright)
+            else:
+                await asyncio.wait_for(self.run_browser(playwright), self.args.safety_seconds)
+        except (Exception, asyncio.CancelledError) as error:
             self.status.error(self.status.data["phase"], error)
             try:
                 self.status.publish()
@@ -334,7 +349,15 @@ class Driver:
             except Exception as secondary:
                 self.status.error("rescue-publication", secondary)
         finally:
-            await self.lifecycle.cleanup(self.status)
+            # The global guard can expire after browser work, while cleanup is
+            # already closing a context. Keep that unique cleanup task alive.
+            cleanup = asyncio.create_task(self.lifecycle.cleanup(self.status))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as error:
+                self.status.error("cleanup-safety", error)
+                await cleanup
+                await self.rescue()
         return self.status.finish()
 
 
@@ -343,17 +366,22 @@ async def main(args):
     driver = Driver(args)
     def cancel(*_):
         driver.cancelled = True
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    for sig in (signal.SIGINT, signal.SIGTERM, *([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])):
         signal.signal(sig, cancel)
     driver.status.publish()
+    run_entered = False
     async def managed():
+        nonlocal run_entered
         async with async_playwright() as playwright:
-            return await driver.run(playwright)
+            run_entered = True
+            # main owns the sole guard, including Playwright startup.
+            return await driver.run(playwright, guarded=True)
     try:
         return await asyncio.wait_for(managed(), args.safety_seconds)
     except Exception as error:
         driver.status.error("browser-runtime", error)
-        await driver.lifecycle.cleanup(driver.status)
+        if not run_entered:
+            await driver.lifecycle.cleanup(driver.status)
         return driver.status.finish()
 
 

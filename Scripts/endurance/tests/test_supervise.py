@@ -3,9 +3,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from supervise import main
+from supervise import forward_signal, main
 
 
 class SupervisorTests(unittest.TestCase):
@@ -42,3 +42,28 @@ class SupervisorTests(unittest.TestCase):
                 self.assertEqual(observed["expectedExitCode"], expected)
                 if intervene:
                     self.assertEqual(observed["intervention"], "supervisor-deadline")
+
+    def test_windows_voluntary_signal_uses_child_console_group(self):
+        process = Mock()
+        process.poll.return_value = None
+        with patch("supervise.WINDOWS", True), patch("supervise.signal.CTRL_BREAK_EVENT", 123, create=True):
+            forward_signal(process, 2)
+        process.send_signal.assert_called_once_with(123)
+        process.poll.return_value = 0
+        forward_signal(process, 2)
+        self.assertEqual(process.send_signal.call_count, 1)
+
+    def test_unobservable_termination_never_returns_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            process = Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired("driver", 1)
+            args = ["--safety-seconds", "4", "--", "--url", "http://localhost/", "--output", temp,
+                    "--expected-build", "build", "--config", str(Path(__file__).resolve().parents[1] / "config.example.json"),
+                    "--duration-ms", "1", "--finalization-seconds", "1", "--safety-seconds", "3"]
+            with patch("supervise.subprocess.Popen", return_value=process), patch("supervise.signal.signal"), patch("supervise.os.killpg", create=True):
+                self.assertEqual(main(args), 1)
+            verdict = json.loads((Path(temp) / "process-exit.json").read_text())
+            self.assertEqual(verdict["observation"], "unknown")
+            self.assertIsNone(verdict["rawExitCode"])
+            self.assertIsNone(verdict["expectedExitCode"])
+            self.assertEqual(verdict["intervention"], "supervisor-deadline")

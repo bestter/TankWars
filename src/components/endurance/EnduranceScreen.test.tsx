@@ -33,6 +33,22 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("JSONL and native exports through the interface (combat replaced by a fixture)", () => {
+  it.each([7000, 14000, 28000, 29000])("preserves an exact %i ms duration entered in minutes", async durationMs => {
+    language.value = "fr";
+    render(<EnduranceScreen onExit={vi.fn()} />);
+    const minutes = screen.getByLabelText(fr.endurance_minutes);
+    // Match Driver.configure: fractional minutes are enabled for short runs.
+    minutes.setAttribute("step", "any");
+    fireEvent.change(minutes, { target: { value: String(durationMs / 60000) } });
+    fireEvent.click(screen.getByRole("button", { name: fr.endurance_start }));
+    const stop = await screen.findByRole("button", { name: fr.endurance_stop });
+    fireEvent.click(stop);
+    await waitFor(() => expect((screen.getByRole("button", { name: fr.btn_menu }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: /^JSON$/ }));
+    await waitFor(() => expect(blobs).toHaveLength(1));
+    expect(JSON.parse(await blobs[0].text())).toMatchObject({ session: { config: { maxDurationMs: durationMs } } });
+  });
+
   it.each(["fr", "en"])("exports a stopped journal and global shots archive through the %s interface", async locale => {
     language.value = locale;
     const dict = locale === "fr" ? fr : en;

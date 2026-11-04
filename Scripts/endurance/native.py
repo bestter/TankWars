@@ -15,6 +15,7 @@ class JournalCollector:
         self.analysis_failed_sequence = None
         self.copied_bytes = 0
         self.sha256 = hashlib.sha256()
+        self.verified_sha256 = hashlib.sha256()
         self.journal_counts: Dict[str, int] = {}
         self.latest_status: Optional[Dict[str, Any]] = None
         self.decisions_file = self.output_dir / "decisions.jsonl"
@@ -101,7 +102,9 @@ class JournalCollector:
             if reconcile_fn:
                 reconcile_fn(row)
             self.verified_sequence = expected
-            self.verified_bytes += len((line + "\n").encode("utf-8"))
+            verified_raw = (line + "\n").encode("utf-8")
+            self.verified_bytes += len(verified_raw)
+            self.verified_sha256.update(verified_raw)
             self.analysis_failed_sequence = None
             event = row.get("event", {})
             kind = event.get("event", {}).get("kind") if event.get("kind") == "combat" else event.get("kind")

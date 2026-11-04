@@ -30,15 +30,15 @@ def positive(value):
 
 
 def targets(duration_ms, blocks):
-    require(positive(duration_ms) and int(duration_ms) == duration_ms, "POSITIVE_DURATION_REQUIRED")
+    require(type(duration_ms) is int and 0 < duration_ms <= 9007199254740991, "POSITIVE_DURATION_REQUIRED")
     require(blocks is None or type(blocks) is int and blocks > 0, "INVALID_COMPLETED_BLOCKS_TARGET")
     return {"durationMs": duration_ms, "completedBlocks": blocks}
 
 
 def objective(requested, duration, completed):
     duration_reached = None if duration is None else duration >= requested["durationMs"]
-    blocks_reached = None if completed is None else (requested["completedBlocks"] is not None and completed >= requested["completedBlocks"])
-    reached = None if duration_reached is None or blocks_reached is None else duration_reached or blocks_reached
+    blocks_reached = False if requested["completedBlocks"] is None else (None if completed is None else completed >= requested["completedBlocks"])
+    reached = True if duration_reached is True or blocks_reached is True else (None if duration_reached is None or blocks_reached is None else False)
     return dict(durationReached=duration_reached, completedBlocksReached=blocks_reached, objectiveReached=reached)
 
 
@@ -92,11 +92,23 @@ class Status:
         self.data.update(result=None, expectedExitCode=None)
         print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
 
-    def proof(self, control, files=(), sequence=None, state="verified", reason=None, prefix_bytes=None):
-        self.data["proofs"].append(dict(control=control, sessionId=self.data["sessionId"],
-            stage=self.data["phase"], at=now(), state=state, files=[fingerprint(p, prefix_bytes) for p in files],
-            sequence=sequence, sequenceReason="not a journal control" if sequence is None else None, reason=reason))
-        self.publish()
+    def proof(self, control, files=(), sequence=None, state="verified", reason=None, prefix_bytes=None,
+              prefix_sha256=None, publish=True):
+        recorded = [fingerprint(p, prefix_bytes) if prefix_sha256 is None else
+                    dict(path=str(Path(p).resolve()), bytes=prefix_bytes, sha256=prefix_sha256, prefix=True) for p in files]
+        proof = dict(control=control, sessionId=self.data["sessionId"],
+            stage=self.data["phase"], at=now(), state=state, files=recorded,
+            sequence=sequence, sequenceReason="not a journal control" if sequence is None else None, reason=reason)
+        # Retain the first and latest immutable cursor checkpoints. Milestones
+        # and failures are never compacted.
+        if control in ("raw-copy", "ledger-prefix") and state == "verified":
+            checkpoints = [p for p in self.data["proofs"] if p["control"] == control and
+                           p["sessionId"] == proof["sessionId"] and p["state"] == "verified"]
+            if len(checkpoints) >= 2:
+                self.data["proofs"] = [p for p in self.data["proofs"] if p is not checkpoints[-1]]
+        self.data["proofs"].append(proof)
+        if publish:
+            self.publish()
 
     def warning(self, stage, error):
         record = dict(stage=stage, type=type(error).__name__, message=str(error), at=now())
@@ -104,10 +116,11 @@ class Status:
         print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
 
     def has_proof(self, control):
-        return any(p["control"] == control and p["state"] == "verified" and
-                   p["sessionId"] == self.data["sessionId"] and
-                   (p["sequence"] is None or p["sequence"] == self.data.get("journalCopied"))
-                   for p in self.data["proofs"])
+        for p in reversed(self.data["proofs"]):
+            if (p["control"] == control and p["sessionId"] == self.data["sessionId"] and
+                    (p["sequence"] is None or p["sequence"] == self.data.get("journalCopied"))):
+                return p["state"] == "verified"
+        return False
 
     def check_files(self):
         for proof in list(self.data["proofs"]):
