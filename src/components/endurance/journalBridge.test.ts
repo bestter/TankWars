@@ -9,13 +9,24 @@ describe("local test-build journal bridge", () => {
     installJournalBridge(fixture().run);
     expect(window.__tankwarsEnduranceTest).toBeUndefined();
   });
-  it("delegates bounded reads and protects a newer StrictMode installation from old cleanup", async () => {
+  it("exposes new methods, omits retired methods, delegates bounded reads and protects a newer StrictMode installation from old cleanup", async () => {
     vi.stubEnv("MODE", "endurance"); vi.stubGlobal("window", {});
-    const run = fixture().run; const read = vi.spyOn(run, "journalPage").mockResolvedValue({ status: null, entries: [] });
+    const run = fixture().run;
+    const read = vi.spyOn(run, "readJournalText").mockResolvedValue({
+      status: null, firstSequence: null, lastSequence: null, count: 0, bytes: 0, text: "",
+    });
     const old = installJournalBridge(run), current = installJournalBridge(run);
-    old(); expect(window.__tankwarsEnduranceTest).toBeDefined();
-    await window.__tankwarsEnduranceTest!.readJournalPage(256, 128);
+    old();
+    const bridge = window.__tankwarsEnduranceTest;
+    expect(bridge).toBeDefined();
+    expect(bridge).toHaveProperty("readJournalText");
+    expect(bridge).toHaveProperty("readArchiveMetrics");
+    expect((bridge as unknown as { readJournalPage?: unknown }).readJournalPage).toBeUndefined();
+    expect((bridge as unknown as { readArchive?: unknown }).readArchive).toBeUndefined();
+    await bridge!.readJournalText(256, 128);
     expect(read).toHaveBeenCalledWith(256, 128);
-    current(); expect(window.__tankwarsEnduranceTest).toBeUndefined();
+    expect(bridge!.readArchiveMetrics()).toBeDefined();
+    current();
+    expect(window.__tankwarsEnduranceTest).toBeUndefined();
   });
 });
