@@ -115,7 +115,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
     try {
       const players = createLocalPlayers(profiles.slice(0, count).map((profile, index) => ({ name: `${profile}-${index + 1}`, isHuman: false, aiProfile: profile, color: COLORS[index] })));
       onStart({ ...defaultConfig(players), freeWeapons, archiveBudgetMiB, roundsPerBlock: rounds, maxBlocks: blocks === 0 ? null : blocks,
-        maxDurationMs: minutes === 0 ? null : minutes * 60000, stopOnIncident, limits });
+        maxDurationMs: minutes === 0 ? null : Math.round(minutes * 60000), stopOnIncident, limits });
     } catch (e) { setError(`${t("endurance_invalid")}: ${String(e)}`); }
   };
   const recovered = async (format: "json" | "md" | "jsonl" | "shots") => {

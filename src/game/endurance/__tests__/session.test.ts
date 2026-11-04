@@ -7,6 +7,27 @@ import { fixture } from "./helpers";
 async function settled() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 
 describe("endurance session contracts", () => {
+  it.each([false, true])("freezes stop duration before slow closure, including a failed save (%s)", async fail => {
+    const f = fixture(); await f.run.start(); f.run.attach(f.host);
+    expect(f.run.archiveMetrics.stoppedAtDurationMs).toBeNull();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(f.storage, "save").mockImplementation(async () => {
+      await gate;
+      if (fail) throw new Error("quota");
+    });
+    f.advance(999);
+    const stopping = f.run.stop("archive-budget");
+    expect(f.run.archiveMetrics.stoppedAtDurationMs).toBe(999);
+    f.advance(5000); await f.run.stop("manual");
+    expect(f.run.archiveMetrics.stoppedAtDurationMs).toBe(999);
+    release(); await stopping;
+    expect(f.run.archiveMetrics.stoppedAtDurationMs).toBe(999);
+    expect(f.run.session.durationMs).toBe(5999);
+    expect(f.run.session.reason).toBe("archive-budget");
+    await f.run.stop();
+    expect(f.run.archiveMetrics.stoppedAtDurationMs).toBe(999);
+  });
   it("validates limits, roster and immutable deep initial configuration", () => {
     const f = fixture();
     const frozen = validateConfig(f.config);

@@ -33,10 +33,12 @@ export class EnduranceSession implements CombatObserver {
   private actionReserve = ACTION_RESERVE;
   private maxActionBytes = 0;
   private exportMs = 0;
+  private stoppedAtDurationMs: number | null = null;
   get archiveMetrics() { return { limit: this.archiveLimit, reserve: this.actionReserve, maxActionBytes: this.maxActionBytes,
     pendingBytes: this.journal?.pendingBytes ?? 0, ...this.recorder.stats, totalBytes: this.archiveBytes, exportMs: this.exportMs,
     confirmedSequence: this.journal?.status.persisted ?? 0, emittedSequence: this.journal?.status.emitted ?? 0,
-    durationMs: this.running ? this.time.now() - this.started : this.session.durationMs, status: this.session.status, reason: this.session.reason }; }
+    durationMs: this.running ? this.time.now() - this.started : this.session.durationMs,
+    stoppedAtDurationMs: this.stoppedAtDurationMs, status: this.session.status, reason: this.session.reason }; }
   diagnostic(input: DiagnosticInput): void {
     if (this.diagnosticFailed) return;
     this.recorder.context(this.block?.id ?? null, this.roundNumber, this.turn);
@@ -470,6 +472,7 @@ export class EnduranceSession implements CombatObserver {
   }
   async stop(reason = "manual"): Promise<void> {
     if (this.stopped) return;
+    this.stoppedAtDurationMs = this.time.now() - this.started;
     this.finalizing = true;
     this.stopped = true;
     this.session.status = "stopped"; this.session.reason = reason;

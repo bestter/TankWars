@@ -4,6 +4,15 @@ import { fixture } from "../../game/endurance/__tests__/helpers";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("local test-build journal bridge", () => {
+  it("exposes the frozen stop measurement without extending the bridge API", async () => {
+    vi.stubEnv("MODE", "endurance"); vi.stubGlobal("window", {});
+    const f = fixture(); await f.run.start();
+    const remove = installJournalBridge(f.run);
+    expect(window.__tankwarsEnduranceTest!.readArchiveMetrics().stoppedAtDurationMs).toBeNull();
+    f.advance(123); await f.run.stop(); f.advance(456);
+    expect(window.__tankwarsEnduranceTest!.readArchiveMetrics().stoppedAtDurationMs).toBe(123);
+    remove();
+  });
   it("is absent in public builds", () => {
     vi.stubEnv("MODE", "production"); vi.stubGlobal("window", {});
     installJournalBridge(fixture().run);
