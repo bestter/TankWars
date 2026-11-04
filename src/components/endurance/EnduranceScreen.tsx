@@ -8,6 +8,7 @@ import { defaultConfig } from "../../game/endurance/config";
 import { EnduranceSession } from "../../game/endurance/session";
 import { IndexedEnduranceStorage } from "../../game/endurance/storage";
 import { markdownReport } from "../../game/endurance/report";
+import { exportJournalJsonl } from "../../game/endurance/journalJsonl";
 import type { EnduranceConfig, EnduranceExport, SessionRecord } from "../../game/endurance/types";
 import type { AiProfile } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
@@ -127,16 +128,11 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
       if (format === "jsonl") {
         const status = await storage.journalStatus(saved.id);
         if (!status) throw new Error(t("endurance_journal_unavailable"));
-        const chunks = [JSON.stringify({ schemaVersion: 1, kind: "journal-status", status: { ...status, complete: saved.status === "stopped" && status.complete } }) + "\n"];
-        let after = 0;
-        while (after < status.persisted) {
-          // The next bounded page starts at the sequence validated in the preceding page.
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop
-          const entries = await storage.readJournal(saved.id, after, 256);
-          if (!entries.length) throw new Error("JOURNAL_SEQUENCE_GAP");
-          for (const entry of entries) { if (entry.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP"); chunks.push(JSON.stringify(entry) + "\n"); }
-        }
-        download(`${saved.id}.jsonl`, chunks.join(""), "application/x-ndjson"); return;
+        const jsonl = await exportJournalJsonl({
+          status: { ...status, complete: saved.status === "stopped" && status.complete },
+          readPage: (after, limit) => storage.readJournal(saved.id, after, limit),
+        });
+        download(`${saved.id}.jsonl`, jsonl, "application/x-ndjson"); return;
       }
       const record = structuredClone(saved);
       if (record.status === "running") { record.collection = "incomplete"; record.reason = "crash-checkpoint"; }

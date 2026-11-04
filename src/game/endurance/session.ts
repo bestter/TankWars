@@ -11,6 +11,7 @@ import type { Player } from "../../types/player";
 import { WEAPON_REGISTRY } from "../../types/weapon";
 import { EnduranceJournal, type JournalEvent, type JournalEntry, type JournalStatus } from "./journal";
 import type { PurchaseObservation } from "../observation";
+import { exportJournalJsonl, formatJournalTextPage, validateJournalPageRequest, type JournalTextPage } from "./journalJsonl";
 
 export interface EnduranceHost {
   captureCurrent?(): void;
@@ -189,26 +190,26 @@ export class EnduranceSession implements CombatObserver {
     await this.journal?.flush();
     return { status: this.journalStatus, entries: await this.storage.readJournal?.(this.session.id, after, limit) ?? [] };
   }
+  async readJournalText(after = 0, limit = 256): Promise<JournalTextPage> {
+    const validated = validateJournalPageRequest(after, limit);
+    await this.journal?.flush();
+    const status = this.journalStatus;
+    if (!status) return { status: null, firstSequence: null, lastSequence: null, count: 0, bytes: 0, text: "" };
+    if (validated.after >= status.persisted) {
+      return { status, firstSequence: null, lastSequence: null, count: 0, bytes: 0, text: "" };
+    }
+    const entries = await this.storage.readJournal?.(this.session.id, validated.after, validated.limit) ?? [];
+    return formatJournalTextPage(entries, this.session.id, validated.after, validated.limit, status);
+  }
   async journalJSONL(): Promise<string> {
-    const chunks: string[] = []; let after = 0;
-    const status = (await this.journalPage()).status;
+    await this.journal?.flush();
+    const status = this.journalStatus;
     if (!status) throw new Error("JOURNAL_UNAVAILABLE");
-    chunks.push(JSON.stringify({ schemaVersion: 1, kind: "journal-status", status }) + "\n");
-    const upper = status.persisted;
-    while (after < upper) {
-      // Each bounded page depends on the last sequence read; do not load the full history in parallel.
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop
-      const { entries } = await this.journalPage(after);
-      const rows = entries.filter(e => e.sequence <= upper);
-      if (!rows.length) throw new Error("JOURNAL_SEQUENCE_GAP");
-      for (const row of rows) { if (row.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP"); chunks.push(JSON.stringify(row) + "\n"); }
-    }
-    for (const row of status.error ? this.journal?.pending() ?? [] : []) {
-      if (row.sequence <= upper) continue;
-      if (row.sequence !== ++after) throw new Error("JOURNAL_SEQUENCE_GAP");
-      chunks.push(JSON.stringify(row) + "\n");
-    }
-    return chunks.join("");
+    return exportJournalJsonl({
+      status,
+      readPage: (after, limit) => this.storage.readJournal?.(this.session.id, after, limit) ?? Promise.resolve([]),
+      pending: () => this.journal?.pending() ?? [],
+    });
   }
   beginShopVisit(player: Player): string | null {
     if (!this.active || this.stopped) return null;
