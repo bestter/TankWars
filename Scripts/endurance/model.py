@@ -107,9 +107,6 @@ class Status:
                 self.data["proofs"] = [p for p in self.data["proofs"] if p is not checkpoints[-1]]
         self.data["proofs"].append(proof)
         self.retain("proof", proof)
-        matching = [p for p in self.data["proofs"] if p["control"] == control and p["state"] == state and p["sessionId"] == proof["sessionId"]]
-        if len(matching) > 2:
-            self.data["proofs"] = [p for p in self.data["proofs"] if p is not matching[-2]]
         if publish:
             self.publish()
 

@@ -12,9 +12,19 @@ export async function readManifest(disk: BundleDisk): Promise<BundleManifest> {
   if (value.rules !== RULES_ID || !object(value.session) || typeof value.session.id !== "string" ||
     typeof value.session.build !== "string" || typeof value.session.gameVersion !== "string" || !object(value.journal) ||
     value.journal.sessionId !== value.session.id || !Number.isSafeInteger(value.journal.persisted) || Number(value.journal.persisted) < 0 ||
-    !object(value.options) || typeof value.complete !== "boolean" || typeof value.reportComplete !== "boolean" ||
-    (value.catalogue !== null && typeof value.catalogue !== "string") || typeof value.index !== "string" ||
-    !value.index.endsWith("index/root.json") || typeof value.generation !== "string" ||
+    !object(value.options) || !Number.isSafeInteger(value.options.partSizeMiB) || !Number.isSafeInteger(value.options.slowDecisionMs) ||
+    typeof value.complete !== "boolean" || typeof value.reportComplete !== "boolean" ||
+    (value.catalogue !== null && typeof value.catalogue !== "string") ||
+    !(value.catalogueSha256 === null || typeof value.catalogueSha256 === "string") ||
+    !(value.derivedCatalogue === null || typeof value.derivedCatalogue === "string") ||
+    !(value.derivedCatalogueSha256 === null || typeof value.derivedCatalogueSha256 === "string") ||
+    !(value.indexBoundary === null || (Number.isSafeInteger(value.indexBoundary) && Number(value.indexBoundary) >= 0)) ||
+    !(value.reportError === null || typeof value.reportError === "string") ||
+    !Number.isSafeInteger(value.captureFirst) || Number(value.captureFirst) < 0 ||
+    !Number.isSafeInteger(value.captureLast) || Number(value.captureLast) < 0 ||
+    !Number.isSafeInteger(value.summaryAtSequence) || Number(value.summaryAtSequence) < 0 ||
+    typeof value.unconfirmed !== "boolean" ||
+    typeof value.index !== "string" || !value.index.endsWith("index/root.json") || typeof value.generation !== "string" ||
     typeof value.journal.complete !== "boolean" || !(value.journal.error === null || typeof value.journal.error === "string") ||
     !Number.isSafeInteger(value.journal.emitted) || Number(value.journal.emitted) < Number(value.journal.persisted)) throw new Error("INVALID_BUNDLE_MANIFEST");
   validateSessionRecord(value.session); safePath(value.index);
@@ -95,7 +105,10 @@ export async function extractShot(disk: BundleDisk, key: string): Promise<ShotAr
   let path: string | null = `${prefix}index/shots/${await identity(key)}.json`;
   const records: ArchiveRecord[] = [], terrains = new Map<string, TerrainRecord>();
   let previous = 0;
+  const visited = new Set<string>();
   while (path) {
+    if (visited.has(path)) throw new Error("INVALID_SHOT_INDEX");
+    visited.add(path);
     await verifyFile(disk, path);
     const page = await readJson(disk, path);
     if (!object(page) || page.shotKey !== key || !Array.isArray(page.refs) || page.refs.length > 256 ||
@@ -123,7 +136,7 @@ export async function validateBundle(disk: BundleDisk): Promise<BundleManifest> 
   let journalSequence = 0, captureSequence = 0;
   for await (const row of disk.scan("read-files", "terrains/")) {
     for await (const line of lines(disk, row.key)) {
-      const value: unknown = JSON.parse(new TextDecoder().decode(line.bytes));
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line.bytes));
       if (!object(value) || typeof value.id !== "string" || await disk.get("validated-terrains", value.id)) throw new Error("DUPLICATE_TERRAIN_ID");
       validateArchive({ ...archiveHeader(manifest), records: [], terrains: [value as unknown as TerrainRecord] });
       await disk.put("validated-terrains", value.id, { path: row.key, offset: line.offset, length: line.bytes.length });
@@ -131,7 +144,7 @@ export async function validateBundle(disk: BundleDisk): Promise<BundleManifest> 
   }
   for await (const row of disk.scan("read-files", "journal/")) {
     for await (const line of lines(disk, row.key)) {
-      const value: unknown = JSON.parse(new TextDecoder().decode(line.bytes));
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line.bytes));
       if (!object(value) || value.sessionId !== manifest.session.id || value.sequence !== ++journalSequence) throw new Error("JOURNAL_SEQUENCE_GAP");
       if (object(value.event) && value.event.kind === "archive" && object(value.event.write)) await disk.put("journal-captures", String(journalSequence), await sha256(jsonBytes(value.event.write.record)));
     }
@@ -139,7 +152,7 @@ export async function validateBundle(disk: BundleDisk): Promise<BundleManifest> 
   if (journalSequence !== manifest.journal.persisted) throw new Error("JOURNAL_BOUNDARY_MISMATCH");
   for await (const row of disk.scan("read-files", "captures/")) {
     for await (const line of lines(disk, row.key)) {
-      const value: unknown = JSON.parse(new TextDecoder().decode(line.bytes));
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line.bytes));
       if (!object(value) || !object(value.record) || value.record.sequence !== ++captureSequence) throw new Error("CAPTURE_SEQUENCE_GAP");
       const record = value.record as unknown as ArchiveRecord;
       if (await disk.get("journal-captures", String(value.journalSequence)) !== await sha256(jsonBytes(record))) throw new Error("CAPTURE_JOURNAL_MISMATCH");

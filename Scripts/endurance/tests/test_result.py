@@ -104,3 +104,21 @@ class ResultTests(unittest.TestCase):
         status.proof("archive", sequence=3)
         status.data["sessionId"] = "s"
         self.assertFalse(status.has_proof("archive"))
+
+    def test_cursor_compaction_and_milestone_preservation(self):
+        status = Status(Path(self.temp.name), targets(1000, 2), "run")
+        status.data["sessionId"] = "session-1"
+
+        # Milestones / arbitrary controls are NOT compacted
+        for i in range(5):
+            status.proof("milestone", sequence=i, publish=False)
+        milestones = [p for p in status.data["proofs"] if p["control"] == "milestone"]
+        self.assertEqual(len(milestones), 5)
+
+        # raw-copy and ledger-prefix retain only first and latest immutable checkpoints
+        for i in range(5):
+            status.proof("raw-copy", sequence=i, state="verified", publish=False)
+        raw_copies = [p for p in status.data["proofs"] if p["control"] == "raw-copy"]
+        self.assertEqual(len(raw_copies), 2)
+        self.assertEqual(raw_copies[0]["sequence"], 0)
+        self.assertEqual(raw_copies[1]["sequence"], 4)

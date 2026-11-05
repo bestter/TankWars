@@ -48,8 +48,6 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     summaryAtSequence: source.status.persisted, unconfirmed: Boolean(source.pending?.length),
     derivedCatalogue: previous?.derivedCatalogue ?? null, derivedCatalogueSha256: previous?.derivedCatalogueSha256 ?? null,
     indexBoundary: previous?.indexBoundary ?? null };
-  manifest.derivedCatalogue = previous?.derivedCatalogue ?? null; manifest.derivedCatalogueSha256 = previous?.derivedCatalogueSha256 ?? null;
-  manifest.indexBoundary = previous?.indexBoundary ?? null;
   const addTerrain = async (id: string, supplied?: TerrainRecord) => {
     const prior = await disk.get("terrains", id);
     if (prior !== undefined && !supplied) return;
@@ -150,9 +148,9 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     progress({ stage: "report", sequence: after, upper: source.status.persisted });
     const prefix = `derived/${manifest.generation}/`;
     await renderReport(disk, manifest, signal, prefix);
-    manifest.index = `${prefix}index/root.json`;
     await disk.write("index.html", one(new TextEncoder().encode(`<!doctype html><meta charset="utf-8"><title>Endurance</title><a href="${prefix}index.html">Rapport hors ligne / Offline report</a><p>Borne / Boundary: ${manifest.journal.persisted}</p><p>Signé / Signed : Codex — GPT-6</p>`)));
     await publishDerived(disk, manifest, prefix);
+    manifest.index = `${prefix}index/root.json`;
     manifest.reportComplete = true;
   } catch (error) {
     if (signal?.aborted) throw error;

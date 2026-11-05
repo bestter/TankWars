@@ -40,25 +40,35 @@ export function BundleExport({ source, revision = 0 }: { source: () => Promise<B
     const bridge: BundleBridge = {
       async summary() { const value = await currentSource.current(); return { schemaVersion: 2, session: value.session, capturedAtSequence: value.status.persisted }; },
       async prepare(options, lease = false) {
-        if (leased && !lease && disk) { deferred = true; return await disk.get("export-state", "manifest") as BundleManifest; }
-        if (leased && lease) throw new Error("EXPORT_BUSY");
-        const selectedOptions = exportOptions(options ?? (effective ? JSON.parse(effective) as ExportOptions : {}));
-        const selected = JSON.stringify(selectedOptions);
-        if (pending) {
-          if (selected === effective) { refresh = true; const result = await pending; if (lease) leased = true; return result; }
-          await pending;
+        if (leased && !lease) {
+          deferred = true;
+          if (disk) return await disk.get("export-state", "manifest") as BundleManifest;
+          if (pending) return await pending;
         }
-        if (disk && selected !== effective) { await disk.dispose(); disk = null; }
-        disk ??= await BrowserDisk.create(`endurance-export-${randomUUID()}`); effective = selected;
-        const target = disk;
-        pending = (async () => {
-          let result: BundleManifest;
-          do { refresh = false; result = await buildBundle(await currentSource.current(), target, selectedOptions, lifetime.signal); } while (refresh);
-          return result;
-        })();
-        try { const result = await pending; if (lease) leased = true; return result; }
-        catch (error) { disk = null; await target.dispose(); throw error; }
-        finally { pending = null; }
+        if (leased && lease) throw new Error("EXPORT_BUSY");
+        if (lease) leased = true;
+        try {
+          const selectedOptions = exportOptions(options ?? (effective ? JSON.parse(effective) as ExportOptions : {}));
+          const selected = JSON.stringify(selectedOptions);
+          if (pending) {
+            if (selected === effective) { refresh = true; return await pending; }
+            await pending;
+          }
+          if (disk && selected !== effective) { await disk.dispose(); disk = null; }
+          disk ??= await BrowserDisk.create(`endurance-export-${randomUUID()}`); effective = selected;
+          const target = disk;
+          pending = (async () => {
+            let result: BundleManifest;
+            do { refresh = false; result = await buildBundle(await currentSource.current(), target, selectedOptions, lifetime.signal); } while (refresh);
+            return result;
+          })();
+          try { return await pending; }
+          catch (error) { disk = null; await target.dispose(); throw error; }
+          finally { pending = null; }
+        } catch (error) {
+          if (lease) leased = false;
+          throw error;
+        }
       },
       unlock() { leased = false; if (deferred) { deferred = false; void bridge.prepare().catch(e => console.warn("[Endurance] Deferred report failed", e)); } },
       async filePage(cursor = { path: "", offset: 0 }) {
@@ -101,7 +111,14 @@ export function BundleExport({ source, revision = 0 }: { source: () => Promise<B
             if (!disk) throw new Error("EXPORT_NOT_PREPARED");
             await writeZip(disk, lifetime.signal);
             await disk.download("bundle.zip", `${manifest.session.id}-endurance.zip`);
-          } finally { bridge.unlock(); }
+          } finally {
+            try {
+              if (disk) await disk.remove("bundle.zip");
+            } catch (cleanup) {
+              console.warn("[Endurance] Temporary ZIP cleanup failed", cleanup);
+            }
+            bridge.unlock();
+          }
         })();
         try { await downloading; } finally { downloading = null; }
       },

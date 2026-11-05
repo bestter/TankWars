@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryDisk } from "./bundleMemory";
 import { buildBundle, type BundleSource } from "../bundle/build";
 import { exportOptions, PartWriter, type FileReference } from "../bundle/format";
-import { encoder, one, readBytes, readJson, safePath } from "../bundle/io";
-import { extractShot, validateBundle } from "../bundle/read";
+import { encoder, identity, jsonBytes, one, readBytes, readJson, safePath, sha256 } from "../bundle/io";
+import { extractShot, readManifest, validateBundle } from "../bundle/read";
 import { writeZip } from "../bundle/zip";
 import { fixture } from "./helpers";
 import type { JournalEntry } from "../journal";
@@ -173,5 +173,63 @@ describe("progressive endurance bundle", () => {
     // A fresh reader validates the full source independently of a prior targeted read.
     disk.tables.delete("verified-files");
     expect((await validateBundle(disk)).captureLast).toBe(records.length);
+  });
+  it("rejects incomplete options or invalid fields in readManifest", async () => {
+    const disk = new MemoryDisk();
+    await buildBundle(source([]), disk);
+    const raw = await readJson(disk, "manifest.json") as Record<string, unknown>;
+    const copy = { ...raw, options: { slowDecisionMs: 1000 } };
+    await disk.write("manifest.json", one(jsonBytes(copy)));
+    await expect(readManifest(disk)).rejects.toThrow("INVALID_BUNDLE_MANIFEST");
+    const copy2 = { ...raw, captureFirst: -1 };
+    await disk.write("manifest.json", one(jsonBytes(copy2)));
+    await expect(readManifest(disk)).rejects.toThrow("INVALID_BUNDLE_MANIFEST");
+  });
+  it("detects cycle in shot index pages in extractShot", async () => {
+    const disk = new MemoryDisk();
+    const manifest = await buildBundle(source([]), disk);
+    const prefix = manifest.index.slice(0, -"index/root.json".length);
+    const key = "test-shot-key";
+    const path = `${prefix}index/shots/${await identity(key)}.json`;
+    const cyclicPage = {
+      shotKey: key,
+      refs: [],
+      next: `index/shots/${await identity(key)}.json`,
+    };
+    await disk.write(path, one(jsonBytes(cyclicPage)));
+    const cyclicBytes = jsonBytes(cyclicPage);
+    await disk.put("derived-files", path, { path, bytes: cyclicBytes.length, sha256: await sha256(cyclicBytes), count: 0, order: 1, type: "index", firstSequence: null, lastSequence: null, oversized: false });
+    await expect(extractShot(disk, key)).rejects.toThrow("INVALID_SHOT_INDEX");
+  });
+  it("enforces strict fatal UTF-8 decoding during validateBundle", async () => {
+    const disk = new MemoryDisk();
+    await buildBundle(source([entry(1)]), disk);
+    const invalidBytes = new Uint8Array([0xff, 0x0a]);
+    await disk.write("journal/part-000001.jsonl", one(invalidBytes));
+    const ref = await disk.get("read-files", "journal/part-000001.jsonl") as FileReference;
+    if (ref) {
+      ref.bytes = invalidBytes.length;
+      ref.sha256 = await sha256(invalidBytes);
+      ref.count = 1;
+      await disk.put("read-files", "journal/part-000001.jsonl", ref);
+    }
+    await expect(validateBundle(disk)).rejects.toThrow();
+  });
+  it("keeps manifest.index consistent when publishDerived fails after renderReport", async () => {
+    class FailPublishDisk extends MemoryDisk {
+      failPublish = false;
+      override async write(path: string, chunks: AsyncIterable<Uint8Array>) {
+        if (this.failPublish && path.startsWith("catalog-reports/")) throw new Error("CATALOG_REPORT_DISK_FULL");
+        return super.write(path, chunks);
+      }
+    }
+    const disk = new FailPublishDisk(), input = source([entry(1)]);
+    const first = await buildBundle(input, disk);
+    disk.failPublish = true;
+    input.status.persisted = 2; input.status.emitted = 2;
+    input.journal = async after => [entry(1), entry(2)].filter(e => e.sequence > after);
+    const second = await buildBundle(input, disk);
+    expect(second.reportComplete).toBe(false);
+    expect(second.index).toBe(first.index);
   });
 });

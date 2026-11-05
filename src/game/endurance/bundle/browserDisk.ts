@@ -44,7 +44,7 @@ export class BrowserDisk implements BundleDisk {
     await directory.removeEntry(parts[parts.length - 1]);
     await new Promise<void>((resolve, reject) => {
       const tx = this.db.transaction("rows", "readwrite"); tx.objectStore("rows").delete(["files", path]);
-      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); tx.onerror = () => reject(tx.error);
     });
   }
   async put(table: string, key: string, value: unknown): Promise<void> {

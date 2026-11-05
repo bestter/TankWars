@@ -11,6 +11,13 @@ if (!path) {
 } else {
   let server, disk, temporary;
   try {
+    const allowed = new Set(["--shot", "--replay", "--weapon", "--angle", "--power", "--output"]);
+    const options = new Map();
+    for (let i = 0; i < args.length; i++) {
+      if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
+      const option = args[i]; options.set(option, option === "--replay" ? true : args[++i]);
+      if (options.get(option) === undefined || (typeof options.get(option) === "string" && options.get(option).startsWith("--"))) throw new Error("MISSING_CLI_VALUE");
+    }
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }
@@ -20,8 +27,8 @@ if (!path) {
       value = { schemaVersion: rows[0].schemaVersion, format: "legacy-journal", events: rows.length - 1 };
     }
     if (value.format === "tankwars-endurance-bundle") {
-      const keyIndex = args.indexOf("--shot"), key = args[keyIndex + 1];
-      if (keyIndex < 0 || !key) throw new Error("SELECT_SHOT_FIRST");
+      const key = options.get("--shot");
+      if (!key) throw new Error("SELECT_SHOT_FIRST");
       server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, optimizeDeps: { noDiscovery: true }, appType: "custom" });
       temporary = await mkdtemp(join(tmpdir(), "tankwars-shot-"));
       disk = new NodeBundleDisk(dirname(resolve(path)), join(temporary, "index.sqlite"));
@@ -38,13 +45,6 @@ if (!path) {
         optimizeDeps: { noDiscovery: true }, appType: "custom" });
       const { validateArchive } = await server.ssrLoadModule("/src/game/diagnostics/validate.ts");
       const archive = validateArchive(value);
-      const allowed = new Set(["--shot", "--replay", "--weapon", "--angle", "--power", "--output"]);
-      const options = new Map();
-      for (let i = 0; i < args.length; i++) {
-        if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
-        const option = args[i]; options.set(option, option === "--replay" ? true : args[++i]);
-        if (options.get(option) === undefined) throw new Error("MISSING_CLI_VALUE");
-      }
       const shots = archive.records.filter(r => r.input.kind === "pre-shot");
       const recordedLaunches = new Set(archive.records.filter(r => r.input.kind === "projectile-launched").map(r => r.shotKey));
       const key = options.get("--shot");

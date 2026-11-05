@@ -2,7 +2,9 @@
 import base64
 import hashlib
 import json
+import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 from model import atomic, require
 from multipart import compare_streams, safe
@@ -56,6 +58,15 @@ async def collect_bundle(page, output, options):
                 digest.update(data)
         require(size == ref["bytes"] and digest.hexdigest() == ref["sha256"], "BUNDLE_FILE_INTEGRITY_FAILED")
     candidate.replace(root / "manifest.json")
+    if manifest.get("reportComplete"):
+        current_derived = f"derived/{manifest['generation']}"
+        current_catalog = f"catalog-reports/{manifest['generation']}"
+        for folder_name in ("derived", "catalog-reports"):
+            base = root / folder_name
+            if base.is_dir():
+                for sub in base.iterdir():
+                    if sub.is_dir() and f"{folder_name}/{sub.name}" not in (current_derived, current_catalog):
+                        shutil.rmtree(sub, ignore_errors=True)
     return manifest
 
 
@@ -64,12 +75,8 @@ def bundle_files(root, manifest=None):
     manifest = manifest if manifest is not None else json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     require(manifest.get("format") == "tankwars-endurance-bundle" and manifest.get("schemaVersion") == 1, "UNSUPPORTED_BUNDLE_SCHEMA")
     # On-disk ordering prevents growing reference arrays or recursion through catalogs.
-    db = sqlite3.connect(":memory:")
-    db.execute("PRAGMA temp_store=FILE")
     # The catalog itself may grow indefinitely: use a temporary on-disk database.
-    import tempfile
     with tempfile.TemporaryDirectory(prefix="tankwars-catalog-") as temporary:
-        db.close()
         db = sqlite3.connect(str(Path(temporary) / "catalog.sqlite"))
         try:
             db.execute("CREATE TABLE files (path TEXT PRIMARY KEY, value TEXT)")
