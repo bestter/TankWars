@@ -29,6 +29,14 @@ try {
     const entry = JSON.parse(new TextDecoder().decode(line.bytes));
     await runtime.indexEntry(target, entry, { path: row.key, offset: line.offset, length: line.bytes.length }, await target.get("capture-journal", String(entry.sequence)), manifest.options.slowDecisionMs);
   }
+  for await (const row of source.scan("read-files", "session/")) {
+    const kind = row.key.split("/")[1];
+    if (!["blocks", "rounds", "incidents"].includes(kind)) continue;
+    for await (const line of runtime.lines(source, row.key)) {
+      const value = JSON.parse(new TextDecoder().decode(line.bytes));
+      await runtime.indexCollection(target, kind, value.record, { path: row.key, offset: line.offset, length: line.bytes.length }, value.capturedAtSequence);
+    }
+  }
   await runtime.renderReport(target, manifest);
   manifest.index = "index/root.json";
   await runtime.publishDerived(target, manifest);

@@ -7,7 +7,7 @@ import { formatJournalTextPage } from "../journalJsonl";
 import type { EnduranceStorage } from "../storage";
 import { Catalogue, exportOptions, PartWriter, publishDerived, type BundleManifest, type ExportOptions, type Location } from "./format";
 import { identity, jsonBytes, one, sha256, type BundleDisk } from "./io";
-import { indexEntry, renderReport } from "./report";
+import { indexCollection, indexEntry, renderReport } from "./report";
 
 export interface BundleSource {
   session: SessionRecord; status: JournalStatus;
@@ -113,7 +113,8 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
         const signature = await identity(JSON.stringify(row.value));
         if (await disk.get(`collection-${name}`, key) === signature) continue;
         if (row.capturedAtSequence !== undefined && row.capturedAtSequence !== null && row.capturedAtSequence > source.status.persisted) continue;
-        await writer.append(jsonBytes({ capturedAtSequence: row.capturedAtSequence ?? null, exportedAtSequence: source.status.persisted, record: row.value }));
+        const location = await writer.append(jsonBytes({ capturedAtSequence: row.capturedAtSequence ?? null, exportedAtSequence: source.status.persisted, record: row.value }));
+        await indexCollection(disk, name, row.value, location, row.capturedAtSequence ?? null);
         await disk.put(`collection-${name}`, key, signature);
       }
       cursor = rows[rows.length - 1].key;

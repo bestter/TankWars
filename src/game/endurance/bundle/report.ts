@@ -22,6 +22,16 @@ async function view(disk: BundleDisk, label: string, row: Row): Promise<void> {
   await disk.put("views", id, { id, label });
   await disk.put(`view-${id}`, `${pad(row.sequence)}/${row.role}/${row.playerId ?? "session"}`, row);
 }
+export async function indexCollection(disk: BundleDisk, kind: "blocks" | "rounds" | "incidents", record: unknown,
+  location: Location, capturedAtSequence: number | null): Promise<void> {
+  if (!object(record)) throw new Error("INVALID_COLLECTION_RECORD");
+  const label = kind === "blocks" ? `Bloc / Block ${String(record.id)}` : kind === "rounds" ? `Manche / Round ${String(record.blockId)}/${String(record.number)}` : "Examen / Review incident";
+  const id = await identity(label);
+  await disk.put("views", id, { id, label });
+  // A block/round has one current immutable snapshot per export boundary. Incident
+  // history remains in the paginated event view rather than an accumulating root.
+  if (kind !== "incidents") await disk.put("view-metadata", id, { record, location, capturedAtSequence });
+}
 export async function indexEntry(disk: BundleDisk, entry: JournalEntry, location: Location,
   capture: { record: ArchiveRecord; location: Location } | undefined, slowMs: number): Promise<void> {
   if (entry.context) await Promise.all(entry.context.players.map(player => disk.put("players", `${entry.blockId}/${entry.round}/${player.id}`, player)));
@@ -80,7 +90,10 @@ export async function indexEntry(disk: BundleDisk, entry: JournalEntry, location
   if (combat?.kind === "shot-result") summary.result = combat;
   if (combat?.kind === "resolved") summary.resolved = true;
   if (combat?.kind === "ammo-consumed") summary.stock = combat;
-  if (combat?.kind === "credit") summary.credit = combat;
+  if (combat?.kind === "credit") {
+    const credits = object(summary.credits) ? summary.credits : {};
+    credits[combat.credit.playerId] = combat.credit; summary.credits = credits;
+  }
   summary.replay = "non rejoué / not replayed";
   await disk.put("turn-summary", context, summary);
   for (const role of roles) {
@@ -144,7 +157,7 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
   const flushMenu = async (next: boolean) => {
     const name = menuPage === 1 ? "index.html" : `report/menu-${menuPage}.html`;
     const root = menuPage === 1 ? "" : "../";
-    const heading = `<p>${escape(manifest.session.id)} · ${escape(manifest.session.build)} · ${escape(manifest.session.gameVersion)}</p><p>Borne / Boundary: ${manifest.journal.persisted}. ${escape(manifest.createdAt)}. ${escape(manifest.session.status)} · ${escape(manifest.session.reason)}. ${manifest.complete ? "Complet jusqu’à la borne / Complete to boundary" : "Partiel / Partial"}.</p><p>Seuil lent / Slow threshold: ${manifest.options.slowDecisionMs} ms. Filtres globaux via vues paginées / Global filters use paginated views.</p>`;
+    const heading = `<p>${escape(manifest.session.id)} · ${escape(manifest.session.build)} · ${escape(manifest.session.gameVersion)}</p><p>Borne / Boundary: ${manifest.journal.persisted}. ${escape(manifest.createdAt)}. ${escape(manifest.session.status)} · ${escape(manifest.session.reason)}. ${manifest.complete ? "Complet jusqu’à la borne / Complete to boundary" : "Partiel / Partial"}.</p><p>Blocs / Blocks: ${manifest.session.attempted}; complétés / completed: ${manifest.session.completed}; abandonnés / abandoned: ${manifest.session.abandoned}; interrompus / interrupted: ${manifest.session.interrupted}. Manches terminées / Completed rounds: ${manifest.session.roundsCompleted}.</p><details><summary>Configuration</summary><pre>${escape(JSON.stringify(manifest.session.config, null, 2))}</pre></details><p>Seuil lent / Slow threshold: ${manifest.options.slowDecisionMs} ms. Filtres globaux via vues paginées / Global filters use paginated views.</p>`;
     await output.write(name, one(page("Endurance", heading + `<a href="${root}report/statistics.html">Statistiques / Statistics</a><ul>${menu.map(link => link.replaceAll('href="report/', `href="${root}report/`)).join("")}</ul>` +
       (next ? `<a href="${root}report/menu-${menuPage + 1}.html">Suite / Next</a>` : ""))));
     await output.write(`index/views/menu-${menuPage}.json`, one(jsonBytes({ views: menuRefs, next: next ? `index/views/menu-${menuPage + 1}.json` : null })));
@@ -153,6 +166,9 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
   for await (const entry of disk.scan("views")) {
     signal?.throwIfAborted();
     const info = entry.value as { id: string; label: string };
+    const [metadataValue, totals] = await Promise.all([disk.get("view-metadata", info.id),
+      info.label.startsWith("Joueur / Player ") ? disk.get("player-totals", info.label.slice("Joueur / Player ".length)) : Promise.resolve(null)]);
+    const metadata = metadataValue as { record: unknown; location: Location; capturedAtSequence: number | null } | undefined;
     const link = `<li><a href="report/${info.id}-1.html">${escape(info.label)}</a></li>`;
     if (menu.length && (menu.length >= 200 || menuBytes + link.length * 6 + 4096 > maxBytes)) await flushMenu(true);
     menu.push(link); menuBytes += encoder.encode(link).length;
@@ -160,7 +176,7 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
     let rows: Row[] = [], bytes = 0, number = 1;
     const flush = async (next: boolean) => {
       const htmlPath = `report/${info.id}-${number}.html`, indexPath = `index/views/${info.id}-${number}.json`;
-      const signature = await sha256(jsonBytes(rows)), cacheKey = `${info.id}/${number}`;
+      const signature = await sha256(jsonBytes({ rows, metadata, totals })), cacheKey = `${info.id}/${number}`;
       const cached = await disk.get("closed-views", cacheKey) as { signature: string; html: string; index: string } | undefined;
       if (next && cached?.signature === signature) {
         // Relative links have the same depth in every generation. Copy immutable
@@ -172,9 +188,9 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
       }
       const content = rows.map(row => `<tr><td>${row.sequence}</td><td>${escape(row.kind)}</td><td>${escape(row.name)} (${escape(row.playerId)})<br>${escape(row.role)}</td><td>${escape(row.profile)} ${escape(row.weapon)}</td><td>${escape(row.durationMs)}</td><td><a href="../${row.location.path}">Source ${row.location.offset}+${row.location.length} octets</a><pre>${escape(JSON.stringify(row.detail))}</pre>${row.shotHash ? `<a href="shot-${row.shotHash}.html">${escape(row.shotKey)}</a>` : ""}</td></tr>`).join("");
       await output.write(`report/${info.id}-${number}.html`, one(page(info.label,
-        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${info.label.startsWith("Joueur / Player ") ? `<pre>${escape(JSON.stringify(await disk.get("player-totals", info.label.slice("Joueur / Player ".length))))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
+        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${metadata ? `<details open><summary>État enregistré / Recorded state · ${escape(metadata.capturedAtSequence)}</summary><a href="../${metadata.location.path}">Preuve / Evidence ${metadata.location.offset}+${metadata.location.length}</a><pre>${escape(JSON.stringify(metadata.record, null, 2))}</pre></details>` : ""}${totals ? `<pre>${escape(JSON.stringify(totals))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
         (number > 1 ? `<a href="${info.id}-${number - 1}.html">Précédente / Previous</a> ` : "") + (next ? `<a href="${info.id}-${number + 1}.html">Suite / Next</a>` : ""))));
-      await output.write(`index/views/${info.id}-${number}.json`, one(jsonBytes({ label: info.label, page: number, next: next ? `index/views/${info.id}-${number + 1}.json` : null, rows })));
+      await output.write(`index/views/${info.id}-${number}.json`, one(jsonBytes({ label: info.label, page: number, next: next ? `index/views/${info.id}-${number + 1}.json` : null, metadata, rows })));
       if (next) await disk.put("closed-views", cacheKey, { signature, html: prefix + htmlPath, index: prefix + indexPath });
       number++; rows = []; bytes = 0;
     };

@@ -71,6 +71,8 @@ describe("progressive endurance bundle", () => {
     expect(await snapshot.collection("blocks", first[0].key)).toEqual([]);
     const disk = new MemoryDisk(), manifest = await buildBundle(snapshot, disk);
     expect(manifest.journal.persisted).toBe(upper); expect(manifest.session.status).toBe("running");
+    const html = [...disk.files].filter(([path]) => path.endsWith(".html")).map(([, bytes]) => new TextDecoder().decode(bytes)).join("");
+    expect(html).toContain("Recorded state"); expect(html).toContain("Configuration"); expect(html).toContain("running");
     expect(new TextDecoder().decode(await readBytes(disk, "journal/part-000001.jsonl"))).not.toContain('"kind":"session-stop"');
     storage.close();
   });
