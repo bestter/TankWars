@@ -1,4 +1,5 @@
 import json
+import io
 import subprocess
 import tempfile
 import unittest
@@ -15,11 +16,12 @@ class SupervisorTests(unittest.TestCase):
                 output = Path(temp)
                 result = {0: "completed", 2: "protected-stop", 3: "interrupted", 1: "error"}.get(raw, "completed")
                 class Process:
+                    stdout = io.BytesIO(b"test stdout\n")
                     pid = 123
                     calls = 0
                     def __init__(self, command, **_):
                         run_id = command[command.index("--run-id") + 1]
-                        state = dict(schemaVersion=1, runId=run_id, phase="end", result=result,
+                        state = dict(schemaVersion=2, runId=run_id, phase="end", result=result,
                                      expectedExitCode=raw if raw != 137 else 0, requested=dict(durationMs=1, completedBlocks=None),
                                      proofs=[], primaryError=None, secondaryErrors=[], warnings=[], stoppedAtDurationMs=1, counters={"completed": 0})
                         (output / "status.json").write_text(json.dumps(state))
@@ -56,6 +58,7 @@ class SupervisorTests(unittest.TestCase):
     def test_unobservable_termination_never_returns_success(self):
         with tempfile.TemporaryDirectory() as temp:
             process = Mock()
+            process.stdout = io.BytesIO(b"")
             process.wait.side_effect = subprocess.TimeoutExpired("driver", 1)
             args = ["--safety-seconds", "4", "--", "--url", "http://localhost/", "--output", temp,
                     "--expected-build", "build", "--config", str(Path(__file__).resolve().parents[1] / "config.example.json"),

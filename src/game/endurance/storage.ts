@@ -35,14 +35,19 @@ function stored<T>(value: unknown, store: Store): T {
   if (store === "incidents" && (typeof value.reason !== "string" || typeof value.kind !== "string" || !Array.isArray(value.recent))) throw new Error("INVALID_STORED_INCIDENT");
   return value as T;
 }
+export function validateSessionRecord(value: unknown): SessionRecord { return stored<SessionRecord>(value, "sessions"); }
 
 export interface Checkpoint {
+  journalSequence?: number;
   session: SessionRecord;
   block: BlockRecord | null;
   round?: RoundRecord & { blockId: string; sessionId: string; id: string };
   incident?: Incident;
 }
 export interface EnduranceStorage {
+  capturePage?(sessionId: string, upper: number, after: number): Promise<Array<{ key: number; record: ArchiveRecord }>>;
+  readTerrain?(id: string): Promise<TerrainRecord>;
+  collectionPage?(name: "blocks" | "rounds" | "incidents", sessionId: string, after?: IDBValidKey): Promise<Array<{ key: IDBValidKey; value: unknown; capturedAtSequence?: number | null }>>;
   readArchive?(sessionId: string, upper: number, filter?: ArchiveFilter): Promise<ArchiveWrite[]>;
   listShots?(sessionId: string, upper: number, query: string, page: number): Promise<ShotListPage>;
   appendJournal?: JournalStorage["appendJournal"];
@@ -89,9 +94,9 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
       tx.onabort = () => reject(tx.error ?? new Error("INDEXEDDB_TRANSACTION_FAILED"));
       tx.onerror = () => reject(tx.error ?? new Error("INDEXEDDB_WRITE_FAILED"));
       tx.objectStore("sessions").put(checkpoint.session);
-      if (checkpoint.block) tx.objectStore("blocks").put(checkpoint.block);
-      if (checkpoint.round) tx.objectStore("rounds").put(checkpoint.round);
-      if (checkpoint.incident) tx.objectStore("incidents").put(checkpoint.incident);
+      if (checkpoint.block) tx.objectStore("blocks").put({ ...checkpoint.block, bundleCheckpointSequence: checkpoint.journalSequence ?? null });
+      if (checkpoint.round) tx.objectStore("rounds").put({ ...checkpoint.round, bundleCheckpointSequence: checkpoint.journalSequence ?? null });
+      if (checkpoint.incident) tx.objectStore("incidents").put({ ...checkpoint.incident, bundleCheckpointSequence: checkpoint.journalSequence ?? null });
     });
   }
   async appendJournal(entries: readonly JournalEntry[], status: JournalStatus): Promise<void> {
@@ -136,7 +141,7 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
     });
   }
   /** Short transactions yield to the writer; each page is bounded by count and serialized bytes. */
-  private async capturePage(sessionId: string, upper: number, after: number, reverse = false): Promise<Array<{ key: number; record: ArchiveRecord }>> {
+  async capturePage(sessionId: string, upper: number, after: number, reverse = false): Promise<Array<{ key: number; record: ArchiveRecord }>> {
     const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("captures"), rows: Array<{ key: number; record: ArchiveRecord }> = [];
@@ -306,6 +311,42 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
     ]);
     return { schemaVersion: 1, session: structuredClone(session), blocks: blocks.sort((a, b) => a.index - b.index), rounds, incidents,
       diagnostics: { evaluatedCommand: "unavailable", perturbations: "unavailable", deterministicReplay: false, combatResume: false } };
+  }
+  async readTerrain(id: string): Promise<TerrainRecord> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction("terrains").objectStore("terrains").get(id);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const value: unknown = request.result;
+        if (!object(value) || value.id !== id) reject(new Error("ARCHIVE_DEPENDENCY_MISSING"));
+        else resolve(value as unknown as TerrainRecord);
+      };
+    });
+  }
+  async collectionPage(name: "blocks" | "rounds" | "incidents", sessionId: string, after?: IDBValidKey): Promise<Array<{ key: IDBValidKey; value: unknown; capturedAtSequence?: number | null }>> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(name), page: Array<{ key: IDBValidKey; value: unknown; capturedAtSequence?: number | null }> = [];
+      let bytes = 0;
+      const request = tx.objectStore(name).index("sessionId").openCursor(IDBKeyRange.only(sessionId));
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || page.length >= 128 || bytes >= 1024 * 1024) return;
+        if (after === undefined || indexedDB.cmp(cursor.primaryKey, after) > 0) {
+          try {
+            const raw = stored<Record<string, unknown>>(cursor.value as unknown, name);
+            const { bundleCheckpointSequence, ...value } = raw;
+            const capturedAtSequence = typeof bundleCheckpointSequence === "number" ? bundleCheckpointSequence : null;
+            bytes += byteSize(value); page.push({ key: cursor.primaryKey, value, capturedAtSequence });
+          } catch (error) { reject(error); tx.abort(); return; }
+        }
+        cursor.continue();
+      };
+      tx.oncomplete = () => resolve(page);
+      tx.onabort = () => reject(tx.error ?? new Error("COLLECTION_READ_FAILED"));
+    });
   }
   close(): void {
     if (this.connection) void this.connection.then(db => db.close(), error => console.error("[Endurance] Storage close failed", error));

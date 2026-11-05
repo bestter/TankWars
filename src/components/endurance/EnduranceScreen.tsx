@@ -1,5 +1,4 @@
 import DiagnosticPanel from "../diagnostics/DiagnosticPanel";
-import { exportStoredArchive } from "../../game/diagnostics/export";
 import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { GameCanvas } from "../GameCanvas";
@@ -8,11 +7,12 @@ import { defaultConfig } from "../../game/endurance/config";
 import { EnduranceSession } from "../../game/endurance/session";
 import { IndexedEnduranceStorage } from "../../game/endurance/storage";
 import { markdownReport } from "../../game/endurance/report";
-import { exportJournalJsonl } from "../../game/endurance/journalJsonl";
 import type { EnduranceConfig, EnduranceExport, SessionRecord } from "../../game/endurance/types";
 import type { AiProfile } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
-import { installJournalBridge } from "./journalBridge";
+import { installJournalBridge, downloadEnduranceBundle } from "./journalBridge";
+import { BundleExport } from "./BundleExport";
+import { storedBundleSource } from "../../game/endurance/bundle/build";
 
 const PROFILES: AiProfile[] = ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"];
 const COLORS = [VGA_PALETTE.BLUE, VGA_PALETTE.RED, VGA_PALETTE.ELECTRIC_CYAN, VGA_PALETTE.FLASH_GREEN];
@@ -55,9 +55,12 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
   }, [session]);
   const exportResult = async (format: "json" | "md" | "view" | "jsonl") => {
     try {
-      if (format === "jsonl") { download(`${session.session.id}.jsonl`, await session.journalJSONL(), "application/x-ndjson"); return; }
-      const data = await session.export(); setReport(data);
-      if (format === "json") download(`${data.session.id}.json`, JSON.stringify(data, null, 2), "application/json");
+      if (format === "jsonl") { await downloadEnduranceBundle(); return; }
+      const snapshot = await session.bundleSource();
+      const data: EnduranceExport = { schemaVersion: 1, session: snapshot.session, blocks: [], rounds: [], incidents: [],
+        diagnostics: { evaluatedCommand: "unavailable", perturbations: "unavailable", deterministicReplay: false, combatResume: false } }; setReport(data);
+      if (format === "json") download(`${data.session.id}.json`, JSON.stringify({ format: "tankwars-endurance-summary", schemaVersion: 2,
+        session: snapshot.session, capturedAtSequence: snapshot.status.persisted, collections: "bundle" }, null, 2), "application/json");
       if (format === "md") download(`${data.session.id}.md`, markdownReport(data, i18n.language.startsWith("fr")), "text/markdown");
     } catch (e) { setError(String(e)); }
   };
@@ -82,13 +85,14 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
       <button type="button" disabled={!session.journalStatus} onClick={() => void exportResult("jsonl")}>JSONL</button>
       <button type="button" disabled={session.running || session.busy} onClick={() => { session.close(); onExit(); }}>{t("btn_menu")}</button>
     </div>
-    <DiagnosticPanel source={{ read: filter => session.exportArchive(filter), list: (query, page) => session.listShots(query, page),
+    <DiagnosticPanel source={{ read: filter => session.exportArchive(filter), exportAll: downloadEnduranceBundle, list: (query, page) => session.listShots(query, page),
       capture: () => session.captureCurrent(), mark: () => session.markDiagnostic() }} />
+    <BundleExport source={() => session.bundleSource()} revision={s.completed + s.abandoned + s.interrupted + (s.status === "stopped" ? 1 : 0)} />
     <p>{t("endurance_limits_help")}</p>
     {session.ready && session.block && <EnduranceBoundary key={session.block.id} session={session}>
       <GameCanvas endurance={session} initialPlayers={structuredClone(session.block.config.players)} freeWeapons={session.session.config.freeWeapons ?? false} gameMode="local" />
     </EnduranceBoundary>}
-    {report && <pre className="endurance-report">{markdownReport(report, i18n.language.startsWith("fr"))}</pre>}
+    {report && <pre className="endurance-report">{markdownReport(report, i18n.language.startsWith("fr"))}{"\nCollections détaillées : rapport ZIP / Detailed collections: ZIP report"}</pre>}
   </section>;
 }
 
@@ -121,23 +125,13 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
   const recovered = async (format: "json" | "md" | "jsonl" | "shots") => {
     if (!saved) return;
     try {
-      if (format === "shots") {
-        const archive = await exportStoredArchive(storage, saved.id, saved.build);
-        download(`${saved.id}-shots.json`, JSON.stringify(archive), "application/json"); return;
-      }
-      if (format === "jsonl") {
-        const status = await storage.journalStatus(saved.id);
-        if (!status) throw new Error(t("endurance_journal_unavailable"));
-        const jsonl = await exportJournalJsonl({
-          status: { ...status, complete: saved.status === "stopped" && status.complete },
-          readPage: (after, limit) => storage.readJournal(saved.id, after, limit),
-        });
-        download(`${saved.id}.jsonl`, jsonl, "application/x-ndjson"); return;
-      }
+      if (format === "shots" || format === "jsonl") { await downloadEnduranceBundle(); return; }
       const record = structuredClone(saved);
       if (record.status === "running") { record.collection = "incomplete"; record.reason = "crash-checkpoint"; }
-      const data = await storage.exportSession(record);
-      download(`${record.id}.${format}`, format === "json" ? JSON.stringify(data, null, 2) : markdownReport(data, i18n.language.startsWith("fr")), format === "json" ? "application/json" : "text/markdown");
+      const data: EnduranceExport = { schemaVersion: 1, session: record, blocks: [], rounds: [], incidents: [],
+        diagnostics: { evaluatedCommand: "unavailable", perturbations: "unavailable", deterministicReplay: false, combatResume: false } };
+      download(`${record.id}.${format}`, format === "json" ? JSON.stringify({ format: "tankwars-endurance-summary", schemaVersion: 2,
+        session: record, collections: "bundle" }, null, 2) : markdownReport(data, i18n.language.startsWith("fr")) + "\nCollections détaillées : rapport ZIP / Detailed collections: ZIP report\n", format === "json" ? "application/json" : "text/markdown");
     } catch (e) { setError(String(e)); }
   };
   return <section className="endurance-screen">
@@ -155,6 +149,11 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
       <button type="submit">{t("endurance_start")}</button><button type="button" onClick={onExit}>{t("btn_menu")}</button>
     </form>
     {error && <p role="alert">{error}</p>}
+    {saved && <BundleExport source={async () => {
+      const status = await storage.journalStatus(saved.id);
+      if (!status) throw new Error("JOURNAL_UNAVAILABLE");
+      return storedBundleSource(storage, saved, { ...status, complete: saved.status === "stopped" && status.complete });
+    }} />}
     {saved && <p>{t("endurance_recover")} ({saved.id}) <button type="button" onClick={() => void recovered("json")}>JSON</button> <button type="button" onClick={() => void recovered("md")}>Markdown</button> <button type="button" onClick={() => void recovered("jsonl")}>JSONL</button> <button type="button" onClick={() => void recovered("shots")}>{t("diagnostics_export")}</button></p>}
   </section>;
 }

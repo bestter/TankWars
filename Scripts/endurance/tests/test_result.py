@@ -48,6 +48,7 @@ class ResultTests(unittest.TestCase):
         status.error("closure", RuntimeError("quota"))
         status.error("cleanup", RuntimeError("secondary"))
         self.assertEqual(status.finish(), 1)
+
         self.assertEqual(status.data["nativeReason"], "archive-budget")
         self.assertEqual(status.data["primaryError"]["message"], "quota")
         self.assertEqual(len(status.data["secondaryErrors"]), 1)
@@ -57,6 +58,12 @@ class ResultTests(unittest.TestCase):
             self.assertEqual(status.finish(), 1)
         status = self.status(duration=None)
         self.assertEqual(status.finish(), 1)
+
+    def test_derived_report_warning_preserves_a_verified_result(self):
+        status = self.status()
+        status.warning("report", RuntimeError("rapport incomplet"))
+        self.assertEqual(status.finish(), 0)
+        self.assertEqual(status.data["warnings"][0]["stage"], "report")
 
     def test_stopped_is_not_finalized(self):
         for collection, error in [("incomplete", None), ("complete", "quota")]:
@@ -68,7 +75,7 @@ class ResultTests(unittest.TestCase):
 
     def test_supervisor_protocol(self):
         for result, code in [("completed", 0), ("protected-stop", 2), ("interrupted", 3), ("error", 1)]:
-            status = dict(schemaVersion=1, runId="run", phase="end", result=result, expectedExitCode=code)
+            status = dict(schemaVersion=2, runId="run", phase="end", result=result, expectedExitCode=code)
             self.assertEqual(observe(status, code, "run")["result"], result)
             self.assertEqual(observe(status, 137, "run")["reason"], "DRIVER_PROTOCOL_ERROR")
             self.assertEqual(observe(status, code, "old")["result"], "error")

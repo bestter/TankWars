@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ArchiveFilter } from "../../game/diagnostics/export";
 import type { ShotArchive, ShotListPage } from "../../game/diagnostics/types";
 
-export interface DiagnosticSource { read(filter?: ArchiveFilter): Promise<ShotArchive | null>; list?(query: string, page: number): Promise<ShotListPage>; capture(): void; mark?(): void }
+export interface DiagnosticSource { read(filter?: ArchiveFilter): Promise<ShotArchive | null>; exportAll?(): Promise<void>; list?(query: string, page: number): Promise<ShotListPage>; capture(): void; mark?(): void }
 function download(archive: ShotArchive): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(archive)], { type: "application/json" }));
   const link = document.createElement("a"); link.href = url; link.download = `${archive.sessionId}-shots-${archive.lastSequence}.json`; link.click();
@@ -50,7 +50,7 @@ export default function DiagnosticPanel({ source }: { source: DiagnosticSource }
   };
   const save = async (filter?: ArchiveFilter) => {
     setBusy(true); setError(null);
-    try { const archive = await source.read(filter); if (archive) { inspect(archive); download(archive); } }
+    try { if (!filter && source.exportAll) { await source.exportAll(); return; } const archive = await source.read(filter); if (archive) { inspect(archive); download(archive); } }
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
   return <details className="diagnostic-panel">

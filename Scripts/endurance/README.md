@@ -1,6 +1,8 @@
-# Pilote d’endurance / Endurance driver — 0.13.5
+# Pilote d’endurance / Endurance driver — 0.13.6
 
 ## Français
+
+> v0.13.6 : le protocole du pilote/superviseur est maintenant v2; les indications historiques de fichiers monolithiques ci-dessous décrivent v1. Les sorties actuelles sont précisées dans la section des bundles.
 
 Depuis la racine du dépôt, installer Python 3.11+, les dépendances Node (`npm ci --ignore-scripts`), puis :
 
@@ -80,3 +82,74 @@ Robustness: only one safety guard is active (including Playwright startup in `ma
 Cursor attestations retain only their first and latest immutable checkpoints; milestone and failure history remains available. Incremental copy/analysis hashes are independently checked against disk at completion. Collection publishes once per page. Progress exports follow new block ends; only the native completed counter decides attainment. UI minutes round to milliseconds, and driver duration requires a positive JavaScript-safe integer.
 
 Signé / Signed: **Codex — GPT-6**.
+
+## Bundles progressifs / Progressive bundles (#380)
+
+**FR.** Le format d’export `tankwars-endurance-bundle`, `schemaVersion: 1`, est indépendant des schémas métier v1. Le pilote/superviseur utilise `schemaVersion: 2` et rejette les versions inconnues. Utiliser Node 24 (SQLite intégré), Python 3.11+ et Chromium. `--part-size-mib 20` et `--slow-decision-ms 1000` sont des entiers positifs sûrs; la conversion Mio → octets doit aussi être sûre. Un changement de paramètres crée un nouvel export.
+
+**EN.** Export envelope v1 is independent of existing business schemas. Driver/supervisor protocol v2 rejects unknown versions. Use Node 24 with built-in SQLite, Python 3.11+ and Chromium. `--part-size-mib 20` and `--slow-decision-ms 1000` accept positive safe integers, including the MiB-to-bytes conversion. Changing settings starts a new export.
+
+```text
+bundle/manifest.json                     # génération, session, paramètres, borne, état
+bundle/journal/part-000001.jsonl          # lignes natives intactes / unchanged native lines
+bundle/captures/part-000001.jsonl         # journalSequence + ArchiveRecord original
+bundle/terrains/part-000001.jsonl         # TerrainRecord dédupliqués / deduplicated
+bundle/session/{metadata,blocks,rounds,incidents}/part-*.jsonl
+bundle/catalog/page-*.json                # 256 références max, chaîne SHA-256
+bundle/index/terrains/*.json              # emplacements UTF-8 / byte locations
+bundle/derived/<generation>/index/...     # index machine paginé / paginated indexes
+bundle/derived/<generation>/report/...    # HTML statique / static HTML
+bundle/index.html                        # lien vers la génération publiée / published report
+recovered-bundle/...                     # relecture indépendante / independent recovery
+copy/part-*.jsonl                         # copie brute avant analyse / raw copy before analysis
+copy/catalog-*.json                      # références bornées / bounded references
+copy/checkpoint-*.stream.json             # attestations immuables / immutable checkpoints
+technical/process-*.log                  # stdout/stderr fusionnés, rotation aux LF
+evidence-*/...                           # preuves et erreurs paginées / paginated evidence
+initial.json, progress.json, final.json, recovered.json # résumés légers / lightweight summaries
+status.json, process-exit.json, summary.md # petits documents atomiques / atomic status
+diagnostic.png, browser-profile/          # capture et profil, hors rotation / not rotated
+```
+
+Rotation avant dépassement, limite exacte acceptée, octets multioctets et LF inclus, sans BOM ni normalisation. Un enregistrement trop gros reste seul, marqué `oversized`. Les pages de références contiennent au plus 256 éléments; les vues HTML au plus 200. Les parties closes restent immuables. Les catalogues exposent chemin, type, ordre, octets, SHA-256, nombre et plages de séquences. Les collections de session conservent leurs révisions avec `capturedAtSequence`; les résumés déclarent leur point de capture. Une séance active peut être complètement exportée jusqu’à sa borne sans être terminée. Le suffixe RAM après panne de stockage est séparé sous `unconfirmed/`, sans devenir une preuve persistée.
+
+Rotation occurs before exceeding the byte limit; equality is allowed. UTF-8 bytes and LF count, without BOM or normalization. Oversized records remain alone and flagged. Reference pages hold at most 256 entries; HTML views at most 200. Closed parts are immutable. Catalogs record paths, kinds, order, byte sizes, SHA-256, counts and sequence ranges. Session collections retain revisions and capture boundaries. A running session may be fully exported to a confirmed boundary. Recoverable RAM suffixes remain explicitly unconfirmed and cannot be recovered after reopening.
+
+Le navigateur prépare le ZIP64 en OPFS, sans Blob de séance construit en RAM ni export de secours monolithique. Le pilote consomme directement des morceaux natifs bornés, sans ZIP par bloc ni sérialisation métier Python. Les index et tris utilisent IndexedDB ou SQLite sur disque. Prévoir l’espace pour source, parties temporaires, index et ZIP; les quotas d’export ne changent pas le budget du jeu. Annuler nettoie les temporaires de l’export manuel et conserve la source.
+
+Chromium writes ZIP64 to OPFS. The driver transports bounded native chunks without rebuilding business JSON or creating a ZIP per block. Indexes and exact duration sorting use IndexedDB/SQLite on disk. Allow disk space for the source, staged files, indexes and ZIP in addition to the gameplay archive budget. Cancellation preserves source data.
+
+Les vues sont statiques, sans `fetch(file://)`, CDN ou serveur. Les filtres sont des vues globales paginées. Les identités reposent sur session/bloc/manche, `playerId` et `shotKey`, jamais sur le nom ou `shotId` seul. Les événements capturés ne sont pas recomptés. Durées mesurées existantes seulement : médiane exacte, p95 au rang supérieur, maximum, valeurs manquantes et classement décroissant; égalités par séquence. Zeus, refus et décisions remplacées restent distincts des tirs lancés. Aucun rejeu automatique.
+
+Views work through `file://` with static links. Global filters are paginated. Identities use session/block/round, `playerId` and full `shotKey`. Captured duplicates do not inflate counts. Existing measured decision times supply exact median, nearest-rank p95, maximum, missing values and descending ranks with sequence tie-breaking. Zeus, refusals and replaced decisions remain separate from launched shots. Replay is explicit.
+
+```sh
+node Scripts/endurance/validate-archive.mjs bundle/manifest.json
+node Scripts/read-shot-archive.mjs bundle/manifest.json --shot 'FULL_KEY' --output shot.json --replay
+node Scripts/endurance/build-report.mjs bundle/manifest.json --output report-regenerated
+```
+
+L’extraction refuse l’écrasement implicite, valide seulement les fichiers lus et réutilise le validateur TypeScript. La validation intégrale parcourt les parties. La récupération rouvre le même profil une fois après fermeture confirmée; les flux journal/captures/terrains sont comparés octet par octet même si leurs parties diffèrent. Les dernières révisions de collections et la session sont comparées séparément. Les fichiers de preuve sont revérifiés après fermeture. Seuls les échecs des vues dérivées sont non bloquants; les verdicts et codes 0/2/3/1 restent inchangés.
+
+Extraction refuses implicit overwrites and validates the source files it actually reads through shared TypeScript rules. Full validation walks all parts. Recovery reopens the closed profile once and compares native journal/capture/terrain bytes regardless of part boundaries, plus collection revisions and session metadata. Required evidence is checked again after closure. Only derived-view failures are nonblocking; result codes remain 0/2/3/1.
+
+Les tests courts incluent la suite Python, les tests Vitest du bundle, le test Chromium documenté plus haut et le contrôle manuel des exports actif/final/récupéré, de l’annulation, des liens hors ligne et d’un tir. Les mesures doivent séparer collecte, export, ZIP, index et récupération, tas JS, mémoire des processus et espace disque. Aucun gain de performance n’est présumé.
+
+Short validation includes Python, bundle Vitest tests, the Chromium smoke above, active/final/recovered exports, cancellation, offline links and one-shot replay. Measure collection/export/ZIP/index/recovery separately and distinguish JavaScript heap, process memory and disk. No unmeasured performance improvement is claimed.
+
+Mesures reproductibles / Reproducible measurements (Vite en mode endurance; source : dossier d’un bundle réel) :
+
+```sh
+npm run dev -- --mode endurance --host 127.0.0.1 --port 5179
+# Dans un autre terminal / In another terminal:
+ENDURANCE_BUNDLE_SOURCE=artifacts/run/bundle \
+ENDURANCE_BUNDLE_DEV_URL=http://127.0.0.1:5179/ \
+ENDURANCE_BUNDLE_OUTPUT=artifacts/bundle-measurements-new \
+PYTHONPATH=Scripts/endurance python -m unittest discover -s Scripts/endurance/tests -p test_bundle_browser.py -v
+```
+
+Sous PowerShell, définir ces variables avec `$env:NAME='value'`. Le test mesure des préfixes de 256/512/1024 entrées avec remplissage déterministe déclaré, parties de 1 Mio et plusieurs pages de collecte; ce sont des données de test, pas de nouvelles observations de combat. Il contrôle le ZIP avec un lecteur indépendant, les liens `file://`, l’absence de requêtes réseau et l’annulation/nettoyage. `measurements.json` sépare durées, disque, pics de tas JS, mémoire navigateur RSS/privée, mémoire du pilote et tas retenu après GC. Les statuts du pilote ajoutent les durées de collecte, export natif, validation et récupération.
+
+PowerShell uses `$env:NAME='value'`. The test uses declared synthetic padding on recorded prefixes, 256/512/1024 entries, 1 MiB parts and multiple collection pages. These are test fixtures, not new combat observations. It independently checks ZIP integrity, all offline links, absence of network requests and cancellation/cleanup. Measurements separate timing, disk, peak JavaScript heap, browser RSS/private memory, driver RSS and retained heap after GC. Driver status also records collection/native export/validation/recovery timings.
+
+Signé / Signed : **Codex — GPT-6**.

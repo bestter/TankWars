@@ -3,10 +3,11 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
+from multipart import Multipart, compare_streams
 
 
 class JournalCollector:
-    def __init__(self, output_dir: Path, session_id: Optional[str] = None):
+    def __init__(self, output_dir: Path, session_id: Optional[str] = None, part_size=None):
         self.output_dir = output_dir
         self.session_id = session_id
         self.journal_sequence = 0
@@ -19,6 +20,9 @@ class JournalCollector:
         self.journal_counts: Dict[str, int] = {}
         self.latest_status: Optional[Dict[str, Any]] = None
         self.decisions_file = self.output_dir / "decisions.jsonl"
+        self.parts = Multipart(output_dir, "copy", part_size) if part_size is not None else None
+        if self.parts:
+            self.decisions_file = self.parts.snapshot()
 
     def process_page(
         self,
@@ -78,9 +82,17 @@ class JournalCollector:
 
         # Step 1: Write binary without BOM, CRLF or transformation
         # Write to actual append file directly or atomic append
-        with self.decisions_file.open("ab") as stream:
-            stream.write(raw_bytes)
-            stream.flush()
+        if self.parts:
+            start = 0
+            for index, byte in enumerate(raw_bytes):
+                if byte == 10:
+                    self.parts.append(raw_bytes[start:index + 1])
+                    start = index + 1
+            self.decisions_file = self.parts.snapshot()
+        else:
+            with self.decisions_file.open("ab") as stream:
+                stream.write(raw_bytes)
+                stream.flush()
 
         # Step 2: Advance copy cursor and cumulative SHA-256 before business analysis
         self.copied_bytes += len(raw_bytes)
@@ -119,25 +131,17 @@ def compare_binary_journal(copied_path: Path, native_jsonl_path: Path) -> Tuple[
     if not copied_path.exists() or not native_jsonl_path.exists():
         return False, "FILE_NOT_FOUND"
 
-    copied_bytes = copied_path.read_bytes()
-    with native_jsonl_path.open("rb") as stream:
-        # Strip exactly the first physical line
-        first_line = stream.readline()
-        if not first_line.endswith(b"\n"):
-            return False, "NATIVE_HEADER_NOT_LF_TERMINATED"
-        native_body = stream.read()
-
-    if copied_bytes != native_body:
-        return False, f"BYTES_DIFFER: copied={len(copied_bytes)} vs native={len(native_body)}"
-    return True, hashlib.sha256(copied_bytes).hexdigest()
+    try:
+        return compare_streams(copied_path, native_jsonl_path, True)
+    except ValueError as error:
+        return False, str(error)
 
 
 def compare_binary_files(path_a: Path, path_b: Path) -> Tuple[bool, str]:
     """Direct strict binary comparison of two files."""
     if not path_a.exists() or not path_b.exists():
         return False, "FILE_NOT_FOUND"
-    bytes_a = path_a.read_bytes()
-    bytes_b = path_b.read_bytes()
-    if bytes_a != bytes_b:
-        return False, f"BYTES_DIFFER: {len(bytes_a)} vs {len(bytes_b)}"
-    return True, hashlib.sha256(bytes_a).hexdigest()
+    try:
+        return compare_streams(path_a, path_b)
+    except ValueError as error:
+        return False, str(error)
