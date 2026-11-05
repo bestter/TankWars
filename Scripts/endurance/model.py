@@ -6,6 +6,7 @@ import os
 import sys
 import traceback
 import uuid
+from multipart import chunks, Multipart
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,16 +46,11 @@ def objective(requested, duration, completed):
 def fingerprint(path, prefix_bytes=None):
     digest = hashlib.sha256()
     remaining = prefix_bytes
-    with Path(path).open("rb") as stream:
-        while remaining is None or remaining > 0:
-            chunk = stream.read(1024 * 1024 if remaining is None else min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            digest.update(chunk)
-            if remaining is not None:
-                remaining -= len(chunk)
-    require(remaining is None or remaining == 0, "ATTESTED_PREFIX_MISSING")
-    result = {"path": str(Path(path).resolve()), "bytes": Path(path).stat().st_size if prefix_bytes is None else prefix_bytes, "sha256": digest.hexdigest()}
+    total = 0
+    for chunk in chunks(path, prefix=remaining):
+        digest.update(chunk)
+        total += len(chunk)
+    result = {"path": str(Path(path).resolve()), "bytes": total, "sha256": digest.hexdigest()}
     if prefix_bytes is not None:
         result["prefix"] = True
     return result
@@ -77,7 +73,8 @@ class Status:
     def __init__(self, output, requested, run_id=None):
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
-        self.data = dict(schemaVersion=1, runId=run_id or uuid.uuid4().hex, phase="preparation", result=None,
+        self.history = Multipart(self.output, "evidence-" + uuid.uuid4().hex)
+        self.data = dict(schemaVersion=2, runId=run_id or uuid.uuid4().hex, phase="preparation", result=None,
                          nativeReason=None, trigger=None, sessionId=None, stoppedAtDurationMs=None,
                          counters=None, requested=requested, proofs=[], primaryError=None, secondaryErrors=[], warnings=[],
                          expectedExitCode=None, **objective(requested, None, None))
@@ -89,6 +86,8 @@ class Status:
             self.data["primaryError"] = record
         else:
             self.data["secondaryErrors"].append(record)
+            self.data["secondaryErrors"] = self.data["secondaryErrors"][-64:]
+        self.retain("error", record)
         self.data.update(result=None, expectedExitCode=None)
         print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
 
@@ -107,13 +106,20 @@ class Status:
             if len(checkpoints) >= 2:
                 self.data["proofs"] = [p for p in self.data["proofs"] if p is not checkpoints[-1]]
         self.data["proofs"].append(proof)
+        self.retain("proof", proof)
         if publish:
             self.publish()
 
     def warning(self, stage, error):
         record = dict(stage=stage, type=type(error).__name__, message=str(error), at=now())
         self.data["warnings"].append(record)
+        self.data["warnings"] = self.data["warnings"][-64:]
+        self.retain("warning", record)
         print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
+
+    def retain(self, kind, record):
+        self.history.append((json.dumps(dict(kind=kind, record=record), ensure_ascii=False) + "\n").encode("utf-8"))
+        self.data["evidence"] = str(self.history.snapshot().relative_to(self.output))
 
     def has_proof(self, control):
         for p in reversed(self.data["proofs"]):

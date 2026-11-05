@@ -8,13 +8,16 @@ import signal
 import sys
 import urllib.parse
 import uuid
+import time
 from pathlib import Path
 
 from ledger import Ledger
 from lifecycle import Lifecycle
-from model import Status, positive, require, targets
+from model import Status, positive, require, targets, atomic
 from native import JournalCollector
 from verify import archive_manifest, closed_session, compare, journal, read, recovery
+from bundle import collect_bundle, logical_stream, compare_bundles, proof_files
+from multipart import compare_streams
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILES = {"v1-random", "v2-heuristic", "v3-sniper", "v4-smart"}
@@ -37,9 +40,12 @@ def arguments(argv=None):
     parser.add_argument("--finalization-seconds", type=float, default=120)
     parser.add_argument("--safety-seconds", type=float, required=True)
     parser.add_argument("--run-id")
+    parser.add_argument("--part-size-mib", type=int, default=20)
+    parser.add_argument("--slow-decision-ms", type=int, default=1000)
     args = parser.parse_args(argv)
     try:
         targets(args.duration_ms, args.completed_blocks)
+        require(0 < args.part_size_mib * 1048576 <= 9007199254740991 and 0 < args.slow_decision_ms <= 9007199254740991, "INVALID_EXPORT_OPTIONS")
         parsed = urllib.parse.urlparse(args.url)
         require(parsed.scheme in ("http", "https") and bool(parsed.netloc), "INVALID_URL")
         require(positive(args.finalization_seconds) and positive(args.safety_seconds), "INVALID_TECHNICAL_TIMEOUT")
@@ -63,8 +69,11 @@ class Driver:
     def __init__(self, args):
         self.args = args
         self.status = Status(args.output, targets(args.duration_ms, args.completed_blocks), args.run_id)
-        self.collector = JournalCollector(self.status.output)
-        self.collector.decisions_file.touch(exist_ok=False)
+        self.multipart = hasattr(args, "part_size_mib")
+        self.collector = JournalCollector(self.status.output, part_size=args.part_size_mib * 1048576 if self.multipart else None)
+        if not self.multipart:
+            self.collector.decisions_file.touch(exist_ok=False)
+        self.bundle_options = dict(partSizeMiB=getattr(args, "part_size_mib", 20), slowDecisionMs=getattr(args, "slow_decision_ms", 1000))
         self.ledger = Ledger()
         self.cancelled = False
         self.stop_requested = False
@@ -83,6 +92,7 @@ class Driver:
         return metrics
 
     async def collect(self, page, final=False):
+        started = time.perf_counter()
         while True:
             result = await page.evaluate("after => window.__tankwarsEnduranceTest.readJournalText(after, 256)", self.collector.journal_sequence)
             before = self.collector.journal_sequence
@@ -105,6 +115,8 @@ class Driver:
         if final:
             journal(meta, self.collector)
             self.status.proof("journal", [self.collector.decisions_file], self.collector.journal_sequence)
+        timings = self.status.data.setdefault("timings", {})
+        timings["collectionMs"] = timings.get("collectionMs", 0) + (time.perf_counter() - started) * 1000
 
     async def download(self, page, button, filename, validate=None):
         path = self.status.output / filename
@@ -129,6 +141,12 @@ class Driver:
         return path
 
     async def summary(self, page, filename="final.json", scope=None):
+        if self.multipart:
+            await page.wait_for_function("() => !!window.__tankwarsEnduranceBundle")
+            value = await page.evaluate("() => window.__tankwarsEnduranceBundle.summary()")
+            require(value.get("schemaVersion") == 2, "UNSUPPORTED_DRIVER_SUMMARY")
+            atomic(self.status.output / filename, json.dumps(value, ensure_ascii=False) + "\n")
+            return value["session"]
         scope = scope if scope is not None else page
         return read(await self.download(page, scope.get_by_role("button", name="JSON", exact=True), filename))["session"]
 
@@ -140,13 +158,19 @@ class Driver:
         return await self.download(page, scope.get_by_role("button", name="Exporter les tirs", exact=True), filename, self.validate_shots)
 
     async def validate_shots(self, path):
+        started = time.perf_counter()
         # Rescue may preserve a complete archive before the final summary exists.
         summary = self.status.output / "final.json"
         if not summary.exists():
             summary = self.status.output / "initial.json"
         session = read(summary)["session"]
         require(session["id"] == self.status.data["sessionId"], "SESSION_CHANGED")
-        archive_manifest(read(path), session)
+        value = read(path)
+        if value.get("format") == "tankwars-endurance-bundle":
+            require(value["session"]["id"] == session["id"] and value["session"]["build"] == session["build"], "ARCHIVE_IDENTITY_MISMATCH")
+            require(value["complete"] and value["journal"]["complete"] and not value["journal"]["error"], "INCOMPLETE_ARCHIVE")
+        else:
+            archive_manifest(value, session)
         process = await asyncio.create_subprocess_exec("node", str(ROOT / "Scripts/endurance/validate-archive.mjs"), str(path.resolve()),
                                                        cwd=ROOT, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -154,6 +178,8 @@ class Driver:
         except BaseException:
             process.kill(); await process.wait(); raise
         require(process.returncode == 0, "ARCHIVE_VALIDATION: " + stderr.decode(errors="replace"))
+        timings = self.status.data.setdefault("timings", {})
+        timings["validationMs"] = timings.get("validationMs", 0) + (time.perf_counter() - started) * 1000
 
     async def configure(self, page):
         await page.goto(self.args.url)
@@ -211,12 +237,32 @@ class Driver:
         self.status.data.update(counters=closed_session(session), nativeReason=session["reason"])
         self.status.proof("closure", [self.status.output / "final.json"])
         await self.collect(page, final=True)
+        if self.multipart:
+            await self.finalize_bundle(page)
+            return
         if not self.status.has_proof("journal-binary"):
             await self.download(page, page.get_by_role("button", name="JSONL", exact=True), "journal-final.jsonl")
         self.verify_journal(self.status.output / "journal-final.jsonl")
         if not self.status.has_proof("archive"):
             await self.shots(page, "shots-final.json")
             self.status.proof("archive", [self.status.output / "shots-final.json"], self.collector.journal_sequence)
+
+    async def finalize_bundle(self, page):
+        root = self.status.output / "bundle"
+        if not self.status.has_proof("archive"):
+            started = time.perf_counter()
+            manifest = await collect_bundle(page, root, self.bundle_options)
+            self.status.data.setdefault("timings", {})["nativeExportMs"] = (time.perf_counter() - started) * 1000
+            await self.validate_shots(root / "manifest.json")
+            require(manifest["journal"] == self.collector.latest_status, "NATIVE_JOURNAL_STATUS_MISMATCH")
+            if not manifest["reportComplete"]:
+                self.status.warning("report", RuntimeError(manifest["reportError"]))
+            self.status.proof("archive", proof_files(root), self.collector.journal_sequence)
+        native = logical_stream(root, "journal")
+        equal, detail = compare_streams(self.collector.decisions_file, native)
+        self.status.proof("journal-binary", [self.collector.decisions_file, native], self.collector.journal_sequence,
+                          "verified" if equal else "failed", None if equal else detail)
+        require(equal, "NATIVE_JOURNAL_BINARY_MISMATCH: " + detail)
 
     def verify_journal(self, path, *, require_verified=True):
         with path.open(encoding="utf-8") as stream:
@@ -268,12 +314,14 @@ class Driver:
             if self.cancelled:
                 await self.stop(page, "voluntary-signal"); break
             block_ends = self.collector.journal_counts.get("block-end", 0)
-            if self.args.completed_blocks is not None and block_ends > checked_block_ends:
+            if block_ends > checked_block_ends:
                 # block-end also includes abandoned/interrupted blocks; only
                 # the native summary establishes the completed-block objective.
                 session = await self.summary(page, "progress.json")
+                if self.multipart:
+                    await collect_bundle(page, self.status.output / "bundle", self.bundle_options)
                 checked_block_ends = block_ends
-                if session["completed"] >= self.args.completed_blocks:
+                if self.args.completed_blocks is not None and session["completed"] >= self.args.completed_blocks:
                     await self.stop(page, "objective"); break
             await asyncio.sleep(.25)
         await self.lifecycle.begin().call(lambda: self.finalize(page))
@@ -293,10 +341,22 @@ class Driver:
             scope = page.locator(".endurance-screen > p").filter(has_text=self.status.data["sessionId"])
             await scope.wait_for()
             await self.summary(page, "recovered.json", scope)
+            if self.multipart:
+                root = self.status.output / "recovered-bundle"
+                await collect_bundle(page, root, self.bundle_options)
+                await self.validate_shots(root / "manifest.json")
+                compare_bundles(self.status.output / "bundle", root)
+                for control, kind in (("recovered-journal", "journal"), ("recovered-archive", "captures")):
+                    self.status.proof(control, [logical_stream(self.status.output / "bundle", kind), logical_stream(root, kind)], self.collector.journal_sequence)
+                require(read(self.status.output / "final.json")["session"] == read(self.status.output / "recovered.json")["session"], "RECOVERED_SUMMARY_MISMATCH")
+                self.status.proof("recovered-summary", [self.status.output / "final.json", self.status.output / "recovered.json"])
+                return
             await self.download(page, scope.get_by_role("button", name="JSONL", exact=True), "recovered.jsonl")
             await self.shots(page, "recovered-shots.json", scope)
             recovery(self.status)
+        started = time.perf_counter()
         await self.lifecycle.begin().call(recover)
+        self.status.data.setdefault("timings", {})["recoveryMs"] = (time.perf_counter() - started) * 1000
         await resource.close(self.lifecycle.begin())
         await self.after_recovery()
 
@@ -323,6 +383,12 @@ class Driver:
                     await self.finalize(resource.page)
                 except Exception as error:
                     self.status.error("rescue-finalization", error)
+                    if self.multipart:
+                        try:
+                            await life.begin().call(lambda: self.finalize_bundle(resource.page))
+                        except Exception as secondary:
+                            self.status.error("rescue-bundle", secondary)
+                        return
                     # Independent exports may remain usable after an analysis failure.
                     # Never re-export a complete archive already attested at this bound.
                     for control, operation in (

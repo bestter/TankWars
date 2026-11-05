@@ -12,6 +12,7 @@ import { WEAPON_REGISTRY } from "../../types/weapon";
 import { EnduranceJournal, type JournalEvent, type JournalEntry, type JournalStatus } from "./journal";
 import type { PurchaseObservation } from "../observation";
 import { exportJournalJsonl, formatJournalTextPage, validateJournalPageRequest, type JournalTextPage } from "./journalJsonl";
+import { storedBundleSource, type BundleSource } from "./bundle/build";
 
 export interface EnduranceHost {
   captureCurrent?(): void;
@@ -213,6 +214,40 @@ export class EnduranceSession implements CombatObserver {
       pending: () => this.journal?.pending() ?? [],
     });
   }
+  async bundleSource(): Promise<BundleSource> {
+    await this.writes; await this.journal?.flush();
+    const status = this.journalStatus;
+    if (!status) throw new Error("JOURNAL_UNAVAILABLE");
+    const source = storedBundleSource(this.storage, this.session, status);
+    const mutable = { blocks: this.block ? structuredClone(this.block) : null,
+      rounds: this.collector && this.block ? structuredClone(this.roundRecord(false, [])) : null };
+    if (this.collector && mutable.blocks) addMetrics(mutable.blocks.partialMetrics, this.collector.data);
+    const readCollection = source.collection;
+    source.collection = async (name, after) => {
+      const frozen = name === "incidents" ? null : mutable[name];
+      const marker = "__bundle_frozen_current__";
+      if (after === undefined && frozen) return [{ key: marker, value: frozen, capturedAtSequence: status.persisted }];
+      let cursor = after === marker ? undefined : after;
+      for (;;) {
+        const rows = await readCollection(name, cursor);
+        if (!rows.length) return [];
+        const filtered = rows.filter(row => {
+          if (row.capturedAtSequence !== undefined && row.capturedAtSequence !== null && row.capturedAtSequence > status.persisted) return false;
+          if (!frozen || typeof row.value !== "object" || row.value === null) return true;
+          const value = row.value as Record<string, unknown>;
+          return name === "blocks" ? value.id !== mutable.blocks?.id : value.id !== mutable.rounds?.id;
+        });
+        if (filtered.length) {
+          // Always advance past the physical page, including any filtered tail.
+          filtered[filtered.length - 1] = { ...filtered[filtered.length - 1], key: rows[rows.length - 1].key };
+          return filtered;
+        }
+        cursor = rows[rows.length - 1].key;
+      }
+    };
+    if (status.error) source.pending = structuredClone(this.journal?.pending() ?? []);
+    return source;
+  }
   beginShopVisit(player: Player): string | null {
     if (!this.active || this.stopped) return null;
     const visitId = `${this.session.id}:shop:${++this.visitCounter}`;
@@ -402,7 +437,7 @@ export class EnduranceSession implements CombatObserver {
     void this.journal?.flush();
     this.session.durationMs = this.time.now() - this.started;
     this.checkpointAt = this.time.now();
-    const checkpoint = structuredClone({ session: this.session, block: this.block, round, incident });
+    const checkpoint = structuredClone({ session: this.session, block: this.block, round, incident, journalSequence: this.journalStatus?.emitted });
     if (this.collector) {
       addMetrics(checkpoint.session.partialMetrics, this.collector.data);
       if (checkpoint.block) addMetrics(checkpoint.block.partialMetrics, this.collector.data);

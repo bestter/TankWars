@@ -7,8 +7,10 @@ import subprocess
 import sys
 import time
 import uuid
+import threading
 from pathlib import Path
 from model import CODES, Status, atomic, positive, require, targets
+from multipart import TechnicalLog
 
 WINDOWS = os.name == "nt"
 
@@ -24,7 +26,7 @@ def forward_signal(process, signum):
 def observe(status, raw_code, run_id, intervention=None, terminated=True):
     if not terminated:
         return dict(observation="unknown", result=None, expectedExitCode=None, rawExitCode=raw_code)
-    valid = (isinstance(status, dict) and status.get("schemaVersion") == 1 and status.get("runId") == run_id
+    valid = (isinstance(status, dict) and status.get("schemaVersion") == 2 and status.get("runId") == run_id
              and status.get("phase") == "end" and status.get("result") in CODES)
     expected = CODES[status["result"]] if valid else None
     if intervention or not valid or expected != raw_code or status.get("expectedExitCode") != expected:
@@ -53,10 +55,22 @@ def main(argv=None):
     command += ["--run-id", run_id]
     intervention = None
     started = time.monotonic()
-    with (output / "process.log").open("w", encoding="utf-8") as log:
+    log = TechnicalLog(output, driver_args.part_size_mib * 1048576)
+    drain_errors = []
+    def drain(pipe):
+        try:
+            while data := pipe.read1(65536):
+                log.feed(data)
+        except Exception as error:
+            drain_errors.append(str(error))
+        finally:
+            pipe.close()
+    try:
         process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("run.py")), *command],
-                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=not WINDOWS,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=not WINDOWS,
                                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0)
+        reader = threading.Thread(target=drain, args=(process.stdout,), daemon=True)
+        reader.start()
         def voluntary(signum, _):
             # Forward user cancellation without calling it a safety intervention.
             forward_signal(process, signum)
@@ -90,6 +104,15 @@ def main(argv=None):
                 except subprocess.TimeoutExpired:
                     # The intervention is confirmed, even if death is not yet observable.
                     raw = None
+        reader.join(timeout=args.termination_seconds)
+        if reader.is_alive():
+            intervention = intervention or "technical-drain-timeout"
+        if drain_errors:
+            intervention = intervention or "technical-drain-failed"
+    finally:
+        # The daemon cannot be abandoned as a successful run; no positive verdict
+        # is possible if inherited pipe handles prevented draining to EOF.
+        technical = log.close() if not ('reader' in locals() and reader.is_alive()) else dict(incompleteLine=True, error="drain timeout")
     try:
         state = json.loads((output / "status.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -106,10 +129,8 @@ def main(argv=None):
         except OSError as error:
             # Keep process-exit independently publishable even when status.json is locked.
             print("SUPERVISOR_STATUS_PUBLICATION_FAILED: " + str(error), file=sys.stderr, flush=True)
-    verdict.update(runId=run_id, intervention=intervention, elapsedSeconds=time.monotonic() - started)
+    verdict.update(schemaVersion=2, runId=run_id, intervention=intervention, elapsedSeconds=time.monotonic() - started, technical=technical)
     atomic(output / "process-exit.json", json.dumps(verdict, indent=2) + "\n")
-    with (output / "process.log").open("a", encoding="utf-8") as log:
-        log.write(json.dumps(verdict) + "\n")
     print(json.dumps(verdict))
     return verdict["expectedExitCode"] if type(verdict["expectedExitCode"]) is int else 1
 

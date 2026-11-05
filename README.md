@@ -362,6 +362,23 @@ The configurable endurance budget is 64–4,096 MiB (512 MiB default), capped by
 
 Use the commands above to inspect, replay or compare a shot. Validation rejects unsupported schemas/rules, invalid values, corrupt terrain and missing dependencies. The export checksum also covers the ordered event/dependency list. Original replay uses the recorded initial projectile, including velocity and flags, rather than recalculating browser trigonometry. `launchSource` identifies legacy command reconstruction when that capture is absent, and the reader reports missing capabilities. Original replay strictly consumes recorded physical randomness once, in order and context; alternatives use a declared constant RNG of 0.5 and a 2,400-step limit, preserving forecast defaults. Physical and economic discrepancies are reported separately. Exit codes are 0 for success, 1 for invalid input, and 2 for incomplete/divergent results or missing legacy capabilities. Legacy JSON reports and JSONL journals remain inspectable without retroactive replay. In-progress captures are explicitly marked; only a stable prelaunch state supports an alternative. No whole-match deterministic replay or crash-time combat recovery is provided. Metrics show budgeted bytes, queue, confirmed sequences, reservation, capture/export latency and JavaScript heap where available.
 
+#### Rapports progressifs hors ligne / Progressive offline reports (#380, v0.13.6)
+
+**Français.** L’endurance exporte maintenant ses données globales dans un ZIP64 produit progressivement sur disque. Extraire le ZIP, puis ouvrir `index.html`, sans serveur ni réseau. Les vues paginées donnent accès aux blocs, manches, joueurs, profils, armes, incidents et décisions lentes; les fiches de tirs indiquent les preuves et la commande d’extraction/rejeu. Les motifs d’examen sont des observations, pas des verdicts de bogue. Le rejeu demeure explicite.
+
+La taille par défaut est 20 Mio d’octets UTF-8 par partie; un enregistrement indivisible plus gros reste seul et signalé. Le seuil de lenteur inclusif est 1000 ms. Ces paramètres sont configurables dans l’export et le pilote, sans modifier le combat ni son budget. Les générations sont actualisées aux fins de blocs et à l’arrêt; le téléchargement demeure manuel. Les boutons globaux JSONL et « Exporter les tirs » utilisent aussi le bundle. JSON et Markdown restent des résumés légers; les collections détaillées sont dans le bundle. Les anciens fichiers restent lisibles.
+
+Les temporaires d’export, les index sur disque et le ZIP demandent de l’espace supplémentaire au-delà d’IndexedDB. Un manque d’espace ou une annulation ne supprime pas la source. Une panne du rapport dérivé conserve les données et le dernier index publié avec sa borne; elle est signalée « rapport incomplet ». Voir [format, inventaire et validation](Scripts/endurance/README.md#bundles-progressifs--progressive-bundles-380).
+
+**English.** Global endurance exports now use a disk-streamed ZIP64 bundle. Extract it and open `index.html` offline, without a server. Paginated global views cover blocks, rounds, player identities and roles, profiles, weapons, incidents and slow decisions. Shot pages link to evidence and explicit extraction/replay commands. Review flags are factual observations, not automatic bug verdicts.
+
+Parts default to 20 MiB of UTF-8 bytes and the inclusive slow-decision threshold to 1000 ms; oversized indivisible records are preserved and flagged. Export settings do not change gameplay or its archive budget. Reports refresh at block endings and stop; downloads remain manual. Global JSONL/shot buttons also use the bundle; JSON/Markdown contain lightweight summaries. Historical files remain readable. Disk temporaries and ZIP output require additional space. Cancellation or export failure preserves IndexedDB; derived-only failures report an incomplete report and preserve the last published index boundary.
+
+```sh
+node Scripts/read-shot-archive.mjs path/to/manifest.json --shot 'FULL_SHOT_KEY' --output shot.json --replay
+node Scripts/endurance/build-report.mjs path/to/manifest.json --output new-report-folder
+```
+
 #### Collecte native JSON/JSONL et téléchargements natifs / Native JSON/JSONL collection and downloads (#381, v0.13.5)
 
 - **Pont texte paginé** : le pont de test `window.__tankwarsEnduranceTest` n'expose plus de méthodes transférant de volumineux graphes d'objets JavaScript (`readJournalPage` et `readArchive` retirées). Il fournit désormais `readJournalText(after?, limit?)` qui retourne directement la tranche de texte JSONL UTF-8 sérialisée par le navigateur, ainsi que `readArchiveMetrics()`.

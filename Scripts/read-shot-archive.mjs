@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { dirname, resolve, join } from "node:path";
+import { tmpdir } from "node:os";
+import { NodeBundleDisk } from "./endurance/bundle-disk.mjs";
 import { createServer } from "vite";
 
 const [path, ...args] = process.argv.slice(2);
@@ -6,8 +9,15 @@ if (!path) {
   console.error("Usage: node Scripts/read-shot-archive.mjs <archive.json> [--shot <key>] [--replay] [--weapon <id> --angle <n> --power <n>]");
   process.exitCode = 1;
 } else {
-  let server;
+  let server, disk, temporary;
   try {
+    const allowed = new Set(["--shot", "--replay", "--weapon", "--angle", "--power", "--output"]);
+    const options = new Map();
+    for (let i = 0; i < args.length; i++) {
+      if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
+      const option = args[i]; options.set(option, option === "--replay" ? true : args[++i]);
+      if (options.get(option) === undefined || (typeof options.get(option) === "string" && options.get(option).startsWith("--"))) throw new Error("MISSING_CLI_VALUE");
+    }
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }
@@ -16,23 +26,25 @@ if (!path) {
       if (!rows.length || rows[0].kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
       value = { schemaVersion: rows[0].schemaVersion, format: "legacy-journal", events: rows.length - 1 };
     }
+    if (value.format === "tankwars-endurance-bundle") {
+      const key = options.get("--shot");
+      if (!key) throw new Error("SELECT_SHOT_FIRST");
+      server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, optimizeDeps: { noDiscovery: true }, appType: "custom" });
+      temporary = await mkdtemp(join(tmpdir(), "tankwars-shot-"));
+      disk = new NodeBundleDisk(dirname(resolve(path)), join(temporary, "index.sqlite"));
+      const { extractShot } = await server.ssrLoadModule("/src/game/endurance/bundle/read.ts");
+      value = await extractShot(disk, key);
+    }
     if (value.format !== "tankwars-shot-archive") {
       if (value.schemaVersion !== 1 || (value.format !== "legacy-journal" &&
         (typeof value.session !== "object" || value.session === null || !Array.isArray(value.blocks)))) throw new Error("NOT_A_SUPPORTED_ARCHIVE");
       console.log(JSON.stringify({ capabilities: { singleShotReplay: false }, reason: "Legacy report/journal: physical captures unavailable", sourceSchema: value.schemaVersion ?? null }, null, 2));
       process.exitCode = 2;
     } else {
-      server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+      server ??= await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null },
         optimizeDeps: { noDiscovery: true }, appType: "custom" });
       const { validateArchive } = await server.ssrLoadModule("/src/game/diagnostics/validate.ts");
       const archive = validateArchive(value);
-      const allowed = new Set(["--shot", "--replay", "--weapon", "--angle", "--power"]);
-      const options = new Map();
-      for (let i = 0; i < args.length; i++) {
-        if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
-        const option = args[i]; options.set(option, option === "--replay" ? true : args[++i]);
-        if (options.get(option) === undefined) throw new Error("MISSING_CLI_VALUE");
-      }
       const shots = archive.records.filter(r => r.input.kind === "pre-shot");
       const recordedLaunches = new Set(archive.records.filter(r => r.input.kind === "projectile-launched").map(r => r.shotKey));
       const key = options.get("--shot");
@@ -46,8 +58,11 @@ if (!path) {
       let chain;
       if (selected) {
         const { filterArchive } = await server.ssrLoadModule("/src/game/diagnostics/export.ts");
-        chain = filterArchive(archive, { shotKey: selected.shotKey }).records;
+        const subset = filterArchive(archive, { shotKey: selected.shotKey });
+        chain = subset.records;
+        if (options.has("--output")) await writeFile(options.get("--output"), JSON.stringify(validateArchive(subset)) + "\n", { flag: "wx" });
       }
+      if (options.has("--output") && !selected) throw new Error("SELECT_SHOT_FIRST");
       const result = { capabilities: { archiveIntegrity: typeof archive.integrity === "string",
         recordedInitialProjectile: shots.every(s => recordedLaunches.has(s.shotKey)) },
         manifest: { ...archive, records: undefined, terrains: undefined }, shots: shots.map(r => ({ id: r.shotKey, sequence: r.sequence, shot: r.input.shot })),
@@ -62,5 +77,5 @@ if (!path) {
       console.log(JSON.stringify(result, null, 2));
     }
   } catch (error) { console.error(String(error)); process.exitCode = 1; }
-  finally { await server?.close(); }
+  finally { disk?.close(); await server?.close(); if (temporary) await rm(temporary, { recursive: true, force: true }); }
 }

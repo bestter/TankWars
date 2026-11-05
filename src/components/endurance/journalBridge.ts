@@ -2,6 +2,10 @@ import type { EnduranceSession } from "../../game/endurance/session";
 import type { JournalTextPage } from "../../game/endurance/journalJsonl";
 
 export type { JournalTextPage };
+export async function downloadEnduranceBundle(): Promise<void> {
+  if (!window.__tankwarsEnduranceBundle) throw new Error("EXPORT_BRIDGE_UNAVAILABLE");
+  await window.__tankwarsEnduranceBundle.download();
+}
 
 export interface EnduranceTestBridge {
   readJournalText(after?: number, limit?: number): Promise<JournalTextPage>;
