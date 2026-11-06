@@ -95,11 +95,10 @@ Les 3 constats **🔴 Critiques** ont été corrigés dans la version `0.11.1` :
   3. Découper `worker/src/game-room.ts` en modules cohésifs (`roomStorage.ts`, `roomShop.ts`, `roomZeus.ts`, `roomCombat.ts`).
 
 ### AMEL-02 — Réutilisation des tampons dans `Terrain.destroyTerrainShaft` (DRILLER)
+- **Résolution (#326)** : Non-intervention / Clôture sans modification. Le constat d'allocation dans la boucle est avéré (~30 à 60 allocations temporaires par impact DRILLER), mais l'opération est ponctuelle (uniquement à l'impact physique de la foreuse, pas dans une boucle continue de frame ou d'animation) et gérée efficacement par le minor GC (scavenge). Aucun impact mesurable sur le framerate ou la mémoire. Ticket fermé avec motif documenté; réouverture ou référence si un profilage futur démontre un goulot d'étranglement concret.
+- **Analyse et décision** : Gemini 3.8 Flash.
 - **Fichiers concernés** :
   - `src/game/engine/Terrain.ts:L497-L530`
-- **Problème** : `new Array<boolean>(this.width).fill(false)` est alloué à chaque itération de la boucle `for (let i = 0; i <= steps; i++)` (~56 fois par impact DRILLER).
-- **Plan d'action** :
-  1. Allouer un unique tampon `stampOccludedColumns` hors de la boucle `for` et le réinitialiser via `.fill(false)` à chaque pas.
 
 ### AMEL-03 — Nettoyage du contrat legacy `AIStrategy.ts` et des mocks constructeurs Vitest
 - **Résolution (#327, v0.11.2)** : Résolu. Suppression du contrat mort `AIStrategy.ts` et de la méthode `GameEngine.requestAIShot`. Remplacement du mock fléché par une fonction constructible dans `useOnlineLobby.test.ts`, éliminant l'avertissement Vitest et l'erreur d'instanciation silencieuse `TypeError: () => mockWs is not a constructor`.
