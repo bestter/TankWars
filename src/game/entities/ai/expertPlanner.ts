@@ -318,7 +318,10 @@ export function chooseExpertPlan(
       candidateCount: ranked.length,
       selected: selected && traceCandidate(selected),
       selectionReason: selected && (lethalTransition.reason === "alternative-accepted"
-        ? "autre cible sans nouvelle menace avec riposte létale" : selectionReason(phase, selected, runnerUp)),
+        ? (selected.primaryTargetId === lethalTransition.initialTargetId
+          ? "élimination de la cible sans nouvelle menace provoquée"
+          : "autre cible sans nouvelle menace provoquée")
+        : selectionReason(phase, selected, runnerUp)),
       runnerUp: runnerUp && traceCandidate(runnerUp),
       bestByWeapon,
     });

@@ -12,6 +12,7 @@ import * as memory from "../aimMemory";
 import { solveSniperAim } from "../sniperAim";
 import * as aim from "../sniperAim";
 import type { WeaponId } from "../../../../types/weapon";
+import { ADVANCED_GAFFES } from "../aimCorruption";
 
 function transitionFixture(count = 3, health = 30) {
   const self = makePlayer({ id: "s", isHuman: false, aiProfile: "v3-sniper", inventory: {},
@@ -26,7 +27,7 @@ function transitionFixture(count = 3, health = 30) {
 }
 
 function analysis(status: TransitionAnalysis["status"]): TransitionAnalysis {
-  return { status, reason: status === "risk" ? "lethal-reply" : status === "safe" ? "no-new-threat" : "uncertified",
+  return { status, reason: status === "risk" ? "provoked-survival" : status === "safe" ? "no-new-threat" : "uncertified",
     initial: null, after: null, reply: null };
 }
 function choice(reason: selection.SniperChoiceReason = "bullet", angle = 40): selection.SniperPhysicalChoice {
@@ -237,18 +238,17 @@ describe("SNIPER lethal transitions with real first-shot and hypothesis physics"
     const resolve = vi.spyOn(physical, "resolvePhysicalShot");
     const search = vi.fn(searchLethalThreat);
     const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 3, true, new LethalTransitionDetector(search));
-    expect(result.trace.analysis).toMatchObject({ status: "risk", initial: { status: "absent" },
-      after: { status: "found" }, reply: { status: "found" } });
+    expect(result.trace.analysis).toMatchObject({ status: "risk", reason: "provoked-survival", initial: { status: "absent" },
+      after: { status: "found" }, reply: null });
     expect(result.trace.alternatives).toHaveLength(0);
     expect(result.trace.extraAmplitude).toBeUndefined();
     const forecast = selection.getSniperChoiceForecast(result.choice)!;
     const after = physical.getForecastAfterState(forecast)!;
+    expect(search).toHaveBeenCalledTimes(2);
     expect(search.mock.calls[1][0]).toBe(after.state);
-    expect(search.mock.calls[2][0]).toBe(after.state);
-    expect(search.mock.calls[1][1]).toBe(search.mock.calls[2][1]);
     expect(after.state.localShotContext?.isFirstShotOfRound).toBe(context ? false : undefined);
     const selectionCalls = resolve.mock.calls.filter(call => call[5]?.captureAfterState);
-    expect(selectionCalls).toHaveLength(result.choice.trace.forecasts);
+    expect(selectionCalls).toHaveLength(result.trace.selectionCounters.forecasts);
     expect(selectionCalls.some((_, i) => resolve.mock.results[resolve.mock.calls.indexOf(selectionCalls[i])].value === forecast)).toBe(true);
     expect(after.terrain.getHeightmap()).not.toEqual(heights);
     expect(f.state).toEqual(before);
@@ -257,11 +257,12 @@ describe("SNIPER lethal transitions with real first-shot and hypothesis physics"
     expect(JSON.stringify(result.trace)).not.toMatch(/copiedTerrain|"players"|"heights"/);
   });
 
-  it("a real transition without a lethal reply keeps the original", () => {
+  it("a real transition with provoked-survival in a duel without lethal alternative keeps the original", () => {
     const f = transitionFixture(2, 100);
     const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 3);
-    expect(result.trace.analysis).toMatchObject({ status: "safe", reason: "no-lethal-reply",
-      initial: { status: "absent" }, after: { status: "found" }, reply: { status: "absent" } });
+    expect(result.trace.analysis).toMatchObject({ status: "risk", reason: "provoked-survival",
+      initial: { status: "absent" }, after: { status: "found" }, reply: null });
+    expect(result.trace.reason).toBe("initial-retained-no-alternative");
   });
 
   it("accepts a useful alternative with real physics while retaining the original forecast identity", () => {
@@ -452,5 +453,205 @@ describe("SNIPER virtual alternatives and random sequence", () => {
     analyze.mockReturnValue(analysis("safe"));
     await strategy.executeTurn("s", f.state, f.terrain);
     expect(pick.mock.calls.at(-1)?.[4]).toBeCloseTo(-46.92);
+  });
+
+  describe("SNIPER same-target lethal continuation #374", () => {
+    it("replaces a risky non-lethal BULLET with a lethal MISSILE on the same target", () => {
+      const f = transitionFixture(2);
+      f.self.inventory = { BULLET: 1 };
+      f.target.isHuman = true;
+
+      // Mock resolvePhysicalShot: BULLET does non-lethal damage, MISSILE kills target
+      vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
+        if (weapon === "BULLET") {
+          return fallbackForecast("c", "BULLET", 1000, {
+            survivors: ["s", "c"],
+            destruction: [],
+          });
+        }
+        // MISSILE
+        return fallbackForecast("c", "MISSILE", 60000, {
+          survivors: ["s"], // target c eliminated
+          destruction: [{ shotId: 1, shooterId: "s", victimId: "c", weaponId: "MISSILE", cause: "health-zero" }],
+        });
+      });
+
+      const detector = new LethalTransitionDetector();
+      // First analysis of BULLET is risk (provoked-survival)
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null });
+
+      const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true, detector);
+      expect(result.target.id).toBe("c");
+      expect(result.choice.weaponId).toBe("MISSILE");
+      expect(result.choice.certified).toBe(true);
+      expect(result.trace.reason).toBe("same-target-lethal-accepted");
+      expect(result.trace.explanation).toBe("élimination de la cible initiale");
+      expect(result.trace.continuation).toMatchObject({
+        attempted: true,
+        accepted: true,
+        analysis: { status: "safe", reason: "target-destroyed" },
+      });
+      expect(result.trace.continuation?.counters?.searches).toBeGreaterThan(0);
+      expect(result.trace.alternatives).toHaveLength(0);
+      expect(result.trace.extraAmplitude).toBeUndefined();
+    });
+
+    it("follows a non-lethal missile-useful with an alternative lethal missile arc on the same target", () => {
+      const f = transitionFixture(2);
+      f.self.inventory = {}; // Only MISSILE
+      f.target.isHuman = true;
+
+      let missileCall = 0;
+      vi.spyOn(physical, "resolvePhysicalShot").mockImplementation(() => {
+        missileCall++;
+        if (missileCall === 1) {
+          // First arc is non-lethal missile-useful
+          return fallbackForecast("c", "MISSILE", 1000, {
+            survivors: ["s", "c"],
+            destruction: [],
+          });
+        }
+        // Second arc is lethal
+        return fallbackForecast("c", "MISSILE", 60000, {
+          survivors: ["s"],
+          destruction: [{ shotId: 1, shooterId: "s", victimId: "c", weaponId: "MISSILE", cause: "health-zero" }],
+        });
+      });
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null });
+
+      const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true, detector);
+      expect(result.target.id).toBe("c");
+      expect(result.choice.weaponId).toBe("MISSILE");
+      expect(result.choice.certified).toBe(true);
+      expect(result.trace.reason).toBe("same-target-lethal-accepted");
+      expect(result.trace.continuation?.accepted).toBe(true);
+    });
+
+    it("selects higher targetLoss among multiple lethal MISSILE arcs and preserves stable order on tie", () => {
+      const f = transitionFixture(2);
+      f.self.inventory = { BULLET: 1 };
+      f.target.isHuman = true;
+
+      let callIndex = 0;
+      vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
+        callIndex++;
+        if (weapon === "BULLET") {
+          return fallbackForecast("c", "BULLET", 1000, { survivors: ["s", "c"] });
+        }
+        // Consecutive missile arcs with different losses
+        const loss = callIndex === 2 ? 20000 : 35000;
+        return fallbackForecast("c", "MISSILE", loss, {
+          survivors: ["s"],
+          destruction: [{ shotId: 1, shooterId: "s", victimId: "c", weaponId: "MISSILE", cause: "health-zero" }],
+        });
+      });
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null });
+
+      const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true, detector);
+      expect(result.trace.reason).toBe("same-target-lethal-accepted");
+      // Picked the higher loss candidate
+      expect(result.choice.trace.admissible[0]?.loss).toBe(35000);
+    });
+
+    it("does not replace if continuation finds only injury, suicide, incomplete forecast or foreign kill", () => {
+      const f = transitionFixture(3);
+      f.self.inventory = { BULLET: 1 };
+      f.target.isHuman = true;
+
+      vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon, command) => {
+        // Any shot not aimed at target c is for alternative target a0
+        if (command.angle > 60 || command.power > 70) {
+          return fallbackForecast("a0", "BULLET", 1000, {
+            survivors: ["s", "a0"],
+            hits: [{ shotId: 1, munitionId: 0, x: 650, y: 330, weaponId: "BULLET", directTargetId: "a0" }],
+            damage: [{ shotId: 1, munitionId: 0, shooterId: "s", victimId: "a0", weaponId: "BULLET", source: "projectile", classification: "direct", healthDamageMilli: 1000, shieldLostMilli: 0, shieldAbsorbedMilli: 0 }],
+          });
+        }
+        if (weapon === "BULLET") {
+          return fallbackForecast("c", "BULLET", 1000, { survivors: ["s", "c"] });
+        }
+        // MISSILE: suicide kill (shooter dies too)
+        return fallbackForecast("c", "MISSILE", 60000, {
+          survivors: [], // shooter s is dead
+          destruction: [
+            { shotId: 1, shooterId: "s", victimId: "c", weaponId: "MISSILE", cause: "health-zero" },
+            { shotId: 1, shooterId: "s", victimId: "s", weaponId: "MISSILE", cause: "health-zero" },
+          ],
+        });
+      });
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValue({ status: "safe", reason: "target-type", initial: null, after: null, reply: null });
+
+      const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true, detector);
+      // Continuation failed because shooter died, so it fell back to other target a0
+      expect(result.trace.continuation).toMatchObject({ attempted: true, accepted: false });
+      expect(result.target.id).toBe("a0");
+      expect(result.trace.reason).toBe("alternative-accepted");
+    });
+
+    it("respects aggregated budgets 2/4/4 and 10 with solverCalls + ballisticCacheHits === searches", () => {
+      const f = transitionFixture(2);
+      f.self.inventory = { BULLET: 2, DRILLER: 1 };
+      f.target.isHuman = true;
+
+      const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true);
+      const counters = result.trace.selectionCounters;
+      expect(counters.searches).toBeLessThanOrEqual(10);
+      expect(counters.solverCalls + counters.ballisticCacheHits).toBe(counters.searches);
+    });
+
+    it("in AISniperStrategy, switching from BULLET to MISSILE applies MISSILE gaffe rules and commits only once", async () => {
+      vi.stubEnv("DEV", false);
+      const f = transitionFixture(2);
+      f.self.inventory = { BULLET: 1 };
+      f.target.isHuman = true;
+
+      // Mock resolvePhysicalShot so BULLET is non-lethal and MISSILE is lethal
+      vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
+        if (weapon === "BULLET") {
+          return fallbackForecast("c", "BULLET", 1000, { survivors: ["s", "c"] });
+        }
+        return fallbackForecast("c", "MISSILE", 60000, {
+          survivors: ["s"],
+          destruction: [{ shotId: 1, shooterId: "s", victimId: "c", weaponId: "MISSILE", cause: "health-zero" }],
+        });
+      });
+
+      vi.spyOn(LethalTransitionDetector.prototype, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null });
+
+      const record = vi.spyOn(memory, "recordAimAttempt");
+      const strategy = new AISniperStrategy(), observations: AIObservation[] = [];
+      const callback = vi.fn();
+      strategy.onTargetSelected = callback;
+      strategy.onDecisionObserved = (value) => observations.push(value);
+
+      const shot = await strategy.executeTurn("s", f.state, f.terrain);
+
+      // Final weapon is MISSILE
+      expect(shot.weaponId).toBe("MISSILE");
+      expect(f.self.tank.currentWeapon).toBe("MISSILE");
+      // Committed exactly once on target "c"
+      expect(record).toHaveBeenCalledExactlyOnceWith(expect.anything(), "c");
+      expect(callback).toHaveBeenCalledExactlyOnceWith("s", "c");
+      expect(observations).toHaveLength(1);
+      expect(observations[0].target?.playerId).toBe("c");
+      // Gaffe step for MISSILE has non-zero chance (whereas BULLET would have 0)
+      const gaffeStep = observations[0].steps.find((s) => s.kind === "gaffe");
+      expect(gaffeStep?.parameters.chance).toBe(ADVANCED_GAFFES["v3-sniper"].chance);
+      expect(JSON.stringify(observations[0].diagnostics)).toContain("same-target-lethal-accepted");
+    });
   });
 });

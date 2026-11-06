@@ -288,14 +288,13 @@ describe("SNIPER ranking, fallback and bounds", () => {
     const strategy = new AISniperStrategy();
     strategy.onDecisionObserved = value => observed.push(value);
     const shot = await strategy.executeTurn("self", f.state, f.terrain);
-    const diagnostics = observed[0].diagnostics as SniperSelectionTrace;
+    const diagnostics = observed[0].diagnostics as SniperSelectionTrace & { lethalTransition: { selectionCounters: SniperSelectionTrace } };
     expect(diagnostics.searches).toBe(diagnostics.solverCalls + diagnostics.ballisticCacheHits);
-    expect(diagnostics.solverCalls).toBe(solve.mock.calls.length);
+    expect(diagnostics.lethalTransition.selectionCounters.solverCalls).toBe(solve.mock.calls.length);
+    expect(diagnostics.lethalTransition.selectionCounters.searches).toBe(
+      diagnostics.lethalTransition.selectionCounters.solverCalls + diagnostics.lethalTransition.selectionCounters.ballisticCacheHits,
+    );
     expect(diagnostics.ballisticCacheHits).toBeGreaterThan(0);
-    expect(observed[0].diagnostics).toMatchObject({ lethalTransition: { selectionCounters: {
-      searches: diagnostics.searches, solverCalls: diagnostics.solverCalls,
-      ballisticCacheHits: diagnostics.ballisticCacheHits,
-    } } });
     expect(observed[0].final).toEqual(shot);
     if (dev) {
       const line = info.mock.calls.find(call => call[0] === "[AI SNIPER] Décision");

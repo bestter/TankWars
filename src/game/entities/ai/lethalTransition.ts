@@ -134,7 +134,8 @@ export class LethalTransitionDetector {
     return value;
   }
   analyze(candidate: TransitionCandidate, self: Player, state: GameState, terrain: TerrainManager): TransitionAnalysis {
-    let initial: ThreatSearchResult | null = null, after: ThreatSearchResult | null = null, reply: ThreatSearchResult | null = null;
+    let initial: ThreatSearchResult | null = null, after: ThreatSearchResult | null = null;
+    const reply: ThreatSearchResult | null = null;
     const conclude = (status: TransitionAnalysis["status"], reason: string): TransitionAnalysis => ({ status, reason, initial, after, reply });
     const forecast = candidate.result?.forecast;
     if (candidate.certified === false || !forecast?.complete) return conclude("unknown", "uncertified");
@@ -153,9 +154,7 @@ export class LethalTransitionDetector {
     after = this.threat(stabilized.state, stabilized.terrain, actor, victim);
     if (after.status === "absent") return conclude("safe", "no-new-threat");
     if (after.status === "unknown") return conclude("unknown", after.cause ?? "after-unknown");
-    reply = this.threat(stabilized.state, stabilized.terrain, victim, actor);
-    if (reply.status === "unknown") return conclude("unknown", reply.cause ?? "reply-unknown");
-    return reply.status === "found" ? conclude("risk", "lethal-reply") : conclude("safe", "no-lethal-reply");
+    return conclude("risk", "provoked-survival");
   }
 }
 
@@ -175,15 +174,31 @@ export function chooseTransitionSafePlan<T extends TransitionCandidate>(candidat
   if (!applicable || !initial) return finish(initial, "not-applicable");
   const analysis = detector.analyze(initial, self, state, terrain);
   if (analysis.status !== "risk") return finish(initial, "initial-retained", analysis);
-  const seen = new Set([initial.primaryTargetId]);
-  for (const candidate of candidates) {
-    if (seen.has(candidate.primaryTargetId)) continue;
-    seen.add(candidate.primaryTargetId);
-    if (!state.players.some((player) => player.id === candidate.primaryTargetId && !player.tank.isDead)) continue;
-    const evaluated = detector.analyze(candidate, self, state, terrain);
-    const accepted = evaluated.status === "safe";
-    alternatives.push({ targetId: candidate.primaryTargetId, accepted, analysis: evaluated });
-    if (accepted) return finish(candidate, "alternative-accepted", analysis);
+  const initialTargetId = initial.primaryTargetId;
+  const seenOtherTargets = new Set<string>();
+  let examinedSameTarget = false;
+  for (const candidate of candidates.slice(1)) {
+    if (candidate.primaryTargetId === initialTargetId) {
+      if (examinedSameTarget) continue;
+      const forecast = candidate.result?.forecast;
+      const isLethalAlternative = candidate.certified !== false &&
+        Boolean(forecast?.complete) &&
+        !forecast!.survivors.includes(initialTargetId);
+      if (!isLethalAlternative) continue;
+      examinedSameTarget = true;
+      const evaluated = detector.analyze(candidate, self, state, terrain);
+      const accepted = evaluated.status === "safe";
+      alternatives.push({ targetId: candidate.primaryTargetId, accepted, analysis: evaluated });
+      if (accepted) return finish(candidate, "alternative-accepted", analysis);
+    } else {
+      if (seenOtherTargets.has(candidate.primaryTargetId)) continue;
+      seenOtherTargets.add(candidate.primaryTargetId);
+      if (!state.players.some((player) => player.id === candidate.primaryTargetId && !player.tank.isDead)) continue;
+      const evaluated = detector.analyze(candidate, self, state, terrain);
+      const accepted = evaluated.status === "safe";
+      alternatives.push({ targetId: candidate.primaryTargetId, accepted, analysis: evaluated });
+      if (accepted) return finish(candidate, "alternative-accepted", analysis);
+    }
   }
   return finish(initial, "initial-retained-no-alternative", analysis);
 }
