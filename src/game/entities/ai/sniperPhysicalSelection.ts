@@ -120,6 +120,30 @@ export function getSniperChoiceForecast(choice: SniperPhysicalChoice): PhysicalR
   return choiceForecasts.get(choice);
 }
 
+export interface SniperContinuationOutcome {
+  readonly success: boolean;
+  readonly candidate?: {
+    readonly choice: SniperPhysicalChoice;
+    readonly forecast: PhysicalResolution;
+  };
+  readonly counters: {
+    readonly searches: number;
+    readonly solverCalls: number;
+    readonly ballisticCacheHits: number;
+    readonly forecasts: number;
+    readonly cacheHits: number;
+  };
+}
+
+const sniperChoiceContinuations = new WeakMap<SniperPhysicalChoice, () => SniperContinuationOutcome>();
+
+export function continueSniperSameTargetLethal(choice: SniperPhysicalChoice): SniperContinuationOutcome | null {
+  const run = sniperChoiceContinuations.get(choice);
+  if (!run) return null;
+  sniperChoiceContinuations.delete(choice);
+  return run();
+}
+
 interface SearchResult {
   readonly point: TacticalPoint;
   readonly variant: AimVariant;
@@ -411,10 +435,19 @@ export function chooseSniperPhysicalShot(
   else if (material === TERRAIN_MATERIAL.ROCK) note("DRILLER", ordinaryTankPoint(target), "full", "veto ROCK");
   else consider("DRILLER", SNIPER_SEARCH_LIMITS.driller, (forecast) => sniperDrillerRefusal(forecast, self, target));
 
+  const missilePoints = localMaterialPoints(self, target, "MISSILE", terrain);
+  const allMissileArcs: { point: TacticalPoint; variant: AimVariant }[] = [];
+  for (const point of missilePoints) {
+    for (const variant of ARCS) {
+      allMissileArcs.push({ point, variant });
+    }
+  }
+
   let choice: Omit<SniperPhysicalChoice, "trace"> | undefined;
   let retainedForecast: PhysicalResolution | null | undefined;
   let selectionReason: SniperSelectionReason;
   let runnerUp: SniperCandidateSummary | undefined;
+  let usedMissile = 0;
   if (ranked.length > 0) {
     const picked = pickBest(ranked);
     const best = picked.best;
@@ -434,25 +467,21 @@ export function chooseSniperPhysicalShot(
     let useful: SearchResult | undefined;
     let surviving: SearchResult | undefined;
     let ordinary: SearchResult | undefined;
-    let used = 0;
-    const points = localMaterialPoints(self, target, "MISSILE", terrain);
-    missileArcs: for (const point of points) {
-      for (const variant of ARCS) {
-        if (used >= SNIPER_SEARCH_LIMITS.missile || searches >= SNIPER_SEARCH_LIMITS.total) break missileArcs;
-        used += 1;
-        const found = searchOne(point, "MISSILE", variant);
-        if (point.kind === "tank" && variant === "full") ordinary = found;
-        if (!found.forecast) continue;
-        if (missileUseful(found.forecast, self, target)) {
-          useful = found;
-          break missileArcs;
-        }
-        if (!surviving && missileSurviving(found.forecast, self)) surviving = found;
-        else if (found.forecast.complete && !found.forecast.survivors.includes(self.id)) {
-          note("MISSILE", point, variant, "tireur détruit", found.command, found.forecast);
-        } else if (found.forecast.complete) note("MISSILE", point, variant,
-          sniperFallbackRefusal(found.forecast, self, target, "MISSILE") ?? "sans effet", found.command, found.forecast);
+    missileArcs: for (const { point, variant } of allMissileArcs) {
+      if (usedMissile >= SNIPER_SEARCH_LIMITS.missile || searches >= SNIPER_SEARCH_LIMITS.total) break missileArcs;
+      usedMissile += 1;
+      const found = searchOne(point, "MISSILE", variant);
+      if (point.kind === "tank" && variant === "full") ordinary = found;
+      if (!found.forecast) continue;
+      if (missileUseful(found.forecast, self, target)) {
+        useful = found;
+        break missileArcs;
       }
+      if (!surviving && missileSurviving(found.forecast, self)) surviving = found;
+      else if (found.forecast.complete && !found.forecast.survivors.includes(self.id)) {
+        note("MISSILE", point, variant, "tireur détruit", found.command, found.forecast);
+      } else if (found.forecast.complete) note("MISSILE", point, variant,
+        sniperFallbackRefusal(found.forecast, self, target, "MISSILE") ?? "sans effet", found.command, found.forecast);
     }
     const selected = useful ?? surviving ?? ordinary;
     retainedForecast = selected?.forecast;
@@ -486,6 +515,89 @@ export function chooseSniperPhysicalShot(
       };
   }
 
+  const initialMissileUsed = usedMissile;
+  let continuationConsumed = false;
+  const runContinuation = (): SniperContinuationOutcome => {
+    if (continuationConsumed) {
+      return { success: false, counters: { searches: 0, solverCalls: 0, ballisticCacheHits: 0, forecasts: 0, cacheHits: 0 } };
+    }
+    continuationConsumed = true;
+    const startSearches = searches;
+    const startSolverCalls = solverCalls;
+    const startBallisticHits = ballisticCacheHits;
+    const startForecasts = forecasts;
+    const startCacheHits = cacheHits;
+
+    const lethalCandidates: { found: SearchResult; loss: number }[] = [];
+    let currentMissileUsed = initialMissileUsed;
+    for (let i = initialMissileUsed; i < allMissileArcs.length; i++) {
+      if (currentMissileUsed >= SNIPER_SEARCH_LIMITS.missile || searches >= SNIPER_SEARCH_LIMITS.total) break;
+      currentMissileUsed += 1;
+      const { point, variant } = allMissileArcs[i];
+      const found = searchOne(point, "MISSILE", variant);
+      if (!found.forecast || !found.forecast.complete) continue;
+      if (!found.forecast.survivors.includes(self.id)) {
+        note("MISSILE", point, variant, "tireur détruit", found.command, found.forecast);
+        continue;
+      }
+      if (!targetDestroyed(found.forecast, self, target, "MISSILE")) {
+        note("MISSILE", point, variant,
+          sniperFallbackRefusal(found.forecast, self, target, "MISSILE") ?? "sans effet", found.command, found.forecast);
+        continue;
+      }
+      if (sniperFallbackRefusal(found.forecast, self, target, "MISSILE") !== null) {
+        note("MISSILE", point, variant,
+          sniperFallbackRefusal(found.forecast, self, target, "MISSILE")!, found.command, found.forecast);
+        continue;
+      }
+      const loss = targetLoss(found.forecast, self, target, "MISSILE");
+      lethalCandidates.push({ found, loss });
+    }
+
+    const counters = {
+      searches: searches - startSearches,
+      solverCalls: solverCalls - startSolverCalls,
+      ballisticCacheHits: ballisticCacheHits - startBallisticHits,
+      forecasts: forecasts - startForecasts,
+      cacheHits: cacheHits - startCacheHits,
+    };
+
+    if (lethalCandidates.length === 0) {
+      return { success: false, counters };
+    }
+
+    let best = lethalCandidates[0];
+    for (const cand of lethalCandidates.slice(1)) {
+      if (cand.loss > best.loss) best = cand;
+    }
+
+    const continuationChoice: SniperPhysicalChoice = {
+      weaponId: "MISSILE",
+      point: best.found.point,
+      variant: best.found.variant,
+      rawCommand: best.found.rawCommand,
+      command: best.found.command,
+      certified: true,
+      reason: "missile-useful",
+      trace: {
+        selectionReason: "destruction de la cible",
+        admissible: tracing ? [summarize("MISSILE", best.found)] : [],
+        refusals,
+        searches,
+        solverCalls,
+        ballisticCacheHits,
+        forecasts,
+        cacheHits,
+      },
+    };
+    choiceForecasts.set(continuationChoice, best.found.forecast!);
+    return {
+      success: true,
+      candidate: { choice: continuationChoice, forecast: best.found.forecast! },
+      counters,
+    };
+  };
+
   const result: SniperPhysicalChoice = {
     ...choice,
     trace: {
@@ -501,5 +613,6 @@ export function chooseSniperPhysicalShot(
     },
   };
   if (retainedForecast) choiceForecasts.set(result, retainedForecast);
+  sniperChoiceContinuations.set(result, runContinuation);
   return result;
 }

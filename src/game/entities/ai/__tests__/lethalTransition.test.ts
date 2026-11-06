@@ -4,6 +4,7 @@ import type { GameState } from "../../../../types/game";
 import { createIdealExpertAim } from "../shotAdvisor";
 import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot } from "../expertShotEvaluator";
 import { getForecastAfterState, resolvePhysicalShot } from "../physicalShotForecast";
+import { summarizeExpertDecision } from "../expertDecisionLog";
 import { chooseTransitionSafePlan, LethalTransitionDetector, searchLethalThreat,
   type ThreatSearchResult, type TransitionCandidate } from "../lethalTransition";
 import * as aim from "../expertAim";
@@ -47,16 +48,20 @@ describe("new lethal transition #352", () => {
     expect(resolve).toHaveBeenCalledTimes(count);
     expect(getForecastAfterState(result.forecast!)).toBeDefined();
   });
-  it.each([30, 100])("uses real stabilized physics and independent after-shot hypotheses (shooter HP %s)", (health) => {
+  it.each([30, 100])("gives risk/provoked-survival with reply: null on provoked threat (shooter HP %s)", (health) => {
     const f = fixture(health);
     const before = structuredClone(f.state);
     const heights = [...f.terrain.getHeightmap()];
     const proposal = candidate(f);
     const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => { throw new Error("GAME_RNG_USED"); });
     const analysis = new LethalTransitionDetector().analyze(proposal, f.self, f.state, f.terrain);
-    expect(analysis).toMatchObject({ status: health === 30 ? "risk" : "safe",
-      reason: health === 30 ? "lethal-reply" : "no-lethal-reply",
-      initial: { status: "absent" }, after: { status: "found" }, reply: { status: health === 30 ? "found" : "absent" } });
+    expect(analysis).toMatchObject({
+      status: "risk",
+      reason: "provoked-survival",
+      initial: { status: "absent" },
+      after: { status: "found" },
+      reply: null,
+    });
     expect(f.state).toEqual(before);
     expect([...f.terrain.getHeightmap()]).toEqual(heights);
     expect(rng).not.toHaveBeenCalled();
@@ -79,7 +84,7 @@ describe("new lethal transition #352", () => {
   it("retains unknown winners, skips unknown alternatives and never explores a lesser variant of the same target", () => {
     const f = fixture(); const a = candidate(f), b = candidate(f, f.other);
     const detector = new LethalTransitionDetector();
-    const analyze = vi.spyOn(detector, "analyze").mockReturnValueOnce({ status: "risk", reason: "lethal-reply", initial: null, after: null, reply: null })
+    const analyze = vi.spyOn(detector, "analyze").mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
       .mockReturnValue({ status: "unknown", reason: "uncertified", initial: null, after: null, reply: null });
     const result = chooseTransitionSafePlan([a, b, { ...b }], f.self, f.state, f.terrain, true, detector);
     expect(result.choice).toBe(a); expect(analyze).toHaveBeenCalledTimes(2);
@@ -90,7 +95,7 @@ describe("new lethal transition #352", () => {
     expect(analyze).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps missing after states unknown only after complete initial absence, with directed state caches", () => {
+  it("keeps missing after states unknown only after complete initial absence, with directed state caches and no reverse threat query", () => {
     const f = fixture(), a = candidate(f);
     const search = vi.fn().mockReturnValue(searched("absent"));
     const detector = new LethalTransitionDetector(search);
@@ -100,10 +105,14 @@ describe("new lethal transition #352", () => {
     expect(search).toHaveBeenCalledTimes(2); // initial shared, after distinct
     const states: GameState[] = [];
     const directed = vi.fn<typeof searchLethalThreat>((state) => { states.push(state); return searched(states.length === 1 ? "absent" : "found"); });
-    expect(new LethalTransitionDetector(directed).analyze(a, f.self, f.state, f.terrain).status).toBe("risk");
-    expect(states[1]).toBe(states[2]);
+    const analysis = new LethalTransitionDetector(directed).analyze(a, f.self, f.state, f.terrain);
+    expect(analysis.status).toBe("risk");
+    expect(analysis.reason).toBe("provoked-survival");
+    expect(analysis.reply).toBeNull();
+    // Proves absence of inverse pair search (target -> shooter)
+    expect(directed).toHaveBeenCalledTimes(2);
+    expect(directed.mock.calls[0].slice(2)).toEqual([expect.objectContaining({ id: "self" }), expect.objectContaining({ id: "target" })]);
     expect(directed.mock.calls[1].slice(2)).toEqual([expect.objectContaining({ id: "self" }), expect.objectContaining({ id: "target" })]);
-    expect(directed.mock.calls[2].slice(2)).toEqual([expect.objectContaining({ id: "target" }), expect.objectContaining({ id: "self" })]);
   });
 
   it.each(["existing", "unknown", "target-type", "target-dead", "self-dead", "uncertified"])("short circuits %s", (branch) => {
@@ -181,5 +190,325 @@ describe("new lethal transition #352", () => {
     expect(searchLethalThreat(f.state, f.terrain, f.self, f.target)).toMatchObject({ status: "unknown", cause: "bulldozer-fall-incomplete" });
     push.mockReturnValue({ ...complete, complete: true, survivors: [] });
     expect(searchLethalThreat(f.state, f.terrain, f.self, f.target)).toMatchObject({ status: "found", weaponId: "BULLDOZER" });
+  });
+
+  describe("ticket #374 lethal transition alternatives", () => {
+    it("accepts a lethal candidate on the same target in a duel when C0 is risky", () => {
+      const f = fixture();
+      // Duel: remove other
+      f.state.players = [f.self, f.target];
+      const initial = candidate(f);
+      const forecastLethal: physical.PhysicalResolution = {
+        complete: true,
+        survivors: [f.self.id], // target is dead
+        support: [],
+        steps: 10,
+        hits: [],
+        damage: [],
+        destruction: [{ shotId: 1, shooterId: f.self.id, victimId: f.target.id, weaponId: "MISSILE", cause: "health-zero" }],
+        humanDamageMilli: 0,
+        aiDamageMilli: 0,
+        humanDestroyedCount: 1,
+        aiDestroyedCount: 0,
+      };
+      const lethalCandidate: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 50, power: 60 },
+        certified: true,
+        result: {
+          forecast: forecastLethal,
+          rawCommand: { angle: 50, power: 60 },
+        },
+      };
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null });
+
+      const selection = chooseTransitionSafePlan([initial, lethalCandidate], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(lethalCandidate);
+      expect(selection.trace.reason).toBe("alternative-accepted");
+      expect(selection.trace.alternatives).toHaveLength(1);
+      expect(selection.trace.alternatives[0]).toMatchObject({
+        targetId: f.target.id,
+        accepted: true,
+        analysis: { status: "safe", reason: "target-destroyed" },
+      });
+    });
+
+    it("prioritizes an earlier better-ranked safe alternative on another target over a same-target lethal candidate", () => {
+      const f = fixture();
+      const initial = candidate(f);
+      const alternativeOther = candidate(f, f.other);
+      const lethalSame: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 50, power: 60 },
+        certified: true,
+        result: {
+          forecast: {
+            complete: true,
+            survivors: [f.self.id],
+            support: [],
+            steps: 10,
+            hits: [],
+            damage: [],
+            destruction: [],
+            humanDamageMilli: 0,
+            aiDamageMilli: 0,
+            humanDestroyedCount: 0,
+            aiDestroyedCount: 0,
+          },
+        },
+      };
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-type", initial: null, after: null, reply: null });
+
+      // alternativeOther is before lethalSame in candidates
+      const selection = chooseTransitionSafePlan([initial, alternativeOther, lethalSame], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(alternativeOther);
+      expect(selection.trace.reason).toBe("alternative-accepted");
+      expect(selection.trace.alternatives).toHaveLength(1);
+      expect(selection.trace.alternatives[0].targetId).toBe(f.other.id);
+    });
+
+    it("skips non-lethal, uncertified or incomplete same-target variants without consuming the slot", () => {
+      const f = fixture();
+      const initial = candidate(f);
+      // Non-lethal variant on same target
+      const nonLethalVariant: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 44, power: 50 },
+        certified: true,
+        result: {
+          forecast: {
+            complete: true,
+            survivors: [f.self.id, f.target.id], // target still alive
+            support: [],
+            steps: 10,
+            hits: [],
+            damage: [],
+            destruction: [],
+            humanDamageMilli: 0,
+            aiDamageMilli: 0,
+            humanDestroyedCount: 0,
+            aiDestroyedCount: 0,
+          },
+        },
+      };
+      // Incomplete variant on same target
+      const incompleteVariant: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 46, power: 50 },
+        certified: true,
+        result: {
+          forecast: { complete: false, steps: 10, hits: [], damage: [], destruction: [], survivors: [], support: [] },
+        },
+      };
+      // Uncertified variant
+      const uncertifiedVariant: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 47, power: 50 },
+        certified: false,
+        result: {
+          forecast: {
+            complete: true, steps: 10, hits: [], damage: [], destruction: [], survivors: [], support: [],
+            humanDestroyedCount: 0, humanDamageMilli: 0, aiDestroyedCount: 0, aiDamageMilli: 0,
+          },
+        },
+      };
+      // Valid lethal variant
+      const lethalVariant: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 48, power: 50 },
+        certified: true,
+        result: {
+          forecast: {
+            complete: true,
+            survivors: [f.self.id], // target destroyed
+            support: [],
+            steps: 10,
+            hits: [],
+            damage: [],
+            destruction: [{ shotId: 1, shooterId: f.self.id, victimId: f.target.id, weaponId: "MISSILE", cause: "health-zero" }],
+            humanDamageMilli: 0,
+            aiDamageMilli: 0,
+            humanDestroyedCount: 1,
+            aiDestroyedCount: 0,
+          },
+        },
+      };
+
+      const detector = new LethalTransitionDetector();
+      const spy = vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null });
+
+      const selection = chooseTransitionSafePlan(
+        [initial, nonLethalVariant, incompleteVariant, uncertifiedVariant, lethalVariant],
+        f.self, f.state, f.terrain, true, detector,
+      );
+      expect(selection.choice).toBe(lethalVariant);
+      expect(selection.trace.reason).toBe("alternative-accepted");
+      // Exactly 2 analyze calls: initial, then lethalVariant (non-lethal variants were skipped without analyze)
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(selection.trace.alternatives).toHaveLength(1);
+      expect(selection.trace.alternatives[0].targetId).toBe(f.target.id);
+    });
+
+    it("examines at most one candidate per other target", () => {
+      const f = fixture();
+      const initial = candidate(f);
+      const other1 = candidate(f, f.other);
+      const other2 = candidate(f, f.other);
+
+      const detector = new LethalTransitionDetector();
+      const spy = vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null });
+
+      const selection = chooseTransitionSafePlan([initial, other1, other2], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(initial);
+      expect(selection.trace.reason).toBe("initial-retained-no-alternative");
+      // other2 was not analyzed because other1 was already analyzed
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(selection.trace.alternatives).toHaveLength(1);
+    });
+
+    it("allows suicidal lethal candidate if already in candidates", () => {
+      const f = fixture();
+      const initial = candidate(f);
+      const suicidalLethal: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 50, power: 60 },
+        certified: true,
+        result: {
+          forecast: {
+            complete: true,
+            survivors: [], // both dead
+            support: [],
+            steps: 10,
+            hits: [],
+            damage: [],
+            destruction: [],
+            humanDamageMilli: 0,
+            aiDamageMilli: 0,
+            humanDestroyedCount: 1,
+            aiDestroyedCount: 1,
+          },
+        },
+      };
+
+      const detector = new LethalTransitionDetector();
+      vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null });
+
+      const selection = chooseTransitionSafePlan([initial, suicidalLethal], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(suicidalLethal);
+      expect(selection.trace.reason).toBe("alternative-accepted");
+    });
+
+    it("retains C0 when C0 analysis is safe or unknown without testing alternatives", () => {
+      const f = fixture();
+      const initial = candidate(f);
+      const alternative = candidate(f, f.other);
+
+      const detector = new LethalTransitionDetector();
+      const spy = vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "safe", reason: "existing-threat", initial: null, after: null, reply: null });
+
+      const selection = chooseTransitionSafePlan([initial, alternative], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(initial);
+      expect(selection.trace.reason).toBe("initial-retained");
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(selection.trace.alternatives).toHaveLength(0);
+    });
+
+    it("summarizeExpertDecision preserves historical archives with non-null reply and formats new null replies correctly", () => {
+      // Historical archive with non-null reply
+      const historical = summarizeExpertDecision({
+        phase: "OPTIMISER_PROFIT",
+        candidateCount: 2,
+        lethalTransition: {
+          reason: "initial-retained",
+          turn: 1,
+          round: 1,
+          analysis: {
+            status: "safe",
+            reason: "no-lethal-reply",
+            initial: searched("absent"),
+            after: searched("found"),
+            reply: searched("absent"),
+          },
+          alternatives: [],
+        },
+      } as unknown as Parameters<typeof summarizeExpertDecision>[0]);
+      expect(historical.lethalTransition?.analysis).toEqual({
+        status: "safe",
+        reason: "no-lethal-reply",
+        initial: "absent",
+        after: "found",
+        reply: "absent",
+      });
+
+      // New archive with provoked-survival and reply: null
+      const modern = summarizeExpertDecision({
+        phase: "OPTIMISER_PROFIT",
+        candidateCount: 2,
+        lethalTransition: {
+          reason: "alternative-accepted",
+          turn: 1,
+          round: 1,
+          initialTargetId: "c",
+          finalTargetId: "c",
+          analysis: {
+            status: "risk",
+            reason: "provoked-survival",
+            initial: searched("absent"),
+            after: searched("found"),
+            reply: null,
+          },
+          alternatives: [{
+            targetId: "c",
+            accepted: true,
+            analysis: { status: "safe", reason: "target-destroyed", initial: null, after: null, reply: null },
+          }],
+        },
+      } as unknown as Parameters<typeof summarizeExpertDecision>[0]);
+      expect(modern.lethalTransition?.analysis).toEqual({
+        status: "risk",
+        reason: "provoked-survival",
+        initial: "absent",
+        after: "found",
+        reply: null,
+      });
+      expect(modern.lethalTransition?.alternatives).toEqual([{
+        targetId: "c",
+        accepted: true,
+        status: "safe",
+        reason: "target-destroyed",
+      }]);
+    });
+
+    it("formats selectionReason for same-target elimination vs other-target without provoked threat", () => {
+      const sameTargetReason = (selectedTargetId: string, initialTargetId: string) => (
+        selectedTargetId === initialTargetId
+          ? "élimination de la cible sans nouvelle menace provoquée"
+          : "autre cible sans nouvelle menace provoquée"
+      );
+      expect(sameTargetReason("c", "c")).toBe("élimination de la cible sans nouvelle menace provoquée");
+      expect(sameTargetReason("other", "c")).toBe("autre cible sans nouvelle menace provoquée");
+    });
   });
 });
