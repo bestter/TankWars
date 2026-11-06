@@ -346,7 +346,7 @@ describe("EXPERT #267 consequences", () => {
     const trace = vi.fn();
     expect(chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate, trace)?.point.x).toBe(400);
     expect(trace.mock.calls[0][0]).toMatchObject({
-      selected: { primaryTargetId: "enemy", destroyedIds: ["ai"] },
+      selected: { primaryTargetId: "ai", destroyedIds: ["ai"] },
       runnerUp: { primaryTargetId: "ai", humanDestroyedCount: 1 },
       bestByWeapon: [{ point: { x: 400 }, humanDestroyedCount: 0 }],
     });
@@ -874,7 +874,7 @@ describe("EXPERT survival and profit ordering", () => {
     }]);
   });
 
-  it("allows a survival pair only when its first member dies and remembers the weaker other member", () => {
+  it("allows a survival pair only when its first member dies and assigns primary target to the destroyed threat", () => {
     const f = threePlayers();
     const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0);
     const evaluate: typeof evaluateExpertShot = (_state, _terrain, shooter, weapon,
@@ -885,7 +885,7 @@ describe("EXPERT survival and profit ordering", () => {
       return invalid;
     };
     const plan = chooseExpertPlan(f.self, f.state, f.terrain, initialAim(f.state), evaluate);
-    expect(plan).toMatchObject({ primaryTargetId: "later", point: { x: 300 } });
+    expect(plan).toMatchObject({ primaryTargetId: "early", point: { x: 300 } });
     expect(rng).toHaveBeenCalledTimes(3);
   });
 

@@ -10,7 +10,16 @@ import { secureRandom } from "../../../utils/random";
 import type { TerrainManager } from "../../engine/Terrain";
 import { nextLivingPlayerIndex } from "../../online/turnOrder";
 import type { AimMemory } from "./aimMemory";
-import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, recordUnprofitableExpertShot, type ValidExpertShotResult, type ExpertForecastCache, type ExpertEvaluatedAim } from "./expertShotEvaluator";
+import {
+  createExpertForecastCache,
+  evaluateExpertShot,
+  isValidExpertShot,
+  recordUnprofitableExpertShot,
+  resolvePostSimulationPrimaryTarget,
+  type ValidExpertShotResult,
+  type ExpertForecastCache,
+  type ExpertEvaluatedAim,
+} from "./expertShotEvaluator";
 import type { ExpertDecisionAim } from "./expertDecisionAim";
 import type { AimSearchPolicy } from "./aimSearch";
 import { compareExpertConsequences, type ExpertConsequences } from "./expertConsequences";
@@ -195,9 +204,10 @@ function nextDelay(state: GameState, player: Player): number {
   return Number.POSITIVE_INFINITY;
 }
 
-function primaryTarget(targets: readonly Player[], roster: readonly Player[]): Player {
+export function primaryTarget(targets: readonly Player[], roster: readonly Player[]): Player {
   return [...targets].sort((a, b) =>
     a.tank.health + a.tank.shield - b.tank.health - b.tank.shield ||
+    playerProfileScore(b) - playerProfileScore(a) ||
     roster.indexOf(a) - roster.indexOf(b))[0];
 }
 
@@ -362,6 +372,7 @@ export function chooseExpertPlan(
         }
         const candidate: RankedPlan = {
           kind: "evaluated", ...targetAim,
+          primaryTargetId: resolvePostSimulationPrimaryTarget(result, group, state.players, self).id,
           requestedPoint: result.requestedPoint,
           rawCommand: result.rawCommand,
           command: result.command,
@@ -419,6 +430,7 @@ export function chooseExpertPlan(
       }
       if (isValidExpertShot(result)) candidates.push({
         kind: "evaluated", ...targetAim,
+        primaryTargetId: resolvePostSimulationPrimaryTarget(result, group, state.players, self).id,
         requestedPoint: result.requestedPoint,
         rawCommand: result.rawCommand,
         command: result.command,
