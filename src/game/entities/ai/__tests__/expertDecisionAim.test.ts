@@ -99,7 +99,7 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
     expect(createExpertDecisionAim(memory, 2).forTarget("A").attempts).toBe(1);
   });
 
-  it.each([true, false])("rolls SURVIE first and uses the pair's weaker primary through the phases (survival=%s)", (survival) => {
+  it.each([true, false])("rolls SURVIE first and derives primary target from virtual attempt before shot and impact after shot (survival=%s)", (survival) => {
     const f = fixture();
     const other = makePlayer({ id: "other", tank: makeTank("other", 450, 336, { health: 1 }) });
     f.state.players.push(other);
@@ -123,7 +123,7 @@ describe("EXPERT shared offset primitives and virtual attempts", () => {
     const trace = vi.fn();
     const plan = planner.chooseExpertPlan(f.self, f.state, f.terrain, createExpertDecisionAim(memory, 1),
       evaluate, trace, evaluator.createExpertForecastCache());
-    expect(plan).toMatchObject({ primaryTargetId: "other", attempts: 2, offset: 12 });
+    expect(plan).toMatchObject({ primaryTargetId: survival ? "target" : "other", attempts: 2, offset: 12 });
     expect(trace.mock.calls[0][0]).toMatchObject({ phase: survival ? "SURVIE" : "OPTIMISER_PROFIT",
       survivalRoll: 0.1, survivalCandidateCount: survival ? 1 : 0 });
     if (survival) expect(trace.mock.calls[0][0].selected.destroyedIds).toEqual(["target"]);

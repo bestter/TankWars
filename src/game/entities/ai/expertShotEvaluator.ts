@@ -1,4 +1,5 @@
 import { advisorAdmissible, compareAdvisorOutcomes, type AdvisorPolicy } from "./expertPolicy";
+import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
 import { WEAPON_REGISTRY, type WeaponId } from "../../../types/weapon";
@@ -191,6 +192,77 @@ export function forecastPhysicalShot(
   return retainForecastAfterState(resolution, { ...resolution, profit: award - (weaponId === "MISSILE" ? 0 : WEAPON_REGISTRY[weaponId].price) });
 }
 
+export interface PostSimulationImpactContext {
+  readonly forecast?: {
+    readonly destruction: readonly { readonly shotId: number; readonly shooterId: string; readonly victimId: string }[];
+    readonly damage: readonly {
+      readonly shotId: number;
+      readonly shooterId: string;
+      readonly victimId: string;
+      readonly healthDamageMilli: number;
+      readonly shieldLostMilli: number;
+      readonly shieldAbsorbedMilli?: number;
+    }[];
+    readonly hits: readonly { readonly shotId: number; readonly directTargetId?: string }[];
+  };
+  readonly destroyedIds?: ReadonlySet<string>;
+}
+
+export function resolvePostSimulationPrimaryTarget(
+  impact: PostSimulationImpactContext,
+  targets: readonly Player[],
+  roster: readonly Player[],
+  shooter: Player,
+): Player {
+  const measure = (player: Player) => {
+    const destroyed = impact.forecast
+      ? impact.forecast.destruction.some((event) =>
+          event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id && event.victimId === player.id)
+      : (impact.destroyedIds?.has(player.id) ?? false);
+
+    let damageMilli = 0;
+    if (impact.forecast) {
+      for (const event of impact.forecast.damage) {
+        if (event.shotId === FORECAST_SHOT_ID && event.shooterId === shooter.id && event.victimId === player.id) {
+          damageMilli += event.healthDamageMilli + event.shieldLostMilli;
+        }
+      }
+    }
+
+    const directHit = impact.forecast
+      ? impact.forecast.hits.some((hit) => hit.shotId === FORECAST_SHOT_ID && hit.directTargetId === player.id)
+      : false;
+
+    const affected = destroyed || damageMilli > 0 || directHit;
+    return { player, destroyed, damageMilli, directHit, affected };
+  };
+
+  const targetsWithImpact = targets.map(measure);
+  const anyTargetAffected = targetsWithImpact.some((entry) => entry.affected);
+
+  let basin = targetsWithImpact;
+  if (!anyTargetAffected) {
+    const otherLivingEnemies = roster
+      .filter((p) => p.id !== shooter.id && !p.tank.isDead && !targets.some((t) => t.id === p.id))
+      .map(measure);
+    const affectedOthers = otherLivingEnemies.filter((entry) => entry.affected);
+    if (affectedOthers.length > 0) {
+      basin = affectedOthers;
+    }
+  }
+
+  const sorted = [...basin].sort((a, b) =>
+    Number(b.destroyed) - Number(a.destroyed) ||
+    b.damageMilli - a.damageMilli ||
+    Number(b.directHit) - Number(a.directHit) ||
+    (a.player.tank.health + a.player.tank.shield) - (b.player.tank.health + b.player.tank.shield) ||
+    playerProfileScore(b.player) - playerProfileScore(a.player) ||
+    roster.indexOf(a.player) - roster.indexOf(b.player)
+  );
+
+  return sorted[0]?.player ?? targets[0] ?? shooter;
+}
+
 const INVALID: ExpertShotResult = {
   destination: -1,
   profit: 0,
@@ -315,8 +387,12 @@ export function evaluateExpertShot(
       : forecast.hits.some((hit) => Math.hypot(hit.x - point.x, hit.y - point.y) <=
           Math.max(24, WEAPON_REGISTRY[weaponId].blastRadius));
     if (!pointMatches) { if (observation) observation.status = "point-not-reached"; continue; }
+    const resolvedTarget = mode === "own"
+      ? resolvePostSimulationPrimaryTarget({ forecast, destroyedIds }, targets, state.players, shooter)
+      : targets[0];
     const candidate: ValidExpertShotResult = {
       ...evaluatedAim,
+      primaryTargetId: resolvedTarget.id,
       humanDestroyedCount: forecast.humanDestroyedCount,
       humanDamageMilli: forecast.humanDamageMilli,
       aiDestroyedCount: forecast.aiDestroyedCount,

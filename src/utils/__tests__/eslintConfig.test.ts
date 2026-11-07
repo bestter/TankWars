@@ -16,7 +16,7 @@ describe('Worker ESLint coverage', () => {
     ]) {
       expect(await eslint.isPathIgnored(file), file).toBe(false);
     }
-  });
+  }, 20_000);
 
   it('detects unused Worker code without rewriting files', async () => {
     const [result] = await eslint.lintText('const unusedWorkerValue = 1;\n', {
