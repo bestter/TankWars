@@ -7,7 +7,7 @@ import { AdvisorController, type AdvisorView } from "./AdvisorController";
 export function useShotAdvisor(engineRef: RefObject<GameEngine | null>, phaseRef: RefObject<GamePhase>,
   gameMode: "local" | "online", initialPlayerCountRef: RefObject<number>) {
   const controllerRef = useRef<AdvisorController | null>(null);
-  const [view, setView] = useState<AdvisorView>({ objective: "SURVIE", status: "idle" });
+  const [view, setView] = useState<AdvisorView>({ objective: "OPTIMISER_PROFIT", status: "idle" });
   useEffect(() => {
     const controller = new AdvisorController({
       observing: () => Boolean(engineRef.current?.diagnosticSink),

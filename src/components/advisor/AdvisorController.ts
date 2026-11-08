@@ -36,9 +36,10 @@ export class AdvisorController {
     this.pending = null;
   }
   private preferences = new Map<string, AdvisorObjective>();
+  private roundNumber: number | null = null;
   private worker: AdvisorWorker | null = null;
   private key: string | null = null;
-  private view: AdvisorView = { objective: "SURVIE", status: "idle" };
+  private view: AdvisorView = { objective: "OPTIMISER_PROFIT", status: "idle" };
 
   private host: AdvisorHost;
   private createWorker: () => AdvisorWorker;
@@ -59,6 +60,13 @@ export class AdvisorController {
   /** Poll relevance, not physics frame state. Publish only on a relevant change. */
   refresh(): AdvisorSnapshot | null {
     const snapshot = this.host.capture();
+    if (snapshot !== null) {
+      const nextRound = snapshot.state.roundNumber ?? 1;
+      if (nextRound !== this.roundNumber) {
+        this.preferences.clear();
+        this.roundNumber = nextRound;
+      }
+    }
     const key = snapshot ? JSON.stringify(snapshot) : null;
     if (key !== this.key) {
       if (this.resultRequestId !== null) {
@@ -67,7 +75,7 @@ export class AdvisorController {
       this.stop();
       this.key = key;
       const playerId = snapshot?.state.players[snapshot.state.currentPlayerIndex]?.id;
-      this.view = { playerId, objective: playerId ? this.preferences.get(playerId) ?? "SURVIE" : "SURVIE", status: "idle" };
+      this.view = { playerId, objective: playerId ? this.preferences.get(playerId) ?? "OPTIMISER_PROFIT" : "OPTIMISER_PROFIT", status: "idle" };
       this.publish(this.view);
     }
     return snapshot;
@@ -151,8 +159,9 @@ export class AdvisorController {
   reset(): void {
     this.stop();
     this.preferences.clear();
+    this.roundNumber = null;
     this.key = null;
-    this.view = { objective: "SURVIE", status: "idle" };
+    this.view = { objective: "OPTIMISER_PROFIT", status: "idle" };
     this.publish(this.view);
   }
 

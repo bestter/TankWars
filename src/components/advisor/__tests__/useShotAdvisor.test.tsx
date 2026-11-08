@@ -44,7 +44,7 @@ describe("advisor browser integration", () => {
     act(() => f.result.current.request());
     expect(f.create).toHaveBeenCalledWith(expect.any(URL), { type: "module" });
     expect(f.worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      objective: "SURVIE", snapshot: expect.objectContaining({ state: expect.objectContaining({
+      objective: "OPTIMISER_PROFIT", snapshot: expect.objectContaining({ state: expect.objectContaining({
         localShotContext: { playerCountAtMatchStart: 4, isFirstShotOfRound: true },
       }) }),
     }));

@@ -16,10 +16,10 @@ function fixture() {
     postMessage: vi.fn(), terminate: vi.fn() };
   const create = vi.fn(() => worker);
   const apply = vi.fn(() => true);
-  let view: AdvisorView = { objective: "SURVIE", status: "idle" };
+  let view: AdvisorView = { objective: "OPTIMISER_PROFIT", status: "idle" };
   const publish = vi.fn((next: AdvisorView) => { view = next; });
   const controller = new AdvisorController({ capture: () => snapshot, apply }, create, publish);
-  const result: AdvisorResult = { objective: "SURVIE", command: { angle: 45, power: 50, weaponId: "MISSILE" },
+  const result: AdvisorResult = { objective: "OPTIMISER_PROFIT", command: { angle: 45, power: 50, weaponId: "MISSILE" },
     targetIds: ["human2"], cost: 0, gain: 80, profit: 80, shooterDestroyed: false, consequences: [] };
   const reply = (advice: unknown = result) => worker.onmessage?.({ data: { advice } } as MessageEvent<unknown>);
   return { controller, worker, create, apply, reply, publish, result,
@@ -44,22 +44,52 @@ describe("advisor delayed lifecycle", () => {
   it("objective changes cancel and discard late results before starting another request", () => {
     const f = fixture(); f.controller.request();
     const late = f.worker.onmessage;
-    f.controller.setObjective("OPTIMISER_PROFIT");
+    f.controller.setObjective("SURVIE");
     late?.({ data: { advice: f.result } } as MessageEvent<unknown>);
-    expect(f.view).toMatchObject({ objective: "OPTIMISER_PROFIT", status: "idle" });
+    expect(f.view).toMatchObject({ objective: "SURVIE", status: "idle" });
     expect(f.worker.terminate).toHaveBeenCalledOnce();
     f.controller.request();
-    expect(f.worker.postMessage).toHaveBeenLastCalledWith({ snapshot: f.snapshot, objective: "OPTIMISER_PROFIT", requestId: 2 });
+    expect(f.worker.postMessage).toHaveBeenLastCalledWith({ snapshot: f.snapshot, objective: "SURVIE", requestId: 2 });
   });
 
-  it("keeps objectives per human across rounds, resets on a new match", () => {
-    const f = fixture(); f.controller.refresh(); f.controller.setObjective("OPTIMISER_PROFIT");
-    f.snapshot!.state.currentPlayerIndex = 1; f.controller.refresh();
-    expect(f.view.objective).toBe("SURVIE");
-    f.snapshot!.state.currentPlayerIndex = 0; f.snapshot!.state.roundNumber = 2; f.controller.refresh();
+  it("keeps objectives per human within a round, resets to OPTIMISER_PROFIT across rounds and on a new match", () => {
+    const f = fixture(); f.controller.refresh();
     expect(f.view.objective).toBe("OPTIMISER_PROFIT");
-    f.controller.reset(); f.controller.refresh();
+    f.snapshot!.state.currentPlayerIndex = 1; f.controller.refresh();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
+
+    f.snapshot!.state.currentPlayerIndex = 0; f.controller.refresh();
+    f.controller.setObjective("SURVIE");
     expect(f.view.objective).toBe("SURVIE");
+    f.snapshot!.state.currentPlayerIndex = 1; f.controller.refresh();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
+
+    f.snapshot = null; f.controller.refresh();
+    f.snapshot = {
+      state: {
+        phase: "COMBAT", players: [
+          makePlayer({ id: "human1", isHuman: true, tank: makeTank("human1", 100, 336) }),
+          makePlayer({ id: "human2", isHuman: true, tank: makeTank("human2", 400, 336) }),
+        ], currentPlayerIndex: 0,
+        turn: 2, roundNumber: 1, windForce: 0, gravity: 260,
+        localShotContext: { playerCountAtMatchStart: 2, isFirstShotOfRound: false },
+      },
+      width: 800, height: 480, heights: [...flatTerrain(800, 480).getHeightmap()],
+      materials: [...flatTerrain(800, 480).getMaterials()],
+    };
+    f.controller.refresh();
+    expect(f.view.objective).toBe("SURVIE");
+
+    f.snapshot.state.roundNumber = 2;
+    f.controller.refresh();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
+
+    f.controller.setObjective("SURVIE");
+    expect(f.view.objective).toBe("SURVIE");
+    f.controller.reset();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
+    f.controller.refresh();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
   });
 
   it.each(["terrain", "position", "health", "shield", "stock", "wind", "gravity", "economy", "turn", "round", "unavailable"])(

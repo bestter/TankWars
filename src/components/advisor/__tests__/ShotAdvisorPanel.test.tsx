@@ -47,6 +47,17 @@ describe("advisor accessible production UI", () => {
     expect(handlers.request).toHaveBeenCalledOnce(); expect(handlers.apply).not.toHaveBeenCalled();
   });
 
+  it("renders OPTIMISER_PROFIT as first option and SURVIE as second option", async () => {
+    await show({ playerId: "self", objective: "OPTIMISER_PROFIT", status: "idle" });
+    const select = screen.getByRole("combobox");
+    const options = select.querySelectorAll("option");
+    expect(options).toHaveLength(2);
+    expect(options[0].value).toBe("OPTIMISER_PROFIT");
+    expect(options[0].textContent).toBe(fr.advisor_profit);
+    expect(options[1].value).toBe("SURVIE");
+    expect(options[1].textContent).toBe(fr.advisor_survival);
+  });
+
   it.each(["empty", "error", "expired"] as const)("shows understandable %s state without DEV traces", async (status) => {
     await show({ playerId: "self", objective: "SURVIE", status });
     expect(screen.getByText(fr[`advisor_${status}`])).toBeDefined();

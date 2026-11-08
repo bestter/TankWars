@@ -20,8 +20,8 @@ export function ShotAdvisorPanel({ view, request, apply, setObjective }: ShotAdv
         <label>
           {t("advisor_objective")}{" "}
           <select value={view.objective} onChange={(event) => setObjective(event.target.value === "SURVIE" ? "SURVIE" : "OPTIMISER_PROFIT")}>
-            <option value="SURVIE">{t("advisor_survival")}</option>
             <option value="OPTIMISER_PROFIT">{t("advisor_profit")}</option>
+            <option value="SURVIE">{t("advisor_survival")}</option>
           </select>
         </label>
         <button type="button" onClick={request} disabled={view.status === "calculating"}>{t("advisor_title")}</button>

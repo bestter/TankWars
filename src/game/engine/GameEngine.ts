@@ -1028,6 +1028,7 @@ export class GameEngine {
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
     this.turnManager.reset(); // this sets internal round=1; caller in React can treat displayRound separately
+    this.turnManager.setRoundNumber(prepared.map.roundNumber);
     this.turnManager.startFirstTurn();
     this.turnManager.setupInputListeners();
 
