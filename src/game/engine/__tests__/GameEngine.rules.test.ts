@@ -130,6 +130,14 @@ describe("GameEngine match rules", () => {
     expect(engine.startNextRound()).toBe(false);
   });
 
+  it("propagates roundNumber to TurnManager on startNextRound", () => {
+    const { a, b } = threePlayers();
+    a.isHuman = true;
+    expect(engine.startNextRound(undefined, [a, b], 3)).toBe(true);
+    const advisorState = engine.getTurnManager().captureAdvisorState();
+    expect(advisorState?.roundNumber).toBe(3);
+  });
+
   it("launches the projectile from the barrel tip, not the tank origin", () => {
     const { a } = threePlayers();
     engine.fireProjectile(
