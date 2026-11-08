@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flatTerrain, makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { GameState } from "../../../../types/game";
 import { createIdealExpertAim } from "../shotAdvisor";
-import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot } from "../expertShotEvaluator";
-import { getForecastAfterState, resolvePhysicalShot } from "../physicalShotForecast";
+import { createExpertForecastCache, evaluateExpertShot, isValidExpertShot, type ValidExpertShotResult } from "../expertShotEvaluator";
+import { chooseExpertPlan, type ExpertDecisionTrace } from "../expertPlanner";
+import { getForecastAfterState, resolvePhysicalShot, retainForecastAfterState, FORECAST_SHOT_ID } from "../physicalShotForecast";
 import { summarizeExpertDecision } from "../expertDecisionLog";
-import { chooseTransitionSafePlan, LethalTransitionDetector, searchLethalThreat,
-  type ThreatSearchResult, type TransitionCandidate } from "../lethalTransition";
+import { chooseTransitionSafePlan, CRITICAL_SURVIVAL_EFFECTIVE_HEALTH, hasCriticalProtectedSurvivor,
+  LethalTransitionDetector, searchLethalThreat, type ThreatSearchResult, type TransitionCandidate } from "../lethalTransition";
 import * as aim from "../expertAim";
 import * as physical from "../physicalShotForecast";
 import * as random from "../../../../utils/random";
@@ -277,29 +278,17 @@ describe("new lethal transition #352", () => {
       expect(selection.trace.alternatives[0].targetId).toBe(f.other.id);
     });
 
-    it("skips non-lethal, uncertified or incomplete same-target variants without consuming the slot", () => {
+    it("skips critical non-lethal, uncertified or incomplete same-target variants without consuming the slot", () => {
       const f = fixture();
       const initial = candidate(f);
-      // Non-lethal variant on same target
+      // Critical non-lethal variant on same target (leaves target at 25 PV < 35 PV)
       const nonLethalVariant: TransitionCandidate = {
         primaryTargetId: f.target.id,
         weaponId: "MISSILE",
         command: { angle: 44, power: 50 },
         certified: true,
         result: {
-          forecast: {
-            complete: true,
-            survivors: [f.self.id, f.target.id], // target still alive
-            support: [],
-            steps: 10,
-            hits: [],
-            damage: [],
-            destruction: [],
-            humanDamageMilli: 0,
-            aiDamageMilli: 0,
-            humanDestroyedCount: 0,
-            aiDestroyedCount: 0,
-          },
+          forecast: initial.result!.forecast!,
         },
       };
       // Incomplete variant on same target
@@ -509,6 +498,311 @@ describe("new lethal transition #352", () => {
       );
       expect(sameTargetReason("c", "c")).toBe("élimination de la cible sans nouvelle menace provoquée");
       expect(sameTargetReason("other", "c")).toBe("autre cible sans nouvelle menace provoquée");
+    });
+  });
+
+  describe("ticket #389 critical non-lethal survival prevention", () => {
+    it("flags a shot leaving a protected target (< 35 effective HP) as risk/provoked-survival even when initial threat is found", () => {
+      expect(CRITICAL_SURVIVAL_EFFECTIVE_HEALTH).toBe(35);
+      const f = fixture(100);
+      // f.target starts at 60 HP; MISSILE (35 dmg) leaves it at 25 HP (< 35)
+      const proposal = candidate(f);
+      expect(hasCriticalProtectedSurvivor(proposal.result!.forecast!, f.state, f.self.id)).toBe(true);
+
+      // Even if a theoretical initial threat (e.g. BULLDOZER or DRILLER) already existed ("found"),
+      // leaving the protected target at < 35 effective HP must NOT short-circuit to safe/existing-threat.
+      const search = vi.fn<typeof searchLethalThreat>().mockReturnValue(searched("found"));
+      const analysis = new LethalTransitionDetector(search).analyze(proposal, f.self, f.state, f.terrain);
+      expect(analysis).toMatchObject({
+        status: "risk",
+        reason: "provoked-survival",
+        initial: { status: "found" },
+        after: null,
+        reply: null,
+      });
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves safe/existing-threat when initial threat is found and protected target survives with >= 35 effective HP", () => {
+      const f = fixture(100);
+      f.target.tank.health = 100;
+      f.target.tank.shield = 26;
+      // MISSILE leaves target well above 35 effective HP (~91 HP)
+      const proposal = candidate(f);
+      const after = getForecastAfterState(proposal.result!.forecast!)!;
+      const victim = after.state.players.find((p) => p.id === f.target.id)!;
+      expect(victim.tank.health + victim.tank.shield).toBeGreaterThanOrEqual(35);
+      expect(hasCriticalProtectedSurvivor(proposal.result!.forecast!, f.state, f.self.id)).toBe(false);
+
+      const search = vi.fn<typeof searchLethalThreat>().mockReturnValue(searched("found"));
+      const analysis = new LethalTransitionDetector(search).analyze(proposal, f.self, f.state, f.terrain);
+      expect(analysis).toMatchObject({
+        status: "safe",
+        reason: "existing-threat",
+        initial: { status: "found" },
+        after: null,
+        reply: null,
+      });
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+
+    it("detects collateral protected survivors (< 35 effective HP or newly threatened) when primaryTargetId is unprotected or destroyed", () => {
+      const f = fixture(100);
+      // Primary target is unprotected (v2-heuristic), collateral is v4-smart left at 6 HP
+      const p2 = makePlayer({
+        id: "player-2",
+        isHuman: false,
+        aiProfile: "v2-heuristic",
+        tank: makeTank("player-2", 380, 336, { health: 40 }),
+      });
+      const p4 = makePlayer({
+        id: "player-4",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        tank: makeTank("player-4", 410, 336, { health: 40 }),
+      });
+      const untouchedSmart = makePlayer({
+        id: "untouched",
+        isHuman: false,
+        aiProfile: "v4-smart",
+        tank: makeTank("untouched", 720, 336, { health: 20 }), // < 35 HP initially, but untouched by the shot
+      });
+      f.state.players = [f.self, p2, p4, untouchedSmart];
+
+      const baseResolution = resolvePhysicalShot(
+        f.state,
+        f.terrain,
+        f.self,
+        "MISSILE",
+        { angle: 45, power: 50 },
+        { captureAfterState: true },
+      );
+      if (!baseResolution.complete) throw new Error("Expected complete baseResolution");
+      const afterState = getForecastAfterState(baseResolution)!;
+      const afterP2 = afterState.state.players.find((p) => p.id === "player-2")!;
+      const afterP4 = afterState.state.players.find((p) => p.id === "player-4")!;
+      afterP2.tank.isDead = true;
+      afterP2.tank.health = 0;
+      afterP4.tank.health = 6;
+      afterP4.tank.shield = 0;
+
+      const collateralForecast = retainForecastAfterState<physical.PhysicalResolution>(baseResolution, {
+        ...baseResolution,
+        complete: true,
+        survivors: ["self", "player-4", "untouched"],
+        destruction: [{ shotId: FORECAST_SHOT_ID, shooterId: "self", victimId: "player-2", weaponId: "MISSILE", cause: "health-zero" }],
+        damage: [
+          {
+            shotId: FORECAST_SHOT_ID,
+            munitionId: 0,
+            shooterId: "self",
+            victimId: "player-2",
+            weaponId: "MISSILE",
+            source: "projectile",
+            classification: "direct",
+            healthDamageMilli: 40_000,
+            shieldLostMilli: 0,
+            shieldAbsorbedMilli: 0,
+          },
+          {
+            shotId: FORECAST_SHOT_ID,
+            munitionId: 0,
+            shooterId: "self",
+            victimId: "player-4",
+            weaponId: "MISSILE",
+            source: "projectile",
+            classification: "indirect",
+            healthDamageMilli: 34_000,
+            shieldLostMilli: 0,
+            shieldAbsorbedMilli: 0,
+          },
+        ],
+        hits: [{ shotId: FORECAST_SHOT_ID, munitionId: 0, x: 380, y: 336, weaponId: "MISSILE", directTargetId: "player-2" }],
+      });
+
+      const collateralCandidate: TransitionCandidate = {
+        primaryTargetId: "player-2",
+        weaponId: "MISSILE",
+        command: { angle: 45, power: 50 },
+        certified: true,
+        result: { forecast: collateralForecast },
+      };
+
+      const search = vi.fn<typeof searchLethalThreat>().mockReturnValue(searched("found"));
+      const analysis = new LethalTransitionDetector(search).analyze(collateralCandidate, f.self, f.state, f.terrain);
+      expect(analysis).toMatchObject({
+        status: "risk",
+        reason: "provoked-survival",
+      });
+      // Only player-4 was inspected; untouchedSmart was not affected by the shot
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(search.mock.calls[0][3].id).toBe("player-4");
+    });
+
+    it("deduplicates identical commands across groups and accepts a measured safe non-lethal alternative on the same target", () => {
+      const f = fixture(100);
+      f.state.players = [f.self, f.target]; // Duel with human target
+      f.target.tank.health = 100;
+      f.target.tank.shield = 40;
+      f.self.inventory = { BULLET: 2, MISSILE: 99 };
+
+      // Simulate C0, C1, C2 sharing the exact same risky BULLET command (from [p2,p4], [p3,p4], [p4])
+      // and C3 being a measured MISSILE command on the same target leaving it at 91 HP (safe: no-new-threat)
+      const missileProposal = candidate(f);
+      const bulletForecast = retainForecastAfterState<physical.PhysicalResolution>(
+        missileProposal.result!.forecast!,
+        {
+          ...missileProposal.result!.forecast!,
+          damage: [{
+            shotId: FORECAST_SHOT_ID,
+            munitionId: 0,
+            shooterId: f.self.id,
+            victimId: f.target.id,
+            weaponId: "BULLET",
+            source: "projectile",
+            classification: "direct",
+            healthDamageMilli: 94_000,
+            shieldLostMilli: 40_000,
+            shieldAbsorbedMilli: 0,
+          }],
+        },
+      );
+
+      const makeBulletDup = (): TransitionCandidate => ({
+        primaryTargetId: f.target.id,
+        weaponId: "BULLET",
+        command: { angle: 50, power: 75 },
+        certified: true,
+        result: { forecast: bulletForecast, rawCommand: { angle: 50, power: 75 } },
+      });
+
+      const c0 = makeBulletDup();
+      const c1 = makeBulletDup();
+      const c2 = makeBulletDup();
+      const c3: TransitionCandidate = {
+        primaryTargetId: f.target.id,
+        weaponId: "MISSILE",
+        command: { angle: 66, power: 86 },
+        certified: true,
+        result: { forecast: missileProposal.result!.forecast!, rawCommand: { angle: 66, power: 86 } },
+      };
+
+      const detector = new LethalTransitionDetector();
+      const spy = vi.spyOn(detector, "analyze")
+        .mockReturnValueOnce({ status: "risk", reason: "provoked-survival", initial: searched("absent"), after: searched("found"), reply: null })
+        .mockReturnValueOnce({ status: "safe", reason: "no-new-threat", initial: searched("absent"), after: searched("absent"), reply: null });
+
+      const selection = chooseTransitionSafePlan([c0, c1, c2, c3], f.self, f.state, f.terrain, true, detector);
+      expect(selection.choice).toBe(c3);
+      expect(selection.trace.reason).toBe("alternative-accepted");
+      // c1 and c2 were skipped by command deduplication without calling detector.analyze
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(selection.trace.alternatives).toHaveLength(1);
+      expect(selection.trace.alternatives[0]).toMatchObject({
+        targetId: f.target.id,
+        accepted: true,
+        analysis: { status: "safe", reason: "no-new-threat" },
+      });
+    });
+
+    it("preserves nonCriticalAlternative per (group, weapon) in evaluateExpertShot and selects it in chooseExpertPlan with measured selectionReason", () => {
+      const f = fixture(100);
+      f.state.players = [f.self, f.target];
+      f.target.tank.health = 100;
+      f.target.tank.shield = 40;
+      f.self.inventory = { GRENADE: 2 };
+
+      const cache = createExpertForecastCache(true);
+      const baseRes = resolvePhysicalShot(f.state, f.terrain, f.self, "MISSILE", { angle: 66, power: 86 }, { captureAfterState: true });
+      if (!baseRes.complete) throw new Error("Expected complete resolution");
+
+      // Create two distinct after-states: one critical (6 HP) for the first point/arc, one safe (80 HP) for the second point/arc
+      const resCritical = resolvePhysicalShot(f.state, f.terrain, f.self, "MISSILE", { angle: 66, power: 86 }, { captureAfterState: true });
+      if (!resCritical.complete) throw new Error("Expected complete resCritical");
+      const afterCrit = getForecastAfterState(resCritical)!;
+      const critVictim = afterCrit.state.players.find((p) => p.id === f.target.id)!;
+      critVictim.tank.health = 6;
+      critVictim.tank.shield = 0;
+
+      const resSafe = resolvePhysicalShot(f.state, f.terrain, f.self, "MISSILE", { angle: 66, power: 86 }, { captureAfterState: true });
+      if (!resSafe.complete) throw new Error("Expected complete resSafe");
+      const afterSafe = getForecastAfterState(resSafe)!;
+      const safeVictim = afterSafe.state.players.find((p) => p.id === f.target.id)!;
+      safeVictim.tank.health = 80;
+      safeVictim.tank.shield = 0;
+
+      let callIndex = 0;
+      vi.spyOn(aim, "solveExpertAim").mockImplementation(() => {
+        callIndex++;
+        return {
+          command: callIndex === 1 ? { angle: 50, power: 75 } : { angle: 62, power: 70 },
+          complete: true,
+        };
+      });
+      const resolveSpy = vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _shooter, _weapon, command): physical.PhysicalResolution => {
+        if (command.angle === 50) {
+          return retainForecastAfterState<physical.PhysicalResolution>(resCritical, {
+            ...resCritical,
+            hits: [{ shotId: FORECAST_SHOT_ID, munitionId: 0, x: 400, y: 336, weaponId: "GRENADE", directTargetId: f.target.id }],
+            damage: [{
+              shotId: FORECAST_SHOT_ID, munitionId: 0, shooterId: f.self.id, victimId: f.target.id, weaponId: "GRENADE",
+              source: "projectile", classification: "direct", healthDamageMilli: 94_000, shieldLostMilli: 40_000, shieldAbsorbedMilli: 0,
+            }],
+          });
+        }
+        return retainForecastAfterState<physical.PhysicalResolution>(resSafe, {
+          ...resSafe,
+          hits: [{ shotId: FORECAST_SHOT_ID, munitionId: 0, x: 400, y: 336, weaponId: "GRENADE", directTargetId: f.target.id }],
+          damage: [{
+            shotId: FORECAST_SHOT_ID, munitionId: 0, shooterId: f.self.id, victimId: f.target.id, weaponId: "GRENADE",
+            source: "projectile", classification: "indirect", healthDamageMilli: 20_000, shieldLostMilli: 40_000, shieldAbsorbedMilli: 0,
+          }],
+        });
+      });
+
+      const evaluated = evaluateExpertShot(
+        f.state,
+        f.terrain,
+        f.self,
+        "GRENADE",
+        [f.target],
+        false,
+        true,
+        cache,
+        { mode: "own", aim: createIdealExpertAim().forTarget(f.target.id), selectionPolicy: "OPTIMISER_PROFIT" },
+      );
+
+      expect(isValidExpertShot(evaluated)).toBe(true);
+      const valid = evaluated as ValidExpertShotResult;
+      expect(valid.command).toEqual({ angle: 50, power: 75 });
+      expect(valid.nonCriticalAlternative).toBeDefined();
+      expect(valid.nonCriticalAlternative?.command).toEqual({ angle: 62, power: 70 });
+      // Only the 2 unique normalized commands were physically simulated
+      expect(resolveSpy).toHaveBeenCalledTimes(2);
+
+      // Verify chooseExpertPlan includes nonCriticalAlternative and selects it with the measured-shot reason
+      vi.spyOn(LethalTransitionDetector.prototype, "analyze").mockImplementation((cand) => {
+        if (cand.command.angle === 50) {
+          return { status: "risk", reason: "provoked-survival", initial: searched("absent"), after: searched("found"), reply: null };
+        }
+        return { status: "safe", reason: "no-new-threat", initial: searched("absent"), after: searched("absent"), reply: null };
+      });
+
+      let trace: ExpertDecisionTrace | undefined;
+      const plan = chooseExpertPlan(
+        f.self,
+        f.state,
+        f.terrain,
+        createIdealExpertAim(),
+        () => valid,
+        (t) => { trace = t; },
+        cache,
+        "OPTIMISER_PROFIT",
+      );
+
+      expect(plan?.command).toEqual({ angle: 62, power: 70 });
+      expect(trace?.lethalTransition?.reason).toBe("alternative-accepted");
+      expect(trace?.selectionReason).toBe("tir mesuré sur la cible sans nouvelle menace provoquée");
     });
   });
 });

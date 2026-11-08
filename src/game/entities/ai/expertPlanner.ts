@@ -329,7 +329,10 @@ export function chooseExpertPlan(
       selected: selected && traceCandidate(selected),
       selectionReason: selected && (lethalTransition.reason === "alternative-accepted"
         ? (selected.primaryTargetId === lethalTransition.initialTargetId
-          ? "élimination de la cible sans nouvelle menace provoquée"
+          ? (selected.result.destroyedIds.has(selected.primaryTargetId) ||
+             (selected.result.forecast !== undefined && !selected.result.forecast.survivors.includes(selected.primaryTargetId))
+            ? "élimination de la cible sans nouvelle menace provoquée"
+            : "tir mesuré sur la cible sans nouvelle menace provoquée")
           : "autre cible sans nouvelle menace provoquée")
         : selectionReason(phase, selected, runnerUp)),
       runnerUp: runnerUp && traceCandidate(runnerUp),
@@ -419,32 +422,39 @@ export function chooseExpertPlan(
     for (const weapon of shooterWeapons) {
       const result = evaluate(state, terrain, self, weapon, group, false,
         state.localShotContext.isFirstShotOfRound, cache, { mode: "own", aim: targetAim, selectionPolicy: "OPTIMISER_PROFIT", ...(advisorObjective && { advisor: { objective: advisorObjective } }) });
-      if (isValidExpertShot(result) && advisorObjective &&
-          !advisorAdmissible({ objective: advisorObjective }, weapon, result.profit, result.shooterDestroyed)) continue;
-      if (isValidExpertShot(result) && weapon !== "MISSILE" && result.profit < 0) {
-        if (cache.diagnostics) recordUnprofitableExpertShot(cache, {
-          weaponId: weapon, targetIds: group.map((player) => player.id),
-          profit: result.profit, shooterDestroyed: result.shooterDestroyed,
-        });
-        continue;
-      }
-      if (isValidExpertShot(result)) candidates.push({
-        kind: "evaluated", ...targetAim,
-        primaryTargetId: resolvePostSimulationPrimaryTarget(result, group, state.players, self).id,
-        requestedPoint: result.requestedPoint,
-        rawCommand: result.rawCommand,
-        command: result.command,
-        weaponId: weapon,
-        point: result.destination,
-        policy: result.policy,
-        targetIds: group.map((player) => player.id),
+      if (!isValidExpertShot(result)) continue;
+      const entries = [
         result,
-        profileScore: group.reduce((sum, player) => sum + playerProfileScore(player), 0),
-        nextTurnDelay: nextDelay(state, earliest),
-        nextTurnIndex: state.players.indexOf(earliest),
-        weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),
-        order: order++,
-      });
+        ...(result.nonCriticalAlternative ? [result.nonCriticalAlternative] : []),
+      ];
+      for (const entry of entries) {
+        if (advisorObjective &&
+            !advisorAdmissible({ objective: advisorObjective }, weapon, entry.profit, entry.shooterDestroyed)) continue;
+        if (weapon !== "MISSILE" && entry.profit < 0) {
+          if (entry === result && cache.diagnostics) recordUnprofitableExpertShot(cache, {
+            weaponId: weapon, targetIds: group.map((player) => player.id),
+            profit: entry.profit, shooterDestroyed: entry.shooterDestroyed,
+          });
+          continue;
+        }
+        candidates.push({
+          kind: "evaluated", ...targetAim,
+          primaryTargetId: resolvePostSimulationPrimaryTarget(entry, group, state.players, self).id,
+          requestedPoint: entry.requestedPoint,
+          rawCommand: entry.rawCommand,
+          command: entry.command,
+          weaponId: weapon,
+          point: entry.destination,
+          policy: entry.policy,
+          targetIds: group.map((player) => player.id),
+          result: entry,
+          profileScore: group.reduce((sum, player) => sum + playerProfileScore(player), 0),
+          nextTurnDelay: nextDelay(state, earliest),
+          nextTurnIndex: state.players.indexOf(earliest),
+          weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),
+          order: order++,
+        });
+      }
     }
   }
   candidates.sort((a, b) => advisorObjective ?

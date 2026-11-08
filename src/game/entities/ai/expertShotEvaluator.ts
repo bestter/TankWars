@@ -13,6 +13,7 @@ import { compareExpertConsequences, type ExpertConsequences } from "./expertCons
 import type { BulldozerThreatSearch } from "./bulldozerThreat";
 
 import { resolvePhysicalShot, retainForecastAfterState, FORECAST_SHOT_ID, FORECAST_MAX_STEPS, type PhysicalResolution } from "./physicalShotForecast";
+import { hasCriticalProtectedSurvivor } from "./lethalTransition";
 import { TERRAIN_MATERIAL } from "../../../types/terrain";
 import { materialBoundaryPoints, bulldozerPoint } from "./materialCandidates";
 import { hasAppliedPhysicalDamage, hasPhysicalEffect } from "./localMaterialPlanner";
@@ -46,6 +47,7 @@ export interface ExpertEvaluatedAim extends ExpertTargetAim {
 
 export interface ValidExpertShotResult extends ExpertShotBase, ExpertConsequences, ExpertEvaluatedAim {
   readonly destination: ExpertPoint;
+  readonly nonCriticalAlternative?: ValidExpertShotResult;
 }
 
 export type ExpertShotResult = ValidExpertShotResult | (ExpertShotBase & {
@@ -361,6 +363,21 @@ export function evaluateExpertShot(
     return INVALID;
   }
   let best = INVALID;
+  let bestNonCritical = INVALID;
+  const optimizeProfit = context.mode === "own" && context.selectionPolicy === "OPTIMISER_PROFIT";
+  const advisor = context.mode === "own" ? context.advisor : undefined;
+  const isBetterCandidate = (candidate: ValidExpertShotResult, current: ExpertShotResult): boolean => {
+    if (!isValidExpertShot(current)) return true;
+    const survivalComparison = Number(candidate.shooterDestroyed) - Number(current.shooterDestroyed);
+    const profitComparison = current.profit - candidate.profit;
+    return (
+      ((advisor
+        ? compareAdvisorOutcomes(candidate, current, advisor)
+        : (optimizeProfit ? profitComparison || survivalComparison : survivalComparison || profitComparison) ||
+          compareExpertConsequences(candidate, current)) ||
+        candidate.pointOrder - current.pointOrder) < 0
+    );
+  };
   const enemyIds = new Set(state.players.filter((player) => player.id !== shooter.id).map((player) => player.id));
   const targetIds = new Set([targets[0].id]);
   for (const { point, pointOrder, forecast, observation, ...evaluatedAim } of expertProposals(
@@ -404,20 +421,30 @@ export function evaluateExpertShot(
       pointOrder,
       forecast,
     };
-    const advisor = context.mode === "own" ? context.advisor : undefined;
     if (advisor && !advisorAdmissible(advisor, weaponId, candidate.profit, candidate.shooterDestroyed)) {
       if (observation) observation.status = "advisor-policy"; continue;
     }
     if (observation) observation.status = "ranked-candidate";
-    const optimizeProfit = context.mode === "own" && context.selectionPolicy === "OPTIMISER_PROFIT";
-    const survivalComparison = Number(candidate.shooterDestroyed) - Number(best.shooterDestroyed);
-    const profitComparison = best.profit - candidate.profit;
-    if (!isValidExpertShot(best) ||
-        ((advisor ? compareAdvisorOutcomes(candidate, best, advisor) :
-          (optimizeProfit ? profitComparison || survivalComparison : survivalComparison || profitComparison) ||
-          compareExpertConsequences(candidate, best)) || candidate.pointOrder - best.pointOrder) < 0) {
+    if (isBetterCandidate(candidate, best)) {
       best = candidate;
     }
+    if (
+      optimizeProfit &&
+      !hasCriticalProtectedSurvivor(forecast, state, shooter.id) &&
+      isBetterCandidate(candidate, bestNonCritical)
+    ) {
+      bestNonCritical = candidate;
+    }
+  }
+  if (
+    optimizeProfit &&
+    isValidExpertShot(best) &&
+    best.forecast &&
+    hasCriticalProtectedSurvivor(best.forecast, state, shooter.id) &&
+    isValidExpertShot(bestNonCritical) &&
+    (bestNonCritical.command.angle !== best.command.angle || bestNonCritical.command.power !== best.command.power)
+  ) {
+    return { ...best, nonCriticalAlternative: bestNonCritical };
   }
   return best;
 }
