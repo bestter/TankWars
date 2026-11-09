@@ -270,6 +270,9 @@ export class GameRoom extends DurableObject {
   private state: RoomState | null = null;
   private committedState: RoomState | null = null;
   private lastCombatStringified = new Map<string, string>();
+  private lastCombatValues = new Map<string, unknown>();
+  private needsCombatStorageSync = true;
+  private syncedRoundNumber = 0;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
   private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -298,6 +301,8 @@ export class GameRoom extends DurableObject {
         this.state.shotHistory = [];
         this.state.processedFireActionsBySlot = {};
         this.state.processedShopActions = {};
+        this.lastCombatStringified.clear();
+        this.lastCombatValues.clear();
         for (const [key, value] of await ctx.storage.list({ prefix: "combat:" })) {
           const entry = value as { kind: string; key: string; slot?: number; value: unknown };
           if (entry.kind === "event") this.state.combatJournal.push(entry.value as CombatEvent);
@@ -307,7 +312,8 @@ export class GameRoom extends DurableObject {
             this.state.processedFireActionsBySlot[entry.slot][entry.key] = entry.value as PersistedFireAction;
           }
           if (entry.kind === "shop") this.state.processedShopActions[entry.key] = entry.value as PersistedShopAction;
-          void key;
+          this.lastCombatValues.set(key, entry.value);
+          this.lastCombatStringified.set(key, JSON.stringify(value));
         }
         this.state.combatJournal.sort((a, b) => a.eventSequence - b.eventSequence);
         this.state.shotHistory = this.state.combatJournal.filter((e): e is ShotMessage => e.type === "SHOT");
@@ -341,6 +347,8 @@ export class GameRoom extends DurableObject {
         if (legacyFireActions !== undefined) {
           delete this.state.processedFireActions;
         }
+        this.syncedRoundNumber = this.state.roundNumber;
+        this.needsCombatStorageSync = migratedFireActions.changed;
         const lastFireRejections: Record<number, FireRejectedMessage> = {};
         for (const [slotKey, result] of Object.entries(
           this.state.lastFireResultBySlot ?? {},
@@ -383,7 +391,20 @@ export class GameRoom extends DurableObject {
             if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
           });
         }
-        this.committedState = structuredClone(this.state);
+        const { combatJournal, earningsResults, shotHistory,
+          processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
+        const clonedFire: Record<number, Record<string, PersistedFireAction>> = {};
+        for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
+          clonedFire[Number(slot)] = { ...actions };
+        }
+        this.committedState = {
+          ...structuredClone(mainSource),
+          combatJournal: [...combatJournal],
+          shotHistory: [...shotHistory],
+          earningsResults: { ...earningsResults },
+          processedFireActionsBySlot: clonedFire,
+          processedShopActions: { ...processedShopActions },
+        };
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
@@ -416,11 +437,11 @@ export class GameRoom extends DurableObject {
 
   private async saveState(): Promise<void> {
     if (!this.state) return;
-    const snapshot = structuredClone(this.state);
-    const { combatJournal, earningsResults, shotHistory: _shots,
-      processedFireActionsBySlot, processedShopActions, ...main } = snapshot;
-    const entries = new Map<string, unknown>();
-    const prefix = `combat:${snapshot.roundNumber}:`;
+    const { combatJournal, earningsResults, shotHistory,
+      processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
+    const main = structuredClone(mainSource);
+    const entries = new Map<string, { kind: string; key: string; slot?: number; value: unknown }>();
+    const prefix = `combat:${main.roundNumber}:`;
     for (const event of combatJournal) entries.set(`${prefix}event:${event.eventSequence}`, { kind: "event", key: String(event.eventSequence), value: event });
     for (const [key, value] of Object.entries(earningsResults)) entries.set(`${prefix}earnings:${key}`, { kind: "earnings", key, value });
     for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
@@ -429,17 +450,40 @@ export class GameRoom extends DurableObject {
     for (const [key, value] of Object.entries(processedShopActions)) entries.set(`${prefix}shop:${key}`, { kind: "shop", key, value });
     try {
       const stringified = new Map<string, string>();
-      for (const [key, value] of entries) stringified.set(key, JSON.stringify(value));
+      const committedValues = new Map<string, unknown>();
+      const nextJournal: CombatEvent[] = [];
+      const nextEarnings: Record<string, PersistedEarningsResult> = {};
+      const nextFire: Record<number, Record<string, PersistedFireAction>> = {};
+      const nextShop: Record<string, PersistedShopAction> = {};
+      for (const [key, entry] of entries) {
+        const cachedStr = this.lastCombatStringified.get(key);
+        const cachedVal = this.lastCombatValues.get(key);
+        const isSameRef = cachedStr !== undefined && cachedVal === entry.value;
+        const valueStr = isSameRef ? cachedStr : JSON.stringify(entry);
+        const clonedValue = isSameRef ? cachedVal : structuredClone(entry.value);
+        stringified.set(key, valueStr);
+        committedValues.set(key, clonedValue);
+        entry.value = clonedValue;
+        if (entry.kind === "event") nextJournal.push(clonedValue as CombatEvent);
+        else if (entry.kind === "earnings") nextEarnings[entry.key] = clonedValue as PersistedEarningsResult;
+        else if (entry.kind === "fire" && entry.slot !== undefined) {
+          nextFire[entry.slot] ??= {};
+          nextFire[entry.slot][entry.key] = clonedValue as PersistedFireAction;
+        } else if (entry.kind === "shop") nextShop[entry.key] = clonedValue as PersistedShopAction;
+      }
+      const needsStorageList = this.needsCombatStorageSync ||
+        this.syncedRoundNumber !== main.roundNumber;
       await this.ctx.storage.transaction(async (txn) => {
-        const stored = await txn.list({ prefix: "combat:" });
-        const obsolete = [...stored.keys()].filter((key) => !entries.has(key));
+        const stored = needsStorageList ? await txn.list({ prefix: "combat:" }) : null;
+        const sourceKeys = stored ? stored.keys() : this.lastCombatStringified.keys();
+        const obsolete = [...sourceKeys].filter((key) => !entries.has(key));
         const changed: Array<[string, unknown]> = [["state", main]];
-        // Wrappers are rebuilt on every saveState call, so reference equality cannot detect unchanged entries.
+        // Reference equality against committed snapshots skips unchanged entries; modified or new entries serialize once.
         for (const [key, value] of entries) {
-          const s = stored.get(key);
+          const s = stored ? stored.get(key) : undefined;
           const valueStr = stringified.get(key)!;
-          const storedStr = this.lastCombatStringified.get(key) ?? JSON.stringify(s);
-          if (s === undefined || storedStr !== valueStr) {
+          const storedStr = this.lastCombatStringified.get(key) ?? (s !== undefined ? JSON.stringify(s) : undefined);
+          if (storedStr === undefined || (stored !== null && s === undefined) || storedStr !== valueStr) {
             changed.push([key, value]);
           }
         }
@@ -451,14 +495,57 @@ export class GameRoom extends DurableObject {
       });
       // Publish only committed serializations; replacing the map also removes obsolete keys.
       this.lastCombatStringified = stringified;
-      this.committedState = snapshot;
+      this.lastCombatValues = committedValues;
+      this.needsCombatStorageSync = false;
+      this.syncedRoundNumber = main.roundNumber;
+      this.state.combatJournal = [...nextJournal];
+      const nextShots = shotHistory.length === 0 && nextJournal.length === 0
+        ? []
+        : nextJournal.filter((e): e is ShotMessage => e.type === "SHOT");
+      this.state.shotHistory = [...nextShots];
+      this.state.earningsResults = { ...nextEarnings };
+      const stateFire: Record<number, Record<string, PersistedFireAction>> = {};
+      for (const [slot, actions] of Object.entries(nextFire)) {
+        stateFire[Number(slot)] = { ...actions };
+      }
+      this.state.processedFireActionsBySlot = stateFire;
+      this.state.processedShopActions = { ...nextShop };
+      this.committedState = {
+        ...main,
+        combatJournal: nextJournal,
+        shotHistory: nextShots,
+        earningsResults: nextEarnings,
+        processedFireActionsBySlot: nextFire,
+        processedShopActions: nextShop,
+      };
     } catch (error) {
       // Discard unpublished mutations; reload the durable state on the next activation.
-      this.state = this.committedState ? structuredClone(this.committedState) : null;
-      this.shotInFlight = this.state?.activeShot !== null;
-      this.awaitingShotFromSlot = this.state?.activeShot?.slot ?? null;
+      this.restoreCommittedStateOnFailure();
       throw error;
     }
+  }
+
+  private restoreCommittedStateOnFailure(): void {
+    if (!this.committedState) {
+      this.state = null;
+    } else {
+      const { combatJournal, earningsResults, shotHistory,
+        processedFireActionsBySlot, processedShopActions, ...main } = this.committedState;
+      const restoredFire: Record<number, Record<string, PersistedFireAction>> = {};
+      for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
+        restoredFire[Number(slot)] = { ...actions };
+      }
+      this.state = {
+        ...structuredClone(main),
+        combatJournal: [...combatJournal],
+        shotHistory: [...shotHistory],
+        earningsResults: { ...earningsResults },
+        processedFireActionsBySlot: restoredFire,
+        processedShopActions: { ...processedShopActions },
+      };
+    }
+    this.shotInFlight = this.state?.activeShot !== null;
+    this.awaitingShotFromSlot = this.state?.activeShot?.slot ?? null;
   }
 
   private appendCombatEvent<T extends CombatEvent>(event: T): T {
@@ -2122,11 +2209,18 @@ export class GameRoom extends DurableObject {
 
     // Chaque action acceptée conserve son accusé et la même carte terminale. Les refus restent des refus.
     this.state.lastCompletedShop = finish;
-    for (const action of Object.values(this.state.processedShopActions)) {
+    const upgradedShopActions: Record<string, PersistedShopAction> = {};
+    for (const [actionKey, action] of Object.entries(this.state.processedShopActions)) {
       if (action.result.type === 'SHOP_STATE' && action.result.shopEpoch === shopEpoch) {
-        action.result = { ...finish, acknowledgedAction: action.result.acknowledgedAction };
+        upgradedShopActions[actionKey] = {
+          slot: action.slot,
+          result: { ...finish, acknowledgedAction: action.result.acknowledgedAction },
+        };
+      } else {
+        upgradedShopActions[actionKey] = action;
       }
     }
+    this.state.processedShopActions = upgradedShopActions;
     this.state.players = nextPlayers;
     this.state.economicRevision++;
     this.state.initialRoundPlayers = structuredClone(nextPlayers);

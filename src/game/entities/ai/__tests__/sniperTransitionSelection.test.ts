@@ -460,6 +460,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(2);
       f.self.inventory = { BULLET: 1 };
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
 
       // Mock resolvePhysicalShot: BULLET does non-lethal damage, MISSILE kills target
       vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
@@ -502,6 +503,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(2);
       f.self.inventory = {}; // Only MISSILE
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
 
       let missileCall = 0;
       vi.spyOn(physical, "resolvePhysicalShot").mockImplementation(() => {
@@ -536,6 +538,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(2);
       f.self.inventory = { BULLET: 1 };
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
 
       let callIndex = 0;
       vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
@@ -565,6 +568,11 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(3);
       f.self.inventory = { BULLET: 1 };
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
+      vi.spyOn(aim, "solveSniperAim").mockImplementation((_self, x, _y, _wind, _gravity, _terrain, _weapon, variant) => ({
+        command: { angle: x < 550 ? (variant === "full" ? 40.04 : 60.04) : (variant === "full" ? 65.04 : 75.04), power: 50.2 },
+        complete: true,
+      }));
 
       vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon, command) => {
         // Any shot not aimed at target c is for alternative target a0
@@ -604,6 +612,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(2);
       f.self.inventory = { BULLET: 2, DRILLER: 1 };
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
 
       const result = chooseSniperTransitionShot(f.self, f.target, f.state, f.terrain, 1, true);
       const counters = result.trace.selectionCounters;
@@ -616,6 +625,7 @@ describe("SNIPER virtual alternatives and random sequence", () => {
       const f = transitionFixture(2);
       f.self.inventory = { BULLET: 1 };
       f.target.isHuman = true;
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.25);
 
       // Mock resolvePhysicalShot so BULLET is non-lethal and MISSILE is lethal
       vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_state, _terrain, _self, weapon) => {
