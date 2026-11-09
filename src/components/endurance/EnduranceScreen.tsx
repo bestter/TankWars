@@ -1,3 +1,4 @@
+import { ScenarioImport, type ScenarioSelection } from "./ScenarioImport";
 import DiagnosticPanel from "../diagnostics/DiagnosticPanel";
 import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -100,6 +101,8 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
   const { t, i18n } = useTranslation();
   const [profiles, setProfiles] = useState(PROFILES);
   const [count, setCount] = useState(4);
+  const [selection, setSelection] = useState<ScenarioSelection>({ scenario: null, error: null, loading: false });
+  const playerCount = selection.scenario?.spawnXs.length ?? count;
   const [rounds, setRounds] = useState(2);
   const [blocks, setBlocks] = useState(0);
   const [minutes, setMinutes] = useState(240);
@@ -116,9 +119,10 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
     return () => { active = false; storage.close(); };
   }, [storage]);
   const start = () => {
+    if (selection.error || selection.loading) return;
     try {
-      const players = createLocalPlayers(profiles.slice(0, count).map((profile, index) => ({ name: `${profile}-${index + 1}`, isHuman: false, aiProfile: profile, color: COLORS[index] })));
-      onStart({ ...defaultConfig(players), freeWeapons, archiveBudgetMiB, roundsPerBlock: rounds, maxBlocks: blocks === 0 ? null : blocks,
+      const players = createLocalPlayers(profiles.slice(0, playerCount).map((profile, index) => ({ name: `${profile}-${index + 1}`, isHuman: false, aiProfile: profile, color: COLORS[index] })));
+      onStart({ ...defaultConfig(players), scenario: selection.scenario, freeWeapons, archiveBudgetMiB, roundsPerBlock: rounds, maxBlocks: blocks === 0 ? null : blocks,
         maxDurationMs: minutes === 0 ? null : Math.round(minutes * 60000), stopOnIncident, limits });
     } catch (e) { setError(`${t("endurance_invalid")}: ${String(e)}`); }
   };
@@ -137,8 +141,9 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
   return <section className="endurance-screen">
     <h1>{t("endurance_title")}</h1><p>{t("endurance_limits_help")}</p>
     <form onSubmit={e => { e.preventDefault(); start(); }} className="endurance-config">
-      <label>{t("num_players")}<select value={count} onChange={e => setCount(Number(e.target.value))}>{[2, 3, 4].map(n => <option key={n}>{n}</option>)}</select></label>
-      {SLOTS.slice(0, count).map((slot, index) => <label key={slot}>{t("endurance_profile", { number: index + 1 })}<select value={profiles[index]} onChange={e => setProfiles(profiles.map((p, i) => i === index ? e.target.value as AiProfile : p))}>{PROFILES.map(p => <option key={p}>{p}</option>)}</select></label>)}
+      <ScenarioImport selection={selection} onChange={setSelection} />
+      <label>{t("num_players")}<select disabled={!!selection.scenario} value={playerCount} onChange={e => setCount(Number(e.target.value))}>{[2, 3, 4].map(n => <option key={n}>{n}</option>)}</select></label>
+      {SLOTS.slice(0, playerCount).map((slot, index) => <label key={slot}>{t("endurance_profile", { number: index + 1 })}<select value={profiles[index]} onChange={e => setProfiles(profiles.map((p, i) => i === index ? e.target.value as AiProfile : p))}>{PROFILES.map(p => <option key={p}>{p}</option>)}</select></label>)}
       <label>{t("endurance_rounds")}<input type="number" min="1" required value={rounds} onChange={e => setRounds(e.target.valueAsNumber)} /></label>
       <label>{t("endurance_blocks")}<input type="number" min="0" required value={blocks} onChange={e => setBlocks(e.target.valueAsNumber)} /></label>
       <label>{t("diagnostics_budget")}<input type="number" min="64" max="4096" required value={archiveBudgetMiB} onChange={e => setArchiveBudgetMiB(e.target.valueAsNumber)} /></label>
@@ -146,7 +151,7 @@ function Configuration({ onStart, onExit }: { onStart: (config: EnduranceConfig)
       {(Object.keys(limits) as Array<keyof typeof limits>).map(key => <label key={key}>{t(`endurance_limit_${key}`)}<input type="number" min="1" required value={limits[key]} onChange={e => setLimits({ ...limits, [key]: e.target.valueAsNumber })} /></label>)}
       <label><input type="checkbox" checked={freeWeapons} onChange={e => setFreeWeapons(e.target.checked)} />{t("endurance_free_weapons")}</label>
       <label><input type="checkbox" checked={stopOnIncident} onChange={e => setStopOnIncident(e.target.checked)} />{t("endurance_stop_incident")}</label>
-      <button type="submit">{t("endurance_start")}</button><button type="button" onClick={onExit}>{t("btn_menu")}</button>
+      <button type="submit" disabled={!!selection.error || selection.loading}>{t("endurance_start")}</button><button type="button" onClick={onExit}>{t("btn_menu")}</button>
     </form>
     {error && <p role="alert">{error}</p>}
     {saved && <BundleExport source={async () => {

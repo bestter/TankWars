@@ -1,6 +1,6 @@
 import type { EnduranceStorage } from "../endurance/storage";
 import type { ShotArchive } from "./types";
-import { emptyArchive, sealArchive } from "./archive";
+import { emptyArchive, sealArchive, recordTerrainIds } from "./archive";
 import { validateArchive } from "./validate";
 
 export interface ArchiveFilter { shotKey?: string; from?: number; to?: number; incidents?: boolean }
@@ -29,7 +29,7 @@ export function filterArchive(archive: ShotArchive, filter: ArchiveFilter = {}):
       (!r.shotKey && (filter.from !== undefined || filter.to !== undefined) &&
         r.sequence >= (filter.from ?? 0) && r.sequence <= (filter.to ?? Infinity)));
   }
-  const ids = new Set(records.flatMap(r => "snapshot" in r.input ? [r.input.snapshot.terrainId] : []));
+  const ids = new Set(records.flatMap(recordTerrainIds));
   return sealArchive({ ...archive, records, firstSequence: records[0]?.sequence ?? 0, terrains: archive.terrains.filter(t => ids.has(t.id)) });
 }
 

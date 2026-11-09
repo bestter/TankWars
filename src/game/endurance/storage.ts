@@ -1,9 +1,10 @@
 import type { BlockRecord, EnduranceExport, Incident, RoundRecord, SessionRecord } from "./types";
+import { validateScenario } from "./scenario";
 import { metrics } from "./metrics";
 import { isPlayers } from "../online/protocol";
 import type { JournalEntry, JournalStatus, JournalStorage } from "./journal";
 import type { ArchiveFilter } from "../diagnostics/export";
-import { byteSize } from "../diagnostics/archive";
+import { byteSize, recordTerrainIds } from "../diagnostics/archive";
 import type { ArchiveRecord, ArchiveWrite, TerrainRecord, ShotListPage } from "../diagnostics/types";
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -22,6 +23,10 @@ function stored<T>(value: unknown, store: Store): T {
       typeof value.durationMs !== "number" || !Number.isFinite(value.durationMs) || value.durationMs < 0 ||
       typeof value.startedAt !== "string" || typeof value.status !== "string" || typeof value.gameVersion !== "string" || typeof value.build !== "string") {
       throw new Error("UNSUPPORTED_OR_INVALID_ENDURANCE_SCHEMA");
+    }
+    if (value.config.scenario != null) {
+      const scenario = validateScenario(value.config.scenario);
+      if (scenario.spawnXs.length !== value.config.players.length) throw new Error("INVALID_STORED_SCENARIO_ROSTER");
     }
     if (store === "sessions" && (!object(value.runtime) || value.runtime.width !== 800 || value.runtime.height !== 480 ||
       ![value.attempted, value.completed, value.abandoned, value.interrupted, value.suspect, value.roundsStarted, value.roundsCompleted, value.incidents].every(n => typeof n === "number" && Number.isSafeInteger(n) && n >= 0))) {
@@ -171,6 +176,7 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
     const append = (record: ArchiveRecord) => {
       if (seen.has(record.sequence)) return;
       seen.add(record.sequence); writes.push({ record, terrains: [] });
+      for (const id of recordTerrainIds(record)) terrainIds.add(id);
       if ("snapshot" in record.input) {
         if (!object(record.input.snapshot) || typeof record.input.snapshot.terrainId !== "string") throw new Error("INVALID_STORED_CAPTURE");
         terrainIds.add(record.input.snapshot.terrainId);

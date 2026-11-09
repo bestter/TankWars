@@ -1,3 +1,4 @@
+import reference from "../../../Scripts/endurance/scenarios/issue-361-rock-cliff.json";
 // @vitest-environment jsdom
 import { Blob as NodeBlob } from "node:buffer";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -149,4 +150,32 @@ describe("JSONL and native exports through the interface (combat replaced by a f
 
     fireEvent.click(stop);
   });
+});
+
+// File.text is supplied explicitly because jsdom's File does not implement the browser API.
+it.each(["fr", "en"])("imports, rejects replacement, removes and restores generated mode (%s)", async locale => {
+  language.value = locale; const dict = locale === "fr" ? fr : en;
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(new Proxy({}, { get: () => () => undefined }) as CanvasRenderingContext2D);
+  render(<EnduranceScreen onExit={vi.fn()} />);
+  const count = screen.getByLabelText(dict.num_players) as HTMLSelectElement;
+  const start = screen.getByRole("button", { name: dict.endurance_start }) as HTMLButtonElement;
+  const upload = (text: string) => fireEvent.change(screen.getByTestId("endurance-scenario-input"), { target: { files: [{ text: async () => text }] } });
+  expect(count.disabled).toBe(false);
+  upload(JSON.stringify(reference));
+  await screen.findByTestId("endurance-scenario-preview");
+  expect(count.value).toBe("2"); expect(count.disabled).toBe(true);
+  const profile = screen.getByLabelText(dict.endurance_profile.replace("{{number}}", "2")) as HTMLSelectElement;
+  fireEvent.change(profile, { target: { value: "v4-smart" } }); expect(profile.value).toBe("v4-smart");
+  upload('{"schemaVersion":');
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(dict.endurance_scenario_invalid));
+  expect(start.disabled).toBe(true); expect(screen.queryByTestId("endurance-scenario-preview")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: dict.endurance_scenario_remove }));
+  expect(start.disabled).toBe(false); expect(count.disabled).toBe(false); expect(count.value).toBe("4");
+  upload(JSON.stringify(reference)); await screen.findByTestId("endurance-scenario-preview");
+  fireEvent.click(start); const stop = await screen.findByRole("button", { name: dict.endurance_stop }); fireEvent.click(stop);
+  await waitFor(() => expect((screen.getByRole("button", { name: dict.btn_menu }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: /^JSON$/ })); await waitFor(() => expect(blobs).toHaveLength(1));
+  const exported = JSON.parse(await blobs[0].text());
+  expect(exported.session.config.scenario).toEqual(reference);
+  expect(exported.session.config.players[1]).toMatchObject({ aiProfile: "v4-smart", tank: { position: { x: 695.675, y: 339 } } });
 });

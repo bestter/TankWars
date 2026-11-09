@@ -5,6 +5,7 @@ import json
 import math
 import re
 import signal
+import subprocess
 import sys
 import urllib.parse
 import uuid
@@ -15,7 +16,7 @@ from ledger import Ledger
 from lifecycle import Lifecycle
 from model import Status, positive, require, targets, atomic
 from native import JournalCollector
-from verify import archive_manifest, closed_session, compare, journal, read, recovery
+from verify import scenario_config, archive_manifest, closed_session, compare, journal, read, recovery
 from bundle import collect_bundle, logical_stream, compare_bundles, proof_files
 from multipart import compare_streams
 
@@ -34,6 +35,7 @@ def arguments(argv=None):
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-build", required=True, help="Exact session build identity, including timestamp")
+    parser.add_argument("--scenario", type=Path, help="Custom JSON map; overrides config scenario")
     parser.add_argument("--config", type=Path, required=True, help="See config.example.json")
     parser.add_argument("--duration-ms", type=int, required=True)
     parser.add_argument("--completed-blocks", type=int)
@@ -52,14 +54,25 @@ def arguments(argv=None):
         require(args.safety_seconds > args.duration_ms / 1000 + args.finalization_seconds, "SAFETY_MUST_INCLUDE_FINALIZATION")
         config = read(args.config)
         require(isinstance(config, dict), "INVALID_CONFIG")
-        require(set(config) == {"profiles", "roundsPerBlock", "archiveBudgetMiB", "freeWeapons", "stopOnIncident", "limits"}, "INVALID_CONFIG_KEYS")
+        require(set(config) - {"scenario"} == {"profiles", "roundsPerBlock", "archiveBudgetMiB", "freeWeapons", "stopOnIncident", "limits"}, "INVALID_CONFIG_KEYS")
         require(type(config["profiles"]) is list and 2 <= len(config["profiles"]) <= 4 and all(p in PROFILES for p in config["profiles"]), "INVALID_PROFILES")
         require(type(config["roundsPerBlock"]) is int and 0 < config["roundsPerBlock"] <= 9007199254740991, "INVALID_ROUNDS")
         require(type(config["archiveBudgetMiB"]) is int and 64 <= config["archiveBudgetMiB"] <= 4096, "INVALID_ARCHIVE_BUDGET")
         require(type(config["freeWeapons"]) is bool and type(config["stopOnIncident"]) is bool, "INVALID_FLAGS")
         require(isinstance(config["limits"], dict) and set(config["limits"]) == {"turns", "roundMs", "actionMs", "transitionMs"} and
                 all(type(v) is int and 0 < v <= 9007199254740991 for v in config["limits"].values()), "INVALID_LIMITS")
-    except (OSError, ValueError, KeyError, TypeError) as error:
+        configured = config.get("scenario")
+        require(configured is None or isinstance(configured, str) and bool(configured.strip()), "INVALID_SCENARIO_PATH")
+        path = args.scenario if args.scenario is not None else (args.config.resolve().parent / configured if configured else None)
+        args.scenario_path = path.resolve() if path is not None else None
+        args.scenario_data = None
+        if args.scenario_path is not None:
+            checked = subprocess.run(["node", str(ROOT / "Scripts/endurance/scenario.mjs"), "validate", str(args.scenario_path)],
+                                     cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=60)
+            require(checked.returncode == 0, "INVALID_SCENARIO: " + checked.stderr)
+            args.scenario_data = json.loads(checked.stdout)
+            require(len(args.scenario_data["spawnXs"]) == len(config["profiles"]), "SCENARIO_PROFILE_COUNT_MISMATCH")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         parser.error(str(error))
     args.config_data = config
     return args
@@ -146,9 +159,12 @@ class Driver:
             value = await page.evaluate("() => window.__tankwarsEnduranceBundle.summary()")
             require(value.get("schemaVersion") == 2, "UNSUPPORTED_DRIVER_SUMMARY")
             atomic(self.status.output / filename, json.dumps(value, ensure_ascii=False) + "\n")
+            scenario_config(value["session"], getattr(self.args, "scenario_data", None))
             return value["session"]
         scope = scope if scope is not None else page
-        return read(await self.download(page, scope.get_by_role("button", name="JSON", exact=True), filename))["session"]
+        session = read(await self.download(page, scope.get_by_role("button", name="JSON", exact=True), filename))["session"]
+        scenario_config(session, getattr(self.args, "scenario_data", None))
+        return session
 
     async def shots(self, page, filename, scope=None):
         if scope is None:
@@ -185,7 +201,16 @@ class Driver:
         await page.goto(self.args.url)
         await page.get_by_role("button", name="Endurance IA", exact=True).click()
         config = self.args.config_data
-        await page.get_by_label(re.compile(r"^NOMBRE DE JOUEURS :")).select_option(str(len(config["profiles"])))
+        count = page.get_by_label(re.compile(r"^NOMBRE DE JOUEURS :"))
+        if getattr(self.args, "scenario_path", None) is not None:
+            # Upload the validated bytes, protecting against a source edit between preflight and upload.
+            await page.get_by_test_id("endurance-scenario-input").set_input_files(dict(
+                name=self.args.scenario_path.name, mimeType="application/json",
+                buffer=json.dumps(self.args.scenario_data, ensure_ascii=False).encode("utf-8")))
+            await page.get_by_test_id("endurance-scenario-preview").wait_for()
+            require(await count.is_disabled() and await count.input_value() == str(len(config["profiles"])), "SCENARIO_COUNT_NOT_LOCKED")
+        else:
+            await count.select_option(str(len(config["profiles"])))
         for index, profile in enumerate(config["profiles"], 1):
             await page.get_by_label(re.compile(rf"^Profil IA {index}")).select_option(profile)
         values = {"Manches par bloc": config["roundsPerBlock"], "Blocs tentés maximum (0 : sans limite)": 0,

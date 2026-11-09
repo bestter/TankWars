@@ -211,7 +211,7 @@ This project follows a strict separation of concerns:
 
 ## Current Status
 
-**v0.13.10** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.14.0** — Playable local (hotseat + AI) and online multiplayer. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 Mode « armes gratuites » (#355, v0.13.0) : disponible en jeu local hotseat et en endurance IA (exclut le multijoueur en ligne). À chaque début de manche (manche 1 comprise), les stocks de munitions sont automatiquement réapprovisionnés jusqu'à des cibles fixes selon le profil et le nombre initial de joueurs $N$ (2, 3 ou 4) : SIMPLE ($(N-1)$ GRENADE/CLUSTER), OK ($3N$ GRENADE/CLUSTER, $N$ DRILLER/BULLDOZER, 1 NUKE), SNIPER ($3N$ BULLET, $2N$ DRILLER/BULLDOZER), EXPERT ($3N$ GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR) et Humains (12 BULLET/GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR; MISSILE infini). Les armes nucléaires sont plafonnées (max 2 NUKE, 1 THERMONUCLEAR sans remboursement); les surplus ordinaires et armes hors profil existantes sont conservés. La boutique d'inter-manche est complètement sautée : la fin de manche enchaîne directement du résumé (`RoundSummary`, affichant gains et solde total) vers le combat de la manche suivante (via le bouton « Manche suivante » en local ou le timer de 3 s en endurance). Aucun achat n'est consigné dans le journal d'endurance. Les gains de combat s'accumulent normalement et les stratégies IA (EXPERT, conseiller) continuent d'utiliser les coûts théoriques des munitions pour leurs décisions tactiques.
 
@@ -500,3 +500,36 @@ Chaque rattrapage repart de la carte et du roster initiaux autoritaires, invalid
 La graine `physicsSeed`, introduite en v3 et conservée en v4, dérive de `(roomId, roundNumber, shotId)` sans tirage Zeus/global. CLUSTER et GRENADE utilisent ce flux dédié en direct comme en reconstruction; le local/hotseat et les RNG injectés des prévisions IA conservent leurs contrats. Les rejeux utilisent l’arme de la commande sans seconde consommation ni remplacement de l’arme courante économique. Les étapes persistées du règlement distinguent gains acquis, preuve physique, évaluation Zeus et finalisation du tour; une interruption reprend les seules étapes manquantes.
 
 Le passage de v3 à v4 est nécessaire pour les nouvelles règles de creusement et d’occlusion ROCK (#184) : les clients simulent et rejouent les tirs localement; mélanger les deux physiques ferait diverger le terrain et les dégâts, même si le format des messages reste identique. Les clients < v4 ou sans version sont rejetés (`PROTOCOL_MISMATCH`, fermeture 4402) et doivent recharger. Une salle déjà commencée sans schéma de combat v4 exige `NEW_GAME_REQUIRED`; les PV initiaux ne servent jamais à migrer une ancienne partie. La portée réseau demeure celle des salles avec au moins un client humain connecté, y compris un humain éliminé devenu spectateur autoritaire. Les salles uniquement IA et la simulation serveur autonome restent hors portée. Ordre de déploiement : publier le Worker avant le client, vérifier `/api/health` (`protocolVersion: 4`, `minimumClientProtocolVersion: 4`), puis construire et publier le client.
+
+## Cartes d’endurance personnalisées / Custom endurance maps (#362, v0.14.0)
+
+Dans un build de test (`npm run build -- --mode endurance`), ouvrir **Endurance IA**, importer un JSON et vérifier l’aperçu 400 × 240. Le nombre de tanks suit les départs et reste verrouillé; leurs profils restent modifiables. Un fichier invalide, y compris en remplacement, bloque le démarrage jusqu’à correction ou retrait. Retirer le scénario réactive le terrain généré. Cette option ne fait pas partie du menu public, du réseau ou du Worker.
+
+Un scénario v1 contient `schemaVersion`, `id`, `name`, `width: 800`, `height: 480`, `heights` et `materials` (800 valeurs chacun), `wind` et `spawnXs` (2 à 4 X, dans l’ordre du roster). `terrainId` est facultatif à l’entrée; s’il existe, il doit correspondre à l’empreinte calculée. Les hauteurs sont finies dans [0, 479], le vent dans [−60, 60], les X dans [104, 696], séparés d’au moins 100 px. Chaque Y vient de `heights[Math.floor(x)]`, est strictement inférieur à 474 (lave), avec une base compatible ROCK. Modifier directement le JSON permet les coordonnées fractionnaires et l’ajustement d’une seule colonne; après modification du relief, retirer l’ancien `terrainId` ou le recalculer par le validateur.
+
+Le [croquis complet de la falaise #361](Scripts/endurance/scenarios/issue-361-rock-cliff.txt) est modifiable. Première ligne : métadonnées JSON (`id`, `name`, `wind`, `spawnXs`). Ensuite, un rectangle ASCII : `.` air, `d` DIRT, `s` SOFT, `r` ROCK. X augmente vers la droite, Y vers le bas. Pour un croquis W × H, la colonne de jeu x copie la colonne `floor(x*W/800)`; sa hauteur est `floor(premièreLigneSolide*480/H)`. La fixture utilise W=80, H=480 : 10 px par caractère horizontal, 1 px par ligne. Tout ce qui est sous la première cellule solide d’une colonne doit conserver le même matériau : ni tunnel, ni surplomb, ni couche superposée. Aucun hasard n’intervient dans la conversion. Exemple valide 4 × 4 (200 px par caractère horizontal, 120 px par ligne) :
+
+```text
+{"id":"demo","name":"Deux rives","wind":0,"spawnXs":[126.483,695.675]}
+....
+.rr.
+drrs
+drrs
+```
+
+Depuis la racine du dépôt, avec Node 24 et les dépendances installées :
+
+```sh
+node Scripts/endurance/scenario.mjs convert Scripts/endurance/scenarios/issue-361-rock-cliff.txt Scripts/endurance/scenarios/issue-361-rock-cliff.json
+node Scripts/endurance/scenario.mjs validate Scripts/endurance/scenarios/issue-361-rock-cliff.json
+```
+
+Le [README du pilote](Scripts/endurance/README.md#scénarios-personnalisés--custom-scenarios-362) donne la commande supervisée et la configuration du duel SIMPLE/EXPERT. La carte, ses départs et son vent sont réappliqués à chaque manche et bloc sans tirage de préparation; les dégâts et cratères évoluent pendant le combat et restent présents pendant une restauration de combat. Les resets habituels s’appliquent à la manche suivante, avec argent et stocks conservés selon le mode boutique/armes gratuites. Un nouveau bloc repart du roster initial.
+
+La provenance `generated`/`custom`, les métadonnées et le scénario complet sont persistés et exportés. Le terrain initial est dédupliqué même avant le premier tir; chaque capture désigne le terrain au moment du tir, qui peut avoir une autre empreinte après un cratère. Les anciennes séances sans scénario restent lisibles. Le rejeu par `Scripts/read-shot-archive.mjs --replay` reste disponible.
+
+**Mesure de la fixture reconstruite #361** (pas une reproduction historique exacte) : départs (126.483, 412) et (695.675, 339), EXPERT au deuxième emplacement, vent 48.2, gravité 260; ROCK aux colonnes 675 et 676 à Y=314. Avec `resolvePhysicalShot`, le MISSILE du journal **149.5° / 57** frappe (675.995843, 314.424137), sans dégât. La commande normalisée **127.5° / 96** franchit le relief et frappe directement le premier tank à (126.362645, 398.885298), retirant 37.212 points de bouclier puis 14 PV de chute. Ces résultats dépendent de cette géométrie reconstruite et du roster initial (100 PV/40 bouclier). Le choix du solveur EXPERT et sa correction restent dans #361.
+
+**English.** Test builds support importing, replacing and removing the same versioned JSON from the endurance UI or Python driver. Draw a complete rectangular silhouette using the legend above; conversion uses nearest source columns and the first solid row, with no interpolation or randomness. The reference sketch and commands above produce the supplied duel. Import locks the player count but leaves profiles editable. Invalid replacement blocks Start. Every new round restores a fresh copy of the original map, wind and fractional spawns; combat recovery keeps current deformation. Session economics follow ordinary shop/free-weapons rules and reset at block boundaries. Reports and bundles retain the validated scenario and initial terrain, while shots reference their actual current terrain. The measured commands demonstrate a blocked shot and a useful high trajectory on the reconstructed fixture; they do not establish an exact historical replay or fix EXPERT.
+
+Documentation #362 : Codex — GPT-6.

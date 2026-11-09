@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject } from "react";
+import { prepareScenarioRound } from "../../game/endurance/scenario";
 import type { EnduranceSession } from "../../game/endurance/session";
 import type { GameEngine } from "../../game/engine/GameEngine";
 import type { RoundMap } from "../../game/round/prepareRound";
@@ -159,13 +160,17 @@ export function finishShopPhase(
     // startNextRound publie le HUD du tour 1 avant la fin de cette fonction.
     host.gamePhaseRef.current = "COMBAT";
     combatPhaseOpen = true;
-    if (!engine.startNextRound(map, finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
+    const scenario = host.endurance?.session.config.scenario;
+    const prepared = scenario ? prepareScenarioRound(scenario, roster, nextRoundNumber ?? host.currentMancheRef.current) : null;
+    if (!engine.startNextRound(prepared?.map ?? map, prepared?.players ?? finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
+      host.endurance?.cancelRoundPreparation();
       host.gamePhaseRef.current = phaseBeforeRound;
       combatPhaseOpen = false;
       host.shopFinishingRef.current = false;
       return;
     }
   } catch (error) {
+    host.endurance?.cancelRoundPreparation();
     if (combatPhaseOpen) host.gamePhaseRef.current = phaseBeforeRound;
     console.error("[Shop] Round preparation failed", error);
     host.endurance?.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
@@ -174,6 +179,7 @@ export function finishShopPhase(
     host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
     return;
   }
+  host.endurance?.confirmRoundPreparation();
   host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
   host.pendingShopFinishRef.current = null;
   host.localShopDoneRef.current = false;
@@ -247,13 +253,17 @@ export function advanceToNextRoundDirect(host: CompleteShopRoundHost): void {
     // Le résumé est encore la phase React au moment du premier HUD de manche.
     host.gamePhaseRef.current = "COMBAT";
     combatPhaseOpen = true;
-    if (!engine.startNextRound(undefined, replenished, nextRoundNumber)) {
+    const scenario = host.endurance?.session.config.scenario;
+    const prepared = scenario ? prepareScenarioRound(scenario, replenished, nextRoundNumber) : null;
+    if (!engine.startNextRound(prepared?.map, prepared?.players ?? replenished, nextRoundNumber)) {
+      host.endurance?.cancelRoundPreparation();
       host.gamePhaseRef.current = phaseBeforeRound;
       combatPhaseOpen = false;
       host.shopFinishingRef.current = false;
       return;
     }
   } catch (error) {
+    host.endurance?.cancelRoundPreparation();
     if (combatPhaseOpen) host.gamePhaseRef.current = phaseBeforeRound;
     console.error("[Game] Free weapons round preparation failed", error);
     host.endurance?.incident(
@@ -268,6 +278,7 @@ export function advanceToNextRoundDirect(host: CompleteShopRoundHost): void {
     return;
   }
 
+  host.endurance?.confirmRoundPreparation();
   host.dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: null });
   host.pendingShopFinishRef.current = null;
   host.localShopDoneRef.current = false;

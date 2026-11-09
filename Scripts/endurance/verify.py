@@ -46,3 +46,12 @@ def recovery(status):
     closed_session(recovered)
     require(final == recovered, "RECOVERED_SUMMARY_MISMATCH")
     status.proof("recovered-summary", [root / "final.json", root / "recovered.json"])
+
+
+def scenario_config(session, expected):
+    require(session["config"].get("scenario") == expected, "SCENARIO_CONFIG_MISMATCH")
+    if expected is not None:
+        players = session["config"]["players"]
+        require(len(players) == len(expected["spawnXs"]), "SCENARIO_ROSTER_MISMATCH")
+        for player, x in zip(players, expected["spawnXs"]):
+            require(player["tank"]["position"] == dict(x=x, y=expected["heights"][int(x)]), "SCENARIO_SPAWN_MISMATCH")

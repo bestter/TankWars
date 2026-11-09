@@ -1,3 +1,4 @@
+import { scenarioProvenance } from "./scenario";
 import { version } from "../../../package.json";
 import { ShotRecorder, ACTION_RESERVE, CLOSURE_RESERVE, MIB, QUEUE_BYTES, byteSize, emptyArchive } from "../diagnostics/archive";
 import { exportStoredArchive, filterArchive, type ArchiveFilter } from "../diagnostics/export";
@@ -115,6 +116,7 @@ export class EnduranceSession implements CombatObserver {
   private checkpointAt = 0;
   private turn = 0;
   private roundNumber = 0;
+  private roundPreparationPending = false;
   private roundDate = "";
   private collector: RoundCollector | null = null;
   private recent: RecentEvent[] = [];
@@ -140,8 +142,9 @@ export class EnduranceSession implements CombatObserver {
     this.storage = storage; this.time = time;
     this.archiveLimit = (config.archiveBudgetMiB ?? 512) * MIB;
     this.started = time.now();
-    this.session = { runtime: { width: 800, height: 480, gravity: 260, baseShotSpeed: 420, localMatch: true, weapons: structuredClone(WEAPON_REGISTRY) },
-      schemaVersion: 1, id: time.id(), gameVersion: version, build, config: validateConfig(config),
+    const validated = validateConfig(config);
+    this.session = { terrain: scenarioProvenance(validated.scenario), runtime: { width: 800, height: 480, gravity: 260, baseShotSpeed: 420, localMatch: true, weapons: structuredClone(WEAPON_REGISTRY) },
+      schemaVersion: 1, id: time.id(), gameVersion: version, build, config: validated,
       startedAt: time.date(), durationMs: 0, status: "running", reason: null, attempted: 0, completed: 0,
       abandoned: 0, interrupted: 0, suspect: 0, roundsStarted: 0, roundsCompleted: 0, incidents: 0,
       collection: "incomplete", storageError: null, completedMetrics: groups(), partialMetrics: groups(),
@@ -275,6 +278,9 @@ export class EnduranceSession implements CombatObserver {
         }
       } catch (error) { console.warn("[Endurance] Storage estimate unavailable", error); }
     }
+    const scenario = this.session.config.scenario;
+    if (scenario) this.recorder.record({ kind: "boundary", status: "initial-scenario", detail: scenarioProvenance(scenario) },
+      { id: scenario.terrainId, width: 800, height: 480, heights: [...scenario.heights], materials: [...scenario.materials] });
     this.recordJournal({ kind: "session-start", metadata: { gameVersion: this.session.gameVersion, build: this.session.build,
       config: this.session.config, coordinates: "pixels; x right, y down; angle degrees: 0 right, 90 up, 180 left",
       unavailable: "null; nominal aim, target or reasoning are never reconstructed", runtime: this.session.runtime } });
@@ -308,13 +314,25 @@ export class EnduranceSession implements CombatObserver {
   detach(host: EnduranceHost): void { if (this.host === host) this.host = null; }
   beginRound(number: number): boolean {
     if (!this.active || this.stopped || !this.block || this.limitReached()) { if (this.limitReached()) void this.stop("duration"); return false; }
+    if (this.collector && this.roundNumber === number) return true;
     this.roundNumber = number; this.turn = 0; this.roundStarted = this.time.now(); this.roundDate = this.time.date();
     this.actionStarted = null; this.phase = "COMBAT";
     this.collector = new RoundCollector(this.session.config.players);
-    this.block.roundsStarted++; this.session.roundsStarted++;
+    this.roundPreparationPending = true;
     this.decisionId = null; this.decisionState = null;
-    this.recordJournal({ kind: "round-start", reason: null, players: [] }, true);
+    if (!this.session.config.scenario) this.confirmRoundPreparation();
     return true;
+  }
+  confirmRoundPreparation(): void {
+    if (!this.roundPreparationPending || !this.block) return;
+    this.roundPreparationPending = false;
+    this.block.roundsStarted++; this.session.roundsStarted++;
+    this.recordJournal({ kind: "round-start", reason: null, players: [] }, true);
+  }
+  cancelRoundPreparation(): void {
+    if (!this.roundPreparationPending) return;
+    this.roundPreparationPending = false;
+    this.collector = null;
   }
   setPhase(phase: string): void {
     if (!this.active || this.phase === phase) return;
@@ -346,6 +364,7 @@ export class EnduranceSession implements CombatObserver {
       if (event.kind === "decision") this.decisionState = "ready";
       if (event.kind === "shot-launched") this.decisionState = "launched";
       if (event.kind === "turn") {
+        this.confirmRoundPreparation();
         if (event.turn > this.session.config.limits.turns) {
           this.incident("limit", "turns", event.turn); return false;
         }

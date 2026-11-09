@@ -1,3 +1,4 @@
+import { scenarioProvenance } from "../scenario";
 import { emptyArchive, RULES_ID } from "../../diagnostics/archive";
 import { validateArchive } from "../../diagnostics/validate";
 import type { ArchiveRecord, TerrainRecord } from "../../diagnostics/types";
@@ -40,7 +41,7 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
   const journal = new PartWriter(disk, "journal", limit, publish);
   const captures = new PartWriter(disk, "captures", limit, publish);
   const terrains = new PartWriter(disk, "terrains", limit, publish);
-  const manifest: BundleManifest = { format: "tankwars-endurance-bundle", schemaVersion: 1,
+  const manifest: BundleManifest = { format: "tankwars-endurance-bundle", schemaVersion: 1, terrain: scenarioProvenance(source.session.config.scenario),
     generation: `${source.status.persisted}-${generationNumber}-${Date.now()}`, createdAt: new Date().toISOString(),
     session: structuredClone(source.session), journal: { ...source.status }, options, rules: RULES_ID,
     catalogue: null, catalogueSha256: null, index: previous?.index ?? "index/root.json", complete: source.status.error === null,
@@ -64,6 +65,8 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     await publish({ path, type: "terrain-index", order: 0, bytes: bytes.length, sha256: await sha256(bytes), count: 1,
       firstSequence: null, lastSequence: null, oversized: bytes.length > limit });
   };
+  const scenario = source.session.config.scenario;
+  if (scenario) await addTerrain(scenario.terrainId);
   let after = previous?.journal.persisted ?? 0;
   while (after < source.status.persisted) {
     signal?.throwIfAborted();

@@ -258,5 +258,13 @@
   "endurance_invalid": "Configuration invalide : au moins une limite de session et des entiers positifs sont requis",
   "endurance_recover": "Exporter le dernier état sauvegardé (incomplet si interrompu)",
   "endurance_progress": "Blocs : {{attempted}} tentés, {{completed}} complétés, {{abandoned}} abandonnés, {{interrupted}} interrompus. Manches terminées : {{rounds}}.",
-  "endurance_limits_help": "Rendu à vitesse normale. Garder cet onglet actif et l’appareil éveillé; masquer l’onglet arrête la session. La seed ne garantit pas un replay identique. Aucun redémarrage après gel complet ni reprise du combat interrompu."
+  "endurance_limits_help": "Rendu à vitesse normale. Garder cet onglet actif et l’appareil éveillé; masquer l’onglet arrête la session. La seed ne garantit pas un replay identique. Aucun redémarrage après gel complet ni reprise du combat interrompu.",
+  "endurance_scenario_generated": "Terrain généré",
+  "endurance_scenario_custom": "Carte personnalisée",
+  "endurance_scenario_import": "Importer ou remplacer un scénario JSON",
+  "endurance_scenario_remove": "Retirer le scénario",
+  "endurance_scenario_loading": "Chargement du scénario…",
+  "endurance_scenario_invalid": "Scénario invalide; corrigez le fichier ou retirez-le",
+  "endurance_scenario_wind": "Vent",
+  "endurance_scenario_spawns": "Départs (X, Y)"
 }

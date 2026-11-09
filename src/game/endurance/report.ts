@@ -1,3 +1,4 @@
+import { scenarioProvenance } from "./scenario";
 import type { EnduranceExport, MetricGroups, Metrics } from "./types";
 
 export function markdownReport(data: EnduranceExport, french = true): string {
@@ -25,7 +26,7 @@ export function markdownReport(data: EnduranceExport, french = true): string {
     `${label("Manches commencées / terminées", "Rounds started / completed")}: ${s.roundsStarted} / ${s.roundsCompleted}`,
     `${label("Tours commencés", "Turns started")}: ${data.rounds.reduce((sum, round) => sum + round.turns, 0)}`,
     `${label("Incidents", "Incidents")}: ${s.incidents}`,
-    "", label("## Configuration", "## Configuration"), "", "```json", JSON.stringify(s.config, null, 2), "```",
+    "", label("## Configuration", "## Configuration"), "", "```json", JSON.stringify({ terrain: scenarioProvenance(s.config.scenario), ...s.config }, null, 2), "```",
     `Runtime: ${s.runtime.width}×${s.runtime.height} · gravity ${s.runtime.gravity} · baseShotSpeed ${s.runtime.baseShotSpeed} · localMatch ${s.runtime.localMatch}`,
     "", label("## Manches terminées", "## Completed rounds"), "", ...metricTable(s.completedMetrics),
     "", label("## Observations partielles", "## Partial observations"), "", ...metricTable(s.partialMetrics),

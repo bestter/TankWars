@@ -6,6 +6,7 @@ import type { WEAPON_REGISTRY } from "../../types/weapon";
 import type { AIObservation, CreditObservation, PhysicalObservation } from "../observation";
 
 export interface EnduranceConfig {
+  scenario?: import("./scenario").EnduranceScenario | null;
   players: Player[];
   roundsPerBlock: number;
   maxBlocks: number | null;
@@ -73,6 +74,7 @@ export interface BlockRecord {
   completedMetrics: MetricGroups; partialMetrics: MetricGroups;
 }
 export interface SessionRecord {
+  terrain?: ReturnType<typeof import("./scenario").scenarioProvenance>;
   runtime: { width: 800; height: 480; gravity: 260; baseShotSpeed: 420; localMatch: true; weapons: typeof WEAPON_REGISTRY };
   schemaVersion: 1; id: string; gameVersion: string; build: string; config: EnduranceConfig;
   startedAt: string; durationMs: number; status: "running" | "stopped"; reason: string | null;
