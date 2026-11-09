@@ -258,5 +258,14 @@
   "endurance_invalid": "Invalid configuration: at least one session limit and positive integers are required",
   "endurance_recover": "Export last checkpoint (incomplete if interrupted)",
   "endurance_progress": "Blocks: {{attempted}} attempted, {{completed}} completed, {{abandoned}} abandoned, {{interrupted}} interrupted. Completed rounds: {{rounds}}.",
-  "endurance_limits_help": "Normal speed with rendering. Keep this tab active and the device awake; hiding the tab stops the session. The seed does not guarantee identical replay. No recovery after a full freeze or interrupted combat resume."
+  "endurance_limits_help": "Normal speed with rendering. Keep this tab active and the device awake; hiding the tab stops the session. The seed does not guarantee identical replay. No recovery after a full freeze or interrupted combat resume.",
+  "endurance_scenario_generated": "Generated terrain",
+  "endurance_scenario_custom": "Custom map",
+  "endurance_scenario_import": "Import or replace a JSON scenario",
+  "endurance_scenario_remove": "Remove scenario",
+  "endurance_scenario_loading": "Loading scenario…",
+  "endurance_scenario_invalid": "Invalid scenario; correct or remove the file",
+  "endurance_scenario_wind": "Wind",
+  "endurance_scenario_spawns": "Spawns (X, Y)",
+  "endurance_scenario_preview_unavailable": "Preview unavailable"
 }

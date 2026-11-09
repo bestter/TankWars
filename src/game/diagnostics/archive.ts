@@ -49,6 +49,7 @@ export class ShotRecorder {
   private started = performance.now();
   private bytes = 0;
   private retaining = true;
+  private initialTerrainId: string | null = null;
   private groups: Array<{ key: string | null; records: ArchiveRecord[]; bytes: number }> = [];
   private readonly persist?: (write: ArchiveWrite) => void;
   private readonly maxShots: number;
@@ -63,7 +64,7 @@ export class ShotRecorder {
     if (round !== undefined) this.round = round;
     if (turn !== undefined) this.turn = turn;
   }
-  record(input: DiagnosticInput): void {
+  record(input: DiagnosticInput, initialTerrain?: TerrainRecord): void {
     if (this.archive.lastSequence === 0 && !(input.kind === "boundary" && input.status === "archive-manifest")) this.record({ kind: "boundary", status: "archive-manifest",
       detail: { ...this.archive, records: undefined, terrains: undefined } });
     if (input.kind === "combat" && input.event.kind === "recovery" && input.event.reason === "decision-timeout") {
@@ -73,6 +74,11 @@ export class ShotRecorder {
     const start = performance.now();
     const copy = structuredClone(input);
     const dependencies: TerrainRecord[] = [];
+    if (initialTerrain) {
+      const terrain = structuredClone(initialTerrain);
+      this.initialTerrainId = terrain.id;
+      this.terrains.set(terrain.id, terrain); dependencies.push(terrain);
+    }
     let stored: ArchiveInput;
     if ("snapshot" in copy) {
       const { heights, materials, ...snapshot } = copy.snapshot;
@@ -117,7 +123,12 @@ export class ShotRecorder {
     this.captureMs += elapsed; this.maxCaptureMs = Math.max(this.maxCaptureMs, elapsed); this.captures++;
   }
   private pruneTerrains(): void {
-    const referenced = new Set(this.groups.flatMap(g => g.records.flatMap(r => "snapshot" in r.input ? [r.input.snapshot.terrainId] : [])));
+    const referenced = new Set<string>();
+    if (this.initialTerrainId) referenced.add(this.initialTerrainId);
+    for (const group of this.groups) for (const record of group.records) {
+      const id = recordTerrainId(record);
+      if (id !== undefined) referenced.add(id);
+    }
     for (const [id, terrain] of this.terrains) if (!referenced.has(id)) { this.bytes -= byteSize(terrain); this.terrains.delete(id); }
   }
   captures = 0;
@@ -131,11 +142,29 @@ export class ShotRecorder {
     }
     if (filter?.from !== undefined) records = records.filter(r => r.sequence >= filter.from!);
     if (filter?.to !== undefined) records = records.filter(r => r.sequence <= filter.to!);
-    const ids = new Set(records.flatMap(r => "snapshot" in r.input ? [r.input.snapshot.terrainId] : []));
+    const ids = new Set<string>();
+    if (this.initialTerrainId && !filter?.shotKey) ids.add(this.initialTerrainId);
+    for (const record of records) {
+      const id = recordTerrainId(record);
+      if (id !== undefined) ids.add(id);
+    }
     return structuredClone(sealArchive({ ...this.archive, records, firstSequence: records[0]?.sequence ?? 0,
       terrains: [...this.terrains.values()].filter(t => ids.has(t.id)) }));
   }
   finish(error: string | null = null): void { this.archive.complete = error === null; this.archive.error = error; }
   get stats() { return { bytes: this.bytes, captures: this.captures, captureMs: this.captureMs,
     maxCaptureMs: this.maxCaptureMs, evicted: this.archive.evicted, sequence: this.archive.lastSequence }; }
+}
+
+/** Initial terrain is a dependency too, even before any shot snapshot exists. */
+export function recordTerrainId(record: ArchiveRecord): string | undefined {
+  const input = record.input;
+  if ("snapshot" in input) {
+    const snapshot = input.snapshot;
+    return typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot) &&
+      typeof snapshot.terrainId === "string" ? snapshot.terrainId : undefined;
+  }
+  if (input.kind === "boundary" && input.status === "initial-scenario" && typeof input.detail === "object" && input.detail !== null &&
+    "terrainId" in input.detail && typeof input.detail.terrainId === "string") return input.detail.terrainId;
+  return undefined;
 }

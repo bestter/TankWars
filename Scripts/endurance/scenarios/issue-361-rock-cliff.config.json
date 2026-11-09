@@ -1,0 +1,17 @@
+{
+  "profiles": [
+    "v1-random",
+    "v4-smart"
+  ],
+  "roundsPerBlock": 2,
+  "archiveBudgetMiB": 512,
+  "freeWeapons": false,
+  "stopOnIncident": false,
+  "limits": {
+    "turns": 1000,
+    "roundMs": 1800000,
+    "actionMs": 120000,
+    "transitionMs": 30000
+  },
+  "scenario": "issue-361-rock-cliff.json"
+}

@@ -1,3 +1,5 @@
+import reference from "../../../Scripts/endurance/scenarios/issue-361-rock-cliff.json";
+import { validateScenario } from "../../game/endurance/scenario";
 // @vitest-environment jsdom
 import { StrictMode, useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
@@ -39,6 +41,43 @@ describe("real local endurance session integration", () => {
     vi.spyOn(AIByProfileStrategy.prototype, "executeTurn").mockImplementation(() => new Promise(() => {}));
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); setRNG(previous); });
+  it.each([false, true])("restores the custom map across two rounds and two blocks (free=%s)", async freeWeapons => {
+    const f = fixture(), storage = new JournalStorage();
+    const run = new EnduranceSession({ ...f.config, scenario: validateScenario(reference), freeWeapons }, storage);
+    await run.start();
+    const setPlayers = vi.spyOn(GameEngine.prototype, "setPlayers");
+    for (let block = 0; block < 2; block++) {
+      const ref = { current: null as ReturnType<typeof useGameSession> | null };
+      const view = render(<Harness run={run} players={structuredClone(run.block!.config.players)} sessionRef={ref} />);
+      await act(async () => { vi.advanceTimersByTime(1); });
+      const engine = setPlayers.mock.instances.at(-1) as GameEngine;
+      for (let round = 1; round <= 2; round++) {
+        expect(engine.getCombatMap(round)).toMatchObject({ heights: reference.heights, materials: reference.materials, wind: 48.2 });
+        const roster = engine.getTankManager().getPlayers();
+        expect(roster.map(p => p.tank.position)).toEqual([{ x: 126.483, y: 412 }, { x: 695.675, y: 339 }]);
+        expect(roster.every(p => p.tank.health === 100 && p.tank.shield === 40)).toBe(true);
+        // A live recovery retains deformation; the next actual round restores the initial map.
+        const damaged = engine.getCombatMap(round); damaged.heights[126] = 460;
+        engine.restoreRoundTerrain(damaged, engine.getInitialRoundMap()!);
+        expect(engine.getCombatMap(round).heights[126]).toBe(460);
+        roster[0].money = 777; roster[1].tank.isDead = true;
+        await act(async () => { engine.onRoundEnded?.({ survivors: [roster[0]], roundWinner: roster[0], isDraw: false }); });
+        await act(async () => { vi.advanceTimersByTime(10000); });
+        await act(async () => { vi.advanceTimersByTime(3000); });
+        if (round === 1) {
+          if (!freeWeapons) await act(async () => { vi.advanceTimersByTime(600); });
+          expect(ref.current?.state.gamePhase).toBe("COMBAT");
+          if (freeWeapons) expect(engine.getTankManager().getPlayers()[0].money).toBe(777);
+        }
+      }
+      view.unmount();
+    }
+    expect(run.session).toMatchObject({ completed: 2, attempted: 2, roundsStarted: 4, roundsCompleted: 4 });
+    expect(storage.entries.filter(e => e.event.kind === "round-start")).toHaveLength(4);
+    expect(storage.entries.filter(e => e.event.kind === "block-start").every(e => e.event.kind === "block-start" && e.event.players[1].tank.position.x === 695.675)).toBe(true);
+    if (freeWeapons) expect(storage.entries.some(e => e.event.kind === "purchase" || e.event.kind === "shop-start")).toBe(false);
+    await run.stop();
+  });
   it("initializes once in StrictMode, restores the exact prior RNG and cancels the hung decision", async () => {
     const f = fixture(); await f.run.start();
     const stop = vi.spyOn(GameEngine.prototype, "stop");

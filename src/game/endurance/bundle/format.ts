@@ -16,6 +16,7 @@ export interface FileReference {
 export interface Location { path: string; offset: number; length: number }
 export interface BundleManifest {
   format: "tankwars-endurance-bundle"; schemaVersion: 1; generation: string; createdAt: string;
+  terrain?: ReturnType<typeof import("../scenario").scenarioProvenance>;
   session: SessionRecord; journal: JournalStatus; options: ExportOptions; rules: string;
   catalogue: string | null; catalogueSha256: string | null; index: string; complete: boolean; reportComplete: boolean;
   derivedCatalogue: string | null; derivedCatalogueSha256: string | null; indexBoundary: number | null;

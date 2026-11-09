@@ -3,6 +3,7 @@ import { ShotRecorder } from "../game/diagnostics/archive";
 import { filterArchive } from "../game/diagnostics/export";
 import type { ArchiveFilter } from "../game/diagnostics/export";
 import { startCanvasLoop } from "./canvasLoop";
+import { prepareScenarioRound } from "../game/endurance/scenario";
 import type { EnduranceSession } from "../game/endurance/session";
 import type { CombatObserver } from "../game/endurance/types";
 import type { RoundMap } from "../game/round/prepareRound";
@@ -585,10 +586,14 @@ export function useGameSession({
     } else {
       try {
         if (gameMode === "online" && !initialMap) throw new Error("INVALID_ROUND_MAP");
-        engine.setPlayers(players, gameMode === "online" ? initialMap : undefined);
+        const scenario = endurance?.session.config.scenario;
+        const prepared = scenario ? prepareScenarioRound(scenario, players, 1) : null;
+        engine.setPlayers(prepared?.players ?? players, prepared?.map ?? (gameMode === "online" ? initialMap : undefined));
+        endurance?.confirmRoundPreparation();
       } catch (error) {
         console.error("[Game] Initial round preparation failed", error);
         if (endurance) {
+          endurance.cancelRoundPreparation();
           endurance.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
           return () => { stopExecution(); endurance.detach(enduranceHost); };
         }

@@ -2,6 +2,8 @@ import { DEFAULT_LIMITS, type EnduranceConfig } from "./types";
 import { ALL_WEAPON_IDS } from "../../types/weapon";
 import type { Player } from "../../types/player";
 
+import { validateScenario, prepareScenarioRound } from "./scenario";
+
 function positive(n: number): boolean { return Number.isSafeInteger(n) && n > 0; }
 export function validateConfig(config: EnduranceConfig): EnduranceConfig {
   if (!positive(config.roundsPerBlock) || (config.maxBlocks === null && config.maxDurationMs === null) ||
@@ -15,6 +17,17 @@ export function validateConfig(config: EnduranceConfig): EnduranceConfig {
   }
   assertRoster(config.players);
   const clone = structuredClone(config);
+  if (config.scenario != null) {
+    clone.scenario = validateScenario(config.scenario);
+    clone.players = prepareScenarioRound(clone.scenario, clone.players, 1).players;
+    // Persist absent optional fields as absent. Playwright transports undefined
+    // object properties as null, while the native JSON bundle omits them.
+    for (const player of clone.players) {
+      delete player.tank.lastHitBy;
+      delete player.tank.lastDirectAttackerId;
+      delete player.tank.hitReaction;
+    }
+  }
   const freeze = (value: object): void => {
     for (const child of Object.values(value)) if (child && typeof child === "object") freeze(child);
     Object.freeze(value);
