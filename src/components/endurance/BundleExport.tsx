@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrowserDisk } from "../../game/endurance/bundle/browserDisk";
 import { buildBundle, type BundleSource } from "../../game/endurance/bundle/build";
@@ -28,7 +28,8 @@ export function BundleExport({ source, revision = 0 }: { source: () => Promise<B
   const currentOptions = useRef({ partSizeMiB, slowDecisionMs });
   useEffect(() => { currentOptions.current = { partSizeMiB, slowDecisionMs }; }, [partSizeMiB, slowDecisionMs]);
   const bridgeRef = useRef<BundleBridge | null>(null);
-  useEffect(() => {
+  // Export controls must have their bridge before the committed UI can be used.
+  useLayoutEffect(() => {
     let disk: BrowserDisk | null = null;
     let effective: string | undefined;
     let pending: Promise<BundleManifest> | null = null;

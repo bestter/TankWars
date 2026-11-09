@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { render, cleanup } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BundleExport } from "../BundleExport";
+import { downloadEnduranceBundle } from "../journalBridge";
 import type { BundleSource } from "../../../game/endurance/bundle/build";
 import { MemoryDisk } from "../../../game/endurance/__tests__/bundleMemory";
 import { fixture } from "../../../game/endurance/__tests__/helpers";
@@ -55,6 +57,22 @@ function fakeSource(): BundleSource {
 }
 
 describe("BundleExport concurrency and zip cleanup", () => {
+  it("allows an export as soon as the recovered controls are committed", async () => {
+    let download: Promise<void> | undefined;
+    function RecoveredControls() {
+      useLayoutEffect(() => {
+        download = downloadEnduranceBundle();
+        // Attach a handler before React flushes passive effects.
+        void download.catch(() => {});
+      }, []);
+      return <BundleExport source={async () => fakeSource()} />;
+    }
+    render(<RecoveredControls />);
+    expect(download).toBeDefined();
+    await expect(download).resolves.toBeUndefined();
+    expect(createdDisk).not.toBeNull();
+  });
+
   it("rejects concurrent leased prepare calls with EXPORT_BUSY", async () => {
     render(<BundleExport source={async () => fakeSource()} />);
     const bridge = window.__tankwarsEnduranceBundle!;
