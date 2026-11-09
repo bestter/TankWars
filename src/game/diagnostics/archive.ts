@@ -49,6 +49,7 @@ export class ShotRecorder {
   private started = performance.now();
   private bytes = 0;
   private retaining = true;
+  private initialTerrainId: string | null = null;
   private groups: Array<{ key: string | null; records: ArchiveRecord[]; bytes: number }> = [];
   private readonly persist?: (write: ArchiveWrite) => void;
   private readonly maxShots: number;
@@ -75,6 +76,7 @@ export class ShotRecorder {
     const dependencies: TerrainRecord[] = [];
     if (initialTerrain) {
       const terrain = structuredClone(initialTerrain);
+      this.initialTerrainId = terrain.id;
       this.terrains.set(terrain.id, terrain); dependencies.push(terrain);
     }
     let stored: ArchiveInput;
@@ -122,6 +124,7 @@ export class ShotRecorder {
   }
   private pruneTerrains(): void {
     const referenced = new Set<string>();
+    if (this.initialTerrainId) referenced.add(this.initialTerrainId);
     for (const group of this.groups) for (const record of group.records) {
       const id = recordTerrainId(record);
       if (id !== undefined) referenced.add(id);
@@ -140,6 +143,7 @@ export class ShotRecorder {
     if (filter?.from !== undefined) records = records.filter(r => r.sequence >= filter.from!);
     if (filter?.to !== undefined) records = records.filter(r => r.sequence <= filter.to!);
     const ids = new Set<string>();
+    if (this.initialTerrainId && !filter?.shotKey) ids.add(this.initialTerrainId);
     for (const record of records) {
       const id = recordTerrainId(record);
       if (id !== undefined) ids.add(id);

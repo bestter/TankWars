@@ -8,7 +8,7 @@ import { validateArchive } from "../validate";
 import { filterArchive, exportStoredArchive } from "../export";
 import { IndexedEnduranceStorage } from "../../endurance/storage";
 import { EnduranceJournal } from "../../endurance/journal";
-import type { ArchiveRecord, ArchiveWrite, ShotArchive } from "../types";
+import type { ArchiveRecord, ArchiveWrite, ShotArchive, TerrainRecord } from "../types";
 import type { WeaponId } from "../../../types/weapon";
 import { EnduranceSession } from "../../endurance/session";
 import { fixture } from "../../endurance/__tests__/helpers";
@@ -348,6 +348,14 @@ describe("durable, content-addressed captures", () => {
     const recorder = new ShotRecorder("bounded", undefined, 2);
     for (let turn = 1; turn <= 5; turn++) recorder.record({ kind: "combat", event: { kind: "turn", turn, playerId: "a" } });
     expect(recorder.export().records).toHaveLength(2); expect(recorder.stats.evicted).toBe(4);
+  });
+  it("retains the initial scenario terrain across evictions before and after firing", () => {
+    const recorder = new ShotRecorder("initial-terrain-test", undefined, 2);
+    const initialTerrain: TerrainRecord = { id: "initial-id", width: 800, height: 480, heights: Array(800).fill(300), materials: Array(800).fill("DIRT") };
+    recorder.record({ kind: "boundary", status: "initial-scenario", detail: { mode: "custom", terrainId: "initial-id" } }, initialTerrain);
+    expect(recorder.export().terrains.map(t => t.id)).toEqual(["initial-id"]);
+    for (let turn = 1; turn <= 5; turn++) recorder.record({ kind: "combat", event: { kind: "turn", turn, playerId: "a" } });
+    expect(recorder.export().terrains.map(t => t.id)).toContain("initial-id");
   });
 });
 

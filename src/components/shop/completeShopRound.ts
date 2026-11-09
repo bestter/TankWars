@@ -154,15 +154,16 @@ export function finishShopPhase(
   }
   const phaseBeforeRound = host.gamePhaseRef.current;
   let combatPhaseOpen = false;
+  const targetRoundNumber = nextRoundNumber ?? host.currentMancheRef.current;
   try {
-    if (host.endurance && !host.endurance.beginRound(host.currentMancheRef.current)) { host.shopFinishingRef.current = false; return; }
+    if (host.endurance && !host.endurance.beginRound(targetRoundNumber)) { host.shopFinishingRef.current = false; return; }
     if (host.gameMode === "online" && !map) throw new Error("INVALID_ROUND_MAP");
     // startNextRound publie le HUD du tour 1 avant la fin de cette fonction.
     host.gamePhaseRef.current = "COMBAT";
     combatPhaseOpen = true;
     const scenario = host.endurance?.session.config.scenario;
-    const prepared = scenario ? prepareScenarioRound(scenario, roster, nextRoundNumber ?? host.currentMancheRef.current) : null;
-    if (!engine.startNextRound(prepared?.map ?? map, prepared?.players ?? finalPlayers, nextRoundNumber ?? host.currentMancheRef.current)) {
+    const prepared = scenario ? prepareScenarioRound(scenario, roster, targetRoundNumber) : null;
+    if (!engine.startNextRound(prepared?.map ?? map, prepared?.players ?? finalPlayers, targetRoundNumber)) {
       host.endurance?.cancelRoundPreparation();
       host.gamePhaseRef.current = phaseBeforeRound;
       combatPhaseOpen = false;

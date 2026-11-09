@@ -30,6 +30,14 @@ describe("custom endurance scenario", () => {
     const source = JSON.stringify({ id: "x", name: "x", spawnXs: [104, 696], wind: 0 }) + "\n" + drawing;
     expect(() => convertScenarioSketch(source)).toThrow(/line|column/);
   });
+  it("ignores a stale terrainId in sketch metadata and computes the correct new fingerprint", () => {
+    const header = JSON.stringify({ id: "custom", name: "Custom", wind: 0, spawnXs: [104, 696], terrainId: "stale-or-wrong" });
+    const drawing = "..\n" + "dd\n".repeat(479);
+    const converted = convertScenarioSketch(header + "\n" + drawing);
+    expect(converted.terrainId).not.toBe("stale-or-wrong");
+    expect(converted.terrainId).toMatch(/^[0-9a-f]{16}$/);
+    expect(validateScenario(converted)).toEqual(converted);
+  });
   it.each([
     { schemaVersion: 2 }, { id: " " }, { name: " " }, { width: 801 }, { height: 479 },
     { heights: Array(799).fill(300) }, { heights: Array(800).fill(NaN) }, { heights: Array(800).fill(480) },

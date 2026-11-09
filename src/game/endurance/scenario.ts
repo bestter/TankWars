@@ -70,6 +70,8 @@ export function scenarioProvenance(scenario?: EnduranceScenario | null) {
     terrainId: scenario.terrainId, wind: scenario.wind, spawnXs: [...scenario.spawnXs] } : { mode: "generated" as const };
 }
 
+const SKETCH_MATERIALS = { d: "DIRT", s: "SOFT", r: "ROCK" } as const;
+
 /** First line JSON metadata, followed by a rectangular, top-to-bottom silhouette. */
 export function convertScenarioSketch(text: string): EnduranceScenario {
   const [header, ...rows] = text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
@@ -90,12 +92,16 @@ export function convertScenarioSketch(text: string): EnduranceScenario {
     // The first solid row sets Y = floor(row * 480 / H); everything below must stay solid and uniform.
     const top = rows.findIndex(row => row[x] !== ".");
     requireScenario(top >= 0, `column ${x + 1}: empty`);
-    const material = rows[top][x];
+    const material = rows[top][x] as keyof typeof SKETCH_MATERIALS;
     for (let y = top; y < rows.length; y++) requireScenario(rows[y][x] === material, `line ${y + 2}, column ${x + 1}: tunnel, overhang or layered materials`);
-    return { height: Math.floor(top * 480 / rows.length), material: { d: "DIRT", s: "SOFT", r: "ROCK" }[material] };
+    return { height: Math.floor(top * 480 / rows.length), material: SKETCH_MATERIALS[material] };
   });
+  const cleanMetadata = typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)
+    ? { ...(metadata as Record<string, unknown>) }
+    : {};
+  delete cleanMetadata.terrainId;
   // Each game column x copies source column floor(x * W / 800), without interpolation.
-  return validateScenario({ ...metadata, schemaVersion: 1, width: 800, height: 480,
+  return validateScenario({ ...cleanMetadata, schemaVersion: 1, width: 800, height: 480,
     heights: Array.from({ length: 800 }, (_, x) => columns[Math.floor(x * width / 800)].height),
     materials: Array.from({ length: 800 }, (_, x) => columns[Math.floor(x * width / 800)].material) });
 }
