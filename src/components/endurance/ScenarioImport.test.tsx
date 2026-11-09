@@ -5,14 +5,31 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ScenarioImport, type ScenarioSelection } from "./ScenarioImport";
 import reference from "../../../Scripts/endurance/scenarios/issue-361-rock-cliff.json";
+import { validateScenario } from "../../game/endurance/scenario";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("../../game/rendering/tankSprite", () => ({ drawTankSprite: vi.fn() }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function Importer() {
   const [selection, setSelection] = useState<ScenarioSelection>({ scenario: null, error: null, loading: false });
   return <ScenarioImport selection={selection} onChange={setSelection} />;
 }
+
+it("shows a fallback for a null 2D context and clears it when a replacement can be drawn", () => {
+  const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const scenario = validateScenario(reference);
+  const { rerender } = render(<ScenarioImport selection={{ scenario, error: null, loading: false }} onChange={vi.fn()} />);
+  expect(screen.getByRole("status").textContent).toBe("endurance_scenario_preview_unavailable");
+  expect(screen.getByRole("img", { name: scenario.name }).nextElementSibling).toBe(screen.getByRole("status"));
+  expect(screen.queryByRole("alert")).toBeNull();
+
+  const context = { save: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), fillText: vi.fn(), restore: vi.fn() };
+  getContext.mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  rerender(<ScenarioImport selection={{ scenario: { ...scenario, name: "Replacement" }, error: null, loading: false }} onChange={vi.fn()} />);
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(context.fillRect).toHaveBeenCalled();
+});
 
 it("can import the same file again after its contents are corrected", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);

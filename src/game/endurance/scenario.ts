@@ -47,7 +47,7 @@ export function validateScenario(value: unknown): EnduranceScenario {
     const right = Math.ceil(x + TANK_HITBOX_WIDTH / 2) - 1;
     requireScenario(
       heights.slice(left, right + 1).every(h => h < 474),
-      `spawn ${i + 1}: lava (Y must be < 474 across base [${left}, ${right}])`,
+      `spawn ${i + 1}: lava (Y must be < 474 in every column of inclusive base [${left}, ${right}] = [floor(X - 12), ceil(X + 12) - 1], X=${x})`,
     );
     requireScenario(hasSafeRockBase(x, terrain), `spawn ${i + 1}: mixed ROCK base`);
     return x;
@@ -87,12 +87,14 @@ export function convertScenarioSketch(text: string): EnduranceScenario {
     for (let x = 0; x < width; x++) requireScenario(".dsr".includes(row[x]), `line ${y + 2}, column ${x + 1}: unknown character`);
   });
   const columns = Array.from({ length: width }, (_, x) => {
+    // The first solid row sets Y = floor(row * 480 / H); everything below must stay solid and uniform.
     const top = rows.findIndex(row => row[x] !== ".");
     requireScenario(top >= 0, `column ${x + 1}: empty`);
     const material = rows[top][x];
     for (let y = top; y < rows.length; y++) requireScenario(rows[y][x] === material, `line ${y + 2}, column ${x + 1}: tunnel, overhang or layered materials`);
     return { height: Math.floor(top * 480 / rows.length), material: { d: "DIRT", s: "SOFT", r: "ROCK" }[material] };
   });
+  // Each game column x copies source column floor(x * W / 800), without interpolation.
   return validateScenario({ ...metadata, schemaVersion: 1, width: 800, height: 480,
     heights: Array.from({ length: 800 }, (_, x) => columns[Math.floor(x * width / 800)].height),
     materials: Array.from({ length: 800 }, (_, x) => columns[Math.floor(x * width / 800)].material) });

@@ -266,5 +266,6 @@
   "endurance_scenario_loading": "Chargement du scénario…",
   "endurance_scenario_invalid": "Scénario invalide; corrigez le fichier ou retirez-le",
   "endurance_scenario_wind": "Vent",
-  "endurance_scenario_spawns": "Départs (X, Y)"
+  "endurance_scenario_spawns": "Départs (X, Y)",
+  "endurance_scenario_preview_unavailable": "Aperçu non disponible"
 }

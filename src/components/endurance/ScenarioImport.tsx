@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { validateScenario, type EnduranceScenario } from "../../game/endurance/scenario";
 import { VGA_PALETTE } from "../../types/game";
@@ -21,9 +21,12 @@ const SPAWN_PREVIEW_COLORS = [
 ] as const;
 
 function ScenarioPreview({ scenario }: { scenario: EnduranceScenario }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const ctx = canvas.current?.getContext("2d");
+  const { t } = useTranslation();
+  const [unavailable, setUnavailable] = useState(false);
+  const drawPreview = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    setUnavailable(ctx === null);
     if (!ctx) return;
     ctx.save(); ctx.scale(0.5, 0.5);
     ctx.fillStyle = VGA_PALETTE.DARK_BLUE; ctx.fillRect(0, 0, 800, 480);
@@ -36,7 +39,8 @@ function ScenarioPreview({ scenario }: { scenario: EnduranceScenario }) {
     });
     ctx.restore();
   }, [scenario]);
-  return <canvas ref={canvas} width={400} height={240} data-testid="endurance-scenario-preview" role="img" aria-label={scenario.name}>{scenario.name}</canvas>;
+  return <><canvas ref={drawPreview} width={400} height={240} data-testid="endurance-scenario-preview" role="img" aria-label={scenario.name}>{scenario.name}</canvas>
+    {unavailable && <p role="status">{t("endurance_scenario_preview_unavailable")}</p>}</>;
 }
 
 export function ScenarioImport({ selection, onChange }: { selection: ScenarioSelection; onChange: (value: ScenarioSelection) => void }) {

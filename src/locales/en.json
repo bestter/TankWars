@@ -266,5 +266,6 @@
   "endurance_scenario_loading": "Loading scenario…",
   "endurance_scenario_invalid": "Invalid scenario; correct or remove the file",
   "endurance_scenario_wind": "Wind",
-  "endurance_scenario_spawns": "Spawns (X, Y)"
+  "endurance_scenario_spawns": "Spawns (X, Y)",
+  "endurance_scenario_preview_unavailable": "Preview unavailable"
 }

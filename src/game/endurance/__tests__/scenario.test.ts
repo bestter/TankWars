@@ -53,6 +53,24 @@ describe("custom endurance scenario", () => {
     expect(() => validateScenario(source)).toThrow("mixed ROCK");
     expect(source.materials[126]).toBe("ROCK");
   });
+  it.each([114, 138])("checks the fractional spawn footprint's boundary column %i at the lava threshold", column => {
+    const heights = Array<number>(800).fill(300);
+    const source = { ...reference, terrainId: undefined, heights, materials: Array(800).fill("DIRT"), spawnXs: [126.5, 600] };
+    heights[113] = 474; heights[139] = 474; // Immediately outside the inclusive footprint [114, 138].
+    heights[114] = 473.999; heights[138] = 473.999;
+    expect(validateScenario(source).spawnXs[0]).toBe(126.5);
+    heights[column] = 474; // Only one of the two boundary columns now touches lava.
+    expect(() => validateScenario(source)).toThrow("inclusive base [114, 138]");
+    heights[column] = 473.999;
+    expect(validateScenario(source).heights[column]).toBe(473.999);
+  });
+  it("requires removing a stale terrainId after a manual terrain edit", () => {
+    const heights = [...reference.heights]; heights[0] += 1;
+    expect(() => validateScenario({ ...reference, heights })).toThrow("terrainId mismatch");
+    const edited = validateScenario({ ...reference, heights, terrainId: undefined });
+    expect(edited.terrainId).not.toBe(reference.terrainId);
+    expect(validateScenario(edited)).toEqual(edited);
+  });
   it("prepares fresh rounds without random draws, resetting combat while preserving session economics", () => {
     const f = fixture(), scenario = validateScenario(reference);
     const rng = vi.fn(() => { throw new Error("unexpected random draw"); }); setRNG({ next: rng });
