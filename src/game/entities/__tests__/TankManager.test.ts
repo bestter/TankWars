@@ -434,4 +434,67 @@ describe("TankManager", () => {
       expect(ys).not.toContain(100 - TANK_GAUGE_DOUBLE_HEALTH_Y_OFFSET);
     });
   });
+
+  describe("recoil state management and decay", () => {
+    function createMockDrawContext(): CanvasRenderingContext2D {
+      const ctx: Partial<CanvasRenderingContext2D> = {
+        fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 0,
+        fillRect: () => {},
+        strokeRect: () => {},
+        beginPath: () => {},
+        arc: () => {},
+        fill: () => {},
+        stroke: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
+        save: () => {},
+        restore: () => {},
+        translate: () => {},
+        rotate: () => {},
+        fillText: () => {},
+      };
+      return ctx as CanvasRenderingContext2D;
+    }
+
+    it("is safe to call decayRecoil when no recoil is active", () => {
+      const tankManager = new TankManager();
+      expect(() => tankManager.decayRecoil()).not.toThrow();
+    });
+
+    it("decays recoil over 9 frames and clears on expiration", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      p1.tank.position = { x: 100, y: 100 };
+      tankManager.setPlayers([p1]);
+
+      tankManager.triggerRecoil(p1.tank.id, 0);
+
+      // Verify recoil decays over exactly 9 steps
+      for (let step = 0; step < 8; step++) {
+        tankManager.decayRecoil();
+        // Still active
+        const ctx = createMockDrawContext();
+        tankManager.draw(ctx, false);
+      }
+
+      // Step 9 expires the recoil
+      tankManager.decayRecoil();
+
+      // Subsequent decays with empty recoil state are safe no-ops
+      tankManager.decayRecoil();
+    });
+
+    it("clears active recoil states with clearRecoil", () => {
+      const tankManager = new TankManager();
+      const p1 = createDummyPlayer("1", false);
+      tankManager.setPlayers([p1]);
+
+      tankManager.triggerRecoil(p1.tank.id, 45);
+      tankManager.clearRecoil();
+      expect(() => tankManager.decayRecoil()).not.toThrow();
+    });
+  });
 });

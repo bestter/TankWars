@@ -1062,16 +1062,19 @@ export class TankManager {
    * Frame-counter based (no heavy time math or allocs per frame).
    */
   public decayRecoil(): void {
-    // Collect to avoid any iterator mutation concerns (defensive, zero cost for N<=4)
-    const toRemove: string[] = [];
+    if (this.recoilState.size === 0) return;
+    let toRemove: string[] | null = null;
     for (const [id, rec] of this.recoilState) {
       rec.remaining -= 1;
       if (rec.remaining <= 0) {
+        if (!toRemove) toRemove = [];
         toRemove.push(id);
       }
     }
-    for (const id of toRemove) {
-      this.recoilState.delete(id);
+    if (toRemove) {
+      for (const id of toRemove) {
+        this.recoilState.delete(id);
+      }
     }
   }
 
