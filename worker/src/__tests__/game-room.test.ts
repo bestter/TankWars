@@ -102,7 +102,6 @@ describe('GameRoom combat persistence comparisons', () => {
       body: JSON.stringify({ roomId: 'comparison', numPlayers: 2,
         slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
     }));
-    const state = room.getRoster()!;
     const events: ShotMessage[] = [1, 2, 3, 4].map((id) => ({
       type: 'SHOT', actionId: `action-${id}`, shotId: id, roundNumber: 1,
       shotNumberInRound: id, isFirstShotOfRound: id === 1, physicsSeed: id,
@@ -112,14 +111,21 @@ describe('GameRoom combat persistence comparisons', () => {
     const key = (id: number) => `combat:1:event:${id}`;
     const wrap = (event: ShotMessage) => ({ kind: 'event', key: String(event.eventSequence), value: event });
     for (const event of events) setup.mockStorage.storageData.set(key(event.eventSequence), structuredClone(wrap(event)));
+
+    // Cold start with the persisted combat entries present in storage
+    const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+    Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+    await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+
+    const state = restored.getRoster()!;
     state.combatJournal = structuredClone(events.slice(0, 3));
     state.combatJournal[2] = { ...events[2], command: { ...events[2].command, power: 70 } };
     state.combatJournal.push({ ...events[3], eventSequence: 5, shotId: 5 });
     const storage = (setup.ctx as { storage: { put: ReturnType<typeof vi.fn> } }).storage;
     const writtenKeys = () => storage.put.mock.calls.flatMap(([batch]) => Object.keys(batch as Record<string, unknown>)).sort();
-    const save = () => (Reflect.get(room, 'saveState') as () => Promise<void>).call(room);
+    const save = () => (Reflect.get(restored, 'saveState') as () => Promise<void>).call(restored);
     storage.put.mockClear();
-    return { ...setup, room, storage, writtenKeys, save, key };
+    return { ...setup, room: restored, storage, writtenKeys, save, key };
   }
 
   it('writes only deeply changed or new combat entries, including after a cold start', async () => {
@@ -754,6 +760,108 @@ describe('Authoritative safe round preparation', () => {
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === "SHOP_FINISH")).toBe(false);
     releases[1](); await completing;
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === "SHOP_FINISH")).toBe(true);
+  });
+
+  it('retains previous action result on saveState failure during completeShopPhase and replays idempotently', async () => {
+    const { setup, room, sockets, state, send } = await startedRoom();
+    state.roundEnded = true;
+    const enter = Reflect.get(room, 'handleShopEnter') as (slot: number, round: number) => Promise<void>;
+    await enter.call(room, 0, 1);
+
+    // Slot 0 becomes ready (saving SHOP_STATE for slot 0)
+    await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' });
+    expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
+
+    // Prepare to intercept the second saveState during slot 1's SHOP_READY:
+    // Slot 1's handleShopReady calls saveState once for the SHOP_STATE entry,
+    // then completeShopPhase calls saveState a second time to persist the round transition.
+    const context = setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } };
+    const origTransaction = context.storage.transaction.getMockImplementation()! as (cb: (txn: unknown) => Promise<void>) => Promise<void>;
+    let txnCount = 0;
+    let failRoundTransition = true;
+    vi.spyOn(context.storage, 'transaction').mockImplementation(async (cb) => {
+      txnCount++;
+      if (txnCount === 2 && failRoundTransition) {
+        throw new Error('simulated disk failure on round transition save');
+      }
+      return origTransaction(cb);
+    });
+
+    // Slot 1 sends SHOP_READY. The second transaction in completeShopPhase will fail.
+    await expect(send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' })).rejects.toThrow(
+      'simulated disk failure on round transition save',
+    );
+
+    // 1. Verify no SHOP_FINISH has been announced to any player
+    expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
+    expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_FINISH')).toBe(false);
+
+    // 2. Verify state was rolled back to round 1 and shopSession is preserved
+    const rosterAfterFailure = room.getRoster()!;
+    expect(rosterAfterFailure.roundNumber).toBe(1);
+    expect(rosterAfterFailure.shopSession).not.toBeNull();
+
+    // 3. Verify the previous action result was preserved as SHOP_STATE (not corrupted into SHOP_FINISH)
+    const ready1ActionKey = 'READY:1:ready-1';
+    expect(rosterAfterFailure.processedShopActions[ready1ActionKey]?.result.type).toBe('SHOP_STATE');
+
+    // Allow transactions to succeed now
+    failRoundTransition = false;
+
+    // 4. Replay the same SHOP_READY with the exact same idempotence key
+    await send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' });
+
+    // 5. Verify the server announces SHOP_FINISH only AFTER the successful save
+    const finish0 = sockets[0].getAllMessages<ShopFinishMessage>().filter((m) => m.type === 'SHOP_FINISH');
+    const finish1 = sockets[1].getAllMessages<ShopFinishMessage>().filter((m) => m.type === 'SHOP_FINISH');
+    expect(finish0).toHaveLength(1);
+    expect(finish1.length).toBeGreaterThanOrEqual(1);
+    expect(finish0[0].nextRoundNumber).toBe(2);
+    expect(sockets[1].getLastMessage()).toMatchObject({
+      type: 'SHOP_FINISH',
+      acknowledgedAction: { slot: 1, actionId: 'ready-1' },
+    });
+
+    // 6. Verify that exactly one next round (round 2) was created and committed
+    const finalRoster = room.getRoster()!;
+    expect(finalRoster.roundNumber).toBe(2);
+    expect(finalRoster.shopSession).toBeNull();
+
+    // 7. Replaying once more is a clean idempotent no-op (still round 2, no round 3 created)
+    sockets[1].sent.length = 0;
+    await send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' });
+    expect(finalRoster.roundNumber).toBe(2);
+  });
+
+  it('does not list storage on first shot of a synchronized round with empty combat cache', async () => {
+    const { setup, sockets, send } = await startedRoom();
+    const list = (setup.ctx as { storage: { list: ReturnType<typeof vi.fn> } }).storage.list;
+    const storage = (setup.ctx as { storage: { put: ReturnType<typeof vi.fn> } }).storage;
+    list.mockClear();
+    storage.put.mockClear();
+
+    const actionId = 'first-shot-action-id';
+    await send(0, {
+      type: 'FIRE',
+      actionId,
+      command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+    });
+
+    // Verify no additional txn.list was executed during this shot
+    expect(list).toHaveBeenCalledTimes(0);
+
+    // Verify both entries (event and fire idempotence) as well as main state are persisted
+    const writtenKeys = storage.put.mock.calls.flatMap(([batch]) => Object.keys(batch as Record<string, unknown>)).sort();
+    expect(writtenKeys).toEqual([
+      'combat:1:event:1',
+      `combat:1:fire:0:${actionId}`,
+      'state',
+    ]);
+    expect(setup.mockStorage.storageData.has('combat:1:event:1')).toBe(true);
+    expect(setup.mockStorage.storageData.has(`combat:1:fire:0:${actionId}`)).toBe(true);
+
+    // Verify shot was broadcasted to players
+    expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === 'SHOT')).toBe(true);
   });
 
   it('loads the same map after restart and rejects a legacy room without generating a replacement', async () => {

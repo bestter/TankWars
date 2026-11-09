@@ -472,8 +472,7 @@ export class GameRoom extends DurableObject {
         } else if (entry.kind === "shop") nextShop[entry.key] = clonedValue as PersistedShopAction;
       }
       const needsStorageList = this.needsCombatStorageSync ||
-        this.syncedRoundNumber !== main.roundNumber ||
-        (this.lastCombatStringified.size === 0 && entries.size > 1);
+        this.syncedRoundNumber !== main.roundNumber;
       await this.ctx.storage.transaction(async (txn) => {
         const stored = needsStorageList ? await txn.list({ prefix: "combat:" }) : null;
         const sourceKeys = stored ? stored.keys() : this.lastCombatStringified.keys();
@@ -2210,11 +2209,18 @@ export class GameRoom extends DurableObject {
 
     // Chaque action acceptée conserve son accusé et la même carte terminale. Les refus restent des refus.
     this.state.lastCompletedShop = finish;
-    for (const action of Object.values(this.state.processedShopActions)) {
+    const upgradedShopActions: Record<string, PersistedShopAction> = {};
+    for (const [actionKey, action] of Object.entries(this.state.processedShopActions)) {
       if (action.result.type === 'SHOP_STATE' && action.result.shopEpoch === shopEpoch) {
-        action.result = { ...finish, acknowledgedAction: action.result.acknowledgedAction };
+        upgradedShopActions[actionKey] = {
+          slot: action.slot,
+          result: { ...finish, acknowledgedAction: action.result.acknowledgedAction },
+        };
+      } else {
+        upgradedShopActions[actionKey] = action;
       }
     }
+    this.state.processedShopActions = upgradedShopActions;
     this.state.players = nextPlayers;
     this.state.economicRevision++;
     this.state.initialRoundPlayers = structuredClone(nextPlayers);
