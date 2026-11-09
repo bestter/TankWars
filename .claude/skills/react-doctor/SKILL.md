@@ -10,17 +10,13 @@ Scans React codebases for security, performance, correctness, and architecture i
 
 ## After making React code changes:
 
-Run `npx --yes react-doctor@latest --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30` and check the diagnostics did not regress.
+Run `npx react-doctor@latest --verbose --scope changed` and check the score did not regress.
 
-For automation through the package script, use `npm --yes run doctor -- --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30`. npm’s `--yes` allows package installation without prompting. React Doctor’s `-y` answers scanner prompts.
-
-If the report is partial or files were skipped at the deadline, record the coverage and retry with a larger budget. A partial retry leaves validation incomplete even with exit code 0. Report separately when no files are eligible.
-
-If regressions are introduced, fix them before committing.
+If the score dropped, fix the regressions before committing.
 
 ## For general cleanup or code improvement:
 
-Run `npx --yes react-doctor@latest --verbose -y --no-score --no-supply-chain --max-duration 60` (the default `--scope full`) to scan the full codebase. Fix issues by severity — errors first, then warnings.
+Run `npx react-doctor@latest --verbose` (the default `--scope full`) to scan the full codebase. Fix issues by severity — errors first, then warnings.
 
 ## For a focused UI design audit:
 
@@ -59,7 +55,7 @@ When the user wants to understand a rule, disagrees with one, or wants to disabl
 ## Command
 
 ```bash
-npx --yes react-doctor@latest --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30
+npx react-doctor@latest --verbose --scope changed
 ```
 
 | Flag                 | Purpose                                                                                 |
@@ -69,10 +65,6 @@ npx --yes react-doctor@latest --verbose --scope changed --blocking warning -y --
 | `--scope changed`    | Only report issues introduced vs the base branch (default: full)                        |
 | `--scope contextual` | Report findings in modified functions, JSX elements, or files, as selected by each rule |
 | `--scope lines`      | Only report issues on the changed lines                                                 |
-| `-y, --yes`          | Skip interactive prompts (essential for non-interactive agents/CI)                      |
-| `--no-score`         | Skip remote score API, share URL, and Sentry crash reporting (offline/sandbox safe)      |
-| `--no-supply-chain`  | Skip remote Socket.dev dependency checks (offline/sandbox safe)                         |
-| `--max-duration <s>` | Time budget in seconds; reports partial results if expired                             |
 | `--score`            | Output only the numeric score                                                           |
 | `design`             | Run only the focused UI design diagnostics                                              |
 
