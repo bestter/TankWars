@@ -23,6 +23,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # L'Action GitHub officielle millionco/react-doctor@v2 s'exécute dans un environnement
+      # non interactif (pas de blocage stdin) et dispose d'un accès réseau complet requis pour
+      # calculer le score, publier le statut de commit (commit-status) et insérer les commentaires
+      # de revue sur la PR. Les drapeaux CLI réservés aux environnements bac à sable locaux ou
+      # agents (-y, --no-score, --no-supply-chain, --max-duration) ne s'y appliquent donc pas.
       - uses: millionco/react-doctor@v2
         with:
           version: latest
