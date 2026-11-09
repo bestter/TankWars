@@ -115,6 +115,10 @@ Rotation avant dépassement, limite exacte acceptée, octets multioctets et LF i
 
 Rotation occurs before exceeding the byte limit; equality is allowed. UTF-8 bytes and LF count, without BOM or normalization. Oversized records remain alone and flagged. Reference pages hold at most 256 entries; HTML views at most 200. Closed parts are immutable. Catalogs record paths, kinds, order, byte sizes, SHA-256, counts and sequence ranges. Session collections retain revisions and capture boundaries. A running session may be fully exported to a confirmed boundary. Recoverable RAM suffixes remain explicitly unconfirmed and cannot be recovered after reopening.
 
+Même si la première écriture du journal échoue, le bundle partiel conserve le journal en attente et le terrain initial personnalisé sous `unconfirmed/`, tant que la séance demeure en mémoire. La borne confirmée reste inchangée. Après rechargement, seules les données confirmées sont récupérables.
+
+Even if the first journal write fails, the partial bundle preserves the pending journal and custom initial terrain under `unconfirmed/` while the session remains in memory. The confirmed boundary stays unchanged. After reopening, only confirmed data can be recovered.
+
 Le navigateur prépare le ZIP64 en OPFS, sans Blob de séance construit en RAM ni export de secours monolithique. Le pilote consomme directement des morceaux natifs bornés, sans ZIP par bloc ni sérialisation métier Python. Les index et tris utilisent IndexedDB ou SQLite sur disque. Prévoir l’espace pour source, parties temporaires, index et ZIP; les quotas d’export ne changent pas le budget du jeu. Annuler nettoie les temporaires de l’export manuel et conserve la source.
 
 Chromium writes ZIP64 to OPFS. The driver transports bounded native chunks without rebuilding business JSON or creating a ZIP per block. Indexes and exact duration sorting use IndexedDB/SQLite on disk. Allow disk space for the source, staged files, indexes and ZIP in addition to the gameplay archive budget. Cancellation preserves source data.

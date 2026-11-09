@@ -66,7 +66,10 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
       firstSequence: null, lastSequence: null, oversized: bytes.length > limit });
   };
   const scenario = source.session.config.scenario;
-  if (scenario) await addTerrain(scenario.terrainId);
+  // A failed first write leaves the initial terrain in the unconfirmed suffix only.
+  const pendingScenario = scenario && source.pending?.some(entry => entry.sequence > source.status.persisted &&
+    entry.event.kind === "archive" && entry.event.write.terrains.some(terrain => terrain.id === scenario.terrainId));
+  if (scenario && !pendingScenario) await addTerrain(scenario.terrainId);
   let after = previous?.journal.persisted ?? 0;
   while (after < source.status.persisted) {
     signal?.throwIfAborted();

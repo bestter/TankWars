@@ -12,12 +12,37 @@ import { replayShot } from "../../diagnostics/replay";
 import { buildBundle } from "../bundle/build";
 import { validateBundle, extractShot } from "../bundle/read";
 import { MemoryDisk } from "./bundleMemory";
+import { jsonBytes } from "../bundle/io";
 
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("exports the unconfirmed initial scenario after the first journal write fails", async () => {
+  const f = fixture(), scenario = validateScenario(reference), storage = new IndexedEnduranceStorage();
+  const write = vi.spyOn(storage, "appendJournal").mockRejectedValue(new Error("quota"));
+  const run = new EnduranceSession({ ...f.config, scenario }, storage);
+  try {
+    await run.start();
+    const source = await run.bundleSource();
+    expect(write).toHaveBeenCalled();
+    expect(source.status).toMatchObject({ persisted: 0, complete: false, error: expect.stringContaining("quota") });
+    const initial = source.pending?.flatMap(row => row.event.kind === "archive" ? row.event.write.terrains : []) ?? [];
+    expect(initial.map(terrain => terrain.id)).toEqual([scenario.terrainId]);
+    const disk = new MemoryDisk(), manifest = await buildBundle(source, disk);
+    expect(manifest).toMatchObject({ complete: false, unconfirmed: true, captureLast: 0, journal: { persisted: 0 } });
+    expect(await validateBundle(disk)).toEqual(manifest);
+    expect(disk.files.get("unconfirmed/terrains/part-000001.jsonl")).toEqual(jsonBytes(initial[0]));
+    expect(new TextDecoder().decode(disk.files.get("unconfirmed/journal/part-000001.jsonl")))
+      .toBe(source.pending?.map(row => JSON.stringify(row) + "\n").join(""));
+    expect([...disk.files.keys()].some(path => path.startsWith("terrains/") || path.startsWith("captures/") || path.startsWith("journal/"))).toBe(false);
+    for (const pending of [[], source.pending?.map(row => ({ ...row, sequence: 0 }))]) {
+      await expect(buildBundle({ ...source, pending }, new MemoryDisk())).rejects.toThrow("ARCHIVE_DEPENDENCY_MISSING");
+    }
+  } finally { await run.stop(); storage.close(); }
+});
 
 it("persists initial terrain before firing, deduplicates modified terrain, replays shot two and recovers the config", async () => {
   const f = fixture(), scenario = validateScenario(reference), storage = new IndexedEnduranceStorage();
@@ -28,6 +53,8 @@ it("persists initial terrain before firing, deduplicates modified terrain, repla
   const emptyDisk = new MemoryDisk();
   expect((await buildBundle(await run.bundleSource(), emptyDisk)).terrain).toMatchObject({ mode: "custom", terrainId: scenario.terrainId });
   await validateBundle(emptyDisk);
+  expect(JSON.parse(new TextDecoder().decode(emptyDisk.files.get("terrains/part-000001.jsonl"))) as unknown).toEqual(initial.terrains[0]);
+  expect([...emptyDisk.files.keys()].some(path => path.startsWith("unconfirmed/"))).toBe(false);
   const engine = new GameEngine(800, 480, { headless: true, gravity: 260, baseShotSpeed: 420 });
   try {
     const prepared = prepareScenarioRound(scenario, run.session.config.players, 1);
