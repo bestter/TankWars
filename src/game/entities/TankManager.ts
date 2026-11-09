@@ -54,6 +54,13 @@ export interface TankPhysicsState {
   fallAttributions: Array<[string, FallAttribution]>;
 }
 
+/** Readonly snapshot of active chassis recoil for diagnostic/test inspection. */
+export interface TankRecoilState {
+  readonly dx: number;
+  readonly dy: number;
+  readonly remaining: number;
+}
+
 export interface ExplosionDamageOptions {
   explosionX: number;
   explosionY: number;
@@ -1081,5 +1088,21 @@ export class TankManager {
   /** Clear any active recoil (e.g. when entering SUMMARY/SHOP or new round). */
   public clearRecoil(): void {
     this.recoilState.clear();
+  }
+
+  /**
+   * Diagnostic / inspection of active recoil for a tank (used in tests and visual debug).
+   * Returns a shallow copy or undefined if no recoil is active for this tank.
+   */
+  public getRecoilState(tankId: string): TankRecoilState | undefined {
+    const rec = this.recoilState.get(tankId);
+    return rec ? { dx: rec.dx, dy: rec.dy, remaining: rec.remaining } : undefined;
+  }
+
+  /**
+   * Diagnostic / inspection of the total count of active recoil states.
+   */
+  public getActiveRecoilCount(): number {
+    return this.recoilState.size;
   }
 }
