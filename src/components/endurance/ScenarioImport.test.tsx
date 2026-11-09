@@ -47,3 +47,21 @@ it.each([2 * 1024 * 1024, 2 * 1024 * 1024 + 1])("checks the %i-byte boundary bef
     expect(text).toHaveBeenCalledOnce();
   }
 });
+
+it("disables the remove button when no scenario, error or loading is active", async () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  render(<Importer />);
+  const removeBtn = screen.getByRole("button", { name: "endurance_scenario_remove" }) as HTMLButtonElement;
+  expect(removeBtn.disabled).toBe(true);
+
+  const user = userEvent.setup();
+  const input = screen.getByTestId("endurance-scenario-input") as HTMLInputElement;
+  const file = new File(["{"], "invalid.json", { type: "application/json" });
+  await user.upload(input, file);
+  await screen.findByRole("alert");
+  expect(removeBtn.disabled).toBe(false);
+
+  await user.click(removeBtn);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(removeBtn.disabled).toBe(true);
+});

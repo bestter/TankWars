@@ -45,6 +45,9 @@ describe("custom endurance scenario", () => {
     const source = { ...reference, terrainId: undefined, heights: Array(800).fill(479), materials: Array(800).fill("DIRT") };
     expect(() => validateScenario(source)).toThrow("lava");
     source.heights[126] = 473.999; source.heights[695] = 0;
+    expect(() => validateScenario(source)).toThrow("lava");
+    for (let c = 114; c <= 138; c++) source.heights[c] = 473.999;
+    for (let c = 683; c <= 707; c++) source.heights[c] = 0;
     expect(validateScenario(source).heights[0]).toBe(479);
     source.materials[126] = "ROCK";
     expect(() => validateScenario(source)).toThrow("mixed ROCK");

@@ -1,3 +1,4 @@
+import { TANK_HITBOX_WIDTH } from "../combatConstants";
 import { fingerprint } from "../diagnostics/archive";
 import { spawnTerrain, type RoundMap } from "../round/prepareRound";
 import { hasSafeRockBase, resetPlayersForSpawn } from "../round/spawnPlacement";
@@ -42,7 +43,12 @@ export function validateScenario(value: unknown): EnduranceScenario {
   const terrain = spawnTerrain(800, { heights, materials });
   const spawnXs = Array.from(s.spawnXs, (x: unknown, i) => {
     requireScenario(finite(x) && x >= 104 && x <= 696, `spawn ${i + 1}: X expected [104, 696]`);
-    requireScenario(heights[Math.floor(x)] < 474, `spawn ${i + 1}: lava (Y must be < 474)`);
+    const left = Math.floor(x - TANK_HITBOX_WIDTH / 2);
+    const right = Math.ceil(x + TANK_HITBOX_WIDTH / 2) - 1;
+    requireScenario(
+      heights.slice(left, right + 1).every(h => h < 474),
+      `spawn ${i + 1}: lava (Y must be < 474 across base [${left}, ${right}])`,
+    );
     requireScenario(hasSafeRockBase(x, terrain), `spawn ${i + 1}: mixed ROCK base`);
     return x;
   });

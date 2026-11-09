@@ -176,12 +176,11 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
     const append = (record: ArchiveRecord) => {
       if (seen.has(record.sequence)) return;
       seen.add(record.sequence); writes.push({ record, terrains: [] });
-      const id = recordTerrainId(record);
-      if (id !== undefined) terrainIds.add(id);
       if ("snapshot" in record.input) {
         if (!object(record.input.snapshot) || typeof record.input.snapshot.terrainId !== "string") throw new Error("INVALID_STORED_CAPTURE");
-        terrainIds.add(record.input.snapshot.terrainId);
       }
+      const id = recordTerrainId(record);
+      if (id !== undefined) terrainIds.add(id);
     };
     const flush = () => { if (wanted) for (const record of group) append(record); group = []; wanted = false; };
     while (after < upper) {
