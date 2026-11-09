@@ -155,13 +155,23 @@ describe('GameRoom combat persistence comparisons', () => {
     expect(setup.writtenKeys()).toEqual([setup.key(6), 'state']);
   });
 
-  it('serializes each current combat entry only once on warm saves', async () => {
+  it('skips re-serializing unchanged combat entries and only serializes modified or new entries on warm saves', async () => {
     const setup = await bootPersistence();
     await setup.save();
     const stringify = vi.spyOn(JSON, 'stringify');
+    const list = (setup.ctx as { storage: { list: ReturnType<typeof vi.fn> } }).storage.list;
+    list.mockClear();
     try {
       await setup.save();
-      expect(stringify).toHaveBeenCalledTimes(4);
+      expect(stringify).toHaveBeenCalledTimes(0);
+      expect(list).toHaveBeenCalledTimes(0);
+
+      const state = setup.room.getRoster()!;
+      const baseShot = state.combatJournal[0] as ShotMessage;
+      state.combatJournal.push({ ...baseShot, eventSequence: 6, shotId: 6 });
+      await setup.save();
+      expect(stringify).toHaveBeenCalledTimes(1);
+      expect(list).toHaveBeenCalledTimes(0);
     } finally {
       stringify.mockRestore();
     }
@@ -177,6 +187,55 @@ describe('GameRoom combat persistence comparisons', () => {
     setup.storage.put.mockClear();
     await setup.save();
     expect(setup.writtenKeys()).toEqual([setup.key(event.eventSequence), 'state']);
+  });
+
+  it('lists storage only on cold start or round transition and purges previous round entries atomically', async () => {
+    const setup = await bootPersistence();
+    const list = (setup.ctx as { storage: { list: ReturnType<typeof vi.fn> } }).storage.list;
+    const del = (setup.ctx as { storage: { delete: ReturnType<typeof vi.fn> } }).storage.delete;
+    await setup.save();
+    setup.storage.put.mockClear();
+    list.mockClear();
+    del.mockClear();
+
+    // Warm save with a modified ShopState -> ShopFinish entry (as in completeShopPhase before round increment)
+    const state = setup.room.getRoster()!;
+    state.processedShopActions['READY:0:r0'] = {
+      slot: 0,
+      result: {
+        type: 'SHOP_STATE',
+        shopEpoch: 1,
+        roundNumber: 1,
+        readySlots: [0],
+        players: [],
+        purchasesByPlayerId: {},
+        aiShopApplied: true,
+      },
+    };
+    await setup.save();
+    expect(list).toHaveBeenCalledTimes(0);
+    expect(setup.writtenKeys()).toEqual(['combat:1:shop:READY:0:r0', 'state']);
+
+    // Mutate shop entry result in-place (simulating SHOP_STATE -> SHOP_FINISH upgrade) and advance round
+    state.roundNumber = 2;
+    state.combatJournal = [];
+    state.earningsResults = {};
+    state.processedFireActionsBySlot = {};
+    state.processedShopActions = {};
+    setup.storage.put.mockClear();
+    del.mockClear();
+    await setup.save();
+
+    expect(list).toHaveBeenCalledTimes(1);
+    const deletedKeys = del.mock.calls.flatMap(([keys]) => keys as string[]).sort();
+    expect(deletedKeys).toEqual([
+      'combat:1:event:1',
+      'combat:1:event:2',
+      'combat:1:event:3',
+      'combat:1:event:5',
+      'combat:1:shop:READY:0:r0',
+    ]);
+    expect(setup.writtenKeys()).toEqual(['state']);
   });
 });
 
