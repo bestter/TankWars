@@ -10,13 +10,17 @@ Scans React codebases for security, performance, correctness, and architecture i
 
 ## After making React code changes:
 
-Run `npx react-doctor@latest --verbose --scope changed -y --no-score --no-supply-chain --max-duration 30` and check the diagnostics did not regress.
+Run `npx --yes react-doctor@latest --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30` and check the diagnostics did not regress.
+
+For automation through the package script, use `npm --yes run doctor -- --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30`. npm’s `--yes` allows package installation without prompting. React Doctor’s `-y` answers scanner prompts.
+
+If the report is partial or files were skipped at the deadline, record the coverage and retry with a larger budget. A partial retry leaves validation incomplete even with exit code 0. Report separately when no files are eligible.
 
 If regressions are introduced, fix them before committing.
 
 ## For general cleanup or code improvement:
 
-Run `npx react-doctor@latest --verbose -y --no-score --no-supply-chain --max-duration 60` (the default `--scope full`) to scan the full codebase. Fix issues by severity — errors first, then warnings.
+Run `npx --yes react-doctor@latest --verbose -y --no-score --no-supply-chain --max-duration 60` (the default `--scope full`) to scan the full codebase. Fix issues by severity — errors first, then warnings.
 
 ## For a focused UI design audit:
 
@@ -55,7 +59,7 @@ When the user wants to understand a rule, disagrees with one, or wants to disabl
 ## Command
 
 ```bash
-npx react-doctor@latest --verbose --scope changed -y --no-score --no-supply-chain --max-duration 30
+npx --yes react-doctor@latest --verbose --scope changed --blocking warning -y --no-score --no-supply-chain --max-duration 30
 ```
 
 | Flag                 | Purpose                                                                                 |
