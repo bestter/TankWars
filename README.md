@@ -503,6 +503,8 @@ Le passage de v3 à v4 est nécessaire pour les nouvelles règles de creusement 
 
 ## Cartes d’endurance personnalisées / Custom endurance maps (#362, v0.14.0)
 
+L’import dans l’interface accepte au plus 2 Mio (2 097 152 octets) et permet de sélectionner de nouveau le même fichier après correction. / UI imports accept up to 2 MiB (2,097,152 bytes) and allow selecting the same file again after correction.
+
 Dans un build de test (`npm run build -- --mode endurance`), ouvrir **Endurance IA**, importer un JSON et vérifier l’aperçu 400 × 240. Le nombre de tanks suit les départs et reste verrouillé; leurs profils restent modifiables. Un fichier invalide, y compris en remplacement, bloque le démarrage jusqu’à correction ou retrait. Retirer le scénario réactive le terrain généré. Cette option ne fait pas partie du menu public, du réseau ou du Worker.
 
 Un scénario v1 contient `schemaVersion`, `id`, `name`, `width: 800`, `height: 480`, `heights` et `materials` (800 valeurs chacun), `wind` et `spawnXs` (2 à 4 X, dans l’ordre du roster). `terrainId` est facultatif à l’entrée; s’il existe, il doit correspondre à l’empreinte calculée. Les hauteurs sont finies dans [0, 479], le vent dans [−60, 60], les X dans [104, 696], séparés d’au moins 100 px. Chaque Y vient de `heights[Math.floor(x)]`, est strictement inférieur à 474 (lave), avec une base compatible ROCK. Modifier directement le JSON permet les coordonnées fractionnaires et l’ajustement d’une seule colonne; après modification du relief, retirer l’ancien `terrainId` ou le recalculer par le validateur.

@@ -121,7 +121,11 @@ export class ShotRecorder {
     this.captureMs += elapsed; this.maxCaptureMs = Math.max(this.maxCaptureMs, elapsed); this.captures++;
   }
   private pruneTerrains(): void {
-    const referenced = new Set(this.groups.flatMap(g => g.records.flatMap(recordTerrainIds)));
+    const referenced = new Set<string>();
+    for (const group of this.groups) for (const record of group.records) {
+      const id = recordTerrainId(record);
+      if (id !== undefined) referenced.add(id);
+    }
     for (const [id, terrain] of this.terrains) if (!referenced.has(id)) { this.bytes -= byteSize(terrain); this.terrains.delete(id); }
   }
   captures = 0;
@@ -135,7 +139,11 @@ export class ShotRecorder {
     }
     if (filter?.from !== undefined) records = records.filter(r => r.sequence >= filter.from!);
     if (filter?.to !== undefined) records = records.filter(r => r.sequence <= filter.to!);
-    const ids = new Set(records.flatMap(recordTerrainIds));
+    const ids = new Set<string>();
+    for (const record of records) {
+      const id = recordTerrainId(record);
+      if (id !== undefined) ids.add(id);
+    }
     return structuredClone(sealArchive({ ...this.archive, records, firstSequence: records[0]?.sequence ?? 0,
       terrains: [...this.terrains.values()].filter(t => ids.has(t.id)) }));
   }
@@ -145,10 +153,14 @@ export class ShotRecorder {
 }
 
 /** Initial terrain is a dependency too, even before any shot snapshot exists. */
-export function recordTerrainIds(record: ArchiveRecord): string[] {
+export function recordTerrainId(record: ArchiveRecord): string | undefined {
   const input = record.input;
-  if ("snapshot" in input) return [input.snapshot.terrainId];
+  if ("snapshot" in input) {
+    const snapshot = input.snapshot;
+    return typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot) &&
+      typeof snapshot.terrainId === "string" ? snapshot.terrainId : undefined;
+  }
   if (input.kind === "boundary" && input.status === "initial-scenario" && typeof input.detail === "object" && input.detail !== null &&
-    "terrainId" in input.detail && typeof input.detail.terrainId === "string") return [input.detail.terrainId];
-  return [];
+    "terrainId" in input.detail && typeof input.detail.terrainId === "string") return input.detail.terrainId;
+  return undefined;
 }

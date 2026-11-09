@@ -24,7 +24,7 @@ function ScenarioPreview({ scenario }: { scenario: EnduranceScenario }) {
     });
     ctx.restore();
   }, [scenario]);
-  return <canvas ref={canvas} width={400} height={240} data-testid="endurance-scenario-preview" aria-label={scenario.name} />;
+  return <canvas ref={canvas} width={400} height={240} data-testid="endurance-scenario-preview" role="img" aria-label={scenario.name}>{scenario.name}</canvas>;
 }
 
 export function ScenarioImport({ selection, onChange }: { selection: ScenarioSelection; onChange: (value: ScenarioSelection) => void }) {
@@ -35,6 +35,7 @@ export function ScenarioImport({ selection, onChange }: { selection: ScenarioSel
     const id = ++request.current;
     onChange({ scenario: null, error: null, loading: true });
     try {
+      if (file.size > 2 * 1024 * 1024) throw new Error("INVALID_SCENARIO: file exceeds 2 MiB");
       const scenario = validateScenario(JSON.parse(await file.text()) as unknown);
       if (id === request.current) onChange({ scenario, error: null, loading: false });
     } catch (error) {
@@ -45,7 +46,7 @@ export function ScenarioImport({ selection, onChange }: { selection: ScenarioSel
   return <fieldset>
     <legend>{t(s ? "endurance_scenario_custom" : "endurance_scenario_generated")}</legend>
     <label>{t("endurance_scenario_import")}<input ref={input} type="file" accept=".json,application/json" data-testid="endurance-scenario-input"
-      onChange={e => { const file = e.target.files?.[0]; if (file) void load(file); }} /></label>
+      onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void load(file); }} /></label>
     <button type="button" onClick={() => { request.current++; if (input.current) input.current.value = ""; onChange({ scenario: null, error: null, loading: false }); }}>{t("endurance_scenario_remove")}</button>
     {selection.loading && <p role="status">{t("endurance_scenario_loading")}</p>}
     {selection.error && <p role="alert">{t("endurance_scenario_invalid")}: {selection.error}</p>}

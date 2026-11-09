@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { GameEngine } from "../../engine/GameEngine";
 import { makePlayer, makeTank, makeRoundMap } from "../../__tests__/helpers";
-import { ShotRecorder, byteSize, fingerprint, sealArchive } from "../archive";
+import { ShotRecorder, byteSize, fingerprint, sealArchive, recordTerrainId } from "../archive";
 import { replayShot } from "../replay";
 import { validateArchive } from "../validate";
 import { filterArchive, exportStoredArchive } from "../export";
 import { IndexedEnduranceStorage } from "../../endurance/storage";
 import { EnduranceJournal } from "../../endurance/journal";
-import type { ArchiveWrite, ShotArchive } from "../types";
+import type { ArchiveRecord, ArchiveWrite, ShotArchive } from "../types";
 import type { WeaponId } from "../../../types/weapon";
 import { EnduranceSession } from "../../endurance/session";
 import { fixture } from "../../endurance/__tests__/helpers";
@@ -56,6 +56,19 @@ function resign(archive: ShotArchive): void {
 }
 
 describe("single-shot archives against the real local engine", () => {
+  it.each([null, undefined, 42, "broken", [], {}, { terrainId: 42 }])("ignores corrupt snapshot terrain references: %j", snapshot => {
+    const record = { input: { kind: "pre-shot", snapshot } } as unknown as ArchiveRecord;
+    expect(recordTerrainId(record)).toBeUndefined();
+  });
+  it("retains initial terrain dependencies through pruning and filtering", () => {
+    const recorder = new ShotRecorder("initial-terrain");
+    const terrain = { id: "initial", width: 800, height: 480, heights: Array<number>(800).fill(300), materials: Array<"DIRT">(800).fill("DIRT") };
+    recorder.record({ kind: "boundary", status: "initial-scenario", detail: { terrainId: terrain.id } }, terrain);
+    const archive = recorder.export();
+    expect(archive.terrains).toEqual([terrain]);
+    expect(filterArchive(archive).terrains).toEqual([terrain]);
+    expect(recordTerrainId({ input: { snapshot: { terrainId: "current" } } } as unknown as ArchiveRecord)).toBe("current");
+  });
   it("captures the owning UI phase for a current snapshot outside combat", () => {
     const engine = new GameEngine(800, 480, { headless: true });
     engine.diagnosticPhase = () => "SHOP";

@@ -67,7 +67,12 @@ export function scenarioProvenance(scenario?: EnduranceScenario | null) {
 /** First line JSON metadata, followed by a rectangular, top-to-bottom silhouette. */
 export function convertScenarioSketch(text: string): EnduranceScenario {
   const [header, ...rows] = text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-  const metadata: unknown = JSON.parse(header);
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(header) as unknown;
+  } catch {
+    throw new Error("INVALID_SCENARIO: header must be valid JSON metadata");
+  }
   requireScenario(typeof metadata === "object" && metadata !== null && !Array.isArray(metadata), "metadata required");
   const width = rows[0]?.length ?? 0;
   requireScenario(width > 0 && width <= 800 && rows.length > 0 && rows.length <= 480, "sketch dimensions expected 1–800 × 1–480");

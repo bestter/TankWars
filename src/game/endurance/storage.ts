@@ -4,7 +4,7 @@ import { metrics } from "./metrics";
 import { isPlayers } from "../online/protocol";
 import type { JournalEntry, JournalStatus, JournalStorage } from "./journal";
 import type { ArchiveFilter } from "../diagnostics/export";
-import { byteSize, recordTerrainIds } from "../diagnostics/archive";
+import { byteSize, recordTerrainId } from "../diagnostics/archive";
 import type { ArchiveRecord, ArchiveWrite, TerrainRecord, ShotListPage } from "../diagnostics/types";
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -176,7 +176,8 @@ export class IndexedEnduranceStorage implements EnduranceStorage {
     const append = (record: ArchiveRecord) => {
       if (seen.has(record.sequence)) return;
       seen.add(record.sequence); writes.push({ record, terrains: [] });
-      for (const id of recordTerrainIds(record)) terrainIds.add(id);
+      const id = recordTerrainId(record);
+      if (id !== undefined) terrainIds.add(id);
       if ("snapshot" in record.input) {
         if (!object(record.input.snapshot) || typeof record.input.snapshot.terrainId !== "string") throw new Error("INVALID_STORED_CAPTURE");
         terrainIds.add(record.input.snapshot.terrainId);

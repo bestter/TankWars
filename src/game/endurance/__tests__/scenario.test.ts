@@ -13,6 +13,9 @@ import { EnduranceSession } from "../session";
 const previous = getRNG();
 afterEach(() => { setRNG(previous); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("custom endurance scenario", () => {
+  it.each(["", "\n..\ndd", "{\n..\ndd", "{invalid}\n..\ndd"])("standardizes malformed sketch headers: %j", text => {
+    expect(() => convertScenarioSketch(text)).toThrow("INVALID_SCENARIO: header must be valid JSON metadata");
+  });
   it("converts the complete sketch deterministically with exact fractional spawns and orientation", () => {
     const text = readFileSync("Scripts/endurance/scenarios/issue-361-rock-cliff.txt", "utf8");
     expect(convertScenarioSketch(text)).toEqual(reference);
