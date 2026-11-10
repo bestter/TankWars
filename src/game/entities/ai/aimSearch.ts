@@ -3,6 +3,8 @@ export type AimVariant = "full" | "low" | "high";
 export interface AimSearchPolicy {
   readonly variant: AimVariant;
   readonly penalizeProximity: boolean;
+  /** Local EXPERT own shots: keep integrating a trajectory still in flight past 420 steps. */
+  readonly extendOpenFlight?: boolean;
 }
 export const ORDINARY_AIM_POLICY: AimSearchPolicy = { variant: "full", penalizeProximity: true };
 export const MATERIAL_AIM_VARIANTS: readonly AimVariant[] = ["full", "low", "high"];

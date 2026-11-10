@@ -4,7 +4,7 @@ import { TANK_HITBOX_WIDTH } from "../../combatConstants";
 import type { TerrainManager } from "../../engine/Terrain";
 import type { AimCommand } from "./aimCorruption";
 import { aimCone, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
-import { searchBallisticSolution } from "./BallisticsSimulator";
+import { BALLISTICS_MAX_STEPS, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS, searchBallisticSolution } from "./BallisticsSimulator";
 
 /** Bounded #212 search: ideal adverse shots, offset own proposals, ordinary last resort. */
 export function solveExpertAim(
@@ -42,6 +42,7 @@ export function solveExpertAim(
     obstaclePenaltyLow: 20,
     weaponId,
     earlyExitError: 4,
+    maxSteps: policy.extendOpenFlight === true ? EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS : BALLISTICS_MAX_STEPS,
     selfHarmPenalty: policy.penalizeProximity ? (landX, landY) =>
       Math.hypot(landX - sx, landY - sy) <= blastRadius + TANK_HITBOX_WIDTH ? 50000 : 0 : undefined,
   });

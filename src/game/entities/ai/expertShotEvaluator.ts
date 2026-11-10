@@ -295,8 +295,13 @@ function* expertProposals(
         if (mode === "own") cache.diagnostics.ownProposals++;
         else cache.diagnostics.adverseProposals++;
       }
-      const policy: AimSearchPolicy = mode === "own"
-        ? { variant, penalizeProximity: false } : ORDINARY_AIM_POLICY;
+      const policy: AimSearchPolicy = context.mode === "own"
+        ? {
+            variant,
+            penalizeProximity: false,
+            ...(context.advisor ? {} : { extendOpenFlight: true as const }),
+          }
+        : ORDINARY_AIM_POLICY;
       const requestedPoint = { x: point.x + aim.offset, y: point.y };
       const searchKey = JSON.stringify([shooter.id, weaponId, requestedPoint.x, requestedPoint.y,
         state.windForce, state.gravity, policy]);

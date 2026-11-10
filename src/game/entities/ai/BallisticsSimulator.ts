@@ -13,6 +13,8 @@ import type { Player } from "../../../types/player";
 import { finalizeAdvancedAim, type AimCommand } from "./aimCorruption";
 
 export const BALLISTICS_MAX_STEPS = 420;
+/** Local EXPERT own shots only. Continues a trajectory still flying at 420. */
+export const EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS = 600;
 
 export const BULLDOZER_DIRECT_SEARCH_MAX_SIMULATIONS = 512;
 export const BULLDOZER_DIRECT_COARSE_ANGLE_STEP = 5;
@@ -117,6 +119,8 @@ export interface ShotResult {
   landY: number;
   hitTerrainEarly: boolean;
   complete?: boolean;
+  /** Integration steps until collision, map exit, or the step budget. Tank stabilization is excluded. */
+  steps: number;
 }
 
 export interface BallisticSearchConfig {
@@ -147,6 +151,8 @@ export interface BallisticSearchConfig {
   earlyExitError?: number;
   /** Restricted searches must also bound the initial fallback. */
   projectFallbackToCone?: boolean;
+  /** Steps for a trajectory still in flight. Defaults to BALLISTICS_MAX_STEPS. */
+  maxSteps?: number;
 }
 
 export interface BallisticSearchResult {
@@ -166,6 +172,7 @@ export function simulateShot(
   wind: number,
   gravity: number,
   terrain: TerrainManager,
+  maxSteps: number = BALLISTICS_MAX_STEPS,
 ): ShotResult {
   const launch = launchFromBarrel(sx, sy, angleDeg);
   let x = launch.x;
@@ -176,8 +183,10 @@ export function simulateShot(
   let landY = y;
   let hitEarly = false;
   let complete = false;
+  let steps = 0;
 
-  for (let step = 0; step < BALLISTICS_MAX_STEPS; step++) {
+  for (let step = 0; step < maxSteps; step++) {
+    steps = step + 1;
     vy += gravity * BALLISTICS_DT;
     vx += wind * BALLISTICS_DT;
 
@@ -207,7 +216,7 @@ export function simulateShot(
     landY = y;
   }
 
-  return { landX, landY, hitTerrainEarly: hitEarly, complete };
+  return { landX, landY, hitTerrainEarly: hitEarly, complete, steps };
 }
 
 /** Grenade bounce + cluster-aware trajectory for Expert AI weapon selection. */
@@ -220,6 +229,7 @@ export function simulateSmartShot(
   gravity: number,
   terrain: TerrainManager,
   weaponId: WeaponId,
+  maxSteps: number = BALLISTICS_MAX_STEPS,
 ): ShotResult {
   const launch = launchFromBarrel(sx, sy, angleDeg);
   let x = launch.x;
@@ -231,10 +241,12 @@ export function simulateSmartShot(
   let hitEarly = false;
   let complete = false;
   let bounceCount = 0;
+  let steps = 0;
 
   const isGrenade = weaponId === "GRENADE";
 
-  for (let step = 0; step < BALLISTICS_MAX_STEPS; step++) {
+  for (let step = 0; step < maxSteps; step++) {
+    steps = step + 1;
     const prevVy = vy;
     vy += gravity * BALLISTICS_DT;
     vx += wind * BALLISTICS_DT;
@@ -290,7 +302,7 @@ export function simulateSmartShot(
     landY = y;
   }
 
-  return { landX, landY, hitTerrainEarly: hitEarly, complete };
+  return { landX, landY, hitTerrainEarly: hitEarly, complete, steps };
 }
 
 function computeShotError(res: ShotResult, config: BallisticSearchConfig): number {
@@ -331,6 +343,7 @@ function evaluateAnglePower(
 
   for (let iter = 0; iter < config.powerIterations; iter++) {
     const p = (lo + hi) / 2;
+    const budget = config.maxSteps ?? BALLISTICS_MAX_STEPS;
     const res =
       config.weaponId &&
       (config.weaponId === "GRENADE" || config.weaponId === "CLUSTER")
@@ -343,6 +356,7 @@ function evaluateAnglePower(
             config.gravity,
             config.terrain,
             config.weaponId,
+            budget,
           )
         : simulateShot(
             config.sx,
@@ -352,6 +366,7 @@ function evaluateAnglePower(
             config.wind,
             config.gravity,
             config.terrain,
+            budget,
           );
 
     const err = computeShotError(res, config);

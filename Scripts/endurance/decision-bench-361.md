@@ -1,6 +1,6 @@
 # Banc de décisions EXPERT — #361
 
-Ce banc s’exécute hors navigateur et hors endurance. Il recharge cinq états de la campagne `endurance-20261109-mirror-2h` dans le vrai `AISmartStrategy`, son planificateur, son solveur et `resolvePhysicalShot`. Aucun de ces modules n’est remplacé par un résultat fictif. Le comportement du jeu reste inchangé.
+Ce banc s’exécute hors navigateur et hors endurance. Il recharge cinq états de la campagne `endurance-20261109-mirror-2h` dans le vrai `AISmartStrategy`, son planificateur, son solveur et `resolvePhysicalShot`. Aucun de ces modules n’est remplacé par un résultat fictif. Depuis v0.14.1, les tirs propres d’EXPERT local prolongent les vols encore ouverts de 420 à 600 pas.
 
 ## Données conservées
 
@@ -42,7 +42,7 @@ New-Item -ItemType Directory -Force $env:TEMP | Out-Null
 npm run test -- src/game/entities/ai/__tests__/issue361Bench.test.ts
 ```
 
-Les tests ordinaires vérifient l’intégrité des entrées, les replays, les certificats, l’isolation, la déterminisation, les callbacks et les sondes du solveur. **Quatre tests `it.fails` exécutent aussi la vraie décision et expriment l’objectif encore non satisfait : trouver un tir évalué utile contre un adversaire vivant dans ces états possédant un certificat.** Ils ne sont pas ignorés. Leur échec attendu n’est pas un correctif ni une approbation du repli actuel. Quand un correctif rend un cas utile, Vitest signale un succès inattendu : il faut alors promouvoir ce cas en test ordinaire. Les tests ordinaires exécutent les mêmes décisions pour qu’une exception ou une corruption du banc ne soit pas masquée par les échecs attendus.
+Les tests ordinaires vérifient l’intégrité des entrées, les replays, les certificats, l’isolation, la déterminisation, les callbacks et les sondes du solveur. Depuis #361 (v0.14.1), `a-to-c-95` et `d-to-b-95` sont des tests ordinaires : la décision évaluée, graine 865, doit être utile à puissance ≤ 95. **Deux tests `it.fails` conservent `a-to-d-99` et `d-to-a-99` pour [#400](https://github.com/bestter/TankWars/issues/400).** Ils ne sont pas ignorés. Leur échec attendu n’approuve pas le repli actuel. Quand un correctif rend un de ces cas utile, Vitest signale un succès inattendu : il faut alors le promouvoir avec #400. Le cas `no-witness-d-to-a` reste une recherche sans effet utile, en phase `REPLI`, sans candidat du plan principal. Les tests ordinaires exécutent aussi les décisions résiduelles pour qu’une exception ou une corruption du banc ne soit pas masquée par les échecs attendus.
 
 Ne pas exiger une commande précise ou une cible précise pour le futur choix autonome : une autre décision utile et admissible peut être correcte. Un certificat physique ne prouve pas à lui seul son admissibilité économique ou tactique; il faut examiner les propositions et les refus dans `observation.diagnostics`.
 
@@ -56,8 +56,26 @@ node Scripts/diagnose-expert-361.mjs --matrix --seed 865 --output artifacts/issu
 
 La matrice comprend **30 décisions** : cinq états × vents −20/0/+20 × deux graines consécutives. Le certificat initial est resimulé pour chaque vent et n’est jamais présumé encore utile. Cette matrice reste un test court et ne lance pas Chromium. Les variations de profondeur de creux ou de montagne ne sont pas encore générées par ce banc : il faudra préparer, stabiliser et recertifier leurs états séparément. Le témoin sans certificat n’est pas présenté comme un cas physiquement inaccessible.
 
-L’horizon de recherche courant reste celui du solveur de production. Les champs `steps` du résolveur incluent la stabilisation des tanks; **ils ne mesurent pas uniquement le temps de vol** et ne suffisent pas à attribuer l’échec à l’horizon de recherche.
+L’horizon partagé du solveur reste de **420 pas**. Les tirs propres d’EXPERT local prolongent une trajectoire encore en vol jusqu’à **600 pas** (`EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS`). Le conseiller, les menaces, les autres profils, le dernier MISSILE ordinaire non certifié et BULLDOZER direct restent à 420. Les champs `steps` du résolveur physique incluent la stabilisation des tanks; **ils ne mesurent pas uniquement le temps de vol**. Le champ `steps` de `simulateShot` compte seulement l’intégration du projectile.
 
-Les captures `a-to-c-95` et `d-to-b-95` servent à vérifier la correction de l’horizon dans [#361](https://github.com/bestter/TankWars/issues/361). Les deux captures avec témoin à puissance 99 et celle sans témoin servent à explorer les lacunes résiduelles dans [#400](https://github.com/bestter/TankWars/issues/400).
+Les captures `a-to-c-95` et `d-to-b-95` vérifient cette correction dans [#361](https://github.com/bestter/TankWars/issues/361). Les deux captures avec témoin à puissance 99 et celle sans témoin restent des lacunes résiduelles dans [#400](https://github.com/bestter/TankWars/issues/400).
 
-Signé : **Codex — GPT-6**.
+## Mesures avant et après #361
+
+Graine 865, vent 0, `AISmartStrategy` réel, état neuf et mémoire archivée. Avant : horizon unique de 420 pas. Après : vols propres encore ouverts jusqu’à 600 pas. `utile` porte sur la commande évaluée et la cible historique. Les propositions viennent de `observation.diagnostics.exploration` (`ownProposals` / `adverseProposals`); sur ces cinq états, chaque proposition propre enregistrée a une prévision complète. Les durées sont celles de cette machine et ne font pas partie du contrat déterministe. Les 30 décisions de la matrice après correction ont pris 4,44 s au total.
+
+| Fixture | Avant (420) | Après (600 sur les tirs propres) |
+| --- | --- | --- |
+| `a-to-d-99` | REPLI, 0 candidat, MISSILE 30,9°/58, inutile, roche proche, 132 propres / 12 adverses, 94 ms | REPLI, 0 candidat, MISSILE 30,9°/58, inutile, roche proche, 132 propres / 12 adverses, 113 ms |
+| `d-to-a-99` | REPLI, 0 candidat, MISSILE 108,6°/94, inutile, 381 propres / 23 adverses, 193 ms | REPLI, 0 candidat, MISSILE 108,6°/95, inutile, 381 propres / 23 adverses, 218 ms |
+| `a-to-c-95` | REPLI, 0 candidat, MISSILE 62°/95, inutile, roche proche, 36 propres / 6 adverses, 25 ms | OPTIMISER_PROFIT, 1 candidat, MISSILE 74°/95, utile, 18 propres / 6 adverses, 31 ms |
+| `d-to-b-95` | REPLI, 0 candidat, MISSILE 118,5°/93, inutile, roche proche, 48 propres / 6 adverses, 29 ms | OPTIMISER_PROFIT, 3 candidats, MISSILE 107°/88, utile, 30 propres / 6 adverses, 50 ms |
+| `no-witness-d-to-a` | REPLI, 0 candidat, MISSILE 110,5°/95, inutile, roche proche, 216 propres / 13 adverses, 99 ms | REPLI, 0 candidat, MISSILE 110,5°/95, inutile, roche proche, 216 propres / 13 adverses, 200 ms |
+
+La baisse du nombre de propositions propres sur `a-to-c-95` et `d-to-b-95` vient du planificateur déjà en place : dès qu’un candidat classé existe, il n’énumère plus les replis à profit négatif. Les deux témoins à 95 entrent dans ce classement normal. `d-to-b-95` retient trois candidats; la sonde publiée 107°/92 n’est pas la commande retenue (107°/88), mais le tir reste utile à puissance ≤ 95. `a-to-c-95` retient exactement 74°/95.
+
+Hors du certificat archivé (vent 0, graine 865), la même matrice rend quelques cellules utiles sans promouvoir les lacunes de #400 : `a-to-d-99` au vent +20 (865 : 71,1°/93; 866 : 72,9°/92), `d-to-a-99` au vent −20 et à la graine 866 seulement (112,4°/92), et `no-witness-d-to-a` au vent −20 (SURVIE, DRILLER 107,5°/94). Le cas archivé sans témoin reste inutile. `a-to-c-95` au vent −20 et `d-to-b-95` au vent +20 restent en REPLI.
+
+La matrice complète, cinq états × vents −20/0/+20 × graines 865 et 866, est produite par la commande `--matrix` ci-dessus. Le JSON reste sous `artifacts/` et n’est pas versionné.
+
+Signé : **Codex — GPT-6** (banc d’origine). Mesures après #361 : **Grok 4.7**.

@@ -151,7 +151,9 @@ describe("EXPERT immediate net profit policy #288", () => {
         const command = { angle: 30 + index * 3 + arc, power: 50 };
         const selectedIndex = own ? arc : index;
         cache.search.set(JSON.stringify(["self", "NUKE", point.x, point.y, 0, 260,
-          { variant, penalizeProximity: !own }]), { command, complete: index === 0 && arc < 2 || !own && index < 2 });
+          own
+            ? { variant, penalizeProximity: false, extendOpenFlight: true }
+            : { variant, penalizeProximity: true }]), { command, complete: index === 0 && arc < 2 || !own && index < 2 });
         cache.physics.set(JSON.stringify(["self", "NUKE", command.angle, command.power, 0, 260, 2, false]), {
           ...complete({ hits: [{ shotId: 1, munitionId: 0, weaponId: "NUKE", x: point.x, y: point.y, directTargetId: "target" }],
             damage: [effect("NUKE")], survivors: selectedIndex === 0 ? ["self"] : [],

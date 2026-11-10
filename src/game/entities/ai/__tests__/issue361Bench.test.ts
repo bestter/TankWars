@@ -6,6 +6,8 @@ import { getRNG, setRNG } from "../../../../utils/random";
 import { object } from "../../../diagnostics/validate";
 import { historicalReplay, loadFixtures, parseFixture, probeSolver, restore, runDecision, useful } from "./issue361Bench";
 import type { DecisionFixture } from "./issue361Bench";
+import { BALLISTICS_MAX_STEPS, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS, simulateShot } from "../BallisticsSimulator";
+import { solveExpertAim } from "../expertAim";
 import { resolvePhysicalShot } from "../physicalShotForecast";
 
 const fixtures = loadFixtures();
@@ -103,12 +105,83 @@ describe("#361 real decision isolation and diagnostics", () => {
   });
 });
 
-describe("#361 known planning gaps — expected failures, not an approved game rule", () => {
-  // These assertions execute the real strategy and currently fail. When a fix makes
-  // one succeed, Vitest reports an unexpected pass: promote that case to ordinary it.
-  it.fails.each(fixtures.filter(f => f.witness !== null))("finds a useful evaluated shot for $id", async fixture => {
+const OPEN_HORIZON_CASES = new Set(["a-to-c-95", "d-to-b-95"]);
+const RESIDUAL_WITNESS_CASES = new Set(["a-to-d-99", "d-to-a-99"]);
+
+describe("#361 open-flight horizon for local EXPERT own shots", () => {
+  it.each(fixtures.filter(f => OPEN_HORIZON_CASES.has(f.id)))(
+    "keeps the $id witness in flight at 420 steps and resolves it by 600",
+    fixture => {
+      const f = restore(fixture);
+      const witness = fixture.witness;
+      if (!witness) throw new Error("Witness required");
+      const origin = { x: f.shooter.tank.position.x, y: f.shooter.tank.position.y };
+      const truncated = simulateShot(origin.x, origin.y, witness.angle, witness.power,
+        f.state.windForce, f.state.gravity, f.terrain, BALLISTICS_MAX_STEPS);
+      const extended = simulateShot(origin.x, origin.y, witness.angle, witness.power,
+        f.state.windForce, f.state.gravity, f.terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+      const settled = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", witness, { localMatch: true });
+
+      expect(truncated).toMatchObject({ complete: false, steps: BALLISTICS_MAX_STEPS });
+      expect(extended.complete).toBe(true);
+      expect(extended.steps).toBeGreaterThan(BALLISTICS_MAX_STEPS);
+      expect(extended.steps).toBeLessThanOrEqual(EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+      expect(settled.complete).toBe(true);
+      if (settled.complete) expect(settled.steps).not.toBe(extended.steps);
+    },
+  );
+
+  it.each(fixtures.filter(f => OPEN_HORIZON_CASES.has(f.id)))(
+    "finds a useful power<=95 solver proposal for $id",
+    fixture => {
+      const f = restore(fixture);
+      const solution = solveExpertAim(
+        f.shooter, f.target.tank.position.x, f.target.tank.position.y - 7.5,
+        f.state.windForce, f.state.gravity, f.terrain, "MISSILE",
+        { variant: "high", penalizeProximity: false, extendOpenFlight: true },
+      );
+      const command = { ...solution.command, weaponId: "MISSILE" as const };
+      const physics = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", command, { localMatch: true });
+
+      expect(solution.complete).toBe(true);
+      expect(solution.command.power).toBeLessThanOrEqual(95);
+      expect(useful(physics, fixture.targetId)).toBe(true);
+      expect(physics.survivors).toContain(fixture.shooterId);
+    },
+  );
+
+  it.each(fixtures.filter(f => OPEN_HORIZON_CASES.has(f.id)))(
+    "finds a useful evaluated shot for $id",
+    async fixture => {
+      const result = await runDecision(fixture);
+      const opponents = fixture.state.players.filter(p => p.id !== fixture.shooterId && !p.tank.isDead);
+      expect(result.observation.evaluated?.power).toBeLessThanOrEqual(95);
+      expect(opponents.some(p => useful(result.evaluatedPhysics, p.id))).toBe(true);
+    },
+    15_000,
+  );
+
+  it("ends no-witness-d-to-a with an unsuccessful search", async () => {
+    const fixture = fixtures.find(f => f.id === "no-witness-d-to-a");
+    if (!fixture) throw new Error("Fixture required");
     const result = await runDecision(fixture);
     const opponents = fixture.state.players.filter(p => p.id !== fixture.shooterId && !p.tank.isDead);
-    expect(opponents.some(p => useful(result.evaluatedPhysics, p.id))).toBe(true);
-  });
+    expect(opponents.some(p => useful(result.evaluatedPhysics, p.id))).toBe(false);
+    expect(result.usefulOnHistoricalTarget).toBe(false);
+    expect(result.phase).toBe("REPLI");
+    expect(result.candidateCount).toBe(0);
+    expect(result.observation.reason).toBe("ordre stable des armes, des points ou des arcs");
+  }, 15_000);
+});
+
+describe("#400 residual witnesses — expected failures, not an approved game rule", () => {
+  // Power-99 witnesses stay out of #361. An unexpected pass must be promoted only with #400.
+  it.fails.each(fixtures.filter(f => RESIDUAL_WITNESS_CASES.has(f.id)))(
+    "finds a useful evaluated shot for $id",
+    async fixture => {
+      const result = await runDecision(fixture);
+      const opponents = fixture.state.players.filter(p => p.id !== fixture.shooterId && !p.tank.isDead);
+      expect(opponents.some(p => useful(result.evaluatedPhysics, p.id))).toBe(true);
+    },
+  );
 });
