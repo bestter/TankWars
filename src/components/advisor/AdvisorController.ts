@@ -2,6 +2,7 @@ import { writeDecisionConsole } from "../../utils/decisionConsole";
 import type { AdvisorObjective } from "../../game/entities/ai/expertPolicy";
 import type { AdvisorSnapshot } from "../../game/entities/ai/shotAdvisor";
 import { isAdvisorResult, type AdvisorResult } from "../../game/entities/ai/advisorProtocol";
+import { isOutOfPlayerStatus } from "../playerStatus";
 
 export interface AdvisorHost {
   observing?(): boolean;
@@ -70,7 +71,7 @@ export class AdvisorController {
     if (!players) return false;
     const self = players.find((player) => player.id === playerId);
     const target = players.find((player) => player.id === targetId);
-    return self?.isHuman === true && target !== undefined && !target.tank.isDead && target.tank.health > 0;
+    return self?.isHuman === true && !isOutOfPlayerStatus(self) && target !== undefined && !isOutOfPlayerStatus(target);
   }
 
   private idleView(playerId: string | undefined, objective: AdvisorObjective): AdvisorView {
@@ -136,9 +137,9 @@ export class AdvisorController {
       removed = true;
     }
     if (!removed) return;
+    this.lockEpoch += 1;
     const lockedTargetId = this.lockFor(this.view.playerId);
     if (this.view.lockedTargetId === lockedTargetId) return;
-    this.lockEpoch += 1;
     const playerId = this.view.playerId;
     const objective = this.view.objective;
     this.stop();
