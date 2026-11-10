@@ -51,6 +51,6 @@ export function solveExpertAim(
       angle: Math.max(6, Math.min(174, best.angle)),
       power: Math.max(25, Math.min(95, best.power)),
     },
-    complete: best.complete !== false,
+    complete: best.complete,
   };
 }

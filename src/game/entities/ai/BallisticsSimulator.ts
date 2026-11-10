@@ -118,7 +118,8 @@ export interface ShotResult {
   landX: number;
   landY: number;
   hitTerrainEarly: boolean;
-  complete?: boolean;
+  /** False when the trajectory is still in flight at the step budget. */
+  complete: boolean;
   /** Integration steps until collision, map exit, or the step budget. Tank stabilization is excluded. */
   steps: number;
 }
@@ -160,7 +161,7 @@ export interface BallisticSearchResult {
   power: number;
   err: number;
   /** False when the chosen trajectory exhausted its step bound or no trial was evaluated. */
-  complete?: boolean;
+  complete: boolean;
 }
 
 /** Standard projectile trajectory (missile, driller, bullet, etc.). */
@@ -340,10 +341,10 @@ function evaluateAnglePower(
   let bestPower = (lo + hi) / 2;
   let bestErr = 999999;
   let bestComplete = false;
+  const budget = config.maxSteps ?? BALLISTICS_MAX_STEPS;
 
   for (let iter = 0; iter < config.powerIterations; iter++) {
     const p = (lo + hi) / 2;
-    const budget = config.maxSteps ?? BALLISTICS_MAX_STEPS;
     const res =
       config.weaponId &&
       (config.weaponId === "GRENADE" || config.weaponId === "CLUSTER")
@@ -370,12 +371,11 @@ function evaluateAnglePower(
           );
 
     const err = computeShotError(res, config);
-    const complete = res.complete !== false;
     // A truncated endpoint must not displace a resolved trajectory.
-    if ((complete && !bestComplete) || (complete === bestComplete && err < bestErr)) {
+    if ((res.complete && !bestComplete) || (res.complete === bestComplete && err < bestErr)) {
       bestErr = err;
       bestPower = p;
-      bestComplete = complete;
+      bestComplete = res.complete;
     }
 
     if (res.landX < config.tx) {
@@ -401,11 +401,10 @@ function sweepAngles(
 
   for (let a = from; a <= to; a += step) {
     const { power, err, complete } = evaluateAnglePower(a, config);
-    const bestComplete = best.complete === true;
-    if ((complete && !bestComplete) || (complete === bestComplete && err < best.err)) {
+    if ((complete && !best.complete) || (complete === best.complete && err < best.err)) {
       best = { angle: a, power, err, complete };
     }
-    if (best.complete === true && config.earlyExitError != null && best.err <= config.earlyExitError) {
+    if (best.complete && config.earlyExitError != null && best.err <= config.earlyExitError) {
       break;
     }
   }

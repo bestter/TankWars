@@ -8,6 +8,7 @@ import {
   simulateDirectBulldozerTrajectory,
 } from "../BallisticsSimulator";
 import * as ballistics from "../BallisticsSimulator";
+import { aimSearchPolicyCacheToken } from "../aimSearch";
 import { solveExpertAim } from "../expertAim";
 import { solveHeuristicAim } from "../heuristicShot";
 import { solveSniperAim } from "../sniperAim";
@@ -120,5 +121,42 @@ describe("EXPERT own-shot open flight #361", () => {
       shooter: f.self, target: f.enemy, players: [f.self, f.enemy],
       terrain: f.terrain, wind: 0, gravity: 0,
     }, { angle: 90, power: 25 })).toMatchObject({ terminal: "incomplete", steps: BALLISTICS_MAX_STEPS });
+  });
+
+  it("ne réutilise pas une solution à 600 pas quand la politique équivaut à 420", () => {
+    const extended = aimSearchPolicyCacheToken({
+      penalizeProximity: false, extendOpenFlight: true, variant: "full",
+    });
+    const ordinary = aimSearchPolicyCacheToken({ penalizeProximity: false, variant: "full" });
+    expect(extended).toEqual({ variant: "full", penalizeProximity: false, extendOpenFlight: true });
+    expect(ordinary).toEqual({ variant: "full", penalizeProximity: false, extendOpenFlight: false });
+    expect(JSON.stringify(extended)).toBe(JSON.stringify(
+      aimSearchPolicyCacheToken({ variant: "full", extendOpenFlight: true, penalizeProximity: false })));
+
+    const f = fixture();
+    const search = vi.spyOn(ballistics, "searchBallisticSolution")
+      .mockReturnValue({ angle: 45, power: 50, err: 1, complete: false });
+    const cache = createExpertForecastCache();
+    const own = { mode: "own" as const, aim, selectionPolicy: "OPTIMISER_PROFIT" as const };
+    evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.enemy], false, false, cache, own);
+    const ownCalls = search.mock.calls.length;
+    const ownKeys = new Set(cache.search.keys());
+    expect(ownCalls).toBeGreaterThan(0);
+    expect(search.mock.calls.every(([config]) => config.maxSteps === EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS)).toBe(true);
+    expect([...ownKeys].every((key) => key.includes('"extendOpenFlight":true'))).toBe(true);
+
+    search.mockClear();
+    evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.enemy], false, false, cache, own);
+    expect(search).not.toHaveBeenCalled();
+
+    search.mockClear();
+    evaluateExpertShot(f.state, f.terrain, f.self, "MISSILE", [f.enemy], false, false, cache, {
+      ...own, advisor: { objective: "OPTIMISER_PROFIT" },
+    });
+    const advisorKeys = [...cache.search.keys()].filter((key) => !ownKeys.has(key));
+    expect(search.mock.calls.length).toBe(ownCalls);
+    expect(search.mock.calls.every(([config]) => config.maxSteps === BALLISTICS_MAX_STEPS)).toBe(true);
+    expect(advisorKeys).toHaveLength(ownKeys.size);
+    expect(advisorKeys.every((key) => key.includes('"extendOpenFlight":false'))).toBe(true);
   });
 });

@@ -35,5 +35,5 @@ export function solveSniperAim(
     obstaclePenaltyHigh: 10000,
     earlyExitError: 2,
   });
-  return { command: { angle: best.angle, power: best.power }, complete: best.complete !== false };
+  return { command: { angle: best.angle, power: best.power }, complete: best.complete };
 }
