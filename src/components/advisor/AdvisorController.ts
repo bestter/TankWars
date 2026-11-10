@@ -15,19 +15,20 @@ export interface AdvisorView {
   status: "idle" | "calculating" | "result" | "empty" | "error" | "expired";
   result?: AdvisorResult;
   names?: Readonly<Record<string, string>>;
+  lockedTargetId?: string;
 }
 export interface AdvisorWorker {
   onmessage: ((event: MessageEvent<unknown>) => void) | null;
   onerror: ((event: ErrorEvent) => void) | null;
   onmessageerror: ((event: MessageEvent<unknown>) => void) | null;
-  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective; requestId?: number; observe?: boolean }): void;
+  postMessage(message: { snapshot: AdvisorSnapshot; objective: AdvisorObjective; requestId?: number; observe?: boolean; lockedTargetId?: string }): void;
   terminate(): void;
 }
 
 export class AdvisorController {
   private nextRequestId = 0;
   private resultRequestId: number | null = null;
-  private pending: { requestId: number; objective: AdvisorObjective; playerId?: string } | null = null;
+  private pending: { requestId: number; objective: AdvisorObjective; playerId?: string; lockedTargetId?: string } | null = null;
   private terminal(status: string, decision?: unknown, summary?: unknown): void {
     if (!this.pending) return;
     this.host.observe?.({ requestId: this.pending.requestId, status, detail: { ...this.pending, decision } });
@@ -36,6 +37,8 @@ export class AdvisorController {
     this.pending = null;
   }
   private preferences = new Map<string, AdvisorObjective>();
+  private locks = new Map<string, string>();
+  private lockEpoch = 0;
   private roundNumber: number | null = null;
   private worker: AdvisorWorker | null = null;
   private key: string | null = null;
@@ -57,6 +60,15 @@ export class AdvisorController {
     this.worker = null;
   }
 
+  private lockFor(playerId: string | undefined): string | undefined {
+    return playerId ? this.locks.get(playerId) : undefined;
+  }
+
+  private idleView(playerId: string | undefined, objective: AdvisorObjective): AdvisorView {
+    const lockedTargetId = this.lockFor(playerId);
+    return { playerId, objective, status: "idle", ...(lockedTargetId ? { lockedTargetId } : {}) };
+  }
+
   /** Poll relevance, not physics frame state. Publish only on a relevant change. */
   refresh(): AdvisorSnapshot | null {
     const snapshot = this.host.capture();
@@ -75,7 +87,7 @@ export class AdvisorController {
       this.stop();
       this.key = key;
       const playerId = snapshot?.state.players[snapshot.state.currentPlayerIndex]?.id;
-      this.view = { playerId, objective: playerId ? this.preferences.get(playerId) ?? "OPTIMISER_PROFIT" : "OPTIMISER_PROFIT", status: "idle" };
+      this.view = this.idleView(playerId, playerId ? this.preferences.get(playerId) ?? "OPTIMISER_PROFIT" : "OPTIMISER_PROFIT");
       this.publish(this.view);
     }
     return snapshot;
@@ -86,7 +98,41 @@ export class AdvisorController {
     if (!this.view.playerId || objective === this.view.objective) return;
     this.preferences.set(this.view.playerId, objective);
     this.stop();
-    this.view = { playerId: this.view.playerId, objective, status: "idle" };
+    this.view = this.idleView(this.view.playerId, objective);
+    this.publish(this.view);
+  }
+
+  /** One lock per human. A second click on the same target removes it. */
+  toggleLock(targetId: string): void {
+    this.refresh();
+    const playerId = this.view.playerId;
+    if (!playerId || playerId === targetId) return;
+    if (this.locks.get(playerId) === targetId) this.locks.delete(playerId);
+    else this.locks.set(playerId, targetId);
+    this.lockEpoch += 1;
+    this.stop();
+    this.view = this.idleView(playerId, this.view.objective);
+    this.publish(this.view);
+  }
+
+  /** Drop every human lock that points at a tank already dead before respawn. */
+  releaseDeadTargets(deadIds: readonly string[]): void {
+    if (deadIds.length === 0) return;
+    const dead = new Set(deadIds);
+    let removed = false;
+    for (const [owner, targetId] of this.locks) {
+      if (!dead.has(targetId)) continue;
+      this.locks.delete(owner);
+      removed = true;
+    }
+    if (!removed) return;
+    const lockedTargetId = this.lockFor(this.view.playerId);
+    if (this.view.lockedTargetId === lockedTargetId) return;
+    this.lockEpoch += 1;
+    const playerId = this.view.playerId;
+    const objective = this.view.objective;
+    this.stop();
+    this.view = this.idleView(playerId, objective);
     this.publish(this.view);
   }
 
@@ -95,12 +141,17 @@ export class AdvisorController {
     if (!snapshot || this.worker) return;
     const key = this.key;
     const objective = this.view.objective;
+    const lockedTargetId = this.view.lockedTargetId;
+    const lockEpoch = this.lockEpoch;
     const names = Object.fromEntries(snapshot.state.players.map((player) => [player.id, player.name]));
     const requestId = ++this.nextRequestId;
     if (this.resultRequestId !== null) this.host.observe?.({ requestId: this.resultRequestId, status: "replaced", detail: null });
     this.resultRequestId = null;
-    this.pending = { requestId, objective, playerId: this.view.playerId };
-    this.host.observe?.({ requestId, status: "calculating", detail: { state: snapshot.state, width: snapshot.width, height: snapshot.height, objective, playerId: this.view.playerId } });
+    this.pending = { requestId, objective, playerId: this.view.playerId, ...(lockedTargetId ? { lockedTargetId } : {}) };
+    this.host.observe?.({ requestId, status: "calculating", detail: {
+      state: snapshot.state, width: snapshot.width, height: snapshot.height, objective,
+      playerId: this.view.playerId, ...(lockedTargetId ? { lockedTargetId } : {}),
+    } });
     if (import.meta.env.DEV) writeDecisionConsole("[Shot advisor] Décision", { ...this.pending, status: "calculating" });
     this.view = { ...this.view, status: "calculating", result: undefined, names };
     this.publish(this.view);
@@ -120,7 +171,7 @@ export class AdvisorController {
       worker.onmessage = (event) => {
         if (this.worker !== worker) return;
         this.refresh();
-        if (this.worker !== worker || this.key !== key || this.view.objective !== objective) return;
+        if (this.worker !== worker || this.key !== key || this.view.objective !== objective || this.lockEpoch !== lockEpoch) return;
         const data = event.data;
         if (typeof data !== "object" || data === null || !("advice" in data)) {
           fail("INVALID_RESULT"); return;
@@ -133,7 +184,7 @@ export class AdvisorController {
         this.view = { ...this.view, status: data.advice === null ? "empty" : "result", result: data.advice ?? undefined };
         this.publish(this.view);
       };
-      worker.postMessage({ snapshot, objective, requestId, ...(this.host.observing?.() ? { observe: true } : {}) });
+      worker.postMessage({ snapshot, objective, requestId, ...(lockedTargetId ? { lockedTargetId } : {}), ...(this.host.observing?.() ? { observe: true } : {}) });
     } catch (error) {
       console.error("[Shot advisor] Unable to start worker", error);
       this.terminal("error");
@@ -159,6 +210,8 @@ export class AdvisorController {
   reset(): void {
     this.stop();
     this.preferences.clear();
+    this.locks.clear();
+    this.lockEpoch += 1;
     this.roundNumber = null;
     this.key = null;
     this.view = { objective: "OPTIMISER_PROFIT", status: "idle" };

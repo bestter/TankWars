@@ -538,6 +538,7 @@ export function useGameSession({
       clearZeusAnnouncement,
       clearCelebrationTimer,
       goToSummary,
+      releaseDeadTargets: (deadIds) => advisor.releaseDeadTargets(deadIds),
     });
 
     // === PLAYERS: provenance MainMenu (via props) OU démo 2 joueurs (standalone / New Game) ===

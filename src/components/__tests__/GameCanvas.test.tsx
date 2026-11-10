@@ -147,7 +147,7 @@ describe("GameCanvas component", () => {
 
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: defaultSessionState,
       CANVAS_WIDTH: 800,
@@ -176,7 +176,7 @@ describe("GameCanvas component", () => {
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -247,7 +247,7 @@ describe("GameCanvas component", () => {
   it("renders RoundSummary during SUMMARY phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -277,7 +277,7 @@ describe("GameCanvas component", () => {
   it("renders Celebration banner during CELEBRATION phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -298,7 +298,7 @@ describe("GameCanvas component", () => {
   it("renders WeaponShop when human player is shopping in SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -321,7 +321,7 @@ describe("GameCanvas component", () => {
   it("renders AI shopping overlay when AI is shopping in local SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -344,7 +344,7 @@ describe("GameCanvas component", () => {
   it("waits for the authoritative shop state online", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, gamePhase: "SHOP" },
       CANVAS_WIDTH: 800,
@@ -362,7 +362,7 @@ describe("GameCanvas component", () => {
   it("renders the local player's authoritative shop online", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -390,7 +390,7 @@ describe("GameCanvas component", () => {
   ])("renders the online waiting state when localShopDone is %s", (localShopDone, expected) => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -415,7 +415,7 @@ describe("GameCanvas component", () => {
   it("renders GameOverOverlay during GAME_OVER phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -438,7 +438,7 @@ describe("GameCanvas component", () => {
   it("renders New Game button when showNewGameButton is true and handles click", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -468,7 +468,7 @@ describe("GameCanvas component", () => {
   it("renders fireRejection alert toast during COMBAT phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -493,7 +493,7 @@ describe("GameCanvas component", () => {
   it("renders a blocking protocol mismatch overlay", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -521,7 +521,7 @@ describe("GameCanvas component", () => {
     const onReturnToMenu = vi.fn();
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, roundPreparationError: "NEW_GAME_REQUIRED" },
       CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
@@ -537,7 +537,7 @@ describe("GameCanvas component", () => {
   it("keeps complete catch-up retry available on a network error", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
       canvasRef: { current: null }, state: { ...defaultSessionState, networkError: "round_preparation_failed" },
       CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
       shopDisplayPlayer: null, localShopDone: false, ...mockHandlers,
@@ -574,10 +574,13 @@ describe("GameCanvas component", () => {
     },
   ];
 
+  let toggleLock = vi.fn();
+
   function renderSession(state: typeof defaultSessionState) {
+    toggleLock = vi.fn();
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn() },
+      advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock, releaseDeadTargets: vi.fn() },
       canvasRef: { current: null },
       state,
       CANVAS_WIDTH: 800,
@@ -603,6 +606,7 @@ describe("GameCanvas component", () => {
     expect(list.compareDocumentPosition(advisor as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(list);
     fireEvent.click(screen.getByRole("button", { name: "player_status_lock_name_CPU 2" }));
+    expect(toggleLock).toHaveBeenCalledExactlyOnceWith("p2");
     expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
     expect(mockHandlers.handleAdjustAngle).not.toHaveBeenCalled();
     expect(mockHandlers.handleAdjustPower).not.toHaveBeenCalled();

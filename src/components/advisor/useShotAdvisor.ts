@@ -41,5 +41,7 @@ export function useShotAdvisor(engineRef: RefObject<GameEngine | null>, phaseRef
   }, [engineRef, phaseRef, gameMode, initialPlayerCountRef]);
   return { view, request: () => controllerRef.current?.request(), apply: () => controllerRef.current?.apply(),
     setObjective: (objective: AdvisorObjective) => controllerRef.current?.setObjective(objective),
+    toggleLock: (targetId: string) => controllerRef.current?.toggleLock(targetId),
+    releaseDeadTargets: (deadIds: readonly string[]) => controllerRef.current?.releaseDeadTargets(deadIds),
     reset: () => controllerRef.current?.reset() };
 }
