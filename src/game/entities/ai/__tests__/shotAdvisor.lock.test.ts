@@ -181,6 +181,33 @@ describe("local advisor target lock #375", () => {
     expect(f.state.players.map((player) => player.id)).toEqual(["a", "b", "c", "e"]);
   });
 
+  it("counts both searched candidates for B while attributing only the collateral winner to C", () => {
+    const f = trio({ GRENADE: 1 });
+    const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => { throw new Error("LIVE_RNG_USED"); });
+    const evaluate = vi.fn<typeof evaluator.evaluateExpertShot>((_state, _terrain, shooter, weapon) => {
+      if (shooter.id !== "a") return invalid;
+      if (weapon === "GRENADE") return aimed("b", 40, {
+        destroyedIds: new Set(),
+        humanDamageMilli: 1500,
+        forecast: { ...resolution([{ id: "c", healthDamageMilli: 1500 }], ["a", "b", "c"]), profit: 40 },
+      });
+      return aimed("b", 10);
+    });
+    let trace: ExpertDecisionTrace | undefined;
+    const plan = chooseExpertPlan(f.self, f.state, f.terrain, createIdealExpertAim(), evaluate,
+      (value) => { trace = value; }, evaluator.createExpertForecastCache(), "OPTIMISER_PROFIT", "b");
+    expect(plan).toMatchObject({ weaponId: "GRENADE", primaryTargetId: "c", targetIds: ["b"] });
+    expect(trace?.candidateCount).toBe(2);
+    expect(trace?.targets?.find(target => target.playerId === "b")).toMatchObject({
+      candidateCount: 2, best: { weaponId: "GRENADE", profit: 40, targetIds: ["b"] },
+    });
+    expect(trace?.targets?.find(target => target.playerId === "c")).toMatchObject({
+      candidateCount: 1, best: { weaponId: "GRENADE", profit: 40, targetIds: ["b"] },
+    });
+    expect(evaluate.mock.calls.filter(call => call[2].id === "a")).toHaveLength(2);
+    expect(rng).not.toHaveBeenCalled();
+  });
+
   it("replaces a risky locked command with an already simulated safe command toward the same target", () => {
     const f = trio();
     const own: string[][] = [];

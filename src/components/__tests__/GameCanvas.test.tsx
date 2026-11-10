@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { GameCanvas } from "../GameCanvas";
 import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
@@ -12,6 +12,9 @@ import { createEmptyShopSession } from "../gameCanvasReducer";
 import type { PlayerStatusCard } from "../playerStatus";
 import fr from "../../locales/fr.json";
 import en from "../../locales/en.json";
+import { AdvisorController } from "../advisor/AdvisorController";
+import type { AdvisorSnapshot } from "../../game/entities/ai/shotAdvisor";
+import { copyLivingPlayerStatus } from "../playerStatus";
 
 const language = vi.hoisted(() => ({ current: "fr" }));
 
@@ -621,5 +624,60 @@ describe("GameCanvas component", () => {
       turnInfo: { ...defaultTurnInfo, isInputLocked: true },
     });
     expect(screen.queryByRole("region", { name: "player_status_title" })).toBeNull();
+  });
+
+  it.each([false, true])("keeps Alice's lock private before Bea's refresh, with early click %s", (earlyClick) => {
+    vi.useFakeTimers();
+    const alice = { ...p1, name: "Alice" };
+    const bea = { ...p2, name: "Bea", isHuman: true };
+    const target = makePlayer({ id: "target", name: "Target" });
+    const players = [alice, bea, target];
+    const snapshot: AdvisorSnapshot = {
+      state: { phase: "COMBAT", players, currentPlayerIndex: 0, turn: 1, roundNumber: 1, windForce: 0, gravity: 260 },
+      width: 800, height: 480, heights: [], materials: [],
+    };
+    const session = vi.mocked(useGameSession)({});
+    const controller = new AdvisorController({ capture: () => snapshot, apply: vi.fn() },
+      () => { throw new Error("NO_ADVICE_REQUESTED"); }, view => { session.advisor.view = view; });
+    session.advisor.toggleLock = id => controller.toggleLock(id);
+    session.state = { ...defaultSessionState, playerStatus: copyLivingPlayerStatus(players) };
+    vi.mocked(useGameSession).mockReturnValue(session);
+    controller.toggleLock("target");
+    const interval = window.setInterval(() => controller.refresh(), 100);
+    const { rerender } = render(<GameCanvas />);
+    const locked = () => screen.queryByRole("button", { name: "player_status_locked_name_Target" });
+    const unlocked = () => screen.getByRole("button", { name: "player_status_lock_name_Target" });
+    try {
+      expect(locked()?.getAttribute("aria-pressed")).toBe("true");
+      snapshot.state.currentPlayerIndex = 1;
+      session.state = { ...session.state, turnInfo: { ...defaultTurnInfo, playerId: bea.id, playerName: bea.name } };
+      rerender(<GameCanvas />);
+      act(() => vi.advanceTimersByTime(99));
+      expect(session.advisor.view.playerId).toBe(alice.id);
+      expect(locked()).toBeNull();
+      expect(unlocked().getAttribute("aria-pressed")).toBe("false");
+      expect(unlocked().textContent).toBe("player_status_lock");
+      if (earlyClick) {
+        fireEvent.click(unlocked());
+        rerender(<GameCanvas />);
+        expect(session.advisor.view.playerId).toBe(bea.id);
+        expect(locked()?.getAttribute("aria-pressed")).toBe("true");
+      }
+      act(() => vi.advanceTimersByTime(1));
+      rerender(<GameCanvas />);
+      expect(session.advisor.view.playerId).toBe(bea.id);
+      expect(Boolean(locked())).toBe(earlyClick);
+      snapshot.state.currentPlayerIndex = 0;
+      session.state = { ...session.state, turnInfo: defaultTurnInfo };
+      act(() => vi.advanceTimersByTime(100));
+      rerender(<GameCanvas />);
+      expect(session.advisor.view.playerId).toBe(alice.id);
+      expect(locked()?.getAttribute("aria-pressed")).toBe("true");
+      expect(mockHandlers.handleFire).not.toHaveBeenCalled();
+    } finally {
+      window.clearInterval(interval);
+      controller.dispose();
+      vi.useRealTimers();
+    }
   });
 });

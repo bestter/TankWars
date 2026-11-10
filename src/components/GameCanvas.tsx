@@ -396,7 +396,7 @@ export function GameCanvas({
           gamePhase={gamePhase}
           turnInfo={turnInfo}
           gameMode={gameMode}
-          lockedTargetId={advisor.view.lockedTargetId}
+          lockedTargetId={advisor.view.playerId === turnInfo?.playerId ? advisor.view.lockedTargetId : undefined}
           onToggleLock={advisor.toggleLock}
         />
 

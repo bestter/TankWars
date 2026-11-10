@@ -311,11 +311,8 @@ export function chooseExpertPlan(
       ...(lockedEnemy ? { lockedTargetId: lockedEnemy.id } : {}),
       lethalTransition,
       targets: state.players.filter(player => player.id !== self.id).map(player => {
-        const direct = ranked.filter(candidate => candidate.primaryTargetId === player.id);
-        const searched = lockedEnemy?.id === player.id
-          ? ranked.filter(candidate => candidate.targetIds.includes(player.id))
-          : [];
-        const proposals = direct.length > 0 ? direct : searched;
+        const proposals = ranked.filter(candidate => candidate.primaryTargetId === player.id ||
+          (lockedEnemy?.id === player.id && candidate.targetIds.includes(player.id)));
         const best = proposals[0];
         const excludedByLock = lockedEnemy !== undefined && !player.tank.isDead && player.id !== lockedEnemy.id && !best;
         return { playerId: player.id, profile: player.isHuman ? "human" : player.aiProfile ?? "unknown",
