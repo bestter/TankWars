@@ -303,4 +303,29 @@ describe("advisor delayed lifecycle", () => {
       detail: expect.objectContaining({ lockedTargetId: "human2" }),
     }));
   });
+
+  it("provides lockFor returning the memorized lock per human independently of current view", () => {
+    const f = fixture();
+    f.controller.refresh();
+    expect(f.controller.lockFor("human1")).toBeUndefined();
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+    f.controller.toggleLock("human2");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    // Change current player to human2 without immediate refresh
+    f.snapshot!.state.currentPlayerIndex = 1;
+    expect(f.view.playerId).toBe("human1");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    f.controller.refresh();
+    expect(f.view.playerId).toBe("human2");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    f.controller.toggleLock("human1");
+    expect(f.controller.lockFor("human2")).toBe("human1");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+  });
 });

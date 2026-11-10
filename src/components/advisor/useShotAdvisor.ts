@@ -45,5 +45,6 @@ export function useShotAdvisor(engineRef: RefObject<GameEngine | null>, phaseRef
   const toggleLock = useCallback((targetId: string) => controllerRef.current?.toggleLock(targetId), []);
   const releaseDeadTargets = useCallback((deadIds: readonly string[]) => controllerRef.current?.releaseDeadTargets(deadIds), []);
   const reset = useCallback(() => controllerRef.current?.reset(), []);
-  return { view, request, apply, setObjective, toggleLock, releaseDeadTargets, reset };
+  const lockFor = useCallback((playerId: string | undefined) => controllerRef.current?.lockFor(playerId), []);
+  return { view, request, apply, setObjective, toggleLock, releaseDeadTargets, reset, lockFor };
 }

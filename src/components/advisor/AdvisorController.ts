@@ -61,7 +61,7 @@ export class AdvisorController {
     this.worker = null;
   }
 
-  private lockFor(playerId: string | undefined): string | undefined {
+  lockFor(playerId: string | undefined): string | undefined {
     return playerId ? this.locks.get(playerId) : undefined;
   }
 

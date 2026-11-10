@@ -150,7 +150,7 @@ describe("GameCanvas component", () => {
 
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: defaultSessionState,
       CANVAS_WIDTH: 800,
@@ -179,7 +179,7 @@ describe("GameCanvas component", () => {
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -250,7 +250,7 @@ describe("GameCanvas component", () => {
   it("renders RoundSummary during SUMMARY phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -280,7 +280,7 @@ describe("GameCanvas component", () => {
   it("renders Celebration banner during CELEBRATION phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -301,7 +301,7 @@ describe("GameCanvas component", () => {
   it("renders WeaponShop when human player is shopping in SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -324,7 +324,7 @@ describe("GameCanvas component", () => {
   it("renders AI shopping overlay when AI is shopping in local SHOP phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -347,7 +347,7 @@ describe("GameCanvas component", () => {
   it("waits for the authoritative shop state online", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, gamePhase: "SHOP" },
       CANVAS_WIDTH: 800,
@@ -365,7 +365,7 @@ describe("GameCanvas component", () => {
   it("renders the local player's authoritative shop online", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -393,7 +393,7 @@ describe("GameCanvas component", () => {
   ])("renders the online waiting state when localShopDone is %s", (localShopDone, expected) => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -418,7 +418,7 @@ describe("GameCanvas component", () => {
   it("renders GameOverOverlay during GAME_OVER phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -441,7 +441,7 @@ describe("GameCanvas component", () => {
   it("renders New Game button when showNewGameButton is true and handles click", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -471,7 +471,7 @@ describe("GameCanvas component", () => {
   it("renders fireRejection alert toast during COMBAT phase", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -496,7 +496,7 @@ describe("GameCanvas component", () => {
   it("renders a blocking protocol mismatch overlay", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: {
         ...defaultSessionState,
@@ -524,7 +524,7 @@ describe("GameCanvas component", () => {
     const onReturnToMenu = vi.fn();
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state: { ...defaultSessionState, roundPreparationError: "NEW_GAME_REQUIRED" },
       CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
@@ -540,7 +540,7 @@ describe("GameCanvas component", () => {
   it("keeps complete catch-up retry available on a network error", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn() },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null }, state: { ...defaultSessionState, networkError: "round_preparation_failed" },
       CANVAS_WIDTH: 800, CANVAS_HEIGHT: 480, isLocalShopTurn: false,
       shopDisplayPlayer: null, localShopDone: false, ...mockHandlers,
@@ -583,7 +583,7 @@ describe("GameCanvas component", () => {
     toggleLock = vi.fn();
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
-      advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock, releaseDeadTargets: vi.fn() },
+      advisor: { view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock, releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
       canvasRef: { current: null },
       state,
       CANVAS_WIDTH: 800,
@@ -640,6 +640,7 @@ describe("GameCanvas component", () => {
     const controller = new AdvisorController({ capture: () => snapshot, apply: vi.fn() },
       () => { throw new Error("NO_ADVICE_REQUESTED"); }, view => { session.advisor.view = view; });
     session.advisor.toggleLock = id => controller.toggleLock(id);
+    session.advisor.lockFor = id => controller.lockFor(id);
     session.state = { ...defaultSessionState, playerStatus: copyLivingPlayerStatus(players) };
     vi.mocked(useGameSession).mockReturnValue(session);
     controller.toggleLock("target");
@@ -674,6 +675,73 @@ describe("GameCanvas component", () => {
       expect(session.advisor.view.playerId).toBe(alice.id);
       expect(locked()?.getAttribute("aria-pressed")).toBe("true");
       expect(mockHandlers.handleFire).not.toHaveBeenCalled();
+    } finally {
+      window.clearInterval(interval);
+      controller.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores Bea's lock before the advisor's 100 ms refresh and clears it on a single click", () => {
+    vi.useFakeTimers();
+    const alice = { ...p1, name: "Alice" };
+    const bea = { ...p2, name: "Bea", isHuman: true };
+    const targetC = makePlayer({ id: "target-c", name: "TargetC" });
+    const players = [alice, bea, targetC];
+    const snapshot: AdvisorSnapshot = {
+      state: { phase: "COMBAT", players, currentPlayerIndex: 1, turn: 1, roundNumber: 1, windForce: 0, gravity: 260 },
+      width: 800, height: 480, heights: [], materials: [],
+    };
+    const session = vi.mocked(useGameSession)({});
+    const controller = new AdvisorController({ capture: () => snapshot, apply: vi.fn() },
+      () => { throw new Error("NO_ADVICE_REQUESTED"); }, view => { session.advisor.view = view; });
+    session.advisor.toggleLock = id => controller.toggleLock(id);
+    session.advisor.lockFor = id => controller.lockFor(id);
+    session.state = {
+      ...defaultSessionState,
+      playerStatus: copyLivingPlayerStatus(players),
+      turnInfo: { ...defaultTurnInfo, playerId: bea.id, playerName: bea.name },
+    };
+    vi.mocked(useGameSession).mockReturnValue(session);
+
+    // 1. Pendant son tour, Béa verrouille la cible C. C reste en vie pendant le tour d’Alice.
+    controller.toggleLock("target-c");
+    const interval = window.setInterval(() => controller.refresh(), 100);
+    const { rerender } = render(<GameCanvas />);
+    const lockedC = () => screen.queryByRole("button", { name: "player_status_locked_name_TargetC" });
+    const unlockedC = () => screen.getByRole("button", { name: "player_status_lock_name_TargetC" });
+
+    try {
+      expect(lockedC()?.getAttribute("aria-pressed")).toBe("true");
+
+      // Tour d'Alice : TargetC reste en vie. Le conseiller se rafraîchit pour Alice.
+      snapshot.state.currentPlayerIndex = 0;
+      session.state = { ...session.state, turnInfo: { ...defaultTurnInfo, playerId: alice.id, playerName: alice.name } };
+      act(() => vi.advanceTimersByTime(100));
+      rerender(<GameCanvas />);
+      expect(session.advisor.view.playerId).toBe(alice.id);
+      expect(lockedC()).toBeNull();
+      expect(unlockedC().getAttribute("aria-pressed")).toBe("false");
+
+      // 2. Le tour revient à Béa. Le HUD indique déjà que Béa joue, mais la vue du conseiller peut prendre jusqu'à 100 ms pour se rafraîchir.
+      snapshot.state.currentPlayerIndex = 1;
+      session.state = { ...session.state, turnInfo: { ...defaultTurnInfo, playerId: bea.id, playerName: bea.name } };
+      rerender(<GameCanvas />);
+      act(() => vi.advanceTimersByTime(99));
+
+      // 3. Pendant cet intervalle, assertions avant le prochain cycle du conseiller :
+      expect(session.advisor.view.playerId).toBe(alice.id);
+      expect(lockedC()).not.toBeNull();
+      expect(lockedC()?.getAttribute("aria-pressed")).toBe("true");
+      expect(lockedC()?.textContent).toBe("player_status_locked");
+
+      // Un seul clic retire son verrou
+      fireEvent.click(lockedC()!);
+      rerender(<GameCanvas />);
+      expect(lockedC()).toBeNull();
+      expect(unlockedC().getAttribute("aria-pressed")).toBe("false");
+      expect(unlockedC().textContent).toBe("player_status_lock");
+      expect(controller.lockFor(bea.id)).toBeUndefined();
     } finally {
       window.clearInterval(interval);
       controller.dispose();
