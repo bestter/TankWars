@@ -149,7 +149,13 @@ describe("local advisor target lock #375", () => {
 
   it("keeps a terrain point searched toward the lock when only a collateral tank is hit", () => {
     const f = trio();
+    const bystander = makePlayer({
+      id: "e", name: "E", isHuman: false, aiProfile: "v1-random", inventory: {},
+      tank: makeTank("e", 200, 336),
+    });
+    f.state.players.push(bystander);
     const own: string[][] = [];
+    let trace: ExpertDecisionTrace | undefined;
     const evaluate: typeof evaluator.evaluateExpertShot = (_state, _terrain, shooter, weapon, targets) => {
       if (shooter.id !== "a" || weapon !== "MISSILE") return invalid;
       own.push(targets.map((player) => player.id));
@@ -157,15 +163,22 @@ describe("local advisor target lock #375", () => {
         destination: { x: 410, y: 300, kind: "terrain" },
         destroyedIds: new Set(),
         humanDamageMilli: 1500,
-        forecast: { ...resolution([{ id: "c", healthDamageMilli: 1500 }], ["a", "b", "c"]), profit: 40 },
+        forecast: { ...resolution([{ id: "c", healthDamageMilli: 1500 }], ["a", "b", "c", "e"]), profit: 40 },
       });
     };
     const plan = chooseExpertPlan(f.self, f.state, f.terrain, createIdealExpertAim(), evaluate,
-      undefined, evaluator.createExpertForecastCache(), "OPTIMISER_PROFIT", "b");
+      (value) => { trace = value; }, evaluator.createExpertForecastCache(), "OPTIMISER_PROFIT", "b");
     expect(own).toEqual([["b"]]);
     expect(plan?.targetIds).toEqual(["b"]);
     expect(plan?.primaryTargetId).toBe("c");
-    expect(f.state.players.map((player) => player.id)).toEqual(["a", "b", "c"]);
+    expect(trace?.targets?.find((target) => target.playerId === "b")).toMatchObject({
+      reason: "admissible", best: { targetIds: ["b"] },
+    });
+    expect(trace?.targets?.find((target) => target.playerId === "c")).toMatchObject({
+      reason: "admissible", best: { targetIds: ["b"] },
+    });
+    expect(trace?.targets?.find((target) => target.playerId === "e")?.reason).toBe("excluded-by-lock");
+    expect(f.state.players.map((player) => player.id)).toEqual(["a", "b", "c", "e"]);
   });
 
   it("replaces a risky locked command with an already simulated safe command toward the same target", () => {

@@ -64,6 +64,15 @@ export class AdvisorController {
     return playerId ? this.locks.get(playerId) : undefined;
   }
 
+  /** Absent, dead, or non-human shooter: refuse the new lock and keep the advice. */
+  private canLock(snapshot: AdvisorSnapshot | null, playerId: string, targetId: string): boolean {
+    const players = snapshot?.state.players;
+    if (!players) return false;
+    const self = players.find((player) => player.id === playerId);
+    const target = players.find((player) => player.id === targetId);
+    return self?.isHuman === true && target !== undefined && !target.tank.isDead && target.tank.health > 0;
+  }
+
   private idleView(playerId: string | undefined, objective: AdvisorObjective): AdvisorView {
     const lockedTargetId = this.lockFor(playerId);
     return { playerId, objective, status: "idle", ...(lockedTargetId ? { lockedTargetId } : {}) };
@@ -104,10 +113,11 @@ export class AdvisorController {
 
   /** One lock per human. A second click on the same target removes it. */
   toggleLock(targetId: string): void {
-    this.refresh();
+    const snapshot = this.refresh();
     const playerId = this.view.playerId;
     if (!playerId || playerId === targetId) return;
     if (this.locks.get(playerId) === targetId) this.locks.delete(playerId);
+    else if (!this.canLock(snapshot, playerId, targetId)) return;
     else this.locks.set(playerId, targetId);
     this.lockEpoch += 1;
     this.stop();

@@ -126,6 +126,7 @@ export function wireEngineSessionCallbacks(opts: {
     }
     opts.lastAppliedZeusStrikeIdRef.current = result.strikeId;
     const roster = [...engine.getTankManager().getPlayers()];
+    if (opts.gameMode !== "online") releaseDeadTargets(roster);
     dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = buildOverlayAwards([result.award], roster);
     if (awards.length > 0) {

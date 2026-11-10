@@ -158,6 +158,54 @@ describe("advisor delayed lifecycle", () => {
     expect(traces.map((trace) => trace.status)).toEqual(["calculating", "cancelled"]);
   });
 
+  it("keeps the current advice when a new lock target is absent or already dead", () => {
+    const f = fixture();
+    const dead = makePlayer({
+      id: "dead", isHuman: false, aiProfile: "v1-random",
+      tank: makeTank("dead", 500, 336, { isDead: true, health: 0 }),
+    });
+    const spent = makePlayer({
+      id: "spent", isHuman: false, aiProfile: "v1-random",
+      tank: makeTank("spent", 700, 336, { health: 0 }),
+    });
+    const cpu = makePlayer({
+      id: "cpu", isHuman: false, aiProfile: "v1-random", tank: makeTank("cpu", 620, 336),
+    });
+    f.snapshot!.state.players.push(dead, spent, cpu);
+    f.controller.refresh();
+    f.controller.toggleLock("human2");
+    f.controller.request();
+    f.reply();
+    const result = f.view.result;
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+
+    f.controller.toggleLock("missing");
+    f.controller.toggleLock("");
+    f.controller.toggleLock("dead");
+    f.controller.toggleLock("spent");
+    f.controller.toggleLock("human1");
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+    expect(f.view.result).toBe(result);
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+
+    f.controller.request();
+    expect(f.view.status).toBe("calculating");
+    f.controller.toggleLock("missing");
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+    f.reply();
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+
+    f.snapshot!.state.currentPlayerIndex = f.snapshot!.state.players.findIndex((player) => player.id === "cpu");
+    f.controller.refresh();
+    f.controller.toggleLock("human2");
+    expect(f.view).toMatchObject({ playerId: "cpu" });
+    expect(f.view.lockedTargetId).toBeUndefined();
+    f.snapshot!.state.currentPlayerIndex = 0;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ playerId: "human1", lockedTargetId: "human2" });
+  });
+
   it("keeps one lock per human, including across an AI turn, and drops only dead targets", () => {
     const f = fixture();
     const cpu = makePlayer({ id: "cpu", isHuman: false, aiProfile: "v1-random", tank: makeTank("cpu", 620, 336) });

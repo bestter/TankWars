@@ -360,6 +360,37 @@ describe("local target lock across a match #375", () => {
     expect(live(free.sessionRef).advisor.view).toMatchObject({ objective: "OPTIMISER_PROFIT", lockedTargetId: "cpu-1" });
   });
 
+  it("drops every human lock when Zeus eliminates the target without ending the round", () => {
+    const { sessionRef, engine } = mount(trio());
+    act(() => { live(sessionRef).advisor.toggleLock("cpu-1"); });
+    act(() => { engine.getTurnManager().nextTurn(); });
+    act(() => { live(sessionRef).advisor.toggleLock("cpu-1"); });
+    expect(live(sessionRef).advisor.view).toMatchObject({ playerId: "human-2", lockedTargetId: "cpu-1" });
+    const cpu = engine.getTankManager().getPlayers().find((player) => player.id === "cpu-1");
+    if (!cpu) throw new Error("cpu");
+    cpu.tank.isDead = true;
+    cpu.tank.health = 0;
+    act(() => {
+      engine.onZeusStrikeApplied?.({
+        strikeId: 1,
+        zeusId: "human-1",
+        targetId: "cpu-1",
+        award: { playerId: "human-1", amount: 0 },
+        balances: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      });
+    });
+    expect(live(sessionRef).state.gamePhase).toBe("COMBAT");
+    expect(cpu.tank.isDead).toBe(true);
+    expect(live(sessionRef).advisor.view.lockedTargetId).toBeUndefined();
+    act(() => { engine.getTurnManager().nextTurn(); });
+    act(() => { live(sessionRef).advisor.setObjective("OPTIMISER_PROFIT"); });
+    expect(live(sessionRef).advisor.view).toMatchObject({
+      playerId: "human-1", objective: "OPTIMISER_PROFIT",
+    });
+    expect(live(sessionRef).advisor.view.lockedTargetId).toBeUndefined();
+  });
+
   it("clears every human lock when the target dies and does not restore it after respawn", () => {
     const { sessionRef, engine } = mount(trio(), true);
     act(() => { live(sessionRef).advisor.toggleLock("cpu-1"); });
