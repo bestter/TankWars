@@ -17,6 +17,7 @@ import { calculateShotRewards } from "../../../economy/shotRewards";
 import { WEAPON_REGISTRY } from "../../../../types/weapon";
 import { TERRAIN_MATERIAL } from "../../../../types/terrain";
 import { TerrainManager } from "../../../engine/Terrain";
+import { aimSearchPolicyCacheToken } from "../aimSearch";
 import { createExpertDecisionAim } from "../expertDecisionAim";
 import * as shotEvaluator from "../expertShotEvaluator";
 
@@ -163,7 +164,8 @@ describe("EXPERT #267 consequences", () => {
     }));
     const cache = createExpertForecastCache();
     // Isolate the two valid ground points; both use the real solver and full physics.
-    cache.search.set(JSON.stringify(["self", "MISSILE", points[0].x, points[0].y, 0, 260, { variant: "full", penalizeProximity: true }]),
+    cache.search.set(JSON.stringify(["self", "MISSILE", points[0].x, points[0].y, 0, 260,
+      aimSearchPolicyCacheToken({ variant: "full", penalizeProximity: true })]),
       { command: { angle: 45, power: 50 }, complete: false });
     const before = structuredClone(f.state.players);
     const rng = vi.spyOn(random, "secureRandom");
@@ -179,7 +181,8 @@ describe("EXPERT #267 consequences", () => {
     const points = expertTacticalPoints(f.self, [f.enemy], "MISSILE", f.terrain, f.state.players);
     for (const [index, point] of points.entries()) {
       const command = { angle: 45 + index, power: 50 };
-      cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260, { variant: "full", penalizeProximity: true }]),
+      cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260,
+        aimSearchPolicyCacheToken({ variant: "full", penalizeProximity: true })]),
         { command, complete: index < 2 });
       cache.physics.set(JSON.stringify(["self", "MISSILE", command.angle, command.power, 0, 260, 2, false]), {
         complete: true, ...(index === 0 ? equalConsequences : winner),
@@ -200,7 +203,8 @@ describe("EXPERT #267 consequences", () => {
       const points = expertTacticalPoints(f.self, [f.enemy], "MISSILE", f.terrain, f.state.players);
       for (const [index, point] of points.entries()) {
         const command = { angle: 45 + index, power: 50 };
-        cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260, { variant: "full", penalizeProximity: true }]),
+        cache.search.set(JSON.stringify(["self", "MISSILE", point.x, point.y, 0, 260,
+          aimSearchPolicyCacheToken({ variant: "full", penalizeProximity: true })]),
           { command, complete: index < 2 });
         const destruction = index === 0 ? [forecastDestruction()] :
           criterion === "required-kill" ? [] : [forecastDestruction(),

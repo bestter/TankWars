@@ -24,7 +24,7 @@ describe("computeHeuristicShot", () => {
     { angle: 172, power: 90, expected: { angle: 172, power: 90 } },
     { angle: 45.125, power: 55.375, expected: { angle: 45.125, power: 55.375 } },
   ])("borne sans arrondir angle=$angle power=$power", ({ angle, power, expected }) => {
-    vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle, power, err: 0 });
+    vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle, power, err: 0, complete: true });
     const self = makePlayer({ tank: makeTank("self", 400, 336) });
     expect(computeHeuristicShot(self, 700, 330, 0, 260, flatTerrain(800, 480)))
       .toEqual(expected);

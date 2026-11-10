@@ -1,6 +1,8 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { TerrainManager } from "../../../engine/Terrain";
 import {
+  BALLISTICS_MAX_STEPS,
+  EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS,
   searchBallisticSolution,
   simulateShot,
   simulateSmartShot,
@@ -129,6 +131,57 @@ describe("BallisticsSimulator", () => {
       ...searchConfig(flatTerrain(800, 480)), powerIterations: 0, fineStep: 0,
     });
     expect(result).toEqual({ angle: 55, power: 60, err: 999999, complete: false });
+  });
+
+  it("measures flight independently of any later tank stabilization", () => {
+    const terrain = flatTerrain(800, 480);
+    const resolved = simulateShot(100, 336, 45, 40, 0, 260, terrain);
+    const stillFlying = simulateShot(100, 336, 90, 95, 0, 0, terrain);
+    const extended = simulateShot(100, 336, 90, 95, 0, 0, terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+    const boundary = (() => {
+      let checks = 0;
+      vi.spyOn(terrain, "checkCollision").mockImplementation(() => ++checks === EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+      return simulateShot(100, 336, 45, 50, 0, 0, terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+    })();
+
+    expect(resolved.complete).toBe(true);
+    expect(resolved.steps).toBeGreaterThan(0);
+    expect(resolved.steps).toBeLessThan(BALLISTICS_MAX_STEPS);
+    expect(stillFlying).toMatchObject({ complete: false, steps: BALLISTICS_MAX_STEPS });
+    expect(extended).toMatchObject({ complete: false, steps: EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS });
+    expect(boundary).toMatchObject({ complete: true, steps: EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS });
+  });
+
+  it("ends a collision about 20 px from the tank without using the extended budget", () => {
+    const terrain = flatTerrain(800, 480);
+    const heights = [...terrain.getHeightmap()];
+    heights.fill(200, 115, 150);
+    terrain.loadHeights(heights);
+    const flight = simulateShot(100, 336, 0, 40, 0, 260, terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+    const distance = Math.hypot(flight.landX - 100, flight.landY - 336);
+
+    expect(flight.complete).toBe(true);
+    expect(flight.steps).toBeGreaterThan(0);
+    expect(flight.steps).toBeLessThan(50);
+    expect(distance).toBeGreaterThan(15);
+    expect(distance).toBeLessThan(35);
+  });
+
+  it("does not let a trajectory still open at 600 replace a resolved shot", () => {
+    const terrain = flatTerrain(800, 480);
+    const resolved = simulateShot(100, 336, 90, 55, 0, 0, terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
+    expect(resolved).toMatchObject({ complete: false, steps: EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS });
+    let checks = 0;
+    vi.spyOn(terrain, "checkCollision").mockImplementation(() => ++checks === 1);
+    const result = searchBallisticSolution({
+      ...searchConfig(terrain), gravity: 0, tx: resolved.landX, ty: resolved.landY,
+      aMin: 90, aMax: 90, fineStep: 0, powerLo: 50, powerHi: 60, powerIterations: 2,
+      maxSteps: EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS,
+    });
+
+    expect(result.complete).toBe(true);
+    expect(result.power).toBe(55);
+    expect(checks).toBe(EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS + 1);
   });
 
   it("simulateShot returns early when projectile leaves the map", () => {

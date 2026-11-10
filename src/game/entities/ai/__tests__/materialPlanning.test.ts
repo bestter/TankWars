@@ -13,7 +13,7 @@ import { materialBoundaryPoints, localMaterialPoints } from "../materialCandidat
 import * as candidates from "../materialCandidates";
 import { chooseLocalMaterialShot, hasPhysicalEffect, LOCAL_MATERIAL_MAX_PROPOSALS, type MaterialSolver } from "../localMaterialPlanner";
 import { chooseExpertFallback, createExpertForecastCache, evaluateExpertShot, expertTacticalPoints } from "../expertShotEvaluator";
-import { aimCone, ORDINARY_AIM_POLICY } from "../aimSearch";
+import { aimCone, aimSearchPolicyCacheToken, ORDINARY_AIM_POLICY } from "../aimSearch";
 import { solveExpertAim } from "../expertAim";
 import { solveHeuristicAim } from "../heuristicShot";
 import { solveSniperAim } from "../sniperAim";
@@ -285,7 +285,7 @@ describe("material candidate geometry and profile search contracts", () => {
 
   it("keeps weapon-aware GRENADE searches and profile parameters including equal-X left direction", () => {
     const f = fixture();
-    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 100, power: 50, err: 0 });
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 100, power: 50, err: 0, complete: true });
     solveHeuristicAim(f.self, 100, 330, 0, 260, f.terrain, "GRENADE", "high");
     expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ weaponId: "GRENADE", isRight: false,
       aMin: 98, aMax: 128, coarseStep: 3.5, powerIterations: 7 }));
@@ -341,7 +341,7 @@ describe("selected material aim is transported once to the real shot", () => {
       point: { x: 400, y: 330, kind: "tank" as const }, policy: ORDINARY_AIM_POLICY, useful: false };
     const fallback = vi.spyOn(expertEvaluator, "chooseExpertFallback").mockReturnValue(ordinary);
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
-    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0 });
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 45, power: 50, err: 0, complete: true });
     await strategy.executeTurn("self", f.state, f.terrain);
     // Simulate a broken collaborator contract to exercise the defensive runtime guard.
     fallback.mockReturnValue(undefined as unknown as expertEvaluator.ExpertFallbackChoice);
@@ -376,7 +376,7 @@ describe("selected material aim is transported once to the real shot", () => {
     const offset = vi.spyOn(fallible, "signedImpactOffset").mockReturnValue(12);
     const memory = vi.spyOn(aimMemory, "recordAimAttempt");
     vi.spyOn(fallible, "maybeGaffe").mockReturnValue(false);
-    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 70, power: 50, err: 0 });
+    const search = vi.spyOn(ballistics, "searchBallisticSolution").mockReturnValue({ angle: 70, power: 50, err: 0, complete: true });
     const resolve = vi.spyOn(physical, "resolvePhysicalShot");
     await create().executeTurn("self", f.state, f.terrain);
     expect(selection).toHaveBeenCalledTimes(1);
@@ -688,7 +688,8 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
     const cache = createExpertForecastCache();
     evaluateExpertShot(f.state, f.terrain, f.target, "MISSILE", [f.self], false, false, cache, { mode: "adverse" });
     expect(cache.search.size).toBe(3);
-    expect([...cache.search.keys()].every((key) => key.includes('"penalizeProximity":true'))).toBe(true);
+    expect([...cache.search.keys()].every((key) => key.includes(
+      JSON.stringify(aimSearchPolicyCacheToken(ORDINARY_AIM_POLICY))))).toBe(true);
   });
 
   it("bounds eight own points to 24 proposals and separates policy caches", () => {

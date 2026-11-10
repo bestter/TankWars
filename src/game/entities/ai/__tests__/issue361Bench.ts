@@ -149,7 +149,7 @@ export function probeSolver(fixture: DecisionFixture, powerHi: 95 | 99, variant:
     obstaclePenaltyLow: 20, earlyExitError: 4 });
   const shot = { ...finalizeAdvancedAim({ angle: result.angle, power: Math.max(25, Math.min(powerHi, result.power)) }), weaponId: "MISSILE" as const };
   const physics = forecast(fixture, shot, f.state.windForce);
-  return { powerHi, variant, command: shot, solverComplete: result.complete !== false, error: result.err,
+  return { powerHi, variant, command: shot, solverComplete: result.complete, error: result.err,
     physics, useful: useful(physics, fixture.targetId) };
 }
 export function historicalReplay(fixture: DecisionFixture) { return replayShot(fixture.archive, fixture.shotKey); }

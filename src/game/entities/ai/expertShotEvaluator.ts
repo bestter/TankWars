@@ -17,7 +17,7 @@ import { hasCriticalProtectedSurvivor } from "./lethalTransition";
 import { TERRAIN_MATERIAL } from "../../../types/terrain";
 import { materialBoundaryPoints, bulldozerPoint } from "./materialCandidates";
 import { hasAppliedPhysicalDamage, hasPhysicalEffect } from "./localMaterialPlanner";
-import { MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
+import { aimSearchPolicyCacheToken, MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY, type AimSearchPolicy } from "./aimSearch";
 export const EXPERT_FORECAST_MAX_STEPS = FORECAST_MAX_STEPS;
 
 export interface ExpertPoint {
@@ -295,11 +295,16 @@ function* expertProposals(
         if (mode === "own") cache.diagnostics.ownProposals++;
         else cache.diagnostics.adverseProposals++;
       }
-      const policy: AimSearchPolicy = mode === "own"
-        ? { variant, penalizeProximity: false } : ORDINARY_AIM_POLICY;
+      const policy: AimSearchPolicy = context.mode === "own"
+        ? {
+            variant,
+            penalizeProximity: false,
+            ...(context.advisor ? {} : { extendOpenFlight: true as const }),
+          }
+        : ORDINARY_AIM_POLICY;
       const requestedPoint = { x: point.x + aim.offset, y: point.y };
       const searchKey = JSON.stringify([shooter.id, weaponId, requestedPoint.x, requestedPoint.y,
-        state.windForce, state.gravity, policy]);
+        state.windForce, state.gravity, aimSearchPolicyCacheToken(policy)]);
       let solution = cache.search.get(searchKey);
       if (!solution) {
         solution = solveExpertAim(shooter, requestedPoint.x, requestedPoint.y, state.windForce, state.gravity, terrain, weaponId, policy);

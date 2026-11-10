@@ -61,6 +61,6 @@ export function solveHeuristicAim(
       angle: Math.max(8, Math.min(172, best.angle)),
       power: Math.max(30, Math.min(90, best.power)),
     },
-    complete: best.complete !== false,
+    complete: best.complete,
   };
 }

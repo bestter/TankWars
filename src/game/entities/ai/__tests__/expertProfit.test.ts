@@ -11,7 +11,7 @@ import * as evaluator from "../expertShotEvaluator";
 import { chooseExpertPlan, type ExpertDecisionTrace } from "../expertPlanner";
 import { createExpertDecisionAim } from "../expertDecisionAim";
 import { AISmartStrategy } from "../AISmartStrategy";
-import { MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY } from "../aimSearch";
+import { aimSearchPolicyCacheToken, MATERIAL_AIM_VARIANTS, ORDINARY_AIM_POLICY } from "../aimSearch";
 import * as tactical from "../expertTacticalWeapon";
 
 const aim = { primaryTargetId: "target", attempts: 2, offset: 0 };
@@ -151,7 +151,9 @@ describe("EXPERT immediate net profit policy #288", () => {
         const command = { angle: 30 + index * 3 + arc, power: 50 };
         const selectedIndex = own ? arc : index;
         cache.search.set(JSON.stringify(["self", "NUKE", point.x, point.y, 0, 260,
-          { variant, penalizeProximity: !own }]), { command, complete: index === 0 && arc < 2 || !own && index < 2 });
+          aimSearchPolicyCacheToken(own
+            ? { variant, penalizeProximity: false, extendOpenFlight: true }
+            : { variant, penalizeProximity: true })]), { command, complete: index === 0 && arc < 2 || !own && index < 2 });
         cache.physics.set(JSON.stringify(["self", "NUKE", command.angle, command.power, 0, 260, 2, false]), {
           ...complete({ hits: [{ shotId: 1, munitionId: 0, weaponId: "NUKE", x: point.x, y: point.y, directTargetId: "target" }],
             damage: [effect("NUKE")], survivors: selectedIndex === 0 ? ["self"] : [],
