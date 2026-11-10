@@ -1,5 +1,7 @@
 # Pilote d’endurance / Endurance driver — 0.14.0
 
+Le [banc court de décisions EXPERT](decision-bench-361.md) reproduit les cas des tickets [#361](https://github.com/bestter/TankWars/issues/361) et [#400](https://github.com/bestter/TankWars/issues/400) sans lancer d’endurance.
+
 ## Français
 
 > v0.13.6 : le protocole du pilote/superviseur est maintenant v2; les indications historiques de fichiers monolithiques ci-dessous décrivent v1. Les sorties actuelles sont précisées dans la section des bundles.
