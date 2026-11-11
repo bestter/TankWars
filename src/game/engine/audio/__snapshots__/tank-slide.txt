@@ -1,0 +1,14 @@
+createBuffer buffer-1 channels=1 length=1411 sampleRate=44100
+createBufferSource source-1
+source-1.buffer=buffer-1 fingerprint=04fb2970
+createBiquadFilter filter-1
+filter-1.type=lowpass
+filter-1.frequency.value=1950
+createGain gain-1
+gain-1.gain.value=0.075
+gain-1.gain.setValueAtTime value=0.075 time=0
+gain-1.gain.linearRampToValueAtTime value=0.0004 time=0.032
+connect source-1 -> filter-1
+connect filter-1 -> gain-1
+connect gain-1 -> destination
+source-1.start when=0

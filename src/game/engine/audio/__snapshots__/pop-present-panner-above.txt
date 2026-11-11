@@ -1,0 +1,28 @@
+createOscillator osc-1
+createGain gain-1
+createBiquadFilter filter-1
+createStereoPanner panner-1
+panner-1.pan.value=1
+osc-1.type=triangle
+osc-1.frequency.setValueAtTime value=120 time=0
+osc-1.frequency.exponentialRampToValueAtTime value=25 time=0.12
+filter-1.type=lowpass
+filter-1.frequency.setValueAtTime value=350 time=0
+gain-1.gain.setValueAtTime value=0.1 time=0
+gain-1.gain.exponentialRampToValueAtTime value=0.001 time=0.15
+connect osc-1 -> filter-1
+connect filter-1 -> panner-1
+connect panner-1 -> gain-1
+connect gain-1 -> destination
+osc-1.start
+osc-1.stop when=0.16
+createOscillator osc-2
+createGain gain-2
+osc-2.type=sawtooth
+osc-2.frequency.setValueAtTime value=900 time=0
+gain-2.gain.setValueAtTime value=0.015 time=0
+gain-2.gain.linearRampToValueAtTime value=0.001 time=0.04
+connect osc-2 -> panner-1
+connect gain-2 -> destination
+osc-2.start
+osc-2.stop when=0.05

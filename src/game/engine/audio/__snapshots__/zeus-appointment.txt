@@ -1,0 +1,27 @@
+createBuffer buffer-1 channels=1 length=10584 sampleRate=44100
+createBufferSource source-1
+source-1.buffer=buffer-1 fingerprint=e6a259a7
+createBiquadFilter filter-1
+filter-1.type=lowpass
+filter-1.frequency.value=1100
+createGain gain-1
+gain-1.gain.value=0.3
+gain-1.gain.setValueAtTime value=0.3 time=0
+gain-1.gain.linearRampToValueAtTime value=0.0004 time=0.24
+filter-1.frequency.setValueAtTime value=1100 time=0
+filter-1.frequency.linearRampToValueAtTime value=90 time=0.216
+connect source-1 -> filter-1
+connect filter-1 -> gain-1
+connect gain-1 -> destination
+source-1.start when=0
+createOscillator osc-1
+createGain gain-2
+osc-1.type=square
+osc-1.frequency.setValueAtTime value=92 time=0
+osc-1.frequency.exponentialRampToValueAtTime value=42 time=0.28
+gain-2.gain.setValueAtTime value=0.18 time=0
+gain-2.gain.exponentialRampToValueAtTime value=0.001 time=0.3
+connect osc-1 -> gain-2
+connect gain-2 -> destination
+osc-1.start
+osc-1.stop when=0.31

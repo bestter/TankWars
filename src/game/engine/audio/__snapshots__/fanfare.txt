@@ -1,0 +1,149 @@
+createOscillator osc-1
+createGain gain-1
+createBiquadFilter filter-1
+osc-1.type=sawtooth
+osc-1.frequency.value=261.6255653005986
+filter-1.type=lowpass
+filter-1.frequency.value=1800
+gain-1.gain.value=0.18
+gain-1.gain.setValueAtTime value=0.18 time=0
+gain-1.gain.linearRampToValueAtTime value=0.001 time=0.288
+connect osc-1 -> filter-1
+connect filter-1 -> gain-1
+connect gain-1 -> destination
+osc-1.start when=0
+osc-1.stop when=0.396
+createOscillator osc-2
+createGain gain-2
+createBiquadFilter filter-2
+osc-2.type=sawtooth
+osc-2.frequency.value=329.6275569128699
+filter-2.type=lowpass
+filter-2.frequency.value=1800
+gain-2.gain.value=0.18
+gain-2.gain.setValueAtTime value=0.18 time=0.153
+gain-2.gain.linearRampToValueAtTime value=0.001 time=0.44099999999999995
+connect osc-2 -> filter-2
+connect filter-2 -> gain-2
+connect gain-2 -> destination
+osc-2.start when=0.153
+osc-2.stop when=0.549
+createOscillator osc-3
+createGain gain-3
+createBiquadFilter filter-3
+osc-3.type=sawtooth
+osc-3.frequency.value=391.99543598174927
+filter-3.type=lowpass
+filter-3.frequency.value=1800
+gain-3.gain.value=0.18
+gain-3.gain.setValueAtTime value=0.18 time=0.306
+gain-3.gain.linearRampToValueAtTime value=0.001 time=0.594
+connect osc-3 -> filter-3
+connect filter-3 -> gain-3
+connect gain-3 -> destination
+osc-3.start when=0.306
+osc-3.stop when=0.702
+createOscillator osc-4
+createGain gain-4
+createBiquadFilter filter-4
+osc-4.type=sawtooth
+osc-4.frequency.value=523.2511306011972
+filter-4.type=lowpass
+filter-4.frequency.value=1800
+gain-4.gain.value=0.18
+gain-4.gain.setValueAtTime value=0.18 time=0.459
+gain-4.gain.linearRampToValueAtTime value=0.001 time=0.747
+connect osc-4 -> filter-4
+connect filter-4 -> gain-4
+connect gain-4 -> destination
+osc-4.start when=0.459
+osc-4.stop when=0.855
+createOscillator osc-5
+createGain gain-5
+createBiquadFilter filter-5
+osc-5.type=sawtooth
+osc-5.frequency.value=659.2551138257398
+filter-5.type=lowpass
+filter-5.frequency.value=1800
+gain-5.gain.value=0.18
+gain-5.gain.setValueAtTime value=0.18 time=0.612
+gain-5.gain.linearRampToValueAtTime value=0.001 time=0.8999999999999999
+connect osc-5 -> filter-5
+connect filter-5 -> gain-5
+connect gain-5 -> destination
+osc-5.start when=0.612
+osc-5.stop when=1.008
+createOscillator osc-6
+createGain gain-6
+createBiquadFilter filter-6
+osc-6.type=sawtooth
+osc-6.frequency.value=783.9908719634985
+filter-6.type=lowpass
+filter-6.frequency.value=1800
+gain-6.gain.value=0.18
+gain-6.gain.setValueAtTime value=0.18 time=0.7649999999999999
+gain-6.gain.linearRampToValueAtTime value=0.001 time=1.053
+connect osc-6 -> filter-6
+connect filter-6 -> gain-6
+connect gain-6 -> destination
+osc-6.start when=0.7649999999999999
+osc-6.stop when=1.161
+createOscillator osc-7
+createGain gain-7
+createBiquadFilter filter-7
+osc-7.type=sawtooth
+osc-7.frequency.value=1046.5022612023945
+filter-7.type=lowpass
+filter-7.frequency.value=1800
+gain-7.gain.value=0.18
+gain-7.gain.setValueAtTime value=0.18 time=0.918
+gain-7.gain.linearRampToValueAtTime value=0.001 time=1.206
+connect osc-7 -> filter-7
+connect filter-7 -> gain-7
+connect gain-7 -> destination
+osc-7.start when=0.918
+osc-7.stop when=1.314
+createOscillator osc-8
+createGain gain-8
+osc-8.type=square
+osc-8.frequency.value=523.2511306011972
+gain-8.gain.value=0.12
+gain-8.gain.setValueAtTime value=0.12 time=0
+gain-8.gain.linearRampToValueAtTime value=0.001 time=1.8
+connect osc-8 -> gain-8
+connect gain-8 -> destination
+osc-8.start
+osc-8.stop when=2.2
+createOscillator osc-9
+createGain gain-9
+osc-9.type=sawtooth
+osc-9.frequency.value=659.2551138257398
+gain-9.gain.value=0.12
+gain-9.gain.setValueAtTime value=0.12 time=0
+gain-9.gain.linearRampToValueAtTime value=0.001 time=1.8
+connect osc-9 -> gain-9
+connect gain-9 -> destination
+osc-9.start
+osc-9.stop when=2.2
+createOscillator osc-10
+createGain gain-10
+osc-10.type=sawtooth
+osc-10.frequency.value=783.9908719634985
+gain-10.gain.value=0.12
+gain-10.gain.setValueAtTime value=0.12 time=0
+gain-10.gain.linearRampToValueAtTime value=0.001 time=1.8
+connect osc-10 -> gain-10
+connect gain-10 -> destination
+osc-10.start
+osc-10.stop when=2.2
+createOscillator osc-11
+createGain gain-11
+osc-11.type=sawtooth
+osc-11.frequency.value=1046.5022612023945
+gain-11.gain.value=0.12
+gain-11.gain.setValueAtTime value=0.12 time=0
+gain-11.gain.linearRampToValueAtTime value=0.001 time=1.8
+connect osc-11 -> gain-11
+connect gain-11 -> destination
+osc-11.start
+osc-11.stop when=2.2

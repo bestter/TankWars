@@ -1,0 +1,64 @@
+createBuffer buffer-1 channels=1 length=1984 sampleRate=44100
+createBufferSource source-1
+source-1.buffer=buffer-1 fingerprint=258d00b7
+createBiquadFilter filter-1
+filter-1.type=lowpass
+filter-1.frequency.value=2600
+createGain gain-1
+gain-1.gain.value=0.15
+gain-1.gain.setValueAtTime value=0.15 time=0
+gain-1.gain.linearRampToValueAtTime value=0.0004 time=0.045
+filter-1.frequency.setValueAtTime value=2600 time=0
+filter-1.frequency.linearRampToValueAtTime value=900 time=0.0405
+connect source-1 -> filter-1
+connect filter-1 -> gain-1
+connect gain-1 -> destination
+source-1.start when=0
+createBuffer buffer-2 channels=1 length=1984 sampleRate=44100
+createBufferSource source-2
+source-2.buffer=buffer-2 fingerprint=258d00b7
+createBiquadFilter filter-2
+filter-2.type=lowpass
+filter-2.frequency.value=2720
+createGain gain-2
+gain-2.gain.value=0.15
+gain-2.gain.setValueAtTime value=0.15 time=0
+gain-2.gain.linearRampToValueAtTime value=0.0004 time=0.045
+filter-2.frequency.setValueAtTime value=2720 time=0
+filter-2.frequency.linearRampToValueAtTime value=900 time=0.0405
+connect source-2 -> filter-2
+connect filter-2 -> gain-2
+connect gain-2 -> destination
+source-2.start when=0
+createBuffer buffer-3 channels=1 length=1984 sampleRate=44100
+createBufferSource source-3
+source-3.buffer=buffer-3 fingerprint=258d00b7
+createBiquadFilter filter-3
+filter-3.type=lowpass
+filter-3.frequency.value=2840
+createGain gain-3
+gain-3.gain.value=0.15
+gain-3.gain.setValueAtTime value=0.15 time=0
+gain-3.gain.linearRampToValueAtTime value=0.0004 time=0.045
+filter-3.frequency.setValueAtTime value=2840 time=0
+filter-3.frequency.linearRampToValueAtTime value=900 time=0.0405
+connect source-3 -> filter-3
+connect filter-3 -> gain-3
+connect gain-3 -> destination
+source-3.start when=0
+createBuffer buffer-4 channels=1 length=1984 sampleRate=44100
+createBufferSource source-4
+source-4.buffer=buffer-4 fingerprint=258d00b7
+createBiquadFilter filter-4
+filter-4.type=lowpass
+filter-4.frequency.value=2960
+createGain gain-4
+gain-4.gain.value=0.15
+gain-4.gain.setValueAtTime value=0.15 time=0
+gain-4.gain.linearRampToValueAtTime value=0.0004 time=0.045
+filter-4.frequency.setValueAtTime value=2960 time=0
+filter-4.frequency.linearRampToValueAtTime value=900 time=0.0405
+connect source-4 -> filter-4
+connect filter-4 -> gain-4
+connect gain-4 -> destination
+source-4.start when=0
