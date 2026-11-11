@@ -229,7 +229,7 @@ npx vitest run src/game/engine/audio/__tests__/combatAudioGraph.test.ts -u
 
 ## Current Status
 
-**v0.15.2** — Added `<head>` metadata (`theme-color` set to `#000000` and `color-scheme` set to `dark light`) in `index.html` to eliminate initial color-scheme inconsistencies before CSS and React load (#406). Harmonized `:root` in `src/index.css` to `color-scheme: dark light;` while preserving light/dark styling, `#root` geometry, and PWA manifest theme declarations.
+**v0.15.2** — Added `<head>` metadata (`theme-color` set to `#000000` and `color-scheme` set to `dark light`) in `index.html` to eliminate initial color-scheme inconsistencies before CSS and React load (#406). The `dark light` priority favors the retro dark game theme, while fixed `#000000` theme-color preserves arcade cabinet immersion across user agents. Harmonized `:root` in `src/index.css` to `color-scheme: dark light;` while preserving light/dark styling, `#root` geometry, and PWA manifest theme declarations (`#55FFFF` accent / `#000000` splash screen).
 
 **v0.15.1** — Cleaned up dead CSS and unused Vite starter template rules (#405) across `src/App.css` and `src/index.css`. Removed orphaned demo selectors (`.counter`, `.hero`, `#next-steps`, etc.) and unused custom properties, while preserving `#root` dimensions (1126px), retro VGA primitives, and active styles.
 

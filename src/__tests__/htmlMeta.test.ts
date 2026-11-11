@@ -11,7 +11,10 @@ describe('HTML head theme and color-scheme metadata (#406)', () => {
   const indexHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
   const indexCss = fs.readFileSync(indexCssPath, 'utf-8');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  const hasDistBuild = fs.existsSync(distHtmlPath);
 
+  // Le theme-color fixe à #000000 sans attribut media maintient l'immersion rétro CRT/VGA
+  // de la borne d'arcade et prévient tout flash blanc de la barre d'outils navigateur.
   it('contains exactly one theme-color meta tag set to #000000 without media attribute', () => {
     const themeColorMatches = indexHtml.match(/<meta\s+[^>]*name=["']theme-color["'][^>]*>/gi) || [];
     expect(themeColorMatches).toHaveLength(1);
@@ -21,6 +24,8 @@ describe('HTML head theme and color-scheme metadata (#406)', () => {
     expect(themeColorTag).not.toMatch(/\smedia=/i);
   });
 
+  // L'ordre 'dark light' indique au navigateur de privilégier le mode sombre rétro
+  // dès le rendu initial du viewport tout en maintenant le support du mode clair CSS.
   it('contains exactly one color-scheme meta tag set to "dark light"', () => {
     const colorSchemeMatches = indexHtml.match(/<meta\s+[^>]*name=["']color-scheme["'][^>]*>/gi) || [];
     expect(colorSchemeMatches).toHaveLength(1);
@@ -64,16 +69,17 @@ describe('HTML head theme and color-scheme metadata (#406)', () => {
     expect(indexCss).toContain('@media (prefers-color-scheme: dark)');
   });
 
+  // Le manifeste PWA conserve son accent cyan VGA (#55FFFF) pour la fenêtre installée
+  // et son fond noir (#000000) pour le splash screen.
   it('preserves PWA manifest colors unchanged', () => {
     expect(manifest.background_color).toBe('#000000');
     expect(manifest.theme_color).toBe('#55FFFF');
   });
 
-  it('persists metadata in production build dist/index.html when present', () => {
-    if (fs.existsSync(distHtmlPath)) {
-      const distHtml = fs.readFileSync(distHtmlPath, 'utf-8');
-      expect(distHtml).toMatch(/<meta\s+[^>]*name=["']color-scheme["'][^>]*content=["']dark light["']/i);
-      expect(distHtml).toMatch(/<meta\s+[^>]*name=["']theme-color["'][^>]*content=["']#000000["']/i);
-    }
+  // Test exécuté lorsque dist/index.html existe (garanti par l'ordre build -> test en CI et validation).
+  it.runIf(hasDistBuild)('persists metadata in production build dist/index.html (requires npm run build)', () => {
+    const distHtml = fs.readFileSync(distHtmlPath, 'utf-8');
+    expect(distHtml).toMatch(/<meta\s+[^>]*name=["']color-scheme["'][^>]*content=["']dark light["']/i);
+    expect(distHtml).toMatch(/<meta\s+[^>]*name=["']theme-color["'][^>]*content=["']#000000["']/i);
   });
 });
