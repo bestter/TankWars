@@ -1,11 +1,17 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "create-github-issues-for-unmet-specification-requirements": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
       "skillPath": "skills/create-github-issues-for-unmet-specification-requirements/SKILL.md",
-      "computedHash": "f44956e909348a20a808bcc2aa56a1b063ff1cc2ae1a1659de6193cff45f59ac"
+      "computedHash": "e7ecd5acabfe3818f9e9c5026d8073142418dcb6e1edcffe6772d54e243664b8"
+    },
+    "modern-web-guidance": {
+      "source": "GoogleChrome/modern-web-guidance",
+      "sourceType": "github",
+      "skillPath": "skills/modern-web-guidance/SKILL.md",
+      "computedHash": "9e69ce00dc314b64f6664031b70295ea46c7de93ac682c624808df6e48e08b66"
     }
   }
 }
