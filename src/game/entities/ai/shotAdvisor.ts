@@ -1,4 +1,5 @@
 import type { FireCommand, GameState } from "../../../types/game";
+import type { Player } from "../../../types/player";
 import { WEAPON_REGISTRY } from "../../../types/weapon";
 import type { TerrainMaterial } from "../../../types/terrain";
 import { TerrainManager } from "../../engine/Terrain";
@@ -33,8 +34,21 @@ export function createIdealExpertAim(): ExpertDecisionAim {
   return { reserve() {}, forTarget: (primaryTargetId) => ({ primaryTargetId, offset: 0, attempts: 0 }) };
 }
 
+/** Absent, dead, or the shooter: the advisor keeps today's unlocked search. */
+export function livingAdvisorLock(self: Player, players: readonly Player[], lockedTargetId?: string): Player | undefined {
+  if (!lockedTargetId || lockedTargetId === self.id) return undefined;
+  const target = players.find((player) => player.id === lockedTargetId);
+  if (!target || target.tank.isDead || target.tank.health <= 0) return undefined;
+  return target;
+}
+
 /** Runs in the browser's dedicated worker. No strategy instance, live memory or game RNG. */
-export function calculateShotAdvice(snapshot: AdvisorSnapshot, objective: AdvisorObjective, onDecision?: (trace: ExpertDecisionTrace) => void): ShotAdvice | null {
+export function calculateShotAdvice(
+  snapshot: AdvisorSnapshot,
+  objective: AdvisorObjective,
+  onDecision?: (trace: ExpertDecisionTrace) => void,
+  lockedTargetId?: string,
+): ShotAdvice | null {
   const { state, width, height, heights, materials } = structuredClone(snapshot);
   const context = state.localShotContext;
   if (!context || !Number.isInteger(context.playerCountAtMatchStart) ||
@@ -47,20 +61,27 @@ export function calculateShotAdvice(snapshot: AdvisorSnapshot, objective: Adviso
   const collect = import.meta.env.DEV || Boolean(onDecision);
   const cache = createExpertForecastCache(collect);
   const aim = createIdealExpertAim();
+  const locked = livingAdvisorLock(self, state.players, lockedTargetId);
   let decision: ExpertDecisionTrace | undefined;
   const plan = chooseExpertPlan(self, state, terrain, aim, undefined,
-    collect ? trace => { decision = trace; } : undefined, cache, objective);
+    collect ? trace => { decision = trace; } : undefined, cache, objective, locked?.id);
   const target = plan ? state.players.find((player) => player.id === plan.primaryTargetId) :
-    ordinaryExpertTarget(self, state.players, { currentTargetAttempts: 0 }, true);
-  if (!target) { if (decision) onDecision?.(decision); return null; }
+    locked ?? ordinaryExpertTarget(self, state.players, { currentTargetAttempts: 0 }, true);
+  const publish = (trace: ExpertDecisionTrace): void => {
+    onDecision?.({
+      ...trace,
+      ...(locked ? { lockedTargetId: locked.id } : {}),
+    });
+  };
+  if (!target) { if (decision) publish(decision); return null; }
   const fallback = plan ? undefined : chooseExpertFallback(state, terrain, self, target,
     adjustWeaponForMaterial(chooseExpertTacticalWeapon(self, target, terrain, state),
       terrain.getMaterialAt(target.tank.position.x), (id) => (self.inventory[id] ?? 0) > 0),
     cache, aim.forTarget(target.id), { objective });
   const choice = plan ?? fallback;
   const forecast = plan?.result?.forecast ?? fallback?.forecast;
-  if (decision) onDecision?.({ ...decision, exploration: cache.diagnostics, advisorFallback: fallback && {
-    targetId: target.id, targetSelectionReason: "neutral-health-roster-order",
+  if (decision) publish({ ...decision, exploration: cache.diagnostics, advisorFallback: fallback && {
+    targetId: target.id, targetSelectionReason: locked ? "locked-target" : "neutral-health-roster-order",
     weaponId: fallback.weaponId, kind: fallback.kind, selectionReason: fallback.selectionReason,
     profit: fallback.forecast?.profit ?? null, refusal: fallback.kind === "ordinary" ? "uncertified" : null,
   } });

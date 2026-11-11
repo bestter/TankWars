@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { GameEngine } from "../../game/engine/GameEngine";
 import type { GamePhase } from "../../types/game";
 import type { AdvisorObjective } from "../../game/entities/ai/expertPolicy";
@@ -39,7 +39,12 @@ export function useShotAdvisor(engineRef: RefObject<GameEngine | null>, phaseRef
       controllerRef.current = null;
     };
   }, [engineRef, phaseRef, gameMode, initialPlayerCountRef]);
-  return { view, request: () => controllerRef.current?.request(), apply: () => controllerRef.current?.apply(),
-    setObjective: (objective: AdvisorObjective) => controllerRef.current?.setObjective(objective),
-    reset: () => controllerRef.current?.reset() };
+  const request = useCallback(() => controllerRef.current?.request(), []);
+  const apply = useCallback(() => controllerRef.current?.apply(), []);
+  const setObjective = useCallback((objective: AdvisorObjective) => controllerRef.current?.setObjective(objective), []);
+  const toggleLock = useCallback((targetId: string) => controllerRef.current?.toggleLock(targetId), []);
+  const releaseDeadTargets = useCallback((deadIds: readonly string[]) => controllerRef.current?.releaseDeadTargets(deadIds), []);
+  const reset = useCallback(() => controllerRef.current?.reset(), []);
+  const lockFor = useCallback((playerId: string | undefined) => controllerRef.current?.lockFor(playerId), []);
+  return { view, request, apply, setObjective, toggleLock, releaseDeadTargets, reset, lockFor };
 }

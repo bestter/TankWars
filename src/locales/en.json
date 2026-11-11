@@ -117,6 +117,8 @@
   "player_status_health": "HP {{current}} / {{max}}",
   "player_status_lock": "Lock target",
   "player_status_lock_name": "Lock {{name}}",
+  "player_status_locked": "Target locked",
+  "player_status_locked_name": "Target locked: {{name}}",
   "player_status_shield": "Shield {{current}} / {{max}}",
   "player_status_title": "Tank status",
   "player_status_you": "YOU",

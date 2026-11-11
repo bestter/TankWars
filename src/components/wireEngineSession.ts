@@ -6,7 +6,7 @@ import { trackEvent } from "../utils/analytics";
 import type { GamePhase } from "../types/game";
 import type { ZeusAppointment, ZeusStrikeResult } from "../game/zeus/zeusDomain";
 import { ZEUS_ANNOUNCEMENT_DURATION_MS, type GameCanvasAction } from "./gameCanvasReducer";
-import { copyLivingPlayerStatus, isAimingInspectionVisible } from "./playerStatus";
+import { copyLivingPlayerStatus, deadStatusPlayerIds, isAimingInspectionVisible } from "./playerStatus";
 import { buildOverlayAwards } from "./sessionPresentation";
 
 export function wireEngineSessionCallbacks(opts: {
@@ -31,8 +31,13 @@ export function wireEngineSessionCallbacks(opts: {
   readonly clearZeusAnnouncement: () => void;
   readonly clearCelebrationTimer: () => void;
   readonly goToSummary: () => void;
+  readonly releaseDeadTargets?: (deadIds: readonly string[]) => void;
 }): void {
   const { engine, dispatch } = opts;
+  const releaseDeadTargets = (players: Parameters<typeof deadStatusPlayerIds>[0]): void => {
+    const deadIds = deadStatusPlayerIds(players);
+    if (deadIds.length > 0) opts.releaseDeadTargets?.(deadIds);
+  };
   const enduranceBlockId = opts.endurance?.block?.id;
   const tm = engine.getTurnManager();
 
@@ -121,6 +126,7 @@ export function wireEngineSessionCallbacks(opts: {
     }
     opts.lastAppliedZeusStrikeIdRef.current = result.strikeId;
     const roster = [...engine.getTankManager().getPlayers()];
+    if (opts.gameMode !== "online") releaseDeadTargets(roster);
     dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = buildOverlayAwards([result.award], roster);
     if (awards.length > 0) {
@@ -142,6 +148,7 @@ export function wireEngineSessionCallbacks(opts: {
       return;
     }
     const roster = [...engine.getTankManager().getPlayers()];
+    releaseDeadTargets(roster);
     dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = buildOverlayAwards(preview.awards, roster);
     if (awards.length > 0) {
@@ -167,6 +174,7 @@ export function wireEngineSessionCallbacks(opts: {
 
     const res = engine.buildRoundResult();
     const nextPlayers = [...engine.getTankManager().getPlayers()];
+    if (opts.gameMode !== "online") releaseDeadTargets(nextPlayers);
     opts.lastCompletedRoundNumberRef.current = Math.max(
       opts.lastCompletedRoundNumberRef.current,
       opts.currentMancheRef.current,

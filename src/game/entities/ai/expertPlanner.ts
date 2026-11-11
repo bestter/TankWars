@@ -90,7 +90,7 @@ export interface ExpertDecisionTrace {
     readonly profile: string;
     readonly dead: boolean;
     readonly candidateCount: number;
-    readonly reason: "admissible" | "no-admissible-candidate" | "dead";
+    readonly reason: "admissible" | "no-admissible-candidate" | "dead" | "excluded-by-lock";
     readonly best?: {
       readonly weaponId: WeaponId;
       readonly targetIds: readonly string[];
@@ -99,6 +99,7 @@ export interface ExpertDecisionTrace {
     };
   }[];
   readonly lethalTransition?: TransitionSelectionTrace;
+  readonly lockedTargetId?: string;
   readonly phase: "SURVIE" | "OPTIMISER_PROFIT" | "REPLI";
   readonly transitionReason: string;
   readonly threats: readonly {
@@ -235,6 +236,7 @@ export function chooseExpertPlan(
   onDecision?: (trace: ExpertDecisionTrace) => void,
   cache: ExpertForecastCache = createExpertForecastCache(),
   advisorObjective?: AdvisorObjective,
+  lockedTargetId?: string,
 ): ExpertPlan | null {
   if (!state.localShotContext) {
     onDecision?.({
@@ -247,11 +249,15 @@ export function chooseExpertPlan(
     return null;
   }
   const enemies = state.players.filter((player) => player.id !== self.id && !player.tank.isDead);
+  const lockedEnemy = lockedTargetId
+    ? enemies.find((player) => player.id === lockedTargetId && player.tank.health > 0)
+    : undefined;
+  const searchEnemies = lockedEnemy ? [lockedEnemy] : enemies;
   const shooterWeapons = ALL_WEAPON_IDS.filter((id) => id !== "BULLDOZER" &&
     (id === "MISSILE" || (self.inventory[id] ?? 0) > 0));
 
   const threats: { player: Player; weaponId: WeaponId; result: { readonly profit: number; readonly shooterDestroyed: boolean } }[] = [];
-  for (const enemy of advisorObjective === "OPTIMISER_PROFIT" ? [] : enemies) {
+  for (const enemy of advisorObjective === "OPTIMISER_PROFIT" ? [] : searchEnemies) {
     let best: { readonly profit: number; readonly shooterDestroyed: boolean } | null = null;
     let bestWeapon: WeaponId | undefined;
     for (const weapon of possibleExpertThreatWeapons(enemy)) {
@@ -302,14 +308,17 @@ export function chooseExpertPlan(
     const runnerUp = ranked[0] === selected ? ranked[1] : ranked[0];
     onDecision({
       phase,
+      ...(lockedEnemy ? { lockedTargetId: lockedEnemy.id } : {}),
       lethalTransition,
       targets: state.players.filter(player => player.id !== self.id).map(player => {
-        const proposals = ranked.filter(candidate => candidate.primaryTargetId === player.id);
+        const proposals = ranked.filter(candidate => candidate.primaryTargetId === player.id ||
+          (lockedEnemy?.id === player.id && candidate.targetIds.includes(player.id)));
         const best = proposals[0];
+        const excludedByLock = lockedEnemy !== undefined && !player.tank.isDead && player.id !== lockedEnemy.id && !best;
         return { playerId: player.id, profile: player.isHuman ? "human" : player.aiProfile ?? "unknown",
           dead: player.tank.isDead, candidateCount: proposals.length,
           reason: player.tank.isDead ? "dead" as const : best ? "admissible" as const :
-            "no-admissible-candidate" as const,
+            excludedByLock ? "excluded-by-lock" as const : "no-admissible-candidate" as const,
           best: best && { weaponId: best.weaponId, targetIds: best.targetIds,
             profit: best.result.profit, shooterDestroyed: best.result.shooterDestroyed } };
       }),
@@ -362,9 +371,11 @@ export function chooseExpertPlan(
     const survivalCandidates: RankedPlan[] | null = onDecision ? [] : null;
     let order = 0;
     for (const weapon of shooterWeapons) {
-      const groups: Player[][] = [[threat], ...enemies
-        .filter((enemy) => enemy.id !== threat.id)
-        .map((enemy) => [threat, enemy])];
+      const groups: Player[][] = lockedEnemy
+        ? [[threat]]
+        : [[threat], ...enemies
+          .filter((enemy) => enemy.id !== threat.id)
+          .map((enemy) => [threat, enemy])];
       for (const group of groups) {
         const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
         const result = evaluate(state, terrain, self, weapon, group, true,
@@ -408,9 +419,13 @@ export function chooseExpertPlan(
     profitTransition = `aucun tir sûr ne détruit la menace ${threat.id} : optimisation sur tous les adversaires`;
   }
 
-  const groups: Player[][] = [...enemies.map((enemy) => [enemy])];
-  for (let i = 0; i < enemies.length; i++) {
-    for (let j = i + 1; j < enemies.length; j++) groups.push([enemies[i], enemies[j]]);
+  const groups: Player[][] = lockedEnemy
+    ? [[lockedEnemy]]
+    : [...enemies.map((enemy) => [enemy])];
+  if (!lockedEnemy) {
+    for (let i = 0; i < enemies.length; i++) {
+      for (let j = i + 1; j < enemies.length; j++) groups.push([enemies[i], enemies[j]]);
+    }
   }
   const candidates: RankedPlan[] = [];
   let order = 0;

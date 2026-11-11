@@ -4,7 +4,7 @@ import type { AdvisorResult } from "../../../game/entities/ai/advisorProtocol";
 import type { AdvisorSnapshot } from "../../../game/entities/ai/shotAdvisor";
 import { flatTerrain, makePlayer, makeTank } from "../../../game/__tests__/helpers";
 
-function fixture() {
+function fixture(observing = false) {
   const players = [makePlayer({ id: "human1", isHuman: true, tank: makeTank("human1", 100, 336) }),
     makePlayer({ id: "human2", isHuman: true, tank: makeTank("human2", 400, 336) })];
   const terrain = flatTerrain(800, 480);
@@ -16,13 +16,16 @@ function fixture() {
     postMessage: vi.fn(), terminate: vi.fn() };
   const create = vi.fn(() => worker);
   const apply = vi.fn(() => true);
+  const observe = vi.fn();
   let view: AdvisorView = { objective: "OPTIMISER_PROFIT", status: "idle" };
   const publish = vi.fn((next: AdvisorView) => { view = next; });
-  const controller = new AdvisorController({ capture: () => snapshot, apply }, create, publish);
+  const controller = new AdvisorController({
+    capture: () => snapshot, apply, ...(observing ? { observing: () => true, observe } : {}),
+  }, create, publish);
   const result: AdvisorResult = { objective: "OPTIMISER_PROFIT", command: { angle: 45, power: 50, weaponId: "MISSILE" },
     targetIds: ["human2"], cost: 0, gain: 80, profit: 80, shooterDestroyed: false, consequences: [] };
   const reply = (advice: unknown = result) => worker.onmessage?.({ data: { advice } } as MessageEvent<unknown>);
-  return { controller, worker, create, apply, reply, publish, result,
+  return { controller, worker, create, apply, reply, publish, result, observe,
     get snapshot() { return snapshot; }, set snapshot(next) { snapshot = next; }, get view() { return view; } };
 }
 afterEach(() => vi.restoreAllMocks());
@@ -153,5 +156,176 @@ describe("advisor delayed lifecycle", () => {
     const traces = log.mock.calls.filter(([line]) => String(line).startsWith("[Shot advisor] Décision {"))
       .map(([line]) => JSON.parse(String(line).slice("[Shot advisor] Décision ".length)) as { status: string });
     expect(traces.map((trace) => trace.status)).toEqual(["calculating", "cancelled"]);
+  });
+
+  it("keeps the current advice when a new lock target is absent or already dead", () => {
+    const f = fixture();
+    const dead = makePlayer({
+      id: "dead", isHuman: false, aiProfile: "v1-random",
+      tank: makeTank("dead", 500, 336, { isDead: true, health: 0 }),
+    });
+    const spent = makePlayer({
+      id: "spent", isHuman: false, aiProfile: "v1-random",
+      tank: makeTank("spent", 700, 336, { health: 0 }),
+    });
+    const cpu = makePlayer({
+      id: "cpu", isHuman: false, aiProfile: "v1-random", tank: makeTank("cpu", 620, 336),
+    });
+    f.snapshot!.state.players.push(dead, spent, cpu);
+    f.controller.refresh();
+    f.controller.toggleLock("human2");
+    f.controller.request();
+    f.reply();
+    const result = f.view.result;
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+
+    f.controller.toggleLock("missing");
+    f.controller.toggleLock("");
+    f.controller.toggleLock("dead");
+    f.controller.toggleLock("spent");
+    f.controller.toggleLock("human1");
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+    expect(f.view.result).toBe(result);
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+
+    f.controller.request();
+    expect(f.view.status).toBe("calculating");
+    f.controller.toggleLock("missing");
+    expect(f.worker.terminate).toHaveBeenCalledOnce();
+    f.reply();
+    expect(f.view).toMatchObject({ status: "result", lockedTargetId: "human2" });
+
+    f.snapshot!.state.currentPlayerIndex = f.snapshot!.state.players.findIndex((player) => player.id === "cpu");
+    f.controller.refresh();
+    f.controller.toggleLock("human2");
+    expect(f.view).toMatchObject({ playerId: "cpu" });
+    expect(f.view.lockedTargetId).toBeUndefined();
+    f.snapshot!.state.currentPlayerIndex = 0;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ playerId: "human1", lockedTargetId: "human2" });
+  });
+
+  it("keeps one lock per human, including across an AI turn, and drops only dead targets", () => {
+    const f = fixture();
+    const cpu = makePlayer({ id: "cpu", isHuman: false, aiProfile: "v1-random", tank: makeTank("cpu", 620, 336) });
+    f.snapshot!.state.players.push(cpu);
+    f.snapshot!.state.localShotContext!.playerCountAtMatchStart = 3;
+    f.controller.refresh();
+    f.controller.setObjective("SURVIE");
+    f.controller.toggleLock("cpu");
+    expect(f.view).toMatchObject({ playerId: "human1", objective: "SURVIE", lockedTargetId: "cpu" });
+    f.controller.toggleLock("cpu");
+    expect(f.view.lockedTargetId).toBeUndefined();
+    expect(f.view.objective).toBe("SURVIE");
+    f.controller.toggleLock("cpu");
+
+    f.snapshot!.state.currentPlayerIndex = 1;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ playerId: "human2", objective: "OPTIMISER_PROFIT" });
+    expect(f.view.lockedTargetId).toBeUndefined();
+    f.controller.toggleLock("cpu");
+    expect(f.view.lockedTargetId).toBe("cpu");
+
+    f.snapshot!.state.currentPlayerIndex = 2;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ playerId: "cpu", objective: "OPTIMISER_PROFIT" });
+    expect(f.view.lockedTargetId).toBeUndefined();
+
+    f.snapshot!.state.currentPlayerIndex = 0;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ playerId: "human1", objective: "SURVIE", lockedTargetId: "cpu" });
+
+    f.snapshot!.state.roundNumber = 2;
+    f.controller.refresh();
+    expect(f.view).toMatchObject({ objective: "OPTIMISER_PROFIT", lockedTargetId: "cpu" });
+
+    f.controller.releaseDeadTargets(["human1"]);
+    expect(f.view.lockedTargetId).toBe("cpu");
+    f.controller.releaseDeadTargets(["cpu"]);
+    expect(f.view.lockedTargetId).toBeUndefined();
+    f.snapshot!.state.currentPlayerIndex = 1;
+    f.controller.refresh();
+    expect(f.view.lockedTargetId).toBeUndefined();
+
+    f.controller.reset();
+    f.snapshot!.state.currentPlayerIndex = 0;
+    f.controller.refresh();
+    expect(f.view.lockedTargetId).toBeUndefined();
+    expect(f.view.objective).toBe("OPTIMISER_PROFIT");
+  });
+
+  it("ignores a stale reply after B to C to B and refuses to apply a result from another lock", () => {
+    const f = fixture();
+    const cpu = makePlayer({ id: "cpu", isHuman: false, aiProfile: "v1-random", tank: makeTank("cpu", 620, 336) });
+    f.snapshot!.state.players.push(cpu);
+    f.controller.refresh();
+    f.controller.setObjective("SURVIE");
+    f.controller.toggleLock("human2");
+    f.controller.request();
+    const late = f.worker.onmessage;
+    f.controller.toggleLock("cpu");
+    f.controller.toggleLock("human2");
+    expect(f.view).toMatchObject({ objective: "SURVIE", lockedTargetId: "human2", status: "idle" });
+    f.controller.request();
+    expect(f.worker.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      objective: "SURVIE", lockedTargetId: "human2", requestId: 2,
+    }));
+    late?.({ data: { advice: { ...f.result, objective: "SURVIE" } } } as MessageEvent<unknown>);
+    expect(f.view.status).toBe("calculating");
+    expect(f.view.result).toBeUndefined();
+    f.reply({ ...f.result, objective: "SURVIE" });
+    expect(f.view.status).toBe("result");
+    f.controller.toggleLock("cpu");
+    f.controller.apply();
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.view).toMatchObject({ objective: "SURVIE", lockedTargetId: "cpu", status: "idle" });
+    expect(f.view.result).toBeUndefined();
+  });
+
+  it("prints and observes the locked target on the advisor decision", () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = fixture(true);
+    f.controller.refresh();
+    f.controller.toggleLock("human2");
+    f.controller.request();
+    f.reply({ ...f.result, decision: { lockedTargetId: "human2", phase: "OPTIMISER_PROFIT" } });
+    const traces = log.mock.calls.filter(([line]) => String(line).startsWith("[Shot advisor] Décision {"))
+      .map(([line]) => JSON.parse(String(line).slice("[Shot advisor] Décision ".length)) as { status: string; lockedTargetId?: string });
+    expect(traces.map((trace) => trace.status)).toEqual(["calculating", "result"]);
+    expect(traces.every((trace) => trace.lockedTargetId === "human2")).toBe(true);
+    expect(f.observe).toHaveBeenCalledWith(expect.objectContaining({
+      status: "calculating",
+      detail: expect.objectContaining({ lockedTargetId: "human2" }),
+    }));
+    expect(f.observe).toHaveBeenCalledWith(expect.objectContaining({
+      status: "result",
+      detail: expect.objectContaining({ lockedTargetId: "human2" }),
+    }));
+  });
+
+  it("provides lockFor returning the memorized lock per human independently of current view", () => {
+    const f = fixture();
+    f.controller.refresh();
+    expect(f.controller.lockFor("human1")).toBeUndefined();
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+    f.controller.toggleLock("human2");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    // Change current player to human2 without immediate refresh
+    f.snapshot!.state.currentPlayerIndex = 1;
+    expect(f.view.playerId).toBe("human1");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    f.controller.refresh();
+    expect(f.view.playerId).toBe("human2");
+    expect(f.controller.lockFor("human1")).toBe("human2");
+    expect(f.controller.lockFor("human2")).toBeUndefined();
+
+    f.controller.toggleLock("human1");
+    expect(f.controller.lockFor("human2")).toBe("human1");
+    expect(f.controller.lockFor("human1")).toBe("human2");
   });
 });

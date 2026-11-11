@@ -988,11 +988,12 @@ canvas {
   border: 2px solid #555555;
   font: inherit;
   padding: 6px 10px;
-  cursor: default;
+  cursor: pointer;
 }
 
 .player-status-lock:disabled {
   opacity: 0.55;
+  cursor: default;
 }
 
 .player-status :focus-visible {

@@ -79,11 +79,15 @@ function AimingPlayerStatus({
   gamePhase,
   turnInfo,
   gameMode,
+  lockedTargetId,
+  onToggleLock,
 }: {
   readonly players: GameCanvasState["playerStatus"];
   readonly gamePhase: GameCanvasState["gamePhase"];
   readonly turnInfo: GameCanvasState["turnInfo"];
   readonly gameMode: GameCanvasProps["gameMode"];
+  readonly lockedTargetId?: string;
+  readonly onToggleLock?: (playerId: string) => void;
 }) {
   if (!players || !turnInfo || !isAimingInspectionVisible({ gamePhase, turnInfo })) return null;
   return (
@@ -91,6 +95,8 @@ function AimingPlayerStatus({
       players={players}
       currentPlayerId={turnInfo.playerId}
       gameMode={gameMode === "online" ? "online" : "local"}
+      lockedTargetId={lockedTargetId}
+      onToggleLock={onToggleLock}
     />
   );
 }
@@ -390,6 +396,8 @@ export function GameCanvas({
           gamePhase={gamePhase}
           turnInfo={turnInfo}
           gameMode={gameMode}
+          lockedTargetId={advisor.lockFor ? advisor.lockFor(turnInfo?.playerId) : (advisor.view.playerId === turnInfo?.playerId ? advisor.view.lockedTargetId : undefined)}
+          onToggleLock={advisor.toggleLock}
         />
 
         <CombatAdvisor

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, isInaccessible, render, screen } from "@testing-library/react";
 import i18next from "i18next";
@@ -86,16 +87,59 @@ describe("PlayerStatusList", () => {
     expect(screen.queryByText(/BLT/)).toBeNull();
   });
 
-  it("keeps a disabled lock button on local opponents only", async () => {
-    await show("fr");
-    const lock = screen.getByRole("button", { name: "Verrouiller Bob" });
-    expect(lock.hasAttribute("disabled")).toBe(true);
-    expect(lock.getAttribute("type")).toBe("button");
-    expect(lock.getAttribute("data-lock-target")).toBe("bob");
-    expect(lock.textContent).toBe("Verrouiller la cible");
-    expect(screen.queryByRole("button", { name: "Verrouiller Alice" })).toBeNull();
-    fireEvent.click(lock);
-    expect(lock.hasAttribute("disabled")).toBe(true);
+  it.each([
+    ["fr", "Verrouiller la cible", "Verrouiller Bob", "Cible verrouillée", "Cible verrouillée : Bob", "Verrouiller Claire", "Cible verrouillée : Claire"],
+    ["en", "Lock target", "Lock Bob", "Target locked", "Target locked: Bob", "Lock Claire", "Target locked: Claire"],
+  ] as const)("toggles, replaces and removes a local lock in %s", async (language, unlockedText, unlockedBob, lockedText, lockedBob, unlockedClaire, lockedClaire) => {
+    const toggles: string[] = [];
+    const claire = card({ id: "claire", name: "Claire", color: "#5555ff", isHuman: true });
+    function LockHarness() {
+      const [lockedTargetId, setLockedTargetId] = useState<string | undefined>();
+      return (
+        <PlayerStatusList
+          players={[...roster, claire]}
+          currentPlayerId="alice"
+          gameMode="local"
+          lockedTargetId={lockedTargetId}
+          onToggleLock={(playerId) => {
+            toggles.push(playerId);
+            setLockedTargetId((current) => current === playerId ? undefined : playerId);
+          }}
+        />
+      );
+    }
+    const i18n = i18next.createInstance();
+    await i18n.init({
+      lng: language,
+      resources: { fr: { translation: fr }, en: { translation: en } },
+      interpolation: { escapeValue: false },
+    });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <LockHarness />
+      </I18nextProvider>,
+    );
+    const bob = screen.getByRole("button", { name: unlockedBob });
+    const claireButton = screen.getByRole("button", { name: unlockedClaire });
+    expect(bob.hasAttribute("disabled")).toBe(false);
+    expect(bob.getAttribute("type")).toBe("button");
+    expect(bob.getAttribute("data-lock-target")).toBe("bob");
+    expect(bob.getAttribute("aria-pressed")).toBe("false");
+    expect(bob.textContent).toBe(unlockedText);
+    expect(screen.queryByRole("button", { name: language === "fr" ? "Verrouiller Alice" : "Lock Alice" })).toBeNull();
+    fireEvent.click(bob);
+    expect(bob.getAttribute("aria-pressed")).toBe("true");
+    expect(bob.textContent).toBe(lockedText);
+    expect(screen.getByRole("button", { name: lockedBob })).toBe(bob);
+    fireEvent.click(claireButton);
+    expect(bob.getAttribute("aria-pressed")).toBe("false");
+    expect(bob.textContent).toBe(unlockedText);
+    expect(claireButton.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: lockedClaire })).toBe(claireButton);
+    fireEvent.click(claireButton);
+    expect(claireButton.getAttribute("aria-pressed")).toBe("false");
+    expect(claireButton.textContent).toBe(unlockedText);
+    expect(toggles).toEqual(["bob", "claire", "claire"]);
   });
 
   it("omits the lock button online", async () => {

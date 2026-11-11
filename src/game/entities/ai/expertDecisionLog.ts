@@ -5,6 +5,7 @@ export function summarizeExpertDecision(trace: ExpertDecisionTrace | undefined) 
   const transition = trace?.lethalTransition;
   const analysis = transition?.analysis;
   return {
+    ...(trace?.lockedTargetId ? { lockedTargetId: trace.lockedTargetId } : {}),
     phase: trace?.phase,
     transitionReason: trace?.transitionReason,
     selectionReason: trace?.selectionReason,

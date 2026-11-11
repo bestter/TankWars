@@ -45,10 +45,22 @@ export function isAimingInspectionVisible(input: {
   );
 }
 
+export function isOutOfPlayerStatus(player: Player): boolean {
+  return player.tank.isDead || player.tank.health <= 0;
+}
+
+export function deadStatusPlayerIds(players: readonly Player[]): string[] {
+  const ids: string[] = [];
+  for (const player of players) {
+    if (isOutOfPlayerStatus(player)) ids.push(player.id);
+  }
+  return ids;
+}
+
 export function copyLivingPlayerStatus(players: readonly Player[]): PlayerStatusCard[] {
   const cards: PlayerStatusCard[] = [];
   for (const player of players) {
-    if (player.tank.isDead || player.tank.health <= 0) continue;
+    if (isOutOfPlayerStatus(player)) continue;
     const inventory: Partial<Record<WeaponId, number>> = {};
     for (const id of ALL_WEAPON_IDS) {
       const value = player.inventory[id];

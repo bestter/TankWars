@@ -12,12 +12,16 @@ export interface PlayerStatusListProps {
   readonly players: readonly PlayerStatusCard[];
   readonly currentPlayerId: string;
   readonly gameMode: "local" | "online";
+  readonly lockedTargetId?: string;
+  readonly onToggleLock?: (playerId: string) => void;
 }
 
 export const PlayerStatusList = memo(function PlayerStatusList({
   players,
   currentPlayerId,
   gameMode,
+  lockedTargetId,
+  onToggleLock,
 }: PlayerStatusListProps) {
   const { t, i18n } = useTranslation();
   const titleId = useId();
@@ -79,11 +83,16 @@ export const PlayerStatusList = memo(function PlayerStatusList({
                 <button
                   type="button"
                   className="player-status-lock"
-                  disabled
                   data-lock-target={player.id}
-                  aria-label={t("player_status_lock_name", { name: player.name })}
+                  aria-pressed={player.id === lockedTargetId}
+                  aria-label={t(player.id === lockedTargetId ? "player_status_locked_name" : "player_status_lock_name", { name: player.name })}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onToggleLock?.(player.id);
+                  }}
                 >
-                  {t("player_status_lock")}
+                  {t(player.id === lockedTargetId ? "player_status_locked" : "player_status_lock")}
                 </button>
               )}
             </li>
