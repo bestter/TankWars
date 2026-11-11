@@ -85,6 +85,8 @@ export function playVictoryFanfare(
           gain.connect(c2.destination);
           osc.start();
           osc.stop(start + 2.2);
+
+          oscillators.push(osc);
         });
       } catch {
         /* silent */

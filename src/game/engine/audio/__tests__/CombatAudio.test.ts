@@ -260,6 +260,21 @@ describe("CombatAudio", () => {
     expect(factory).toHaveBeenCalledOnce();
   });
 
+  it("arrête les oscillateurs de l'accord final si stopVictoryMusic est appelé après 1,1 s", () => {
+    vi.useFakeTimers();
+    const fake = createFakeContext();
+    const audio = createAudio(() => fake.context);
+
+    audio.playVictoryFanfare();
+    vi.advanceTimersByTime(1100);
+    expect(fake.oscillators).toHaveLength(11);
+
+    audio.stopVictoryMusic();
+    for (const oscillator of fake.oscillators) {
+      expect(oscillator.stop).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("ne joue qu'un accord si la fanfare est relancée", () => {
     vi.useFakeTimers();
     const fake = createFakeContext();
