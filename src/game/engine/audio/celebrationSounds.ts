@@ -15,9 +15,16 @@ export function stopVictoryOscillators(oscillators: OscillatorNode[]): void {
 export function playVictoryFanfare(
   ensure: EnsureAudioContext,
   oscillators: OscillatorNode[],
-): void {
+): () => void {
   const ctx = ensure();
-  if (!ctx) return;
+  if (!ctx) return () => {};
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const cancel = (): void => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+  };
 
   try {
     const notes = [60, 64, 67, 72, 76, 79, 84]; // C major arpeggio (joyful)
@@ -54,33 +61,40 @@ export function playVictoryFanfare(
       oscillators.push(osc);
     });
 
-    // Add a bright final chord. The timeout is not cancelled by dispose().
-    setTimeout(() => {
+    // Accord final à 1,1 s. La fonction retournée annule ce minuteur.
+    timer = setTimeout(() => {
+      timer = null;
       const c2 = ensure();
       if (!c2) return;
-      const chordNotes = [72, 76, 79, 84];
-      chordNotes.forEach((midiNote, i) => {
-        const osc = c2.createOscillator();
-        const gain = c2.createGain();
-        const freq = 440 * 2 ** ((midiNote - 69) / 12);
+      try {
+        const chordNotes = [72, 76, 79, 84];
+        chordNotes.forEach((midiNote, i) => {
+          const osc = c2.createOscillator();
+          const gain = c2.createGain();
+          const freq = 440 * 2 ** ((midiNote - 69) / 12);
 
-        osc.type = i === 0 ? "square" : "sawtooth";
-        osc.frequency.value = freq;
+          osc.type = i === 0 ? "square" : "sawtooth";
+          osc.frequency.value = freq;
 
-        gain.gain.value = 0.12;
-        const start = c2.currentTime;
-        gain.gain.setValueAtTime(0.12, start);
-        gain.gain.linearRampToValueAtTime(0.001, start + 1.8);
+          gain.gain.value = 0.12;
+          const start = c2.currentTime;
+          gain.gain.setValueAtTime(0.12, start);
+          gain.gain.linearRampToValueAtTime(0.001, start + 1.8);
 
-        osc.connect(gain);
-        gain.connect(c2.destination);
-        osc.start();
-        osc.stop(start + 2.2);
-      });
+          osc.connect(gain);
+          gain.connect(c2.destination);
+          osc.start();
+          osc.stop(start + 2.2);
+        });
+      } catch {
+        /* silent */
+      }
     }, 1100);
   } catch {
-    // Audio not available - silently ignore
+    cancel();
+    return () => {};
   }
+  return cancel;
 }
 
 /** Pop spatialisé. Le crépitement reste branché sur le panoramique quand il existe. */

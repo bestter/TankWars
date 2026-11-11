@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ALL_WEAPON_IDS } from "../../../../types/weapon";
 import * as random from "../../../../utils/random";
-import { CombatAudio } from "../CombatAudio";
+import { CombatAudio, defaultAudioContext } from "../CombatAudio";
 
 interface FakeOscillator {
   type: OscillatorType;
@@ -213,6 +213,65 @@ describe("CombatAudio", () => {
     expect(second.oscillators.length).toBeGreaterThan(0);
   });
 
+  it("joue l'accord final à 1,1 s sur le même contexte", () => {
+    vi.useFakeTimers();
+    const fake = createFakeContext();
+    const factory = vi.fn(() => fake.context);
+    const audio = createAudio(factory);
+
+    audio.playVictoryFanfare();
+    expect(fake.oscillators).toHaveLength(7);
+    expect(factory).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1100);
+    expect(factory).toHaveBeenCalledOnce();
+    expect(fake.oscillators).toHaveLength(11);
+  });
+
+  it("n'ouvre pas de contexte pour l'accord après dispose", () => {
+    vi.useFakeTimers();
+    const fake = createFakeContext();
+    const factory = vi.fn(() => fake.context);
+    const audio = createAudio(factory);
+
+    audio.playVictoryFanfare();
+    audio.dispose();
+    vi.advanceTimersByTime(1100);
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(fake.oscillators).toHaveLength(7);
+    expect(fake.close).toHaveBeenCalledOnce();
+  });
+
+  it("annule l'accord sans fermer le contexte", () => {
+    vi.useFakeTimers();
+    const fake = createFakeContext();
+    const factory = vi.fn(() => fake.context);
+    const audio = createAudio(factory);
+
+    audio.playVictoryFanfare();
+    audio.stopVictoryMusic();
+    vi.advanceTimersByTime(1100);
+
+    expect(fake.oscillators).toHaveLength(7);
+    expect(fake.close).not.toHaveBeenCalled();
+
+    audio.playFire("BULLET");
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("ne joue qu'un accord si la fanfare est relancée", () => {
+    vi.useFakeTimers();
+    const fake = createFakeContext();
+    const audio = createAudio(() => fake.context);
+
+    audio.playVictoryFanfare();
+    audio.playVictoryFanfare();
+    vi.advanceTimersByTime(1100);
+
+    expect(fake.oscillators).toHaveLength(18);
+  });
+
   it("ne ferme pas un contexte déjà fermé", () => {
     const fake = createFakeContext({ state: "closed" });
     const audio = createAudio(() => fake.context);
@@ -286,5 +345,10 @@ describe("CombatAudio", () => {
 
     expect(() => audio.playFireworkPop(0)).not.toThrow();
     expect(draws).not.toHaveBeenCalled();
+  });
+
+  it("retourne null quand window est absent", () => {
+    expect(typeof window).toBe("undefined");
+    expect(defaultAudioContext()).toBeNull();
   });
 });

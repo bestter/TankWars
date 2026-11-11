@@ -37,6 +37,7 @@ export interface CombatAudioOptions {
 export class CombatAudio {
   private audioContext: AudioContext | null = null;
   private readonly victoryOscillators: OscillatorNode[] = [];
+  private cancelFinalChord: (() => void) | null = null;
   private readonly lastSlideTimes = new Map<string, number>();
   private readonly getWidth: () => number;
   private readonly createContext: () => AudioContext | null;
@@ -85,10 +86,16 @@ export class CombatAudio {
   }
 
   playVictoryFanfare(): void {
-    playVictoryFanfare(this.ensureContext, this.victoryOscillators);
+    this.cancelFinalChord?.();
+    this.cancelFinalChord = playVictoryFanfare(
+      this.ensureContext,
+      this.victoryOscillators,
+    );
   }
 
   stopVictoryMusic(): void {
+    this.cancelFinalChord?.();
+    this.cancelFinalChord = null;
     stopVictoryOscillators(this.victoryOscillators);
   }
 
@@ -125,7 +132,8 @@ export class CombatAudio {
   };
 }
 
-function defaultAudioContext(): AudioContext | null {
+export function defaultAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
   const browserWindow = window as Window & typeof globalThis & {
     webkitAudioContext?: typeof AudioContext;
   };

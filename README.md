@@ -215,11 +215,11 @@ This project follows a strict separation of concerns:
 
 L'audio de combat vit dans `src/game/engine/audio/`. `GameEngine` appelle seulement la façade `CombatAudio`. Les familles sont séparées : `weaponSounds.ts` (tir et impact), `tankSounds.ts` (explosion, ensevelissement, plancher), `zeusSounds.ts`, `celebrationSounds.ts` (fanfare et pop de feu d'artifice) et `noiseBurst.ts`. La glissade, le contexte audio et `dispose()` restent sur la façade.
 
-Les tables de tir et d'impact sont exhaustives (`satisfies Record<WeaponId, …>`). Une arme ajoutée à `WEAPON_REGISTRY` sans entrée fait échouer `npm run build`. BULLET et BULLDOZER restent muets au tir et demandent quand même le contexte. Le `setTimeout` de l'accord final et le gain de crépitement branché sans entrée quand un panoramique existe sont conservés tels quels.
+Les tables de tir et d'impact sont exhaustives (`satisfies Record<WeaponId, …>`). Une arme ajoutée à `WEAPON_REGISTRY` sans entrée fait échouer `npm run build`. BULLET et BULLDOZER restent muets au tir et demandent quand même le contexte. L'accord final reste planifié à 1,1 s; `stopVictoryMusic()` et `dispose()` annulent ce minuteur pour ne pas rouvrir un contexte fermé. Le gain de crépitement branché sans entrée quand un panoramique existe est conservé tel quel.
 
 Combat audio lives in `src/game/engine/audio/`. `GameEngine` calls the `CombatAudio` facade only. Families cover weapon fire and impact, tank explosion, burial and floor, Zeus, the victory fanfare, the firework pop, and the shared noise burst. Sliding, the audio context and `dispose()` stay on the facade.
 
-Fire and impact tables are exhaustive over `WeaponId`. A weapon added to `WEAPON_REGISTRY` without an entry fails `npm run build`. BULLET and BULLDOZER stay silent on fire and still request a context. The final-chord `setTimeout` and the crackle gain left unconnected when a stereo panner exists stay as they are.
+Fire and impact tables are exhaustive over `WeaponId`. A weapon added to `WEAPON_REGISTRY` without an entry fails `npm run build`. BULLET and BULLDOZER stay silent on fire and still request a context. The final chord stays scheduled at 1.1 s; `stopVictoryMusic()` and `dispose()` cancel that timer so a closed context is not reopened. The crackle gain left unconnected when a stereo panner exists stays as it is.
 
 Régénérer les instantanés seulement lorsque le graphe change volontairement. Regenerate the snapshots only when that graph change is intentional:
 
