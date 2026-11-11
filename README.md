@@ -229,6 +229,8 @@ npx vitest run src/game/engine/audio/__tests__/combatAudioGraph.test.ts -u
 
 ## Current Status
 
+**v0.15.2** — Added `<head>` metadata (`theme-color` set to `#000000` and `color-scheme` set to `dark light`) in `index.html` to eliminate initial color-scheme inconsistencies before CSS and React load (#406). The `dark light` priority favors the retro dark game theme, while fixed `#000000` theme-color preserves arcade cabinet immersion across user agents. Harmonized `:root` in `src/index.css` to `color-scheme: dark light;` while preserving light/dark styling, `#root` geometry, and PWA manifest theme declarations (`#55FFFF` accent / `#000000` splash screen).
+
 **v0.15.1** — Cleaned up dead CSS and unused Vite starter template rules (#405) across `src/App.css` and `src/index.css`. Removed orphaned demo selectors (`.counter`, `.hero`, `#next-steps`, etc.) and unused custom properties, while preserving `#root` dimensions (1126px), retro VGA primitives, and active styles.
 
 **v0.15.0** — Combat Web Audio now lives in `src/game/engine/audio/` behind `CombatAudio` (#413). Heard sounds, volumes and call sites are unchanged. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
