@@ -229,6 +229,8 @@ npx vitest run src/game/engine/audio/__tests__/combatAudioGraph.test.ts -u
 
 ## Current Status
 
+**v0.15.1** — Cleaned up dead CSS and unused Vite starter template rules (#405) across `src/App.css` and `src/index.css`. Removed orphaned demo selectors (`.counter`, `.hero`, `#next-steps`, etc.) and unused custom properties, while preserving `#root` dimensions (1126px), retro VGA primitives, and active styles.
+
 **v0.15.0** — Combat Web Audio now lives in `src/game/engine/audio/` behind `CombatAudio` (#413). Heard sounds, volumes and call sites are unchanged. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
 
 **v0.14.2** — Playable local (hotseat + AI) and online multiplayer. During local aim, a human can lock one living opponent for the shot advisor (#375); the search stays on that target, and the button is omitted online. Local EXPERT own-shot search continues a trajectory still in flight at 420 steps up to 600 (#361, v0.14.1). Shared callers stay at 420.
