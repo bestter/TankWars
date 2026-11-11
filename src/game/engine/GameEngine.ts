@@ -1,6 +1,7 @@
 import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type PreparedRound } from "../round/prepareRound";
 import type { DiagnosticInput, DiagnosticState } from "../diagnostics/types";
 import { secureRandom } from "../../utils/random";
+import { CombatAudio } from "./audio/CombatAudio";
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
  *
@@ -260,8 +261,7 @@ export class GameEngine {
     Array<{ cause: string; info?: string; round?: number }>
   > = {};
 
-  // Audio state for new SFX (throttling prevents slide scrape spam at 120 Hz)
-  private lastSlideTimes: Map<string, number> = new Map();
+  private readonly audio: CombatAudio;
 
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
@@ -294,6 +294,7 @@ export class GameEngine {
   constructor(width: number, height: number, config: Partial<GameConfig> = {}) {
     this.width = Math.floor(width);
     this.height = Math.floor(height);
+    this.audio = new CombatAudio({ getWidth: () => this.width });
 
     this.terrain = new TerrainManager(this.width, this.height);
 
@@ -306,9 +307,9 @@ export class GameEngine {
       this.combatObserver?.emit({ kind: "death", playerId, cause });
       this.recordDeath(playerId, cause, details);
       if (cause === "explosion" || cause === "zeus") {
-        this.playTankDestroyedByExplosionSound();
+        this.audio.playTankDestroyedByExplosion();
       } else if (cause === "burial") {
-        this.playTankSadBurialSound();
+        this.audio.playTankSadBurial();
       }
     };
     this.tankManager.onDamageApplied = (event) => {
@@ -324,9 +325,9 @@ export class GameEngine {
 
     // Wire tank movement / pit SFX (consumed by applyGravity in TankManager)
     this.tankManager.onTankSliding = (playerId) =>
-      this.playTankSlidingSound(playerId);
+      this.audio.playTankSliding(playerId);
     this.tankManager.onTankTouchedFloor = () =>
-      this.playTankTouchLowestFloorSound();
+      this.audio.playTankTouchLowestFloor();
 
     // Crée le TurnManager avec un callback de tir
     this.turnManager = new TurnManager(
@@ -378,7 +379,7 @@ export class GameEngine {
       });
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
-      this.playImpactSound(hit.weaponId);
+      this.audio.playImpact(hit.weaponId);
 
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
       if (hit.weaponId === "THERMONUCLEAR") {
@@ -445,7 +446,7 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.gameOver = false;
     this.winner = null;
-    this.lastSlideTimes.clear();
+    this.audio.resetSlideThrottle();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
     this.turnManager.setRoundNumber(map?.roundNumber ?? 1);
 
@@ -529,7 +530,7 @@ export class GameEngine {
     this.tankManager.beginShotAttribution(shotId, ownerId, command.weaponId);
 
     // Per-weapon fire sound (distinct for each projectile type)
-    this.playFireSound(command.weaponId);
+    this.audio.playFire(command.weaponId);
 
     // Calculate barrel tip position so the projectile starts at the end of the barrel
     // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
@@ -705,7 +706,7 @@ export class GameEngine {
       if (evaluation.zeusRevoked) this.clearZeusVisuals();
       if (evaluation.appointment) {
         this.pendingZeusAppointment = evaluation.appointment;
-        this.playZeusAppointmentSound();
+        this.audio.playZeusAppointment();
         this.onZeusAppointed?.(evaluation.appointment);
       }
     }
@@ -776,7 +777,7 @@ export class GameEngine {
       nextAppointmentId: appointment.appointmentId + 1,
     };
     this.turnManager.lockSpecialTurn();
-    this.playZeusAppointmentSound();
+    this.audio.playZeusAppointment();
     this.onZeusAppointed?.(appointment);
   }
 
@@ -801,7 +802,7 @@ export class GameEngine {
   public applyRemoteZeusStrikeResult(result: ZeusStrikeResult): boolean {
     if (result.strikeId <= this.lastAppliedZeusStrikeId) return false;
     const target = this.tankManager.getPlayerById(result.targetId);
-    this.playZeusStrikeSound();
+    this.audio.playZeusStrike();
     if (target && !target.tank.isDead) {
       this.tankManager.applyZeusStrike(result.zeusId, result.targetId);
     }
@@ -872,7 +873,7 @@ export class GameEngine {
       visual.elapsedSeconds >= 0.7
     ) {
       visual.impactApplied = true;
-      this.playZeusStrikeSound();
+      this.audio.playZeusStrike();
       if (this.tankManager.applyZeusStrike(visual.strike.zeusId, visual.strike.targetId)) {
         const reward = calculateZeusStrikeReward(
           visual.strike.zeusId,
@@ -1010,7 +1011,7 @@ export class GameEngine {
     this.winner = null;
     this.roundCombatActive = true;
 
-    this.stopVictoryMusic();
+    this.audio.stopVictoryMusic();
     this.physicsEngine.clear(false);
     this.fireworks = [];
     this.impactExplosions = [];
@@ -1023,7 +1024,7 @@ export class GameEngine {
     this.resetZeusForRound();
 
     this.applyPreparedRound(prepared);
-    this.lastSlideTimes.clear();
+    this.audio.resetSlideThrottle();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
 
     // Prepare turn system for the next round (keeps overall round counter semantics via TurnManager)
@@ -1064,14 +1065,7 @@ export class GameEngine {
       this.rafId = null;
     }
     this.clearZeusVisuals();
-    this.stopVictoryMusic();
-    const audioContext = this.audioContext;
-    this.audioContext = null;
-    if (audioContext && audioContext.state !== "closed") {
-      void audioContext.close().catch(() => {
-        // Audio teardown is best-effort during React unmount.
-      });
-    }
+    this.audio.dispose();
   }
 
   private readonly loop = (timestamp: number): void => {
@@ -1397,7 +1391,7 @@ export class GameEngine {
     this.fireworks = [];
     this.celebrationCenterX = centerX;
     this.celebrationColor = color ?? this.winner?.tank.color ?? "#FFFFFF";
-    this.playVictoryFanfare();
+    this.audio.playVictoryFanfare();
 
     const festiveColors = [
       VGA_PALETTE.ELECTRIC_CYAN,
@@ -1449,180 +1443,6 @@ export class GameEngine {
         rotation: secureRandom() * Math.PI * 2,
         rotationSpeed: (secureRandom() - 0.5) * 0.12,
       });
-    }
-  }
-
-  // Simple joyful victory fanfare using Web Audio API (chiptune style)
-  private audioContext: AudioContext | null = null;
-  private victoryOscillators: OscillatorNode[] = [];
-
-  /** Lazily creates (or returns) the shared AudioContext (handles webkit prefix + suspended contexts). */
-  private ensureAudioContext(): AudioContext | null {
-    if (this.audioContext) return this.audioContext;
-    try {
-      const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (AudioContextClass) {
-        this.audioContext = new AudioContextClass();
-        return this.audioContext;
-      }
-    } catch {
-      /* no audio */
-    }
-    return null;
-  }
-
-  private playVictoryFanfare(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-
-    try {
-      const notes = [60, 64, 67, 72, 76, 79, 84]; // C major arpeggio (joyful)
-      const noteDuration = 0.18;
-
-      this.victoryOscillators.forEach((osc) => {
-        try {
-          osc.stop();
-        } catch {
-          /* ignore */
-        }
-      });
-      this.victoryOscillators = [];
-
-      notes.forEach((midiNote, index) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        const filter = ctx.createBiquadFilter();
-
-        const frequency = 440 * 2 ** ((midiNote - 69) / 12);
-
-        osc.type = "sawtooth";
-        osc.frequency.value = frequency;
-
-        filter.type = "lowpass";
-        filter.frequency.value = 1800;
-
-        gain.gain.value = 0.18;
-
-        const now = ctx.currentTime + index * noteDuration * 0.85;
-        gain.gain.setValueAtTime(0.18, now);
-        gain.gain.linearRampToValueAtTime(0.001, now + noteDuration * 1.6);
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc.start(now);
-        osc.stop(now + noteDuration * 2.2);
-
-        this.victoryOscillators.push(osc);
-      });
-
-      // Add a bright final chord
-      setTimeout(() => {
-        const c2 = this.ensureAudioContext();
-        if (!c2) return;
-        const chordNotes = [72, 76, 79, 84];
-        chordNotes.forEach((midiNote, i) => {
-          const osc = c2.createOscillator();
-          const gain = c2.createGain();
-          const freq = 440 * 2 ** ((midiNote - 69) / 12);
-
-          osc.type = i === 0 ? "square" : "sawtooth";
-          osc.frequency.value = freq;
-
-          gain.gain.value = 0.12;
-          const start = c2.currentTime;
-          gain.gain.setValueAtTime(0.12, start);
-          gain.gain.linearRampToValueAtTime(0.001, start + 1.8);
-
-          osc.connect(gain);
-          gain.connect(c2.destination);
-          osc.start();
-          osc.stop(start + 2.2);
-        });
-      }, 1100);
-    } catch {
-      // Audio not available - silently ignore
-    }
-  }
-
-  private stopVictoryMusic(): void {
-    this.victoryOscillators.forEach((osc) => {
-      try {
-        osc.stop();
-      } catch {
-        /* ignore */
-      }
-    });
-    this.victoryOscillators = [];
-  }
-
-  /** Plays a short chiptune firework explosion pop sound, spatialized left-to-right based on x position. */
-  private playFireworkPop(x: number): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-
-    try {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const filter = ctx.createBiquadFilter();
-
-      let panner: StereoPannerNode | null = null;
-      if (typeof ctx.createStereoPanner === "function") {
-        panner = ctx.createStereoPanner();
-        const panValue = Math.max(-1, Math.min(1, (x / this.width) * 2 - 1));
-        panner.pan.value = panValue;
-      }
-
-      // Base explosion thud using a triangle wave with rapid pitch decay
-      osc.type = "triangle";
-      const baseFreq = 120 + secureRandom() * 50;
-      osc.frequency.setValueAtTime(baseFreq, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.12);
-
-      filter.type = "lowpass";
-      filter.frequency.setValueAtTime(350, ctx.currentTime);
-
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-
-      osc.connect(filter);
-      if (panner) {
-        filter.connect(panner);
-        panner.connect(gain);
-      } else {
-        filter.connect(gain);
-      }
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.16);
-
-      // Micro crackle pop (high pitch white-noise simulation with sawtooth) for sparkle feel
-      if (secureRandom() < 0.38) {
-        const crackleOsc = ctx.createOscillator();
-        const crackleGain = ctx.createGain();
-
-        crackleOsc.type = "sawtooth";
-        crackleOsc.frequency.setValueAtTime(
-          900 + secureRandom() * 1100,
-          ctx.currentTime,
-        );
-        crackleGain.gain.setValueAtTime(0.015, ctx.currentTime);
-        crackleGain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.04);
-
-        if (panner) {
-          crackleOsc.connect(panner);
-        } else {
-          crackleOsc.connect(crackleGain);
-        }
-        crackleGain.connect(ctx.destination);
-
-        crackleOsc.start();
-        crackleOsc.stop(ctx.currentTime + 0.05);
-      }
-    } catch {
-      // Audio failed or blocked - silently ignore
     }
   }
 
@@ -1737,7 +1557,7 @@ export class GameEngine {
 
         // Explode when life ends
         if (p.life <= 0) {
-          this.playFireworkPop(p.x);
+          this.audio.playFireworkPop(p.x);
 
           const explosionPattern = Math.floor(secureRandom() * 4);
 
@@ -2269,7 +2089,7 @@ export class GameEngine {
     this.clearZeusVisuals(); this.clearRoundCelebration();
     this.gameOver = false; this.winner = null; this.roundCombatActive = true;
     this.shotNumberInRound = 0; this.previousProjectileCount = 0;
-    this.lastSlideTimes.clear();
+    this.audio.resetSlideThrottle();
     this.tankManager.setPlayers(structuredClone([...initialPlayers]));
     this.restoreRoundTerrain(map);
     this.turnManager.setRoundNumber(map.roundNumber);
@@ -2300,7 +2120,7 @@ export class GameEngine {
   /** Fully resets the game for a new match */
   public resetGame(players?: Player[]): void {
     const prepared = players ? this.prepareCombatRound(players, 1) : null;
-    this.stopVictoryMusic();
+    this.audio.stopVictoryMusic();
     this.gameOver = false;
     this.winner = null;
     this.roundCombatActive = true;
@@ -2338,407 +2158,9 @@ export class GameEngine {
     this.deathReasons = {};
 
     // Reset audio throttling + tank velocities for clean next match
-    this.lastSlideTimes.clear();
+    this.audio.resetSlideThrottle();
     this.tankManager.clearVelocities();
 
     if (prepared) this.setPlayers(prepared.players, prepared.map);
-  }
-
-  // ============================================================
-  // Sound synthesis (Web Audio, chiptune/retro style, no assets)
-  // All methods are silent on failure and never throw to the loop.
-  // ============================================================
-
-  private playZeusAppointmentSound(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      this.playNoiseBurst(0.24, 0.3, 1100, 90);
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "square";
-      oscillator.frequency.setValueAtTime(92, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(42, ctx.currentTime + 0.28);
-      gain.gain.setValueAtTime(0.18, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.31);
-    } catch {
-      // Audio is optional and must never interrupt combat.
-    }
-  }
-
-  private playZeusStrikeSound(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      this.playNoiseBurst(0.18, 0.45, 3200, 120);
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "sawtooth";
-      oscillator.frequency.setValueAtTime(180, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(48, ctx.currentTime + 0.22);
-      gain.gain.setValueAtTime(0.22, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.24);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.25);
-    } catch {
-      // Audio is optional and must never interrupt combat.
-    }
-  }
-
-  private playFireSound(weaponId: WeaponId): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-
-      // Goal: move away from clean PONG-style square/saw beeps toward short, noisy, percussive
-      // "launch reports" in the spirit of old TankWars / Scorched Earth on NES/ATARI-era hardware.
-      // Heavy use of noise (LFSR) + a little low tone for body. Short, gritty, not melodic.
-
-      switch (weaponId) {
-        case "MISSILE": {
-          // Classic rocket launch: mid noise whoosh + quick low "thump" body
-          this.playNoiseBurst(0.09, 0.22, 1800, 420);
-          // subtle low end "report"
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "triangle"; // more "NES triangle channel" feel than sine
-          osc.frequency.value = 95;
-          gain.gain.value = 0.18;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          gain.gain.setValueAtTime(0.18, now);
-          gain.gain.linearRampToValueAtTime(0.0005, now + 0.07);
-          osc.stop(now + 0.09);
-          break;
-        }
-        case "GRENADE": {
-          // Lobbed: shorter, slightly higher noise "pop" with a little tail
-          this.playNoiseBurst(0.07, 0.26, 2400, 650);
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "square";
-          osc.frequency.value = 140;
-          gain.gain.value = 0.15;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          gain.gain.setValueAtTime(0.15, now);
-          gain.gain.linearRampToValueAtTime(0.0004, now + 0.09);
-          osc.stop(now + 0.11);
-          break;
-        }
-        case "CLUSTER": {
-          // Multiple small noisy "submunition release" pops — not clean chirps
-          for (let k = 0; k < 4; k++) {
-            this.playNoiseBurst(0.045, 0.15, 2600 + k * 120, 900);
-          }
-          break;
-        }
-        case "NUKE": {
-          // Deep heavy launch rumble
-          this.playNoiseBurst(0.28, 0.28, 650, 140);
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "triangle";
-          osc.frequency.value = 55;
-          gain.gain.value = 0.35;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          gain.gain.setValueAtTime(0.35, now);
-          gain.gain.linearRampToValueAtTime(0.0003, now + 0.26);
-          osc.stop(now + 0.32);
-          break;
-        }
-        case "THERMONUCLEAR": {
-          // Massive thermonuclear launch — deeper/longer than nuke
-          this.playNoiseBurst(0.36, 0.33, 520, 85);
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "triangle";
-          osc.frequency.value = 38;
-          gain.gain.value = 0.38;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          gain.gain.setValueAtTime(0.38, now);
-          gain.gain.linearRampToValueAtTime(0.0002, now + 0.38);
-          osc.stop(now + 0.42);
-          break;
-        }
-        case "DRILLER": {
-          // Rapid noisy "drilling / boring" texture — series of gritty ticks
-          for (let k = 0; k < 5; k++) {
-            this.playNoiseBurst(0.028, 0.18, 3200 - k * 180, 1100);
-          }
-          // low "motor" hum underneath
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sawtooth";
-          osc.frequency.value = 85;
-          gain.gain.value = 0.12;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          osc.frequency.setValueAtTime(85, now);
-          osc.frequency.linearRampToValueAtTime(72, now + 0.12);
-          gain.gain.setValueAtTime(0.12, now);
-          gain.gain.linearRampToValueAtTime(0.0004, now + 0.13);
-          osc.stop(now + 0.15);
-          break;
-        }
-      }
-    } catch {
-      /* silent */
-    }
-  }
-
-  private playImpactSound(weaponId: WeaponId): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-
-      // Make impacts feel like real old-school artillery hits: the noise is the star.
-      // Use LFSR noise + downward filter sweep (bright crackle → low rumble).
-      // Only a little low triangle body for the "oomph", not a clean pongy tone.
-
-      const isNuke = weaponId === "NUKE";
-      const isCluster = weaponId === "CLUSTER";
-      const isThermo = weaponId === "THERMONUCLEAR";
-
-      if (isThermo) {
-        // HUGE bomb sound: long multi-layer nuclear rumble + aftershocks (deeper + longer than nuke)
-        this.playNoiseBurst(0.82, 0.39, 1750, 48);
-        this.playNoiseBurst(0.62, 0.28, 880, 35, 0.18);
-        // deep body layers
-        const osc1 = ctx.createOscillator();
-        const gain1 = ctx.createGain();
-        osc1.type = "triangle";
-        osc1.frequency.value = 32;
-        gain1.gain.value = 0.46;
-        osc1.connect(gain1);
-        gain1.connect(ctx.destination);
-        osc1.start(now);
-        gain1.gain.setValueAtTime(0.46, now);
-        gain1.gain.linearRampToValueAtTime(0.00015, now + 0.85);
-        osc1.stop(now + 0.92);
-
-        const osc2 = ctx.createOscillator();
-        const gain2 = ctx.createGain();
-        osc2.type = "sawtooth";
-        osc2.frequency.value = 28;
-        gain2.gain.value = 0.22;
-        osc2.connect(gain2);
-        gain2.connect(ctx.destination);
-        osc2.start(now + 0.12);
-        osc2.frequency.setValueAtTime(28, now + 0.12);
-        osc2.frequency.linearRampToValueAtTime(22, now + 0.75);
-        gain2.gain.setValueAtTime(0.22, now + 0.12);
-        gain2.gain.linearRampToValueAtTime(0.0001, now + 0.95);
-        osc2.stop(now + 1.0);
-      } else if (isNuke) {
-        // Huge dirty explosion
-        this.playNoiseBurst(0.55, 0.32, 2100, 95);
-        // very low body
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "triangle";
-        osc.frequency.value = 42;
-        gain.gain.value = 0.42;
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now);
-        gain.gain.setValueAtTime(0.42, now);
-        gain.gain.linearRampToValueAtTime(0.0002, now + 0.6);
-        osc.stop(now + 0.7);
-      } else if (isCluster) {
-        // Several small noisy secondary blasts
-        for (let k = 0; k < 3; k++) {
-          this.playNoiseBurst(0.13, 0.18, 2800, 420);
-        }
-      } else {
-        // Standard missile/grenade/driller hit
-        const startCut = weaponId === "DRILLER" ? 3200 : 1950;
-        const endCut = weaponId === "GRENADE" ? 380 : 160;
-        this.playNoiseBurst(0.22, 0.26, startCut, endCut);
-
-        // light low body
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "triangle";
-        osc.frequency.value = 78;
-        gain.gain.value = 0.17;
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now);
-        gain.gain.setValueAtTime(0.17, now);
-        gain.gain.linearRampToValueAtTime(0.0003, now + 0.18);
-        osc.stop(now + 0.22);
-      }
-    } catch {
-      /* silent */
-    }
-  }
-
-  private playTankDestroyedByExplosionSound(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-
-      // Tank vaporized by direct/splash hit — big noisy boom + debris crackle
-      // Primary is a longer LFSR noise with strong downward sweep
-      this.playNoiseBurst(0.38, 0.29, 2400, 180);
-
-      // Low dirty body (triangle for that old console bass thump)
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = 58;
-      gain.gain.value = 0.32;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      gain.gain.setValueAtTime(0.32, now);
-      gain.gain.linearRampToValueAtTime(0.0003, now + 0.42);
-      osc.stop(now + 0.48);
-    } catch {
-      /* silent */
-    }
-  }
-
-  private playTankSadBurialSound(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-
-      // Burial / falling off the bottom: slow noisy "whoosh of falling into the pit"
-      // + final wet/muffled splat. Much less musical, more "realistic old game" dirt sound.
-      // Long filtered noise sweep down (air + dirt falling)
-      this.playNoiseBurst(0.65, 0.22, 1450, 95);
-
-      // Final low "splat into the abyss" — reuse the floor thump character but softer/sadder
-      const t2 = now + 0.48;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = 48;
-      gain.gain.value = 0.21;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(t2);
-      gain.gain.setValueAtTime(0.21, t2);
-      gain.gain.linearRampToValueAtTime(0.0002, t2 + 0.38);
-      osc.stop(t2 + 0.45);
-
-      // Extra low muffled tail for the "sinking" finality (scheduled via offset)
-      this.playNoiseBurst(0.32, 0.14, 260, 80, 0.52);
-    } catch {
-      /* silent */
-    }
-  }
-
-  private playTankSlidingSound(playerId: string): void {
-    const now = performance.now();
-    const last = this.lastSlideTimes.get(playerId) ?? 0;
-    if (now - last < 82) return; // throttle ~12 per sec max per tank
-    this.lastSlideTimes.set(playerId, now);
-
-    // Short gritty scrape (noise works great for dirt/rock slide)
-    this.playNoiseBurst(0.032, 0.075, 1950);
-  }
-
-  private playTankTouchLowestFloorSound(): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const now = ctx.currentTime;
-      // Heavy low thump — keep the character the user liked, but use triangle + swept LFSR noise
-      // for a bit more "dirt" while staying percussive and satisfying.
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = 48;
-      gain.gain.value = 0.36;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      gain.gain.setValueAtTime(0.36, now);
-      gain.gain.linearRampToValueAtTime(0.0003, now + 0.38);
-      osc.stop(now + 0.45);
-
-      // Muffled impact noise with a little sweep
-      this.playNoiseBurst(0.26, 0.19, 380, 110);
-    } catch {
-      /* silent */
-    }
-  }
-
-  /**
-   * Noise burst helper — now with retro LFSR-style noise (more NES/ATARI grit than pure white)
-   * and optional filter sweep (start high for crackle, sweep low for body rumble).
-   * This is the key to moving away from "PONG" clean beeps toward thumpy, crackly old-school explosions.
-   */
-  private playNoiseBurst(
-    duration: number,
-    volume: number,
-    cutoff: number,
-    sweepTo?: number,
-    startOffset = 0,
-  ): void {
-    const ctx = this.ensureAudioContext();
-    if (!ctx) return;
-    try {
-      const len = Math.max(1, Math.floor(ctx.sampleRate * duration));
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const data = buf.getChannelData(0);
-
-      // Simple 16-bit LFSR for grittier, more "console noise channel" character (periodicity + buzz)
-      // instead of modern white noise. This helps the "NES/ATARI but realistic" feel.
-      let lfsr = 0xace1 >>> 0;
-      for (let i = 0; i < len; i++) {
-        // 16-bit LFSR with common taps (0, 2, 3, 5) for decent length sequence
-        const bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1;
-        lfsr = ((lfsr >>> 1) | (bit << 15)) >>> 0;
-        data[i] = lfsr & 1 ? 0.9 : -0.9; // slightly less than full scale for headroom when layered
-      }
-
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-
-      const filter = ctx.createBiquadFilter();
-      filter.type = "lowpass";
-      filter.frequency.value = cutoff;
-
-      const gain = ctx.createGain();
-      gain.gain.value = volume;
-
-      const t = ctx.currentTime + Math.max(0, startOffset);
-      gain.gain.setValueAtTime(volume, t);
-      gain.gain.linearRampToValueAtTime(0.0004, t + duration);
-
-      // Optional downward sweep on the filter for that classic "explosion blooming then settling" feel
-      if (sweepTo !== undefined && sweepTo > 0) {
-        filter.frequency.setValueAtTime(cutoff, t);
-        filter.frequency.linearRampToValueAtTime(sweepTo, t + duration * 0.9);
-      }
-
-      src.connect(filter);
-      filter.connect(gain);
-      gain.connect(ctx.destination);
-      src.start(t);
-    } catch {
-      /* silent */
-    }
   }
 }
