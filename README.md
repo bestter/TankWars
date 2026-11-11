@@ -63,7 +63,7 @@ Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382/#3
 - **Internationalization (i18n)** — French and English for UI, settings, weapon descriptions, and status. Retro LanguageSwitcher.
 - **Mobile Playability & PWA** — Touch D-Pads (angle, power, fire, weapon cycle) with press-and-hold. `manifest.json` + `sw.js` (network-first navigations) for installable fullscreen landscape on iOS/Android.
 - **Online Multiplayer** — Host creates a room (2–4 players: shareable human URLs + optional AI). Cloudflare Worker + Durable Object (`worker/`) owns turn order, FIRE/ammo, the transactional shop, rewards, round end, and Zeus. `FIRE` is server-first and idempotent by `actionId`. Protocol v4 (minimum client v4) requires a complete round map and uses finite inclusive FIRE bounds: angle -360° to 360° and power 0 to 100. Successful `SHOP_STATE` / `SHOP_FINISH` messages acknowledge `{ slot, actionId }`; concurrent states still update the UI but only the correlated ack unlocks local controls, and a timeout retries the same ID. The WebSocket handshake requires v4; older or missing versions receive `PROTOCOL_MISMATCH` and close `4402`. The Worker prepares and persists the common terrain, materials, initial positions and wind before every round. Clients load this result without regenerating terrain, respawning or rolling wind. Projectile physics and damage simulation stay local; server AI still uses its existing placeholder command.
-- **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. All in `GameEngine` (Web Audio).
+- **Audio** — Chiptune explosions (spatialized), weapon hits, celebration fireworks, victory sting, and synthesized retro thunder at Zeus appointment/impact followed by the normal destruction sound. `GameEngine` delegates Web Audio to `CombatAudio` in `src/game/engine/audio/` (#413).
 
 ---
 
@@ -211,9 +211,27 @@ This project follows a strict separation of concerns:
 
 ---
 
+## Ajouter ou modifier un son / Adding or changing a sound
+
+L'audio de combat vit dans `src/game/engine/audio/`. `GameEngine` appelle seulement la façade `CombatAudio`. Les familles sont séparées : `weaponSounds.ts` (tir et impact), `tankSounds.ts` (explosion, ensevelissement, plancher), `zeusSounds.ts`, `celebrationSounds.ts` (fanfare et pop de feu d'artifice) et `noiseBurst.ts`. La glissade, le contexte audio et `dispose()` restent sur la façade.
+
+Les tables de tir et d'impact sont exhaustives (`satisfies Record<WeaponId, …>`). Une arme ajoutée à `WEAPON_REGISTRY` sans entrée fait échouer `npm run build`. BULLET et BULLDOZER restent muets au tir et demandent quand même le contexte. Le `setTimeout` de l'accord final et le gain de crépitement branché sans entrée quand un panoramique existe sont conservés tels quels.
+
+Combat audio lives in `src/game/engine/audio/`. `GameEngine` calls the `CombatAudio` facade only. Families cover weapon fire and impact, tank explosion, burial and floor, Zeus, the victory fanfare, the firework pop, and the shared noise burst. Sliding, the audio context and `dispose()` stay on the facade.
+
+Fire and impact tables are exhaustive over `WeaponId`. A weapon added to `WEAPON_REGISTRY` without an entry fails `npm run build`. BULLET and BULLDOZER stay silent on fire and still request a context. The final-chord `setTimeout` and the crackle gain left unconnected when a stereo panner exists stay as they are.
+
+Régénérer les instantanés seulement lorsque le graphe change volontairement. Regenerate the snapshots only when that graph change is intentional:
+
+```bash
+npx vitest run src/game/engine/audio/__tests__/combatAudioGraph.test.ts -u
+```
+
 ## Current Status
 
-**v0.14.2** — Playable local (hotseat + AI) and online multiplayer. During local aim, a human can lock one living opponent for the shot advisor (#375); the search stays on that target, and the button is omitted online. Local EXPERT own-shot search continues a trajectory still in flight at 420 steps up to 600 (#361, v0.14.1). Shared callers stay at 420. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+**v0.15.0** — Combat Web Audio now lives in `src/game/engine/audio/` behind `CombatAudio` (#413). Heard sounds, volumes and call sites are unchanged. Version is imported from `package.json` and shown in the Main Menu footer next to the license (© Martin Labelle).
+
+**v0.14.2** — Playable local (hotseat + AI) and online multiplayer. During local aim, a human can lock one living opponent for the shot advisor (#375); the search stays on that target, and the button is omitted online. Local EXPERT own-shot search continues a trajectory still in flight at 420 steps up to 600 (#361, v0.14.1). Shared callers stay at 420.
 
 Mode « armes gratuites » (#355, v0.13.0) : disponible en jeu local hotseat et en endurance IA (exclut le multijoueur en ligne). À chaque début de manche (manche 1 comprise), les stocks de munitions sont automatiquement réapprovisionnés jusqu'à des cibles fixes selon le profil et le nombre initial de joueurs $N$ (2, 3 ou 4) : SIMPLE ($(N-1)$ GRENADE/CLUSTER), OK ($3N$ GRENADE/CLUSTER, $N$ DRILLER/BULLDOZER, 1 NUKE), SNIPER ($3N$ BULLET, $2N$ DRILLER/BULLDOZER), EXPERT ($3N$ GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR) et Humains (12 BULLET/GRENADE/CLUSTER/DRILLER/BULLDOZER, 2 NUKE, 1 THERMONUCLEAR; MISSILE infini). Les armes nucléaires sont plafonnées (max 2 NUKE, 1 THERMONUCLEAR sans remboursement); les surplus ordinaires et armes hors profil existantes sont conservés. La boutique d'inter-manche est complètement sautée : la fin de manche enchaîne directement du résumé (`RoundSummary`, affichant gains et solde total) vers le combat de la manche suivante (via le bouton « Manche suivante » en local ou le timer de 3 s en endurance). Aucun achat n'est consigné dans le journal d'endurance. Les gains de combat s'accumulent normalement et les stratégies IA (EXPERT, conseiller) continuent d'utiliser les coûts théoriques des munitions pour leurs décisions tactiques.
 

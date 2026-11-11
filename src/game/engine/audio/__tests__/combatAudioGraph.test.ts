@@ -1,29 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GameEngine } from "../../GameEngine";
-import { ALL_WEAPON_IDS, type WeaponId } from "../../../../types/weapon";
+import { ALL_WEAPON_IDS } from "../../../../types/weapon";
 import * as random from "../../../../utils/random";
+import { CombatAudio } from "../CombatAudio";
 import { createRecordingSession } from "./recordingAudioContext";
 
 /**
- * Caractérisation du graphe Web Audio avant l'extraction (#413).
- * L'accès aux méthodes privées disparaît quand le harnais vise CombatAudio.
- * Ne régénérer ces instantanés que si le son change volontairement.
+ * Instantané du graphe Web Audio (#413).
+ * Le régénérer seulement quand un son change volontairement.
  */
 
 const WIDTH = 200;
-
-type EngineAudio = {
-  playFireSound(weaponId: WeaponId): void;
-  playImpactSound(weaponId: WeaponId): void;
-  playZeusAppointmentSound(): void;
-  playZeusStrikeSound(): void;
-  playTankDestroyedByExplosionSound(): void;
-  playTankSadBurialSound(): void;
-  playTankTouchLowestFloorSound(): void;
-  playTankSlidingSound(playerId: string): void;
-  playFireworkPop(x: number): void;
-  playVictoryFanfare(): void;
-};
 
 const POP_POSITIONS = [
   ["0", 0],
@@ -36,19 +22,14 @@ const POP_POSITIONS = [
 const CRACKLE_ABSENT = [0.5, 0.5];
 const CRACKLE_PRESENT = [0, 0, 0];
 
-function engineAudio(engine: GameEngine): EngineAudio {
-  return engine as unknown as EngineAudio;
-}
-
-async function expectEngineGraph(
+async function expectAudioGraph(
   name: string,
-  play: (audio: EngineAudio) => void,
+  play: (audio: CombatAudio) => void,
   options: { stereoPanner?: boolean; random?: readonly number[] } = {},
 ): Promise<void> {
   const session = createRecordingSession({
     stereoPanner: options.stereoPanner ?? true,
   });
-  vi.stubGlobal("window", { AudioContext: session.AudioContext });
   let draws = 0;
   if (options.random) {
     const values = options.random;
@@ -58,8 +39,11 @@ async function expectEngineGraph(
       return value ?? Number.NaN;
     });
   }
-  const engine = new GameEngine(WIDTH, WIDTH);
-  play(engineAudio(engine));
+  const audio = new CombatAudio({
+    getWidth: () => WIDTH,
+    createContext: () => session.borrowContext(),
+  });
+  play(audio);
   if (options.random) expect(draws).toBe(options.random.length);
   await expect(session.render()).toMatchFileSnapshot(`../__snapshots__/${name}.txt`);
 }
@@ -72,50 +56,50 @@ afterEach(() => {
 
 describe("combat audio graph", () => {
   it.each(ALL_WEAPON_IDS)("records the fire graph for %s", async (weaponId) => {
-    await expectEngineGraph(`fire-${weaponId}`, (audio) => {
-      audio.playFireSound(weaponId);
+    await expectAudioGraph(`fire-${weaponId}`, (audio) => {
+      audio.playFire(weaponId);
     });
   });
 
   it.each(ALL_WEAPON_IDS)("records the impact graph for %s", async (weaponId) => {
-    await expectEngineGraph(`impact-${weaponId}`, (audio) => {
-      audio.playImpactSound(weaponId);
+    await expectAudioGraph(`impact-${weaponId}`, (audio) => {
+      audio.playImpact(weaponId);
     });
   });
 
   it("records the Zeus appointment", async () => {
-    await expectEngineGraph("zeus-appointment", (audio) => {
-      audio.playZeusAppointmentSound();
+    await expectAudioGraph("zeus-appointment", (audio) => {
+      audio.playZeusAppointment();
     });
   });
 
   it("records the Zeus strike", async () => {
-    await expectEngineGraph("zeus-strike", (audio) => {
-      audio.playZeusStrikeSound();
+    await expectAudioGraph("zeus-strike", (audio) => {
+      audio.playZeusStrike();
     });
   });
 
   it("records a tank destroyed by an explosion", async () => {
-    await expectEngineGraph("tank-destroyed", (audio) => {
-      audio.playTankDestroyedByExplosionSound();
+    await expectAudioGraph("tank-destroyed", (audio) => {
+      audio.playTankDestroyedByExplosion();
     });
   });
 
   it("records a burial", async () => {
-    await expectEngineGraph("tank-burial", (audio) => {
-      audio.playTankSadBurialSound();
+    await expectAudioGraph("tank-burial", (audio) => {
+      audio.playTankSadBurial();
     });
   });
 
   it("records the floor contact", async () => {
-    await expectEngineGraph("tank-floor", (audio) => {
-      audio.playTankTouchLowestFloorSound();
+    await expectAudioGraph("tank-floor", (audio) => {
+      audio.playTankTouchLowestFloor();
     });
   });
 
   it("records one slide", async () => {
-    await expectEngineGraph("tank-slide", (audio) => {
-      audio.playTankSlidingSound("tank-a");
+    await expectAudioGraph("tank-slide", (audio) => {
+      audio.playTankSliding("tank-a");
     });
   });
 
@@ -123,7 +107,7 @@ describe("combat audio graph", () => {
     it.each(POP_POSITIONS)(
       "records a pop without crackle and with a panner at %s",
       async (label, x) => {
-        await expectEngineGraph(
+        await expectAudioGraph(
           `pop-absent-panner-${label}`,
           (audio) => {
             audio.playFireworkPop(x);
@@ -136,7 +120,7 @@ describe("combat audio graph", () => {
     it.each(POP_POSITIONS)(
       "records a pop with crackle and a panner at %s",
       async (label, x) => {
-        await expectEngineGraph(
+        await expectAudioGraph(
           `pop-present-panner-${label}`,
           (audio) => {
             audio.playFireworkPop(x);
@@ -147,7 +131,7 @@ describe("combat audio graph", () => {
     );
 
     it("records a pop without crackle and without a panner", async () => {
-      await expectEngineGraph(
+      await expectAudioGraph(
         "pop-absent-no-panner-mid",
         (audio) => {
           audio.playFireworkPop(WIDTH / 2);
@@ -157,7 +141,7 @@ describe("combat audio graph", () => {
     });
 
     it("records a pop with crackle and without a panner", async () => {
-      await expectEngineGraph(
+      await expectAudioGraph(
         "pop-present-no-panner-mid",
         (audio) => {
           audio.playFireworkPop(WIDTH / 2);
@@ -169,10 +153,12 @@ describe("combat audio graph", () => {
 
   it("records the full victory fanfare, including the final chord", async () => {
     const session = createRecordingSession({ stereoPanner: true });
-    vi.stubGlobal("window", { AudioContext: session.AudioContext });
-    const engine = new GameEngine(WIDTH, WIDTH);
+    const audio = new CombatAudio({
+      getWidth: () => WIDTH,
+      createContext: () => session.borrowContext(),
+    });
     vi.useFakeTimers();
-    engineAudio(engine).playVictoryFanfare();
+    audio.playVictoryFanfare();
     await vi.advanceTimersByTimeAsync(1100);
     await expect(session.render()).toMatchFileSnapshot("../__snapshots__/fanfare.txt");
   });

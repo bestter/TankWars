@@ -72,10 +72,6 @@ class RecordingState {
     this.facade = facade as AudioContext;
   }
 
-  private now(): number {
-    return this.facade.currentTime;
-  }
-
   private createOscillator(): OscillatorNode {
     const id = `osc-${(this.counts.osc += 1)}`;
     this.lines.push(`createOscillator ${id}`);
