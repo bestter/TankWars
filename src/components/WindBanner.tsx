@@ -1,12 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { formatWindDisplay } from "../game/wind";
 import { VGA_PALETTE } from "../types/game";
-
-const WIND_DIR_KEYS: Record<string, "wind_dir_calm" | "wind_dir_west" | "wind_dir_east"> = {
-  calm: "wind_dir_calm",
-  west: "wind_dir_west",
-  east: "wind_dir_east",
-};
+import { getWindDirectionKey } from "./windI18n";
 
 export interface WindBannerProps {
   windForce: number;
@@ -15,6 +10,7 @@ export interface WindBannerProps {
 export function WindBanner({ windForce }: WindBannerProps) {
   const { t } = useTranslation();
   const info = formatWindDisplay(windForce);
+  const directionLabel = t(getWindDirectionKey(info));
   const barMax = 52;
   const fill =
     info.direction === "CALM" ? 0 : Math.min(1, info.strength / barMax);
@@ -22,7 +18,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
 
   return (
     <div
-      aria-label={t("wind_aria_label", { label: t(WIND_DIR_KEYS[info.label.toLowerCase()] || "wind_dir_calm"), strength: info.strength })}
+      aria-label={t("wind_aria_label", { label: directionLabel, strength: info.strength })}
       className="wind-banner"
     >
       <span style={{ color: VGA_PALETTE.CYAN }}>{t("wind_title")}</span>
@@ -37,7 +33,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
       >
         {info.arrow}
       </span>
-      <span style={{ color: VGA_PALETTE.WHITE }}>{t(WIND_DIR_KEYS[info.label.toLowerCase()] || "wind_dir_calm")}</span>
+      <span style={{ color: VGA_PALETTE.WHITE }}>{directionLabel}</span>
       {info.direction !== "CALM" && (
         <>
           <span style={{ color: VGA_PALETTE.GREEN }}>{info.strength}</span>

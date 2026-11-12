@@ -86,6 +86,77 @@ describe('TurnManager', () => {
     });
   });
 
+  describe('keyboard and catch-up', () => {
+    afterEach(() => {
+      turnManager.removeInputListeners();
+      vi.unstubAllGlobals();
+    });
+
+    it('ignores Space fire shortcut when focus is inside an anchor link', () => {
+      let keyDownHandler: ((event: KeyboardEvent) => void) | undefined;
+      vi.stubGlobal('window', {
+        addEventListener: vi.fn((type: string, handler: EventListenerOrEventListenerObject) => {
+          if (type === 'keydown' && typeof handler === 'function') {
+            keyDownHandler = handler as unknown as (event: KeyboardEvent) => void;
+          }
+        }),
+        removeEventListener: vi.fn(),
+      });
+      class FakeElement {
+        private readonly inLink: boolean;
+        constructor(inLink: boolean) {
+          this.inLink = inLink;
+        }
+        closest(selector: string): FakeElement | null {
+          return this.inLink && selector.includes('a[href]') ? this : null;
+        }
+      }
+      vi.stubGlobal('Element', FakeElement);
+
+      const human = makePlayer({ id: 'h1', isHuman: true });
+      mockTankManager.getPlayers = vi.fn(() => [human]);
+      turnManager.startFirstTurn();
+      turnManager.setupInputListeners();
+
+      expect(keyDownHandler).toBeDefined();
+      const preventDefault = vi.fn();
+      keyDownHandler!({
+        key: ' ',
+        target: new FakeElement(true),
+        preventDefault,
+      } as unknown as KeyboardEvent);
+      expect(mockFireCallback).not.toHaveBeenCalled();
+      expect(preventDefault).not.toHaveBeenCalled();
+
+      keyDownHandler!({
+        key: ' ',
+        target: new FakeElement(false),
+        preventDefault,
+      } as unknown as KeyboardEvent);
+      expect(mockFireCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes isCatchUp on CurrentTurnInfo across lockForCatchUp and unlockAfterCatchUp', () => {
+      const a = makePlayer({ id: 'a', isHuman: true });
+      mockTankManager.getPlayers = vi.fn(() => [a]);
+      const hudUpdates: Array<{ isCatchUp?: boolean } | null> = [];
+      turnManager.onHudUpdate = (info) => {
+        hudUpdates.push(info);
+      };
+
+      turnManager.startFirstTurn();
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(false);
+
+      turnManager.lockForCatchUp();
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(true);
+      expect(hudUpdates.at(-1)?.isCatchUp).toBe(true);
+
+      turnManager.unlockAfterCatchUp();
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(false);
+      expect(hudUpdates.at(-1)?.isCatchUp).toBe(false);
+    });
+  });
+
 
   describe('AI error handling', () => {
     beforeEach(() => {
@@ -769,6 +840,31 @@ describe('TurnManager', () => {
 
       expect(onShotSettled).toHaveBeenCalledTimes(1);
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+    });
+
+    it('sets isResolving to false during remote aiming and true during shot resolution', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      // Remote player 2's turn
+      turnManager.syncTurn(1);
+      const aimingInfo = turnManager.getCurrentTurnInfo();
+      expect(aimingInfo?.playerId).toBe('player-2');
+      expect(aimingInfo?.isInputLocked).toBe(true);
+      expect(aimingInfo?.isResolving).toBe(false);
+
+      // Remote player 2 fires
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        { fromSlot: 1 },
+      );
+      const resolvingInfo = turnManager.getCurrentTurnInfo();
+      expect(resolvingInfo?.isResolving).toBe(true);
+
+      // Settlement finishes
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isResolving).toBe(false);
     });
   });
 

@@ -122,6 +122,7 @@ function AppScreen({
 
 function App() {
   const [showEndurance, setShowEndurance] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
   const onlineMultiplayerEnabled = !hotseatOnly;
@@ -219,29 +220,48 @@ function App() {
       }}
     >
       <SEO titleKey="seo_title" descriptionKey="seo_description" />
-      {/* Sélecteur de langue disponible partout */}
-      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 100 }}>
-        <LanguageSwitcher />
-      </div>
+      <header>
+        <a
+          href="#main-content"
+          className="skip-link visually-hidden"
+          onClick={() => {
+            mainRef.current?.focus();
+          }}
+        >
+          {t("skip_to_content")}
+        </a>
+        {/* Sélecteur de langue disponible partout */}
+        <div style={{ position: "absolute", top: 12, right: 12, zIndex: 100 }}>
+          <LanguageSwitcher />
+        </div>
+      </header>
 
-      <OnlinePersistenceAlerts messages={messages} />
-      {showEndurance && EnduranceScreen ? <Suspense fallback={<p>{t("endurance_loading")}</p>}><EnduranceScreen onExit={() => setShowEndurance(false)} /></Suspense> : <AppScreen
-        onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
-        showMenu={showMenu}
-        showOnlineLobby={showOnlineLobby}
-        isOnlineJoin={isOnlineJoin}
-        onlineMultiplayerEnabled={onlineMultiplayerEnabled}
-        participation={participation}
-        players={players}
-        onlineMeta={onlineMeta}
-        resumeCanvas={resumeCanvas}
-        freeWeapons={state.freeWeapons}
-        onStartLocalGame={handleStartGame}
-        onStartOnlineGame={handleStartOnlineGame}
-        onHideOnlineLobby={handleOnlineMenuToggle}
-        onReturnToMenu={handleReturnToLobbyOrMenu}
-        onPersistenceWarning={handlePersistenceWarning}
-      />}
+      <main ref={mainRef} id="main-content" tabIndex={-1}>
+        <OnlinePersistenceAlerts messages={messages} />
+        {showEndurance && EnduranceScreen ? (
+          <Suspense fallback={<p>{t("endurance_loading")}</p>}>
+            <EnduranceScreen onExit={() => setShowEndurance(false)} />
+          </Suspense>
+        ) : (
+          <AppScreen
+            onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
+            showMenu={showMenu}
+            showOnlineLobby={showOnlineLobby}
+            isOnlineJoin={isOnlineJoin}
+            onlineMultiplayerEnabled={onlineMultiplayerEnabled}
+            participation={participation}
+            players={players}
+            onlineMeta={onlineMeta}
+            resumeCanvas={resumeCanvas}
+            freeWeapons={state.freeWeapons}
+            onStartLocalGame={handleStartGame}
+            onStartOnlineGame={handleStartOnlineGame}
+            onHideOnlineLobby={handleOnlineMenuToggle}
+            onReturnToMenu={handleReturnToLobbyOrMenu}
+            onPersistenceWarning={handlePersistenceWarning}
+          />
+        )}
+      </main>
     </div>
   );
 }

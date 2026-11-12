@@ -44,6 +44,10 @@ export interface CurrentTurnInfo {
   isInputLocked: boolean;
   /** True while any alive tank is currently falling (vy > 0) or we are waiting for stabilization after a shot. */
   tanksAreFalling: boolean;
+  /** True while a shot has been fired/accepted and its resolution is in progress. */
+  isResolving?: boolean;
+  /** True while replaying authoritative catch-up history before live play resumes. */
+  isCatchUp?: boolean;
 }
 
 export interface ShotResolutionGate {
@@ -162,6 +166,8 @@ export class TurnManager {
   private lastHudWeapon: WeaponId | null = null;
   private lastHudLocked = false;
   private lastHudFalling = false;
+  private lastHudResolving = false;
+  private lastHudCatchUp = false;
   private lastHudTurn = 0;
 
   // Callbacks pour le HUD React
@@ -353,6 +359,7 @@ export class TurnManager {
           } else if (this.acceptedFire(player.tank.position, command, player.id)) {
             this.hasUnresolvedShot = true;
             this.consumeAmmo(player, player.tank.currentWeapon);
+            this.notifyHudUpdate();
             this.armSettlementSafety(player.id);
           }
         } else {
@@ -499,7 +506,7 @@ export class TurnManager {
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
-    if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("button, select, input, textarea")) return;
+    if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("a[href], button, select, input, textarea")) return;
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return;
 
@@ -1101,6 +1108,8 @@ export class TurnManager {
       isInputLocked: this.isInputLocked,
       tanksAreFalling:
         this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
+      isResolving: this.hasUnresolvedShot,
+      isCatchUp: this.catchUpLocked,
     };
   }
 
@@ -1110,6 +1119,8 @@ export class TurnManager {
       this.lastHudWeapon !== info.currentWeapon ||
       this.lastHudLocked !== info.isInputLocked ||
       this.lastHudFalling !== info.tanksAreFalling ||
+      this.lastHudResolving !== (info.isResolving ?? false) ||
+      this.lastHudCatchUp !== (info.isCatchUp ?? false) ||
       this.lastHudTurn !== info.turn
     );
   }
@@ -1119,6 +1130,8 @@ export class TurnManager {
     this.lastHudWeapon = info.currentWeapon;
     this.lastHudLocked = info.isInputLocked;
     this.lastHudFalling = info.tanksAreFalling;
+    this.lastHudResolving = info.isResolving ?? false;
+    this.lastHudCatchUp = info.isCatchUp ?? false;
     this.lastHudTurn = info.turn;
     this.lastHudNotifyMs = performance.now();
     this.onHudUpdate?.(info);
@@ -1413,6 +1426,7 @@ export class TurnManager {
         this.hasUnresolvedShot = true;
         this.consumeAmmo(player, player.tank.currentWeapon);
         this.disarmDecisionWatchdog();
+        this.notifyHudUpdate();
       }
 
       // Le tir accepté quitte la décision. La stabilisation réelle avance le tour;

@@ -21,6 +21,7 @@ import type { FireRejectedReason } from "../game/online/protocol";
 import { GameShopOverlay } from "./GameShopOverlay";
 import type { GameCanvasState } from "./gameCanvasReducer";
 import type { WeaponId } from "../types/weapon";
+import { CombatStatusAnnouncer } from "./CombatStatusAnnouncer";
 
 const FIRE_REJECTION_KEYS = {
   ZEUS_TURN: "fire_rejected_zeus_turn",
@@ -121,6 +122,7 @@ function CombatAdvisor({
 }
 
 function CombatControls({
+  round,
   gamePhase,
   wind,
   turnInfo,
@@ -130,6 +132,7 @@ function CombatControls({
   onCycleWeapon,
   onFire,
 }: {
+  readonly round: number;
   readonly gamePhase: GameCanvasState["gamePhase"];
   readonly wind: number;
   readonly turnInfo: GameCanvasState["turnInfo"];
@@ -143,6 +146,7 @@ function CombatControls({
   if (!active) return null;
   return (
     <>
+      <CombatStatusAnnouncer round={round} turnInfo={turnInfo} wind={wind} />
       <WindBanner windForce={wind} />
       <GameHUD turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />
       <MobileControls
@@ -381,6 +385,7 @@ export function GameCanvas({
         />
 
         <CombatControls
+          round={state.currentManche}
           gamePhase={gamePhase}
           wind={wind}
           turnInfo={turnInfo}

@@ -198,7 +198,9 @@ describe("GameCanvas component", () => {
     });
 
     render(<GameCanvas />);
-    expect(screen.getByRole("status").textContent).toBe(
+    const zeusElement = document.querySelector(".zeus-announcement");
+    expect(zeusElement?.getAttribute("role")).toBe("status");
+    expect(zeusElement?.textContent).toBe(
       "zeus_appointed_announcement_CPU 2",
     );
   });
@@ -747,5 +749,57 @@ describe("GameCanvas component", () => {
       controller.dispose();
       vi.useRealTimers();
     }
+  });
+
+  it("renders CombatStatusAnnouncer in COMBAT and omits it outside combat phases", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "COMBAT",
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    const { rerender } = render(<GameCanvas />);
+    const statusRegions = screen.getAllByRole("status");
+    expect(statusRegions.length).toBeGreaterThan(0);
+    const announcer = statusRegions.find((el) => el.classList.contains("visually-hidden"));
+    expect(announcer).toBeDefined();
+
+    // In SUMMARY phase, CombatControls (and CombatStatusAnnouncer) is not rendered
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SUMMARY",
+        roundResult: {
+          damageDealt: { p1: 50, p2: 0 },
+          earningsByPlayer: { p1: 150, p2: 0 },
+          terrainDestroyed: 120,
+          survivors: ["p1"],
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    rerender(<GameCanvas />);
+    const summaryStatus = screen.queryAllByRole("status");
+    const announcerInSummary = summaryStatus.find((el) => el.classList.contains("visually-hidden"));
+    expect(announcerInSummary).toBeUndefined();
   });
 });
