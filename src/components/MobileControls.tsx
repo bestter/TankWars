@@ -123,6 +123,12 @@ export const MobileControls = memo(function MobileControls({
     onPointerLeave: stopIfOwner,
     onPointerMove: (e: ButtonPointerEvent) => {
       if (activeHoldRef.current !== e.pointerId) return;
+      // Avec un appui combiné, pointerup n'arrive qu'au relâchement du dernier
+      // bouton : le bouton principal relâché est signalé par pointermove.
+      if ((e.buttons & 1) === 0) {
+        stopAction();
+        return;
+      }
       // Filet de sécurité si une capture empêche pointerleave.
       const r = e.currentTarget.getBoundingClientRect();
       if (

@@ -270,12 +270,34 @@ describe('MobileControls', () => {
         left: 0, top: 0, right: 48, bottom: 44, width: 48, height: 44, x: 0, y: 0, toJSON: () => ({}),
       });
       down(btn);
-      fireEvent.pointerMove(btn, { pointerId: 1, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(btn, { pointerId: 1, buttons: 1, clientX: 20, clientY: 20 });
       act(() => { vi.advanceTimersByTime(330); });
       expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
-      fireEvent.pointerMove(btn, { pointerId: 1, clientX: 200, clientY: 20 });
+      fireEvent.pointerMove(btn, { pointerId: 1, buttons: 1, clientX: 200, clientY: 20 });
       act(() => { vi.advanceTimersByTime(1000); });
       expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['◀', '▲'])('%s : arrête au relâchement du bouton principal malgré un bouton central encore enfoncé', (label) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText(label);
+      const cb = label === '◀' ? defaultProps.onAdjustAngle : defaultProps.onAdjustPower;
+      vi.spyOn(btn, 'getBoundingClientRect').mockReturnValue({
+        left: 0, top: 0, right: 48, bottom: 44, width: 48, height: 44, x: 0, y: 0, toJSON: () => ({}),
+      });
+      down(btn, 1, { pointerType: 'mouse' });
+      // Bouton central ajouté : le maintien continue (gauche + central = 5).
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 5, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(330); });
+      expect(cb).toHaveBeenCalledTimes(2);
+      // Gauche relâché, central toujours enfoncé : pas de pointerup.
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 4, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(cb).toHaveBeenCalledTimes(2);
+      // Aucun redémarrage automatique.
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 1, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(cb).toHaveBeenCalledTimes(2);
     });
 
     it.each(['pointerCancel', 'lostPointerCapture'] as const)('%s arrête le maintien avant le délai et pendant la répétition', (evt) => {
