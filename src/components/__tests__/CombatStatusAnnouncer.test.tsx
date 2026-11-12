@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
 import { CombatStatusAnnouncer } from "../CombatStatusAnnouncer";
@@ -388,5 +389,79 @@ describe("CombatStatusAnnouncer", () => {
 
     rerender(<CombatStatusAnnouncer round={1} turnInfo={null} wind={0} />);
     expect(region.textContent).toBe("");
+  });
+
+  it("keeps initial turn announcement under React StrictMode even when isResolving is true", () => {
+    render(
+      <StrictMode>
+        <CombatStatusAnnouncer
+          round={1}
+          turnInfo={{ ...baseTurnInfo, isResolving: true }}
+          wind={0}
+        />
+      </StrictMode>
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("Tour 1, Player 1, vent calme");
+  });
+
+  it("suppresses announcements during catch-up replay and announces once catch-up unlocks", () => {
+    const { rerender } = render(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...baseTurnInfo, isCatchUp: true }}
+        wind={0}
+      />
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...baseTurnInfo, turn: 2, isResolving: true, isCatchUp: true }}
+        wind={20}
+      />
+    );
+    expect(region.textContent).toBe("");
+
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...baseTurnInfo, turn: 2, isResolving: false, isCatchUp: false }}
+        wind={20}
+      />
+    );
+    expect(region.textContent).toBe("Tour 2, Player 1, vent EST force 20");
+  });
+
+  it("does not re-render or mutate live region when only aim angle or power changes", () => {
+    const { rerender } = render(
+      <CombatStatusAnnouncer round={1} turnInfo={baseTurnInfo} wind={0} />
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("Tour 1, Player 1, vent calme");
+
+    const observer = new MutationObserver(() => {});
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...baseTurnInfo, angle: 60, power: 80 }}
+        wind={0}
+      />
+    );
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...baseTurnInfo, angle: 65, power: 85 }}
+        wind={0}
+      />
+    );
+
+    expect(observer.takeRecords()).toHaveLength(0);
+    observer.disconnect();
+    expect(region.textContent).toBe("Tour 1, Player 1, vent calme");
   });
 });

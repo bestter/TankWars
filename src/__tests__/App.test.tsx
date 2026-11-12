@@ -90,9 +90,11 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
     expect(screen.queryByRole('button', { name: 'endurance_title' })).toBeNull();
   });
-  it('mounts one atomic live region before any warning occurs', () => {
+  it('mounts one atomic live region inside main landmark before any warning occurs', () => {
     render(<App />);
+    const main = screen.getByRole('main');
     const alert = screen.getByRole('alert');
+    expect(main.contains(alert)).toBe(true);
     expect(alert.getAttribute('aria-atomic')).toBe('true');
     expect(alert.textContent).toBe('');
   });

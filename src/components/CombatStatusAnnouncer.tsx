@@ -1,13 +1,8 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { formatWindDisplay } from "../game/wind";
-
-const WIND_DIR_KEYS: Record<string, "wind_dir_calm" | "wind_dir_west" | "wind_dir_east"> = {
-  calm: "wind_dir_calm",
-  west: "wind_dir_west",
-  east: "wind_dir_east",
-};
+import { getWindDirectionKey } from "./windI18n";
 
 export interface CombatStatusAnnouncerProps {
   readonly round: number;
@@ -23,16 +18,55 @@ interface TurnTracking {
   hasAnnouncedFalling: boolean;
 }
 
-export function CombatStatusAnnouncer({ round, turnInfo, wind }: CombatStatusAnnouncerProps) {
+function areAnnouncerPropsEqual(
+  prev: CombatStatusAnnouncerProps,
+  next: CombatStatusAnnouncerProps,
+): boolean {
+  if (prev.round !== next.round || prev.wind !== next.wind) return false;
+  const a = prev.turnInfo;
+  const b = next.turnInfo;
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.turn === b.turn &&
+    a.playerId === b.playerId &&
+    a.playerName === b.playerName &&
+    a.isInputLocked === b.isInputLocked &&
+    a.isResolving === b.isResolving &&
+    a.tanksAreFalling === b.tanksAreFalling &&
+    a.isCatchUp === b.isCatchUp
+  );
+}
+
+export const CombatStatusAnnouncer = memo(function CombatStatusAnnouncer({
+  round,
+  turnInfo,
+  wind,
+}: CombatStatusAnnouncerProps) {
   const { t } = useTranslation();
   const regionRef = useRef<HTMLDivElement>(null);
   const trackingRef = useRef<TurnTracking | null>(null);
+
+  const hasTurnInfo = turnInfo !== null;
+  const turn = turnInfo?.turn ?? 0;
+  const playerId = turnInfo?.playerId ?? "";
+  const playerName = turnInfo?.playerName ?? "";
+  const isInputLocked = turnInfo?.isInputLocked ?? false;
+  const isResolvingProp = turnInfo?.isResolving;
+  const tanksAreFalling = turnInfo?.tanksAreFalling ?? false;
+  const isCatchUp = turnInfo?.isCatchUp ?? false;
+
+  useEffect(() => {
+    return () => {
+      trackingRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const el = regionRef.current;
     if (!el) return;
 
-    if (!turnInfo) {
+    if (!hasTurnInfo || isCatchUp) {
       trackingRef.current = null;
       el.textContent = "";
       return;
@@ -42,31 +76,30 @@ export function CombatStatusAnnouncer({ round, turnInfo, wind }: CombatStatusAnn
     const isNewTurn =
       !currentTracking ||
       currentTracking.round !== round ||
-      currentTracking.turn !== turnInfo.turn ||
-      currentTracking.playerId !== turnInfo.playerId;
+      currentTracking.turn !== turn ||
+      currentTracking.playerId !== playerId;
 
     if (isNewTurn) {
       const windInfo = formatWindDisplay(wind);
       let announcement: string;
       if (windInfo.direction === "CALM") {
         announcement = t("combat_status_turn_calm", {
-          turn: turnInfo.turn,
-          player: turnInfo.playerName,
+          turn,
+          player: playerName,
         });
       } else {
-        const dirKey = WIND_DIR_KEYS[windInfo.label.toLowerCase()] || "wind_dir_calm";
         announcement = t("combat_status_turn_wind", {
-          turn: turnInfo.turn,
-          player: turnInfo.playerName,
-          direction: t(dirKey),
+          turn,
+          player: playerName,
+          direction: t(getWindDirectionKey(windInfo)),
           strength: windInfo.strength,
         });
       }
 
       trackingRef.current = {
         round,
-        turn: turnInfo.turn,
-        playerId: turnInfo.playerId,
+        turn,
+        playerId,
         hasAnnouncedResolving: false,
         hasAnnouncedFalling: false,
       };
@@ -75,8 +108,8 @@ export function CombatStatusAnnouncer({ round, turnInfo, wind }: CombatStatusAnn
     }
 
     // Même tour : gestion des transitions de tir et de chute
-    const isResolving = turnInfo.isResolving ?? turnInfo.isInputLocked;
-    if (turnInfo.tanksAreFalling) {
+    const isResolving = isResolvingProp ?? isInputLocked;
+    if (tanksAreFalling) {
       if (!currentTracking.hasAnnouncedFalling) {
         currentTracking.hasAnnouncedFalling = true;
         currentTracking.hasAnnouncedResolving = true;
@@ -88,9 +121,21 @@ export function CombatStatusAnnouncer({ round, turnInfo, wind }: CombatStatusAnn
         el.textContent = t("combat_status_resolving");
       }
     }
-  }, [round, turnInfo, wind, t]);
+  }, [
+    round,
+    hasTurnInfo,
+    turn,
+    playerId,
+    playerName,
+    isInputLocked,
+    isResolvingProp,
+    tanksAreFalling,
+    isCatchUp,
+    wind,
+    t,
+  ]);
 
   return (
     <div ref={regionRef} role="status" aria-live="polite" className="visually-hidden" />
   );
-}
+}, areAnnouncerPropsEqual);

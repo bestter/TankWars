@@ -46,6 +46,8 @@ export interface CurrentTurnInfo {
   tanksAreFalling: boolean;
   /** True while a shot has been fired/accepted and its resolution is in progress. */
   isResolving?: boolean;
+  /** True while replaying authoritative catch-up history before live play resumes. */
+  isCatchUp?: boolean;
 }
 
 export interface ShotResolutionGate {
@@ -165,6 +167,7 @@ export class TurnManager {
   private lastHudLocked = false;
   private lastHudFalling = false;
   private lastHudResolving = false;
+  private lastHudCatchUp = false;
   private lastHudTurn = 0;
 
   // Callbacks pour le HUD React
@@ -356,6 +359,7 @@ export class TurnManager {
           } else if (this.acceptedFire(player.tank.position, command, player.id)) {
             this.hasUnresolvedShot = true;
             this.consumeAmmo(player, player.tank.currentWeapon);
+            this.notifyHudUpdate();
             this.armSettlementSafety(player.id);
           }
         } else {
@@ -502,7 +506,7 @@ export class TurnManager {
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
-    if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("button, select, input, textarea")) return;
+    if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("a[href], button, select, input, textarea")) return;
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return;
 
@@ -1105,6 +1109,7 @@ export class TurnManager {
       tanksAreFalling:
         this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
       isResolving: this.hasUnresolvedShot,
+      isCatchUp: this.catchUpLocked,
     };
   }
 
@@ -1115,6 +1120,7 @@ export class TurnManager {
       this.lastHudLocked !== info.isInputLocked ||
       this.lastHudFalling !== info.tanksAreFalling ||
       this.lastHudResolving !== (info.isResolving ?? false) ||
+      this.lastHudCatchUp !== (info.isCatchUp ?? false) ||
       this.lastHudTurn !== info.turn
     );
   }
@@ -1125,6 +1131,7 @@ export class TurnManager {
     this.lastHudLocked = info.isInputLocked;
     this.lastHudFalling = info.tanksAreFalling;
     this.lastHudResolving = info.isResolving ?? false;
+    this.lastHudCatchUp = info.isCatchUp ?? false;
     this.lastHudTurn = info.turn;
     this.lastHudNotifyMs = performance.now();
     this.onHudUpdate?.(info);

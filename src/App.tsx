@@ -122,6 +122,7 @@ function AppScreen({
 
 function App() {
   const [showEndurance, setShowEndurance] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
   const onlineMultiplayerEnabled = !hotseatOnly;
@@ -222,12 +223,9 @@ function App() {
       <header>
         <a
           href="#main-content"
-          className="skip-link"
+          className="skip-link visually-hidden"
           onClick={() => {
-            const target = document.getElementById("main-content");
-            if (target) {
-              target.focus();
-            }
+            mainRef.current?.focus();
           }}
         >
           {t("skip_to_content")}
@@ -238,8 +236,8 @@ function App() {
         </div>
       </header>
 
-      <OnlinePersistenceAlerts messages={messages} />
-      <main id="main-content" tabIndex={-1}>
+      <main ref={mainRef} id="main-content" tabIndex={-1}>
+        <OnlinePersistenceAlerts messages={messages} />
         {showEndurance && EnduranceScreen ? (
           <Suspense fallback={<p>{t("endurance_loading")}</p>}>
             <EnduranceScreen onExit={() => setShowEndurance(false)} />
