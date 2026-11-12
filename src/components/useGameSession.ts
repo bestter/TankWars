@@ -55,6 +55,7 @@ import {
 import { replenishRosterFreeWeapons } from "../game/shop/freeWeapons";
 import { shopBuySell, shopReady } from "./shop/shopPlayerActions";
 import { usePersistOnlineCanvas } from "./usePersistOnlineCanvas";
+import { useCombatWakeLock } from "./useCombatWakeLock";
 import { wireEngineSessionCallbacks } from "./wireEngineSession";
 
 function buildInitialCanvasState(
@@ -193,6 +194,7 @@ export function useGameSession({
     resumeCanvas,
     buildInitialCanvasState,
   );
+  useCombatWakeLock(state);
   const {
     gamePhase,
     shopPlayers,
