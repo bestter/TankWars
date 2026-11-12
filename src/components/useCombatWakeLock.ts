@@ -12,7 +12,10 @@ async function releaseScreenLock(sentinel: WakeLockSentinel): Promise<void> {
 }
 
 // Own browser resources in one controller; React only starts/stops its lifetime.
-function observeVisibleCombat(pending: RefObject<Promise<void> | null>): () => void {
+function observeVisibleCombat(
+  pending: RefObject<Promise<void> | null>,
+  wakeLock: WakeLock,
+): () => void {
   let disposed = false;
   let visibilityGeneration = 0;
   let sentinel: WakeLockSentinel | null = null;
@@ -23,10 +26,12 @@ function observeVisibleCombat(pending: RefObject<Promise<void> | null>): () => v
     sentinel = null;
   };
   const track = (operation: Promise<void>) => {
-    pending.current = operation;
-    void operation.then(() => {
-      if (pending.current === operation) pending.current = null;
-    });
+    const tracked = operation
+      .catch(() => {})
+      .then(() => {
+        if (pending.current === tracked) pending.current = null;
+      });
+    pending.current = tracked;
   };
   const release = () => {
     if (!sentinel) return;
@@ -49,7 +54,7 @@ function observeVisibleCombat(pending: RefObject<Promise<void> | null>): () => v
     const generation = visibilityGeneration;
     track((async () => {
       try {
-        const acquired = await navigator.wakeLock.request("screen");
+        const acquired = await wakeLock.request("screen");
         if (!eligible() || generation !== visibilityGeneration) {
           await releaseScreenLock(acquired);
         } else if (!acquired.released) {
@@ -85,9 +90,9 @@ export function useCombatWakeLock(state: CombatState): void {
     !state.protocolMismatch && !state.roundPreparationError;
 
   useEffect(() => {
-    if (!active || typeof navigator === "undefined" || typeof document === "undefined" ||
-      !("wakeLock" in navigator) || typeof navigator.wakeLock?.request !== "function") return;
+    const wakeLock = typeof navigator !== "undefined" && navigator ? navigator.wakeLock : undefined;
+    if (!active || typeof document === "undefined" || typeof wakeLock?.request !== "function") return;
 
-    return observeVisibleCombat(pending);
+    return observeVisibleCombat(pending, wakeLock);
   }, [active]);
 }

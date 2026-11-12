@@ -202,8 +202,8 @@ describe("useCombatWakeLock (#409)", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("handles an absent navigator", async () => {
-    vi.stubGlobal("navigator", undefined);
+  it.each([undefined, null])("handles an absent navigator (%j)", async nav => {
+    vi.stubGlobal("navigator", nav);
     renderHook(() => useCombatWakeLock(combat));
     await flush();
     expect(request).not.toHaveBeenCalled();
@@ -217,6 +217,19 @@ describe("useCombatWakeLock (#409)", () => {
     await flush();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("acquire"), error);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears pending queue even if a tracked operation rejects unexpectedly", async () => {
+    let rejectFirst!: (reason?: unknown) => void;
+    request
+      .mockReturnValueOnce(new Promise<WakeLockSentinel>((_, reject) => { rejectFirst = reject; }))
+      .mockResolvedValueOnce(sentinel);
+    vi.spyOn(console, "warn").mockImplementationOnce(() => { throw new Error("warn failure"); });
+    renderHook(() => useCombatWakeLock(combat));
+    visibility("hidden");
+    visibility("visible");
+    await act(async () => { rejectFirst(new DOMException("Denied", "NotAllowedError")); });
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it("warns on release rejection without an unhandled error", async () => {
