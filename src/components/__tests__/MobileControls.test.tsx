@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { MobileControls } from '../MobileControls';
 import type { CurrentTurnInfo } from '../../game/engine/TurnManager';
 
@@ -10,6 +10,20 @@ vi.mock('react-i18next', () => ({
     t: (key: string) => key,
   }),
 }));
+
+// JSDOM n'expose pas PointerEvent : double minimal portant pointerId/pointerType.
+if (typeof window.PointerEvent === 'undefined') {
+  class PointerEventDouble extends MouseEvent {
+    pointerId: number;
+    pointerType: string;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+      this.pointerType = init.pointerType ?? 'mouse';
+    }
+  }
+  Object.defineProperty(window, 'PointerEvent', { value: PointerEventDouble, configurable: true });
+}
 
 describe('MobileControls', () => {
   let originalMatchMedia: typeof window.matchMedia;
@@ -168,160 +182,297 @@ describe('MobileControls', () => {
       expect(defaultProps.onFire).toHaveBeenCalled();
     });
 
-    it('handles mouse events for angle adjustment', () => {
-      render(<MobileControls {...defaultProps} />);
-
-      const leftBtn = screen.getByText('◀');
-      fireEvent.mouseDown(leftBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledWith(-1);
-      fireEvent.mouseUp(leftBtn);
-
-      const rightBtn = screen.getByText('▶');
-      fireEvent.mouseDown(rightBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledWith(1);
-      fireEvent.mouseUp(rightBtn);
-    });
-
-    it('handles touch events for power adjustment', () => {
-      render(<MobileControls {...defaultProps} />);
-
-      const downBtn = screen.getByText('▼');
-      fireEvent.touchStart(downBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(-1);
-      fireEvent.touchEnd(downBtn);
-
-      const upBtn = screen.getByText('▲');
-      fireEvent.touchStart(upBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(1);
-      fireEvent.touchEnd(upBtn);
-    });
-
-    it('handles long press intervals correctly', () => {
-      vi.useFakeTimers();
-      render(<MobileControls {...defaultProps} />);
-
-      const upBtn = screen.getByText('▲');
-
-      // Start long press
-      fireEvent.mouseDown(upBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
-
-      // Wait for initial timeout (250ms)
-      vi.advanceTimersByTime(250);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1); // Not called yet by interval
-
-      // Wait for first interval (80ms)
-      vi.advanceTimersByTime(80);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
-
-      // Wait for second interval
-      vi.advanceTimersByTime(80);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(3);
-
-      // Stop press
-      fireEvent.mouseUp(upBtn);
-
-      // Ensure it's not called anymore
-      vi.advanceTimersByTime(100);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(3);
-
-      vi.useRealTimers();
-    });
   });
 
-  describe('Edge cases and unmount', () => {
-    it('stops action on unmount', () => {
+  describe('Réglages par Pointer Events', () => {
+    const ADJUST_BUTTONS: Array<[string, 'onAdjustAngle' | 'onAdjustPower', number]> = [
+      ['◀', 'onAdjustAngle', -1],
+      ['▶', 'onAdjustAngle', 1],
+      ['▼', 'onAdjustPower', -1],
+      ['▲', 'onAdjustPower', 1],
+    ];
+
+    const down = (el: Element, pointerId = 1, init: PointerEventInit = {}) =>
+      fireEvent.pointerDown(el, { pointerId, button: 0, buttons: 1, ...init });
+
+    beforeEach(() => {
       vi.useFakeTimers();
-      const { unmount } = render(<MobileControls {...defaultProps} />);
+    });
 
-      const upBtn = screen.getByText('▲');
-      fireEvent.mouseDown(upBtn);
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
+    it.each(ADJUST_BUTTONS)('%s : un pas immédiat puis répétitions à 330/410 ms', (label, cb, delta) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText(label);
+      down(btn);
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(1);
+      expect(defaultProps[cb]).toHaveBeenCalledWith(delta);
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(1);
+      act(() => { vi.advanceTimersByTime(80); });
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(2);
+      act(() => { vi.advanceTimersByTime(80); });
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(3);
+      fireEvent.pointerUp(btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(3);
+    });
+
+    it.each(['mouse', 'touch', 'pen'])('un appui court (%s) produit exactement un pas, sans pas au clic', (pointerType) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▲');
+      down(btn, 1, { pointerType });
+      fireEvent.pointerUp(btn, { pointerId: 1, pointerType });
+      fireEvent.click(btn);
+      act(() => { vi.advanceTimersByTime(1000); });
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+    });
 
-      // Advance to interval
-      vi.advanceTimersByTime(250 + 80);
+    it('ignore clic droit, bouton central et boutons auxiliaires', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▲');
+      down(btn, 1, { button: 2, buttons: 2 });
+      down(btn, 2, { button: 1, buttons: 4 });
+      down(btn, 3, { pointerType: 'pen', button: 0, buttons: 3 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustPower).not.toHaveBeenCalled();
+    });
+
+    it.each(['mouse', 'touch', 'pen'])('arrête à la sortie du bouton (%s), avant le délai et sans reprise au retour', (pointerType) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('◀');
+      down(btn, 1, { pointerType });
+      fireEvent.pointerLeave(btn, { pointerId: 1, pointerType });
+      act(() => { vi.advanceTimersByTime(1000); });
+      fireEvent.pointerEnter(btn, { pointerId: 1, pointerType });
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(1);
+    });
+
+    it('arrête à la sortie pendant la répétition', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('◀');
+      down(btn);
+      act(() => { vi.advanceTimersByTime(250 + 80); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
+      fireEvent.pointerLeave(btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
+    });
+
+    it('arrête quand un pointeur capturé sort du rectangle du bouton (pointermove)', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('◀');
+      vi.spyOn(btn, 'getBoundingClientRect').mockReturnValue({
+        left: 0, top: 0, right: 48, bottom: 44, width: 48, height: 44, x: 0, y: 0, toJSON: () => ({}),
+      });
+      down(btn);
+      fireEvent.pointerMove(btn, { pointerId: 1, buttons: 1, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(330); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
+      fireEvent.pointerMove(btn, { pointerId: 1, buttons: 1, clientX: 200, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['◀', '▲'])('%s : arrête au relâchement du bouton principal malgré un bouton central encore enfoncé', (label) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText(label);
+      const cb = label === '◀' ? defaultProps.onAdjustAngle : defaultProps.onAdjustPower;
+      vi.spyOn(btn, 'getBoundingClientRect').mockReturnValue({
+        left: 0, top: 0, right: 48, bottom: 44, width: 48, height: 44, x: 0, y: 0, toJSON: () => ({}),
+      });
+      down(btn, 1, { pointerType: 'mouse' });
+      // Bouton central ajouté : le maintien continue (gauche + central = 5).
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 5, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(330); });
+      expect(cb).toHaveBeenCalledTimes(2);
+      // Gauche relâché, central toujours enfoncé : pas de pointerup.
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 4, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(cb).toHaveBeenCalledTimes(2);
+      // Aucun redémarrage automatique.
+      fireEvent.pointerMove(btn, { pointerId: 1, pointerType: 'mouse', buttons: 1, clientX: 20, clientY: 20 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(cb).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['pointerCancel', 'lostPointerCapture'] as const)('%s arrête le maintien avant le délai et pendant la répétition', (evt) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▶');
+      down(btn);
+      fireEvent[evt](btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(1);
+
+      down(btn);
+      act(() => { vi.advanceTimersByTime(330); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(3);
+      fireEvent[evt](btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(3);
+    });
+
+    it('libère la capture implicite sans arrêter le maintien', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▲');
+      btn.hasPointerCapture = vi.fn(() => true);
+      btn.releasePointerCapture = vi.fn();
+      down(btn, 1, { pointerType: 'touch' });
+      expect(btn.releasePointerCapture).toHaveBeenCalledWith(1);
+      fireEvent.lostPointerCapture(btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(330); });
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
-
-      // Unmount the component
-      unmount();
-
-      // Ensure interval is cleared and doesn't fire again
-      vi.advanceTimersByTime(80);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2); // Still 2
-
-      vi.useRealTimers();
+      // Une perte de capture inattendue ultérieure arrête le maintien.
+      fireEvent.lostPointerCapture(btn, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
     });
 
-    it('stops action on touchCancel and mouseLeave', () => {
-      vi.useFakeTimers();
+    it('démarre le maintien sans planter si releasePointerCapture lève une exception', () => {
       render(<MobileControls {...defaultProps} />);
-
-      const leftBtn = screen.getByText('◀');
-
-      // Test mouseLeave
-      fireEvent.mouseDown(leftBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(1);
-      fireEvent.mouseLeave(leftBtn);
-      vi.advanceTimersByTime(250 + 80);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(1);
-
-      // Test touchCancel
-      fireEvent.touchStart(leftBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
-      fireEvent.touchCancel(leftBtn);
-      vi.advanceTimersByTime(250 + 80);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(2);
-
-      vi.useRealTimers();
-    });
-  });
-
-  describe('More touch events', () => {
-
-    it('handles mouse events for down adjust power', () => {
-      render(<MobileControls {...defaultProps} />);
-      const downBtn = screen.getByText('▼');
-      fireEvent.mouseDown(downBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(-1);
+      const btn = screen.getByText('▲');
+      btn.hasPointerCapture = vi.fn(() => true);
+      btn.releasePointerCapture = vi.fn(() => {
+        throw new DOMException('NotFoundError', 'NotFoundError');
+      });
+      down(btn, 1, { pointerType: 'touch' });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
     });
 
-    it('handles touch events for angle adjustment', () => {
+    it('premier appui prioritaire : le second pointeur est sans effet, même sur un autre bouton', () => {
       render(<MobileControls {...defaultProps} />);
-
-      const rightBtn = screen.getByText('▶');
-      fireEvent.touchStart(rightBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledWith(1);
-      fireEvent.touchEnd(rightBtn);
-
-      const leftBtn = screen.getByText('◀');
-      fireEvent.touchStart(leftBtn);
-      expect(defaultProps.onAdjustAngle).toHaveBeenCalledWith(-1);
-      fireEvent.touchEnd(leftBtn);
+      const first = screen.getByText('▲');
+      const other = screen.getByText('◀');
+      down(first, 1);
+      down(first, 2);
+      down(other, 2);
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+      expect(defaultProps.onAdjustAngle).not.toHaveBeenCalled();
+      fireEvent.pointerMove(other, { pointerId: 2, clientX: 999, clientY: 999 });
+      fireEvent.pointerLeave(first, { pointerId: 2 });
+      fireEvent.pointerCancel(first, { pointerId: 2 });
+      fireEvent.pointerUp(other, { pointerId: 2 });
+      fireEvent.lostPointerCapture(first, { pointerId: 2 });
+      act(() => { vi.advanceTimersByTime(330); });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
+      expect(defaultProps.onAdjustAngle).not.toHaveBeenCalled();
+      fireEvent.pointerUp(first, { pointerId: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
+      // Le second pointeur, toujours posé, n'est pas devenu actif.
+      expect(defaultProps.onAdjustAngle).not.toHaveBeenCalled();
     });
 
-    it('handles touch events for power adjustment', () => {
+    describe('arrêts externes', () => {
+      const startHold = (props = defaultProps) => {
+        const utils = render(<MobileControls {...props} />);
+        down(screen.getByText('▲'));
+        act(() => { vi.advanceTimersByTime(330); });
+        expect(props.onAdjustPower).toHaveBeenCalledTimes(2);
+        return utils;
+      };
+      const expectStopped = () => {
+        act(() => { vi.advanceTimersByTime(1000); });
+        expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
+      };
+
+      it.each([
+        ['verrouillage', { ...defaultTurnInfo, isInputLocked: true }],
+        ['tour IA', { ...defaultTurnInfo, isHuman: false }],
+        ['turnInfo null', null],
+      ])('arrête au %s', (_name, turnInfo) => {
+        const { rerender } = startHold();
+        rerender(<MobileControls {...defaultProps} turnInfo={turnInfo} />);
+        expectStopped();
+      });
+
+      it('arrête au changement de joueur sans transfert au suivant', () => {
+        const { rerender } = startHold();
+        rerender(<MobileControls {...defaultProps} turnInfo={{ ...defaultTurnInfo, playerId: 'p2' }} />);
+        expectStopped();
+      });
+
+      it('arrête au démontage', () => {
+        const { unmount } = startHold();
+        unmount();
+        expectStopped();
+      });
+
+      it('arrête à la perte de focus de la fenêtre', () => {
+        startHold();
+        act(() => { window.dispatchEvent(new Event('blur')); });
+        expectStopped();
+      });
+
+      it('arrête quand le document devient masqué', () => {
+        startHold();
+        const spy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+        act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+        expectStopped();
+        spy.mockRestore();
+      });
+
+      it('ne reprend pas automatiquement après réactivation', () => {
+        const { rerender } = startHold();
+        rerender(<MobileControls {...defaultProps} turnInfo={{ ...defaultTurnInfo, isInputLocked: true }} />);
+        rerender(<MobileControls {...defaultProps} />);
+        expectStopped();
+      });
+
+      it('un rafraîchissement du HUD conserve la cadence', () => {
+        const { rerender } = startHold();
+        rerender(<MobileControls {...defaultProps} turnInfo={{ ...defaultTurnInfo, angle: 5, power: 60 }} />);
+        act(() => { vi.advanceTimersByTime(160); });
+        expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(4);
+      });
+    });
+
+    it('ne démarre pas lorsque les commandes sont désactivées', () => {
+      render(<MobileControls {...defaultProps} turnInfo={{ ...defaultTurnInfo, isInputLocked: true }} />);
+      down(screen.getByText('▲'));
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps.onAdjustPower).not.toHaveBeenCalled();
+    });
+
+    it('les réglages ne portent plus de gestionnaires Mouse/Touch et Arme/Tir restent des clics', () => {
       render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▲');
+      fireEvent.mouseDown(btn);
+      fireEvent.touchStart(btn);
+      expect(defaultProps.onAdjustPower).not.toHaveBeenCalled();
 
-      const downBtn = screen.getByText('▼');
-      fireEvent.touchStart(downBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(-1);
-      fireEvent.touchEnd(downBtn);
+      fireEvent.pointerDown(screen.getByText('mobile_fire_btn'), { pointerId: 1, button: 0, buttons: 1 });
+      expect(defaultProps.onFire).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText('mobile_fire_btn'));
+      fireEvent.click(screen.getByText('mobile_weapon_btn'));
+      expect(defaultProps.onFire).toHaveBeenCalledTimes(1);
+      expect(defaultProps.onCycleWeapon).toHaveBeenCalledTimes(1);
+    });
 
-      const upBtn = screen.getByText('▲');
-      fireEvent.touchStart(upBtn);
-      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(1);
-      fireEvent.touchEnd(upBtn);
+    it('applique la classe de touch-action: none aux quatre réglages seulement', () => {
+      render(<MobileControls {...defaultProps} />);
+      for (const [label] of ADJUST_BUTTONS) {
+        expect(screen.getByText(label).classList.contains('retro-mobile-adjust-btn')).toBe(true);
+      }
+      expect(screen.getByText('mobile_fire_btn').classList.contains('retro-mobile-adjust-btn')).toBe(false);
+      expect(screen.getByText('mobile_weapon_btn').classList.contains('retro-mobile-adjust-btn')).toBe(false);
     });
   });
 
   describe('Touch configuration changes', () => {
     it('updates isTouch when media query changes', async () => {
       let changeListener: (() => void) | undefined;
+      let isCoarse = false;
 
       // Override default mock to intercept addEventListener
       window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-        matches: false,
+        get matches() {
+          return query === '(pointer: coarse)' ? isCoarse : false;
+        },
         media: query,
         onchange: null,
         addEventListener: vi.fn((event, listener) => {
@@ -343,20 +494,14 @@ describe('MobileControls', () => {
 
       // Trigger change event saying it IS a touch device now
       if (changeListener) {
-        window.matchMedia = vi.fn().mockImplementation(() => ({
-          matches: true,
-          media: '(pointer: coarse)'
-        }));
-
+        isCoarse = true;
         const { act } = await import('@testing-library/react');
         await act(async () => {
           changeListener?.();
         });
       }
 
-      // We don't verify re-render to visible in this test strictly because our mock of window.matchMedia
-      // isn't re-evaluated globally by React without forcing a re-render.
-      // But the coverage will show `checkTouch` ran.
+      expect(container.firstChild).not.toBeNull();
 
       // Restore
       (window as unknown as Record<string, unknown>).ontouchstart = originalOntouchstart;

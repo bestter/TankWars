@@ -644,6 +644,11 @@ canvas {
   touch-action: manipulation;
 }
 
+/* Réglages angle/puissance : maintien stable, sans défilement ni pincement (#407). */
+.retro-mobile-adjust-btn {
+  touch-action: none;
+}
+
 .retro-mobile-btn:active:not(:disabled) {
   background-color: #444;
   border-color: #aaa;

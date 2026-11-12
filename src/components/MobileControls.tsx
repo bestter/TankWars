@@ -1,4 +1,11 @@
-import { memo, useRef, useEffect, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useRef,
+  useEffect,
+  useState,
+  type PointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { VGA_PALETTE } from "../types/game";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
@@ -10,6 +17,8 @@ export interface MobileControlsProps {
   onCycleWeapon: (delta: 1 | -1) => void;
   onFire: () => void;
 }
+
+type ButtonPointerEvent = PointerEvent<HTMLButtonElement>;
 
 export const MobileControls = memo(function MobileControls({
   turnInfo,
@@ -45,32 +54,115 @@ export const MobileControls = memo(function MobileControls({
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const actionRef = useRef<(() => void) | null>(null);
+  // Maintien actif : premier appui prioritaire, associé à son pointerId.
+  const activeHoldRef = useRef<number | null>(null);
+  // Pointeur dont la capture implicite a été libérée volontairement.
+  const releasedCapturePointerRef = useRef<number | null>(null);
 
-  const startAction = (action: () => void) => {
-    stopAction();
-    action();
-    timeoutRef.current = setTimeout(() => {
-      intervalRef.current = setInterval(action, 80);
-    }, 250);
-  };
-
-  const stopAction = () => {
+  const stopAction = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     if (intervalRef.current) clearInterval(intervalRef.current);
     timeoutRef.current = null;
     intervalRef.current = null;
-  };
-
-  // Nettoyage au démontage
-  useEffect(() => {
-    return () => stopAction();
+    actionRef.current = null;
+    activeHoldRef.current = null;
+    releasedCapturePointerRef.current = null;
   }, []);
 
-  if (!isTouch) return null;
+  const startAction = (pointerId: number, action: () => void) => {
+    stopAction();
+    activeHoldRef.current = pointerId;
+    actionRef.current = action;
+    action();
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(() => {
+        actionRef.current?.();
+      }, 80);
+    }, 250);
+  };
 
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
   const canInteract = isHumanTurn && !isLocked;
+  const playerId = turnInfo?.playerId ?? null;
+  const controlsActive = isTouch && canInteract;
+
+  // Arrêt au démontage, à la disparition des commandes, au verrouillage,
+  // à la perte du tour humain et au changement de joueur. Les mises à jour
+  // ordinaires du HUD ne modifient pas ces dépendances.
+  useEffect(() => {
+    return () => {
+      stopAction();
+    };
+  }, [controlsActive, playerId, stopAction]);
+
+  // Arrêt à la perte de focus de la fenêtre ou lorsque le document est masqué.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) stopAction();
+    };
+    window.addEventListener("blur", stopAction);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", stopAction);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [stopAction]);
+
+  const stopIfOwner = (e: ButtonPointerEvent) => {
+    if (activeHoldRef.current === e.pointerId) stopAction();
+  };
+
+  const holdProps = (action: () => void) => ({
+    onPointerDown: (e: ButtonPointerEvent) => {
+      // Souris gauche, contact tactile ou pointe du stylet seulement.
+      if (e.button !== 0 || (e.buttons & ~1) !== 0) return;
+      if (!canInteract || activeHoldRef.current !== null) return;
+      const target = e.currentTarget;
+      startAction(e.pointerId, action);
+      // Libère la capture implicite (tactile) pour recevoir pointerleave.
+      if (target.hasPointerCapture?.(e.pointerId)) {
+        releasedCapturePointerRef.current = e.pointerId;
+        try {
+          target.releasePointerCapture(e.pointerId);
+        } catch {
+          // Filet de sécurité si la capture est perdue ou invalidée de façon concurrente.
+        }
+      }
+    },
+    onPointerUp: stopIfOwner,
+    onPointerCancel: stopIfOwner,
+    onPointerLeave: stopIfOwner,
+    onPointerMove: (e: ButtonPointerEvent) => {
+      if (activeHoldRef.current !== e.pointerId) return;
+      // Avec un appui combiné, pointerup n'arrive qu'au relâchement du dernier
+      // bouton : le bouton principal relâché est signalé par pointermove.
+      if ((e.buttons & 1) === 0) {
+        stopAction();
+        return;
+      }
+      // Filet de sécurité si une capture empêche pointerleave.
+      const r = e.currentTarget.getBoundingClientRect();
+      if (
+        e.clientX < r.left ||
+        e.clientX > r.right ||
+        e.clientY < r.top ||
+        e.clientY > r.bottom
+      ) {
+        stopAction();
+      }
+    },
+    onLostPointerCapture: (e: ButtonPointerEvent) => {
+      if (releasedCapturePointerRef.current === e.pointerId) {
+        releasedCapturePointerRef.current = null;
+        return;
+      }
+      stopIfOwner(e);
+    },
+  });
+
+  if (!isTouch) return null;
 
   return (
     <div className="mobile-controls-panel">
@@ -82,35 +174,19 @@ export const MobileControls = memo(function MobileControls({
         <div className="mobile-button-row">
           <button
             type="button"
-            className="retro-mobile-btn btn-angle"
+            className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
             aria-label="Réduire l'angle"
             disabled={!canInteract}
-            onMouseDown={() => startAction(() => onAdjustAngle(-1))}
-            onMouseUp={stopAction}
-            onMouseLeave={stopAction}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startAction(() => onAdjustAngle(-1));
-            }}
-            onTouchEnd={stopAction}
-            onTouchCancel={stopAction}
+            {...holdProps(() => onAdjustAngle(-1))}
           >
             ◀
           </button>
           <button
             type="button"
-            className="retro-mobile-btn btn-angle"
+            className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
             aria-label="Augmenter l'angle"
             disabled={!canInteract}
-            onMouseDown={() => startAction(() => onAdjustAngle(1))}
-            onMouseUp={stopAction}
-            onMouseLeave={stopAction}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startAction(() => onAdjustAngle(1));
-            }}
-            onTouchEnd={stopAction}
-            onTouchCancel={stopAction}
+            {...holdProps(() => onAdjustAngle(1))}
           >
             ▶
           </button>
@@ -125,35 +201,19 @@ export const MobileControls = memo(function MobileControls({
         <div className="mobile-button-row">
           <button
             type="button"
-            className="retro-mobile-btn btn-power"
+            className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
             aria-label="Réduire la puissance"
             disabled={!canInteract}
-            onMouseDown={() => startAction(() => onAdjustPower(-1))}
-            onMouseUp={stopAction}
-            onMouseLeave={stopAction}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startAction(() => onAdjustPower(-1));
-            }}
-            onTouchEnd={stopAction}
-            onTouchCancel={stopAction}
+            {...holdProps(() => onAdjustPower(-1))}
           >
             ▼
           </button>
           <button
             type="button"
-            className="retro-mobile-btn btn-power"
+            className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
             aria-label="Augmenter la puissance"
             disabled={!canInteract}
-            onMouseDown={() => startAction(() => onAdjustPower(1))}
-            onMouseUp={stopAction}
-            onMouseLeave={stopAction}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startAction(() => onAdjustPower(1));
-            }}
-            onTouchEnd={stopAction}
-            onTouchCancel={stopAction}
+            {...holdProps(() => onAdjustPower(1))}
           >
             ▲
           </button>
