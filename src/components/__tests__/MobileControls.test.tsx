@@ -332,6 +332,17 @@ describe('MobileControls', () => {
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);
     });
 
+    it('démarre le maintien sans planter si releasePointerCapture lève une exception', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▲');
+      btn.hasPointerCapture = vi.fn(() => true);
+      btn.releasePointerCapture = vi.fn(() => {
+        throw new DOMException('NotFoundError', 'NotFoundError');
+      });
+      down(btn, 1, { pointerType: 'touch' });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+    });
+
     it('premier appui prioritaire : le second pointeur est sans effet, même sur un autre bouton', () => {
       render(<MobileControls {...defaultProps} />);
       const first = screen.getByText('▲');
@@ -455,10 +466,13 @@ describe('MobileControls', () => {
   describe('Touch configuration changes', () => {
     it('updates isTouch when media query changes', async () => {
       let changeListener: (() => void) | undefined;
+      let isCoarse = false;
 
       // Override default mock to intercept addEventListener
       window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-        matches: false,
+        get matches() {
+          return query === '(pointer: coarse)' ? isCoarse : false;
+        },
         media: query,
         onchange: null,
         addEventListener: vi.fn((event, listener) => {
@@ -480,20 +494,14 @@ describe('MobileControls', () => {
 
       // Trigger change event saying it IS a touch device now
       if (changeListener) {
-        window.matchMedia = vi.fn().mockImplementation(() => ({
-          matches: true,
-          media: '(pointer: coarse)'
-        }));
-
+        isCoarse = true;
         const { act } = await import('@testing-library/react');
         await act(async () => {
           changeListener?.();
         });
       }
 
-      // We don't verify re-render to visible in this test strictly because our mock of window.matchMedia
-      // isn't re-evaluated globally by React without forcing a re-render.
-      // But the coverage will show `checkTouch` ran.
+      expect(container.firstChild).not.toBeNull();
 
       // Restore
       (window as unknown as Record<string, unknown>).ontouchstart = originalOntouchstart;

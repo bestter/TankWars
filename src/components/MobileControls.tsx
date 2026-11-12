@@ -54,6 +54,7 @@ export const MobileControls = memo(function MobileControls({
 
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const actionRef = useRef<(() => void) | null>(null);
   // Maintien actif : premier appui prioritaire, associé à son pointerId.
   const activeHoldRef = useRef<number | null>(null);
   // Pointeur dont la capture implicite a été libérée volontairement.
@@ -64,6 +65,7 @@ export const MobileControls = memo(function MobileControls({
     if (intervalRef.current) clearInterval(intervalRef.current);
     timeoutRef.current = null;
     intervalRef.current = null;
+    actionRef.current = null;
     activeHoldRef.current = null;
     releasedCapturePointerRef.current = null;
   }, []);
@@ -71,9 +73,12 @@ export const MobileControls = memo(function MobileControls({
   const startAction = (pointerId: number, action: () => void) => {
     stopAction();
     activeHoldRef.current = pointerId;
+    actionRef.current = action;
     action();
     timeoutRef.current = setTimeout(() => {
-      intervalRef.current = setInterval(action, 80);
+      intervalRef.current = setInterval(() => {
+        actionRef.current?.();
+      }, 80);
     }, 250);
   };
 
@@ -86,7 +91,11 @@ export const MobileControls = memo(function MobileControls({
   // Arrêt au démontage, à la disparition des commandes, au verrouillage,
   // à la perte du tour humain et au changement de joueur. Les mises à jour
   // ordinaires du HUD ne modifient pas ces dépendances.
-  useEffect(() => stopAction, [controlsActive, playerId, stopAction]);
+  useEffect(() => {
+    return () => {
+      stopAction();
+    };
+  }, [controlsActive, playerId, stopAction]);
 
   // Arrêt à la perte de focus de la fenêtre ou lorsque le document est masqué.
   useEffect(() => {
@@ -115,7 +124,11 @@ export const MobileControls = memo(function MobileControls({
       // Libère la capture implicite (tactile) pour recevoir pointerleave.
       if (target.hasPointerCapture?.(e.pointerId)) {
         releasedCapturePointerRef.current = e.pointerId;
-        target.releasePointerCapture(e.pointerId);
+        try {
+          target.releasePointerCapture(e.pointerId);
+        } catch {
+          // Filet de sécurité si la capture est perdue ou invalidée de façon concurrente.
+        }
       }
     },
     onPointerUp: stopIfOwner,
