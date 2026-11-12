@@ -306,4 +306,44 @@ describe('App component (State and Lifecycle integration)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
     expect(screen.getByText('Mode: local')).toBeDefined();
   });
+
+  it('provides semantic landmarks, skip link before language switcher, and targets main content with focus', () => {
+    render(<App />);
+
+    // Unique header and main landmarks
+    const banner = screen.getByRole('banner');
+    const main = screen.getByRole('main');
+    expect(banner).toBeDefined();
+    expect(main).toBeDefined();
+    expect(main.id).toBe('main-content');
+    expect(main.getAttribute('tabindex')).toBe('-1');
+
+    // Skip link inside header, preceding language switcher
+    const skipLink = screen.getByRole('link', { name: 'skip_to_content' });
+    expect(skipLink).toBeDefined();
+    expect(skipLink.getAttribute('href')).toBe('#main-content');
+    expect(banner.contains(skipLink)).toBe(true);
+
+    const langSwitcher = banner.querySelector('.language-switcher, [aria-label], select, button') ?? banner;
+    expect(skipLink.compareDocumentPosition(langSwitcher) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Activating skip link focuses main content
+    fireEvent.click(skipLink);
+    expect(document.activeElement).toBe(main);
+
+    // Landmarks persist on view transitions
+    const startBtn = screen.getByRole('button', { name: 'start_battle_button' });
+    fireEvent.click(startBtn);
+
+    expect(screen.getByRole('banner')).toBe(banner);
+    expect(screen.getByRole('main')).toBe(main);
+    expect(main.contains(screen.getByTestId('game-canvas-mock'))).toBe(true);
+
+    const returnBtn = screen.getByRole('button', { name: 'Mock Return To Menu' });
+    fireEvent.click(returnBtn);
+
+    expect(screen.getByRole('banner')).toBe(banner);
+    expect(screen.getByRole('main')).toBe(main);
+    expect(main.contains(screen.getByText('main_title'))).toBe(true);
+  });
 });
