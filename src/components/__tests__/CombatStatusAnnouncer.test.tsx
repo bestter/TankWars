@@ -150,8 +150,69 @@ describe("CombatStatusAnnouncer", () => {
       />
     );
 
-    expect(record).toHaveLength(0);
+    const mutations = [...record, ...observer.takeRecords()];
+    expect(mutations).toHaveLength(0);
     expect(region.textContent).toBe("Tour 1, Player 1, vent calme");
+    observer.disconnect();
+  });
+
+  it("handles remote opponent turn: aims with locked inputs without resolving, announces once on fire, and ignores HUD updates during shot", () => {
+    const opponentAiming: CurrentTurnInfo = {
+      ...baseTurnInfo,
+      playerId: "p2",
+      playerName: "Opponent",
+      turn: 2,
+      isInputLocked: true,
+      isResolving: false,
+      tanksAreFalling: false,
+    };
+
+    const { rerender } = render(
+      <CombatStatusAnnouncer round={1} turnInfo={opponentAiming} wind={0} />
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("Tour 2, Opponent, vent calme");
+
+    const record: MutationRecord[] = [];
+    const observer = new MutationObserver((mutations) => record.push(...mutations));
+    observer.observe(region, { characterData: true, childList: true, subtree: true });
+
+    // 1. L'adversaire vise. Les commandes locales sont verrouillées et le HUD reçoit une mise à jour.
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...opponentAiming, angle: 60, power: 75 }}
+        wind={0}
+      />
+    );
+    // Aucune annonce de résolution ne doit être émise
+    expect([...record, ...observer.takeRecords()]).toHaveLength(0);
+    expect(region.textContent).toBe("Tour 2, Opponent, vent calme");
+
+    // 2. L'adversaire tire. L'annonce de résolution doit être émise une seule fois.
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...opponentAiming, angle: 60, power: 75, isResolving: true }}
+        wind={0}
+      />
+    );
+    expect(region.textContent).toBe("Résolution du tir");
+    const resolvingRecords = [...record, ...observer.takeRecords()];
+    expect(resolvingRecords.length).toBeGreaterThan(0);
+
+    // 3. Le HUD reçoit une autre mise à jour pendant le même tir. L'annonce ne doit pas se répéter.
+    record.length = 0;
+    rerender(
+      <CombatStatusAnnouncer
+        round={1}
+        turnInfo={{ ...opponentAiming, angle: 60, power: 75, isResolving: true }}
+        wind={5}
+      />
+    );
+    expect([...record, ...observer.takeRecords()]).toHaveLength(0);
+    expect(region.textContent).toBe("Résolution du tir");
+
     observer.disconnect();
   });
 

@@ -75,13 +75,14 @@ export function CombatStatusAnnouncer({ round, turnInfo, wind }: CombatStatusAnn
     }
 
     // Même tour : gestion des transitions de tir et de chute
+    const isResolving = turnInfo.isResolving ?? turnInfo.isInputLocked;
     if (turnInfo.tanksAreFalling) {
       if (!currentTracking.hasAnnouncedFalling) {
         currentTracking.hasAnnouncedFalling = true;
         currentTracking.hasAnnouncedResolving = true;
         el.textContent = t("combat_status_falling");
       }
-    } else if (turnInfo.isInputLocked) {
+    } else if (isResolving) {
       if (!currentTracking.hasAnnouncedResolving) {
         currentTracking.hasAnnouncedResolving = true;
         el.textContent = t("combat_status_resolving");

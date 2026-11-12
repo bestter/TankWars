@@ -770,6 +770,31 @@ describe('TurnManager', () => {
       expect(onShotSettled).toHaveBeenCalledTimes(1);
       expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
     });
+
+    it('sets isResolving to false during remote aiming and true during shot resolution', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      // Remote player 2's turn
+      turnManager.syncTurn(1);
+      const aimingInfo = turnManager.getCurrentTurnInfo();
+      expect(aimingInfo?.playerId).toBe('player-2');
+      expect(aimingInfo?.isInputLocked).toBe(true);
+      expect(aimingInfo?.isResolving).toBe(false);
+
+      // Remote player 2 fires
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        { fromSlot: 1 },
+      );
+      const resolvingInfo = turnManager.getCurrentTurnInfo();
+      expect(resolvingInfo?.isResolving).toBe(true);
+
+      // Settlement finishes
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isResolving).toBe(false);
+    });
   });
 
   describe('AI grenade settlement vs safety net', () => {
