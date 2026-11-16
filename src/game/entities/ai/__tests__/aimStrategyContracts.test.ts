@@ -114,7 +114,8 @@ describe("contrats de séquence des stratégies IA", () => {
         });
         expect(self.tank.hitReaction?.wasDirectHit).toBe(true);
         const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
-        const shots = [];
+        const terrain = flatTerrain(800, 480);
+        const shots: Awaited<ReturnType<AimStrategy["executeTurn"]>>[] = [];
         const draws: number[] = [];
         const health = self.tank.health;
         for (let turn = 1; turn <= 4; turn++) {
@@ -135,7 +136,7 @@ describe("contrats de séquence des stratégies IA", () => {
           rng.mockClear();
           shots.push(await strategy.executeTurn("self-tank", {
             ...makeGameState(self, target, profile), roundNumber: 1, turn,
-          }, flatTerrain(800, 480)));
+          }, terrain));
           draws.push(rng.mock.calls.length);
           expect(self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
         }
