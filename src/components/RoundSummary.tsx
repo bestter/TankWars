@@ -1,7 +1,26 @@
+import { useEffect, useId, useRef, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import type { RoundResult } from "../types/game";
 import { VGA_PALETTE } from "../types/game";
+
+function openModalDialog(dialog: HTMLDialogElement): void {
+  if (dialog.open || dialog.hasAttribute("open")) return;
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeModalDialog(dialog: HTMLDialogElement): void {
+  if (!dialog.open && !dialog.hasAttribute("open")) return;
+  if (typeof dialog.close === "function") {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
 
 export interface RoundEndOutcome {
   isDraw: boolean;
@@ -29,6 +48,11 @@ export function RoundSummary({
   freeWeapons = false,
 }: RoundSummaryProps) {
   const { t } = useTranslation();
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const isUnmountingRef = useRef(false);
+  const nextRoundBtnRef = useRef<HTMLButtonElement | null>(null);
+  const newGameBtnRef = useRef<HTMLButtonElement | null>(null);
   const alivePlayers = players.filter((p) => !p.tank.isDead);
   const sorted = players
     .map((player, index) => ({ player, index }))
@@ -40,6 +64,38 @@ export function RoundSummary({
     });
   const canContinue = players.length >= 2;
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    isUnmountingRef.current = false;
+    openModalDialog(dialog);
+    return () => {
+      isUnmountingRef.current = true;
+      closeModalDialog(dialog);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (canContinue) {
+      nextRoundBtnRef.current?.focus();
+    } else {
+      newGameBtnRef.current?.focus();
+    }
+  }, [canContinue]);
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+    if (canContinue) {
+      onNextRound();
+    }
+  };
+
+  const handleClose = () => {
+    if (!isUnmountingRef.current && dialogRef.current?.isConnected) {
+      openModalDialog(dialogRef.current);
+    }
+  };
+
   let outcomeLine = t("outcome_round_ended");
   if (roundOutcome?.isDraw) {
     outcomeLine = t("outcome_draw");
@@ -48,8 +104,12 @@ export function RoundSummary({
   }
 
   return (
-    <div
+    <dialog
+      ref={dialogRef}
       className="retro-modal"
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      onClose={handleClose}
       style={{
         border: `4px solid ${VGA_PALETTE.CYAN}`,
         minWidth: 420,
@@ -58,17 +118,18 @@ export function RoundSummary({
         backgroundColor: "rgba(0, 0, 0, 0.92)",
       }}
     >
-      <div
+      <h2
+        id={titleId}
         style={{
+          margin: "0 0 6px",
           fontSize: "18px",
           fontWeight: "bold",
           color: VGA_PALETTE.MAGENTA,
-          marginBottom: 6,
           letterSpacing: 1,
         }}
       >
         {t("round_summary_title", { round })}
-      </div>
+      </h2>
       <div
         style={{
           fontSize: "13px",
@@ -159,6 +220,7 @@ export function RoundSummary({
       </div>
 
       <button
+        ref={nextRoundBtnRef}
         type="button"
         onClick={onNextRound}
         disabled={!canContinue}
@@ -175,6 +237,7 @@ export function RoundSummary({
       </button>
 
       <button
+        ref={newGameBtnRef}
         type="button"
         onClick={onNewGame}
         className="round-summary-menu-btn"
@@ -187,6 +250,6 @@ export function RoundSummary({
       >
         {t("next_round_note")}
       </div>
-    </div>
+    </dialog>
   );
 }

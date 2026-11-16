@@ -5,6 +5,52 @@ import { WeaponShop } from '../WeaponShop';
 import { makePlayer, makeTank } from '../../game/__tests__/helpers';
 import { VGA_PALETTE } from '../../types/game';
 
+function installDialogPrototypeMocks() {
+  const originalShowModal = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    'showModal',
+  );
+  const originalClose = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    'close',
+  );
+
+  const showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  });
+  const close = vi.fn(function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+  });
+
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    writable: true,
+    value: showModal,
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    writable: true,
+    value: close,
+  });
+
+  return {
+    showModal,
+    close,
+    restore() {
+      if (originalShowModal) {
+        Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal);
+      } else {
+        delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).showModal;
+      }
+      if (originalClose) {
+        Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose);
+      } else {
+        delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).close;
+      }
+    },
+  };
+}
+
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -269,5 +315,159 @@ describe('WeaponShop', () => {
     fireEvent.click(screen.getByRole('button', { name: 'btn_ready_next_player' }));
     expect(onBuySell).not.toHaveBeenCalled();
     expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('renders a native <dialog> named by its h2 heading without inline display', () => {
+    const player = makePlayer({ id: 'p-1', name: 'Major Tom' });
+    render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={2}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'shop_header 1/2' }) as HTMLDialogElement;
+    const heading = screen.getByRole('heading', { level: 2, name: 'shop_header 1/2' });
+
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog.classList.contains('retro-modal-shop')).toBe(true);
+    expect(dialog.style.display).toBe('');
+    expect(dialog.getAttribute('role')).toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBeNull();
+    expect(dialog.getAttribute('aria-labelledby')).toBe(heading.id);
+  });
+
+  it('opens with showModal on mount, stays open across hotseat shopper changes, reopens on close, and closes on unmount', () => {
+    const mocks = installDialogPrototypeMocks();
+    try {
+      const p1 = makePlayer({ id: 'p-1', name: 'Alpha' });
+      const p2 = makePlayer({ id: 'p-2', name: 'Bravo' });
+      const { rerender, unmount } = render(
+        <WeaponShop
+          player={p1}
+          shopIndex={0}
+          totalShoppers={2}
+          onBuySell={() => {}}
+          onReady={() => {}}
+        />
+      );
+
+      const dialog = screen.getByRole('dialog', { name: 'shop_header 1/2' }) as HTMLDialogElement;
+      expect(mocks.showModal).toHaveBeenCalledTimes(1);
+      expect(dialog.hasAttribute('open')).toBe(true);
+
+      rerender(
+        <WeaponShop
+          player={p2}
+          shopIndex={1}
+          totalShoppers={2}
+          onBuySell={() => {}}
+          onReady={() => {}}
+        />
+      );
+      expect(dialog.hasAttribute('open')).toBe(true);
+      expect(mocks.showModal).toHaveBeenCalledTimes(1);
+
+      dialog.removeAttribute('open');
+      fireEvent(dialog, new Event('close'));
+      expect(mocks.showModal).toHaveBeenCalledTimes(2);
+      expect(dialog.hasAttribute('open')).toBe(true);
+
+      unmount();
+      expect(mocks.close).toHaveBeenCalledTimes(1);
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it('focuses ready button on mount and shopper change while preserving scrollTop for same player updates', () => {
+    const p1 = makePlayer({ id: 'p-1', name: 'Alpha', money: 1000, inventory: { GRENADE: 0 } });
+    const p1Updated = makePlayer({ id: 'p-1', name: 'Alpha', money: 900, inventory: { GRENADE: 1 } });
+    const p2 = makePlayer({ id: 'p-2', name: 'Bravo', money: 800, inventory: { GRENADE: 0 } });
+
+    const { rerender } = render(
+      <WeaponShop
+        player={p1}
+        shopIndex={0}
+        totalShoppers={2}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    const readyBtn = screen.getByRole('button', { name: 'btn_ready_next_player' });
+    expect(document.activeElement).toBe(readyBtn);
+
+    const buyBtn = screen.getAllByTitle('title_buy')[0];
+    const weaponList = buyBtn.parentElement?.parentElement?.parentElement as HTMLDivElement;
+    expect(weaponList.style.overflowY).toBe('auto');
+
+    weaponList.scrollTop = 140;
+    buyBtn.focus();
+    expect(document.activeElement).toBe(buyBtn);
+
+    rerender(
+      <WeaponShop
+        player={p1Updated}
+        shopIndex={0}
+        totalShoppers={2}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+    expect(weaponList.scrollTop).toBe(140);
+    expect(document.activeElement).toBe(buyBtn);
+
+    rerender(
+      <WeaponShop
+        player={p2}
+        shopIndex={1}
+        totalShoppers={2}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+    expect(weaponList.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(readyBtn);
+  });
+
+  it('intercepts cancel event and invokes onReady only when controlsDisabled is false', () => {
+    const player = makePlayer({ id: 'p-1', name: 'Alpha' });
+    const onReady = vi.fn();
+
+    const { rerender } = render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={onReady}
+      />
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'shop_header 1/1' });
+    const cancelEvent = new Event('cancel', { cancelable: true });
+    fireEvent(dialog, cancelEvent);
+    expect(cancelEvent.defaultPrevented).toBe(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={onReady}
+        controlsDisabled
+      />
+    );
+
+    const disabledCancelEvent = new Event('cancel', { cancelable: true });
+    fireEvent(dialog, disabledCancelEvent);
+    expect(disabledCancelEvent.defaultPrevented).toBe(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
   });
 });

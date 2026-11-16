@@ -5,6 +5,52 @@ import { RoundSummary } from '../RoundSummary';
 import { makePlayer, makeTank } from '../../game/__tests__/helpers';
 import type { Color, RoundResult } from '../../types/game';
 
+function installDialogPrototypeMocks() {
+  const originalShowModal = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    'showModal',
+  );
+  const originalClose = Object.getOwnPropertyDescriptor(
+    HTMLDialogElement.prototype,
+    'close',
+  );
+
+  const showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  });
+  const close = vi.fn(function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+  });
+
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    writable: true,
+    value: showModal,
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    writable: true,
+    value: close,
+  });
+
+  return {
+    showModal,
+    close,
+    restore() {
+      if (originalShowModal) {
+        Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal);
+      } else {
+        delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).showModal;
+      }
+      if (originalClose) {
+        Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose);
+      } else {
+        delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).close;
+      }
+    },
+  };
+}
+
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -151,5 +197,63 @@ describe('RoundSummary', () => {
     expect(screen.queryByText('btn_go_to_shop')).toBeNull();
     expect(screen.getByText(/round_survivors_free_weapons/)).toBeDefined();
     expect(screen.getAllByText(/round_summary_balance/)).toHaveLength(2);
+  });
+
+  it('renders a native <dialog> named by its h2 heading without redundant ARIA attributes', () => {
+    render(<RoundSummary {...defaultProps} />);
+    const dialog = screen.getByRole('dialog', { name: 'round_summary_title 3' });
+    const heading = screen.getByRole('heading', { level: 2, name: 'round_summary_title 3' });
+
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog.getAttribute('role')).toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBeNull();
+    expect(dialog.getAttribute('aria-labelledby')).toBe(heading.id);
+  });
+
+  it('opens with showModal on mount, reopens on unexpected close, and closes on unmount', () => {
+    const mocks = installDialogPrototypeMocks();
+    try {
+      const { unmount } = render(<RoundSummary {...defaultProps} />);
+      const dialog = screen.getByRole('dialog', { name: 'round_summary_title 3' }) as HTMLDialogElement;
+
+      expect(mocks.showModal).toHaveBeenCalledTimes(1);
+      expect(dialog.hasAttribute('open')).toBe(true);
+
+      dialog.removeAttribute('open');
+      fireEvent(dialog, new Event('close'));
+      expect(mocks.showModal).toHaveBeenCalledTimes(2);
+      expect(dialog.hasAttribute('open')).toBe(true);
+
+      unmount();
+      expect(mocks.close).toHaveBeenCalledTimes(1);
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it('focuses the primary continue button initially when >= 2 players', () => {
+    render(<RoundSummary {...defaultProps} />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'btn_go_to_shop' }));
+  });
+
+  it('focuses the return to menu button initially when fewer than 2 players', () => {
+    render(<RoundSummary {...defaultProps} players={[player1]} />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'btn_return_to_menu' }));
+  });
+
+  it('intercepts cancel event and triggers onNextRound only when canContinue is true', () => {
+    const { rerender } = render(<RoundSummary {...defaultProps} />);
+    const dialog = screen.getByRole('dialog', { name: 'round_summary_title 3' });
+
+    const cancelEvent = new Event('cancel', { cancelable: true });
+    fireEvent(dialog, cancelEvent);
+    expect(cancelEvent.defaultPrevented).toBe(true);
+    expect(onNextRoundMock).toHaveBeenCalledTimes(1);
+
+    rerender(<RoundSummary {...defaultProps} players={[player1]} />);
+    const blockedCancelEvent = new Event('cancel', { cancelable: true });
+    fireEvent(dialog, blockedCancelEvent);
+    expect(blockedCancelEvent.defaultPrevented).toBe(true);
+    expect(onNextRoundMock).toHaveBeenCalledTimes(1);
   });
 });

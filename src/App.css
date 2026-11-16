@@ -4,11 +4,8 @@
  * Hardcoded VGA hexes from src/types/game.ts for static parts.
  */
 .retro-modal {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 25;
+  inset: 0;
+  margin: auto;
   pointer-events: auto;
   background-color: rgba(0, 0, 0, 0.93);
   box-shadow:
@@ -20,6 +17,21 @@
   text-align: center;
   box-sizing: border-box;
   max-height: 96%;
+}
+
+.retro-modal-shop[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+dialog.retro-modal:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.retro-modal::backdrop {
+  background-color: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .retro-hud {
