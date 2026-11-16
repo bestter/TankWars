@@ -22,6 +22,8 @@ import {
 import * as random from "../../../../utils/random";
 import type { AiProfile, Player } from "../../../../types/player";
 import * as sniperAim from "../sniperAim";
+import { TankManager } from "../../TankManager";
+import { WEAPON_REGISTRY } from "../../../../types/weapon";
 
 type AimStrategy =
   | AISimpleStrategy
@@ -95,6 +97,73 @@ describe("contrats de séquence des stratégies IA", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it.each(strategyFactories)(
+    "$profile garde ses commandes et ses tirages après un contact DRILLER sans perte (#423)",
+    async ({ profile, create }) => {
+      const run = async (contact: boolean) => {
+        const strategy = create();
+        const self = makeShooter(profile);
+        const target = makeTarget("target", 500);
+        const tm = new TankManager();
+        tm.setPlayers([self, target]);
+        tm.applyExplosionDamage({
+          explosionX: self.tank.position.x, explosionY: self.tank.position.y,
+          radius: 28, maxDamage: 5, weaponId: "MISSILE", isDirectHit: true,
+          shooterId: target.id,
+        });
+        expect(self.tank.hitReaction?.wasDirectHit).toBe(true);
+        const rng = vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+        const shots = [];
+        const draws: number[] = [];
+        const health = self.tank.health;
+        for (let turn = 1; turn <= 4; turn++) {
+          if (contact && turn === 2) {
+            const mark = vi.spyOn(tm, "markDirectlyAffected");
+            tm.applyExplosionDamage({
+              explosionX: self.tank.position.x, explosionY: self.tank.position.y - 15,
+              radius: WEAPON_REGISTRY.DRILLER.blastRadius,
+              maxDamage: WEAPON_REGISTRY.DRILLER.damage,
+              weaponId: "DRILLER", isDirectHit: true, shooterId: target.id,
+            });
+            expect(mark).toHaveBeenCalledExactlyOnceWith(self.id, undefined);
+            expect(self.tank.lastDirectAttackerId).toBe(target.id);
+            expect(self.tank.health).toBe(health);
+            expect(self.tank.shield).toBe(0);
+            expect(self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+          }
+          rng.mockClear();
+          shots.push(await strategy.executeTurn("self-tank", {
+            ...makeGameState(self, target, profile), roundNumber: 1, turn,
+          }, flatTerrain(800, 480)));
+          draws.push(rng.mock.calls.length);
+          expect(self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+        }
+        vi.restoreAllMocks();
+        return { shots, draws };
+      };
+      expect(await run(true)).toEqual(await run(false));
+    },
+  );
+
+  it.each(strategyFactories)(
+    "$profile préserve une réaction en attente et la consomme à la première riposte (#423)",
+    async ({ profile, create }) => {
+      const self = makeShooter(profile);
+      const target = makeTarget("target", 500);
+      self.tank.hitReaction = { wasDirectHit: true, fallDistance: 35 };
+      const tm = new TankManager();
+      tm.setPlayers([self, target]);
+      tm.applyExplosionDamage({
+        explosionX: self.tank.position.x, explosionY: self.tank.position.y - 15,
+        radius: 14, maxDamage: 42, weaponId: "DRILLER", isDirectHit: true,
+      });
+      expect(self.tank.hitReaction).toEqual({ wasDirectHit: true, fallDistance: 35 });
+      vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+      await create().executeTurn("self-tank", makeGameState(self, target, profile), flatTerrain(800, 480));
+      expect(self.tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+    },
+  );
 
   it.each(strategyFactories)(
     "repart au tir 1 pour A -> B -> A et à la manche suivante",

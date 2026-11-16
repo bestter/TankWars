@@ -3,6 +3,8 @@ import { TankManager, type ExplosionDamageOptions } from "../TankManager";
 import { TerrainManager } from "../../engine/Terrain";
 import { makePlayer, makeTank, flatTerrain } from "../../__tests__/helpers";
 import { THERMONUCLEAR_INSTANT_KILL_RADIUS } from "../../combatConstants";
+import { consumeHitReaction, getHitReactionIntensity } from "../ai/hitReaction";
+import { WEAPON_REGISTRY } from "../../../types/weapon";
 
 function managerWith(...players: ReturnType<typeof makePlayer>[]): TankManager {
   const tm = new TankManager();
@@ -22,6 +24,96 @@ function explosion(overrides: Partial<ExplosionDamageOptions> = {}): ExplosionDa
     ...overrides,
   };
 }
+
+describe("hit reaction requires actual impact loss (#423)", () => {
+  const profiles = ["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"] as const;
+  const drillerContact = explosion({
+    weaponId: "DRILLER", explosionY: 185, isDirectHit: true,
+    radius: WEAPON_REGISTRY.DRILLER.blastRadius,
+    maxDamage: WEAPON_REGISTRY.DRILLER.damage,
+  });
+
+  it.each(profiles)("%s preserves inactive, pending and absent reactions on lossless contact", (aiProfile) => {
+    for (const reaction of [undefined, { wasDirectHit: false, fallDistance: 20 },
+      { wasDirectHit: true, fallDistance: 35 }]) {
+      const expectedReaction = reaction ? { ...reaction } : undefined;
+      const target = makePlayer({ id: "victim", isHuman: false, aiProfile,
+        inventory: {}, tank: makeTank("victim", 100, 200, { shield: 40, hitReaction: reaction }) });
+      const tm = managerWith(target);
+      const mark = vi.spyOn(tm, "markDirectlyAffected");
+      tm.applyExplosionDamage(drillerContact);
+      expect(target.tank.health).toBe(100);
+      expect(target.tank.shield).toBe(40);
+      expect(target.tank.hitReaction).toEqual(expectedReaction);
+      expect(target.tank.lastDirectAttackerId).toBe("killer");
+      expect(target.tank.lastHitBy).toBeUndefined();
+      expect(mark).toHaveBeenCalledExactlyOnceWith("victim", undefined);
+    }
+  });
+
+  it.each(profiles)("%s arms only direct losses with any combination of optional identifiers", (aiProfile) => {
+    for (const shield of [0, 40]) {
+      for (const isDirectHit of [true, false]) {
+        for (let identifiers = 0; identifiers < 8; identifiers++) {
+          const target = makePlayer({ id: "victim", isHuman: false, aiProfile,
+            inventory: {}, tank: makeTank("victim", 100, 200, { shield }) });
+          const tm = managerWith(target);
+          const shooterId = identifiers & 1 ? "killer" : undefined;
+          tm.applyExplosionDamage(explosion({ isDirectHit, maxDamage: 5, shooterId,
+            shotId: identifiers & 2 ? 1 : undefined, munitionId: identifiers & 4 ? 0 : undefined }));
+          expect(target.tank.hitReaction?.wasDirectHit ?? false).toBe(isDirectHit);
+          expect(target.tank.health).toBe(shield ? 100 : 95);
+          expect(target.tank.shield).toBe(shield ? (isDirectHit ? 30 : 35) : 0);
+          expect(target.tank.lastHitBy).toBe(shield ? undefined : shooterId);
+        }
+      }
+    }
+  });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)("arms a local %s reaction through qualified direct IDs", (weaponId) => {
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100, 200, { shield: 40 }) });
+    const tm = managerWith(target);
+    tm.beginLocalNuclearImpact(explosion({ weaponId, isDirectHit: true }));
+    expect(target.tank.health).toBe(0);
+    expect(target.tank.shield).toBe(0);
+    expect(target.tank.hitReaction).toEqual({ wasDirectHit: true, fallDistance: 0 });
+    expect(target.tank.lastDirectAttackerId).toBe("killer");
+  });
+
+  it("does not arm for zero damage within the radius", () => {
+    const target = makePlayer({ id: "victim", tank: makeTank("victim", 100, 200) });
+    managerWith(target).applyExplosionDamage(explosion({ isDirectHit: true, maxDamage: 0 }));
+    expect(target.tank.hitReaction).toBeUndefined();
+  });
+
+  it.each(profiles)("%s reacts only to the subsequent fall, preserving direct attribution", (profile) => {
+    const tank = makeTank("victim", 100, 200, {
+      health: 200,
+      hitReaction: { wasDirectHit: false, fallDistance: 0 },
+    });
+    const tm = managerWith(makePlayer({ id: "victim", tank }));
+    const terrain = flatTerrain(300, 480, 0.7);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.beginShotAttribution(12, "killer", "DRILLER");
+    tm.applyExplosionDamage({ ...drillerContact, shotId: 12, munitionId: 0 });
+    expect(applied).not.toHaveBeenCalled();
+    expect(tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 0 });
+    tm.updateTankPositions(terrain);
+    for (let step = 0; step < 600; step++) tm.applyGravity(1 / 60, terrain);
+    expect(tank.hitReaction).toEqual({ wasDirectHit: false, fallDistance: 120 });
+    expect(getHitReactionIntensity(profile, tank.hitReaction)).toBe(
+      getHitReactionIntensity(profile, { wasDirectHit: false, fallDistance: 120 }),
+    );
+    expect(applied).toHaveBeenCalled();
+    for (const [event] of applied.mock.calls) {
+      expect(event).toMatchObject({ source: "fall", classification: "direct", shotId: 12,
+        munitionId: 0, shooterId: "killer" });
+    }
+    consumeHitReaction(tank.hitReaction);
+    expect(getHitReactionIntensity(profile, tank.hitReaction)).toBe(0);
+  });
+});
 
 describe("TankManager.applyExplosionDamage", () => {
   it.each([
