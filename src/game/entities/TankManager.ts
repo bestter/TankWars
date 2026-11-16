@@ -700,11 +700,6 @@ export class TankManager {
 
         directHitTankIds.add(player.id);
         this.markDirectlyAffected(player.id, munitionId);
-        tank.hitReaction = tank.hitReaction ?? {
-          wasDirectHit: false,
-          fallDistance: 0,
-        };
-        tank.hitReaction.wasDirectHit = true;
         if (shooterId && shooterId !== player.id) {
           tank.lastDirectAttackerId = shooterId;
         }
@@ -771,11 +766,6 @@ export class TankManager {
           explosionY <= pos.y;
         if (isDirectHitOnThisTank) {
           this.markDirectlyAffected(player.id, munitionId);
-          tank.hitReaction = tank.hitReaction ?? {
-            wasDirectHit: false,
-            fallDistance: 0,
-          };
-          tank.hitReaction.wasDirectHit = true;
           if (shooterId && shooterId !== player.id && weaponId !== "BULLDOZER") {
             tank.lastDirectAttackerId = shooterId;
           }
@@ -853,6 +843,15 @@ export class TankManager {
 
       if (remainingDamage > 0) {
         tank.health = Math.max(0, tank.health - remainingDamage);
+      }
+      // Un contact géométrique conserve son attribution, mais seule une perte
+      // réelle à l'impact arme la réaction de visée (#423).
+      if (isDirectHitOnThisTank && (shieldBefore > tank.shield || healthBefore > tank.health)) {
+        tank.hitReaction = tank.hitReaction ?? {
+          wasDirectHit: false,
+          fallDistance: 0,
+        };
+        tank.hitReaction.wasDirectHit = true;
       }
       const healthDamage = healthBefore - tank.health;
 
