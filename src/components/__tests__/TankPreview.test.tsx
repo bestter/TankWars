@@ -86,6 +86,18 @@ describe('TankPreview', () => {
     );
   });
 
+  it('does not re-render or redraw when re-rendered with the same color (memoized)', () => {
+    const { rerender } = render(<TankPreview color={"#ff0000" as Color} />);
+
+    expect(drawTankSprite).toHaveBeenCalledTimes(1);
+
+    // Re-render with identical color
+    rerender(<TankPreview color={"#ff0000" as Color} />);
+
+    // Memoization prevents re-rendering and redraw
+    expect(drawTankSprite).toHaveBeenCalledTimes(1);
+  });
+
   it('handles null context gracefully', () => {
     // Return null from getContext
     HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(null);
