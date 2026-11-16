@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { drawTankSprite } from "../game/rendering/tankSprite";
 import type { Color } from "../types/game";
@@ -7,7 +7,7 @@ interface TankPreviewProps {
   color: Color;
 }
 
-export function TankPreview({ color }: TankPreviewProps) {
+export const TankPreview = memo(function TankPreview({ color }: TankPreviewProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -43,4 +43,4 @@ export function TankPreview({ color }: TankPreviewProps) {
       />
     </div>
   );
-}
+});
