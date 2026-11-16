@@ -97,20 +97,23 @@ describe('TankPreview', () => {
   });
 
   it('does not re-render or redraw when parent re-renders with the same color (memoized)', () => {
+    const color = '#ff0000' as Color;
     const { rerender } = render(
-      <TankPreviewParent color={"#ff0000" as Color} renderTick={0} />
+      <TankPreviewParent color={color} renderTick={0} />
     );
 
     const callsAfterMount = mockT.mock.calls.length;
     expect(callsAfterMount).toBeGreaterThan(0);
     expect(drawTankSprite).toHaveBeenCalledTimes(1);
+    expect(mockFillRect).toHaveBeenCalledTimes(1);
 
     // Re-render parent with an unrelated prop change and identical color
-    rerender(<TankPreviewParent color={"#ff0000" as Color} renderTick={1} />);
+    rerender(<TankPreviewParent color={color} renderTick={1} />);
 
     // Memoization prevents re-rendering TankPreview and redrawing
     expect(mockT).toHaveBeenCalledTimes(callsAfterMount);
     expect(drawTankSprite).toHaveBeenCalledTimes(1);
+    expect(mockFillRect).toHaveBeenCalledTimes(1);
   });
 
   it('handles null context gracefully', () => {
