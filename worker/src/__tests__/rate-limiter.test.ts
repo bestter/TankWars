@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env, RateLimiter } from '../index';
-import { RATE_LIMIT_IDLE_MS, RATE_LIMIT_WINDOW_MS } from '../rate-limiter';
+import { RATE_LIMIT_IDLE_MS, RATE_LIMIT_WINDOW_MS, WEBSOCKET_RATE_LIMIT_MAX_REQUESTS, WEBSOCKET_RATE_LIMIT_WINDOW_MS } from '../rate-limiter';
 
 function createLimiter() {
   const data = new Map<string, unknown>();
@@ -45,7 +45,10 @@ function createEnv() {
     headers: ip ? { 'cf-connecting-ip': ip } : {},
     body: JSON.stringify({ numPlayers: 2 }),
   }), env);
-  return { env, createRoom, limiterFetch, roomFetch, limiters };
+  const connectWebSocket = (ip: string) => worker.fetch(new Request('https://api.example/api/rooms/room-id/ws?slot=0&token=token123', {
+    headers: { Upgrade: 'websocket', 'cf-connecting-ip': ip },
+  }), env);
+  return { env, createRoom, connectWebSocket, limiterFetch, roomFetch, limiters };
 }
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -134,6 +137,41 @@ describe('Room creation rate limiting', () => {
     expect(response.status).toBe(403);
     expect(limiterFetch).not.toHaveBeenCalled();
     expect(roomFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebSocket admission rate limiting', () => {
+  it('rejects over-budget connections before resolving a room and reopens the window independently of REST', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const { env, connectWebSocket, createRoom, roomFetch } = createEnv();
+    const ip = '192.0.2.1';
+    for (let i = 0; i < WEBSOCKET_RATE_LIMIT_MAX_REQUESTS; i++) expect((await connectWebSocket(ip)).status).toBe(200);
+    const denied = await connectWebSocket(ip);
+    expect(denied.status).toBe(429);
+    expect(denied.headers.get('Retry-After')).toBe('10');
+    expect(env.RATE_LIMITER.idFromName).toHaveBeenCalledWith('ws_rate_limit_' + ip);
+    expect(env.GAME_ROOM.idFromName).toHaveBeenCalledTimes(WEBSOCKET_RATE_LIMIT_MAX_REQUESTS);
+    expect(roomFetch).toHaveBeenCalledTimes(WEBSOCKET_RATE_LIMIT_MAX_REQUESTS);
+    expect((await createRoom(ip)).status).toBe(200);
+    expect((await connectWebSocket('192.0.2.2')).status).toBe(200);
+    now.mockReturnValue(1_000_000 + WEBSOCKET_RATE_LIMIT_WINDOW_MS);
+    expect((await connectWebSocket(ip)).status).toBe(200);
+  });
+
+  it('admits a WebSocket connection even when the same IP has exhausted the REST quota', async () => {
+    const { createRoom, connectWebSocket } = createEnv();
+    const ip = '192.0.2.1';
+    for (let i = 0; i < 5; i++) await createRoom(ip);
+    expect((await createRoom(ip)).status).toBe(429);
+    expect((await connectWebSocket(ip)).status).toBe(200);
+  });
+
+  it('fails closed before resolving a room when the WebSocket limiter is unavailable', async () => {
+    const { env, connectWebSocket, limiterFetch } = createEnv();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    limiterFetch.mockRejectedValueOnce(new Error('limiter unavailable'));
+    expect((await connectWebSocket('192.0.2.1')).status).toBe(500);
+    expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
   });
 });
 
