@@ -172,6 +172,7 @@ describe("GameCanvas component", () => {
 
     const canvas = screen.getByRole("img");
     expect(canvas).toBeDefined();
+    expect(canvas.classList.contains("game-canvas")).toBe(true);
     expect(canvas.getAttribute("aria-label")).toBe("canvas_game_aria_label");
     expect(canvas.tabIndex).toBe(0);
   });

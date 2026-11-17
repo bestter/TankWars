@@ -2,7 +2,11 @@ import { useShotAdvisor } from "./advisor/useShotAdvisor";
 import { ShotRecorder } from "../game/diagnostics/archive";
 import { filterArchive } from "../game/diagnostics/export";
 import type { ArchiveFilter } from "../game/diagnostics/export";
-import { startCanvasLoop } from "./canvasLoop";
+import {
+  isCanvasPhaseActive,
+  startCanvasLoop,
+  type CanvasLoopController,
+} from "./canvasLoop";
 import { prepareScenarioRound } from "../game/endurance/scenario";
 import type { EnduranceSession } from "../game/endurance/session";
 import type { CombatObserver } from "../game/endurance/types";
@@ -195,6 +199,9 @@ export function useGameSession({
     buildInitialCanvasState,
   );
   useCombatWakeLock(state);
+  const phaseActive = isCanvasPhaseActive(state);
+  const phaseActiveRef = useRef(phaseActive);
+  const canvasLoopRef = useRef<CanvasLoopController | null>(null);
   const {
     gamePhase,
     shopPlayers,
@@ -235,6 +242,11 @@ export function useGameSession({
   const zeusAnnouncementTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync refs to avoid stale closures
+  useEffect(() => {
+    phaseActiveRef.current = phaseActive;
+    canvasLoopRef.current?.setPhaseActive(phaseActive);
+  }, [phaseActive]);
+
   useEffect(() => {
     gamePhaseRef.current = gamePhase;
   }, [gamePhase]);
@@ -560,6 +572,7 @@ export function useGameSession({
       engine.setLocalPlayerId(localPlayerId);
     }
 
+    let initialRoundPrepFailed = false;
     const resumed = resumeCanvas;
     if (resumed && resumed.uiPlayers.length >= 2) {
       if (!initialMap) throw new Error("INVALID_ROUND_MAP");
@@ -600,6 +613,7 @@ export function useGameSession({
           endurance.incident("exception", "ROUND_PREPARATION_FAILED", 0, String(error));
           return () => { stopExecution(); endurance.detach(enduranceHost); };
         }
+        initialRoundPrepFailed = true;
         engine.enterInterRoundPhase();
         dispatch({ type: "SET_ROUND_PREPARATION_ERROR", reason: "EXHAUSTED" });
       }
@@ -646,13 +660,24 @@ export function useGameSession({
     engine.start();
 
     // === CONTINUOUS RENDERING LOOP ===
-    stopRendering = startCanvasLoop(() => {
-      if (stopped) return;
-      if (ctx) {
+    const loopController = startCanvasLoop(
+      () => {
+        if (stopped) return;
         ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        renderFrame();
+      },
+      {
+        canvas,
+        initialPhaseActive: phaseActiveRef.current && !initialRoundPrepFailed,
+      },
+    );
+    canvasLoopRef.current = loopController;
+    stopRendering = () => {
+      loopController.dispose();
+      if (canvasLoopRef.current === loopController) {
+        canvasLoopRef.current = null;
       }
-      renderFrame();
-    });
+    };
 
     return () => {
       stopExecution();

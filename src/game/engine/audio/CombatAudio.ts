@@ -28,7 +28,7 @@ const SLIDE_INTERVAL_MS = 82;
 export interface CombatAudioOptions {
   /** Largeur utilisée pour le panoramique stéréo des pops (même valeur que GameEngine.width). */
   getWidth: () => number;
-  /** Fabrique injectable; par défaut window.AudioContext ou webkitAudioContext, null si indisponible. */
+  /** Fabrique injectable; par défaut window.AudioContext, null si indisponible. */
   createContext?: () => AudioContext | null;
   /** Horloge injectable pour la limitation de la glissade; par défaut performance.now(). */
   now?: () => number;
@@ -133,11 +133,8 @@ export class CombatAudio {
 }
 
 export function defaultAudioContext(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  const browserWindow = window as Window & typeof globalThis & {
-    webkitAudioContext?: typeof AudioContext;
-  };
-  const AudioContextClass = browserWindow.AudioContext || browserWindow.webkitAudioContext;
-  if (!AudioContextClass) return null;
-  return new AudioContextClass();
+  if (typeof window === "undefined" || typeof window.AudioContext !== "function") {
+    return null;
+  }
+  return new window.AudioContext();
 }

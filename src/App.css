@@ -646,6 +646,11 @@ canvas {
   box-sizing: border-box;
 }
 
+.game-canvas {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 800px auto 480px;
+}
+
 /* Mobile controls panel rules */
 .mobile-controls-panel {
   display: flex;

@@ -41,6 +41,12 @@ describe('styles CSS cleanup (#405)', () => {
     expect(appCss).toContain('overscroll-behavior: contain;');
   });
 
+  it('defers offscreen rendering for .game-canvas without affecting other canvases (#411)', () => {
+    expect(appCss).toMatch(
+      /\.game-canvas\s*\{[^}]*content-visibility:\s*auto;[^}]*contain-intrinsic-size:\s*auto 800px auto 480px;[^}]*\}/,
+    );
+  });
+
   it('removes orphaned CSS variables and demo selectors from index.css', () => {
     const orphanedVariables = [
       '--accent:',

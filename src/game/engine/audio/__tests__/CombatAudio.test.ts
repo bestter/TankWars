@@ -366,4 +366,22 @@ describe("CombatAudio", () => {
     expect(typeof window).toBe("undefined");
     expect(defaultAudioContext()).toBeNull();
   });
+
+  it("instancie window.AudioContext sans recourir à webkitAudioContext", () => {
+    const fake = createFakeContext();
+    const AudioContextSpy = vi.fn(function FakeAudioContext() {
+      return fake.context;
+    });
+    const webkitAudioContextSpy = vi.fn(function FakeWebkitAudioContext() {
+      return fake.context;
+    });
+
+    vi.stubGlobal("window", { AudioContext: AudioContextSpy });
+    expect(defaultAudioContext()).toBe(fake.context);
+    expect(AudioContextSpy).toHaveBeenCalledOnce();
+
+    vi.stubGlobal("window", { webkitAudioContext: webkitAudioContextSpy });
+    expect(defaultAudioContext()).toBeNull();
+    expect(webkitAudioContextSpy).not.toHaveBeenCalled();
+  });
 });
