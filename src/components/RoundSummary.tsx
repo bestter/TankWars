@@ -3,24 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import type { RoundResult } from "../types/game";
 import { VGA_PALETTE } from "../types/game";
-
-function openModalDialog(dialog: HTMLDialogElement): void {
-  if (dialog.open || dialog.hasAttribute("open")) return;
-  if (typeof dialog.showModal === "function") {
-    dialog.showModal();
-  } else {
-    dialog.setAttribute("open", "");
-  }
-}
-
-function closeModalDialog(dialog: HTMLDialogElement): void {
-  if (!dialog.open && !dialog.hasAttribute("open")) return;
-  if (typeof dialog.close === "function") {
-    dialog.close();
-  } else {
-    dialog.removeAttribute("open");
-  }
-}
+import { useModalDialog } from "./modalDialog";
 
 export interface RoundEndOutcome {
   isDraw: boolean;
@@ -49,8 +32,7 @@ export function RoundSummary({
 }: RoundSummaryProps) {
   const { t } = useTranslation();
   const titleId = useId();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const isUnmountingRef = useRef(false);
+  const { dialogRef, handleClose } = useModalDialog();
   const nextRoundBtnRef = useRef<HTMLButtonElement | null>(null);
   const newGameBtnRef = useRef<HTMLButtonElement | null>(null);
   const alivePlayers = players.filter((p) => !p.tank.isDead);
@@ -65,17 +47,6 @@ export function RoundSummary({
   const canContinue = players.length >= 2;
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    isUnmountingRef.current = false;
-    openModalDialog(dialog);
-    return () => {
-      isUnmountingRef.current = true;
-      closeModalDialog(dialog);
-    };
-  }, []);
-
-  useEffect(() => {
     if (canContinue) {
       nextRoundBtnRef.current?.focus();
     } else {
@@ -87,12 +58,6 @@ export function RoundSummary({
     event.preventDefault();
     if (canContinue) {
       onNextRound();
-    }
-  };
-
-  const handleClose = () => {
-    if (!isUnmountingRef.current && dialogRef.current?.isConnected) {
-      openModalDialog(dialogRef.current);
     }
   };
 

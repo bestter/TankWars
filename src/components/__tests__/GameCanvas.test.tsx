@@ -513,12 +513,175 @@ describe("GameCanvas component", () => {
     });
 
     render(<GameCanvas />);
-    const alert = screen.getByRole("alert");
-    expect(alert.className).toBe("protocol-mismatch-overlay");
-    expect(alert.textContent).toContain("protocol_mismatch_title");
-    expect(
-      screen.getByRole("button", { name: "protocol_mismatch_refresh" }),
-    ).toBeDefined();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("protocol-mismatch-overlay");
+    expect(dialog.textContent).toContain("protocol_mismatch_title");
+    expect(screen.getByRole("alert").textContent).toContain("protocol_mismatch_body");
+    const refreshBtn = screen.getByRole("button", { name: "protocol_mismatch_refresh" });
+    expect(refreshBtn).toBeDefined();
+    expect(document.activeElement).toBe(refreshBtn);
+  });
+
+  it("replaces WeaponShop with SessionErrorDialog on EXHAUSTED roundPreparationError in online SHOP", () => {
+    const onReturnToMenu = vi.fn();
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SHOP",
+        roundPreparationError: "EXHAUSTED",
+        shopSession: {
+          ...createEmptyShopSession(),
+          authoritativeReceived: true,
+          epoch: 1,
+          pendingIntent: { kind: "READY", shopEpoch: 1, actionId: "act-1" },
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" onReturnToMenu={onReturnToMenu} />);
+    expect(screen.queryByText("btn_ready_next_player")).toBeNull();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("round_preparation_failed");
+    const retryBtn = screen.getByRole("button", { name: "btn_retry" });
+    expect(document.activeElement).toBe(retryBtn);
+
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(mockHandlers.handleShopReady).not.toHaveBeenCalled();
+
+    fireEvent.click(retryBtn);
+    expect(mockHandlers.retryRoundPreparation).toHaveBeenCalledOnce();
+
+    const menuButtons = screen.getAllByRole("button", { name: "btn_menu" });
+    expect(menuButtons.some((btn) => dialog.contains(btn))).toBe(true);
+    fireEvent.click(menuButtons.find((btn) => dialog.contains(btn))!);
+    expect(onReturnToMenu).toHaveBeenCalledOnce();
+  });
+
+  it("focuses Menu in SessionErrorDialog on NEW_GAME_REQUIRED during SHOP", () => {
+    const onReturnToMenu = vi.fn();
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SHOP",
+        roundPreparationError: "NEW_GAME_REQUIRED",
+        shopSession: {
+          ...createEmptyShopSession(),
+          authoritativeReceived: true,
+          epoch: 1,
+          pendingIntent: { kind: "READY", shopEpoch: 1, actionId: "act-1" },
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" onReturnToMenu={onReturnToMenu} />);
+    const dialog = screen.getByRole("dialog");
+    expect(screen.queryByRole("button", { name: "btn_retry" })).toBeNull();
+    expect(dialog.textContent).toContain(fr.round_new_game_required);
+    const dialogMenuBtn = screen.getAllByRole("button", { name: "btn_menu" }).find((btn) => dialog.contains(btn))!;
+    expect(document.activeElement).toBe(dialogMenuBtn);
+    fireEvent.click(dialogMenuBtn);
+    expect(onReturnToMenu).toHaveBeenCalledOnce();
+  });
+
+  it("replaces WeaponShop and RoundSummary with ProtocolMismatchDialog on protocolMismatch", () => {
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SHOP",
+        protocolMismatch: { requiredVersion: 1, receivedVersion: 0 },
+        shopSession: {
+          ...createEmptyShopSession(),
+          authoritativeReceived: true,
+          epoch: 1,
+        },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: true,
+      shopDisplayPlayer: p1,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" />);
+    expect(screen.queryByText("btn_ready_next_player")).toBeNull();
+    const dialogs = screen.getAllByRole("dialog");
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0].className).toContain("protocol-mismatch-overlay");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "protocol_mismatch_refresh" }));
+
+    cleanup();
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SUMMARY",
+        protocolMismatch: { requiredVersion: 1, receivedVersion: 0 },
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas gameMode="online" />);
+    expect(screen.queryByText(/round_summary_title/i)).toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "protocol_mismatch_refresh" }));
+  });
+
+  it("replaces RoundSummary with SessionErrorDialog on EXHAUSTED roundPreparationError in SUMMARY", () => {
+    const onReturnToMenu = vi.fn();
+    vi.mocked(useGameSession).mockReturnValue({
+      diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
+      advisor: { view: { objective: "SURVIE" as const, status: "idle" as const }, request: vi.fn(), apply: vi.fn(), setObjective: vi.fn(), reset: vi.fn(), toggleLock: vi.fn(), releaseDeadTargets: vi.fn(), lockFor: vi.fn() },
+      canvasRef: { current: null },
+      state: {
+        ...defaultSessionState,
+        gamePhase: "SUMMARY",
+        roundPreparationError: "EXHAUSTED",
+      },
+      CANVAS_WIDTH: 800,
+      CANVAS_HEIGHT: 480,
+      isLocalShopTurn: false,
+      shopDisplayPlayer: null,
+      localShopDone: false,
+      ...mockHandlers,
+    });
+
+    render(<GameCanvas onReturnToMenu={onReturnToMenu} />);
+    expect(screen.queryByText(/round_summary_title/i)).toBeNull();
+    const dialog = screen.getByRole("dialog");
+    const retryBtn = screen.getByRole("button", { name: "btn_retry" });
+    expect(dialog.contains(retryBtn)).toBe(true);
+    expect(document.activeElement).toBe(retryBtn);
+    fireEvent.click(retryBtn);
+    expect(mockHandlers.retryRoundPreparation).toHaveBeenCalledOnce();
   });
 
   it.each(["fr", "en"])("shows the incompatible game format in %s and returns to menu", (locale) => {

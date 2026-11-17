@@ -12,24 +12,7 @@ import {
   applyShopTransaction,
   type ShopDenial,
 } from "../game/shop/shopTransaction";
-
-function openModalDialog(dialog: HTMLDialogElement): void {
-  if (dialog.open || dialog.hasAttribute("open")) return;
-  if (typeof dialog.showModal === "function") {
-    dialog.showModal();
-  } else {
-    dialog.setAttribute("open", "");
-  }
-}
-
-function closeModalDialog(dialog: HTMLDialogElement): void {
-  if (!dialog.open && !dialog.hasAttribute("open")) return;
-  if (typeof dialog.close === "function") {
-    dialog.close();
-  } else {
-    dialog.removeAttribute("open");
-  }
-}
+import { openModalDialog, useModalDialog } from "./modalDialog";
 
 const SHOP_DENIAL_KEYS = {
   STOCK_CAP: "shop_reason_stock_cap",
@@ -306,23 +289,11 @@ export function WeaponShop({
 }: WeaponShopProps) {
   const { t } = useTranslation();
   const titleId = useId();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const isUnmountingRef = useRef(false);
+  const { dialogRef, handleClose } = useModalDialog();
   const weaponListRef = useRef<HTMLDivElement | null>(null);
   const readyButtonRef = useRef<HTMLButtonElement | null>(null);
   const money = player.money ?? 0;
   const inventory = player.inventory ?? {};
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    isUnmountingRef.current = false;
-    openModalDialog(dialog);
-    return () => {
-      isUnmountingRef.current = true;
-      closeModalDialog(dialog);
-    };
-  }, []);
 
   useEffect(() => {
     void player.id;
@@ -335,18 +306,12 @@ export function WeaponShop({
     if (!readyButtonRef.current?.disabled) {
       readyButtonRef.current?.focus();
     }
-  }, [player.id]);
+  }, [dialogRef, player.id]);
 
   const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
     event.preventDefault();
     if (!controlsDisabled) {
       onReady();
-    }
-  };
-
-  const handleClose = () => {
-    if (!isUnmountingRef.current && dialogRef.current?.isConnected) {
-      openModalDialog(dialogRef.current);
     }
   };
 
