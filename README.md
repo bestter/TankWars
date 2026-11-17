@@ -406,20 +406,24 @@ Use the commands above to inspect, replay or compare a shot. Validation rejects 
 
 #### Rapports progressifs hors ligne / Progressive offline reports (#380, v0.13.6)
 
-**Français.** L’endurance exporte maintenant ses données globales dans un ZIP64 produit progressivement sur disque. Extraire le ZIP, puis ouvrir `index.html`, sans serveur ni réseau. Les vues paginées donnent accès aux blocs, manches, joueurs, profils, armes, incidents et décisions lentes; les fiches de tirs indiquent les preuves et la commande d’extraction/rejeu. Les motifs d’examen sont des observations, pas des verdicts de bogue. Le rejeu demeure explicite.
+**Français.** L’endurance exporte maintenant ses données globales dans un ZIP64 produit progressivement sur disque. Extraire le ZIP, puis ouvrir `index.html`, sans serveur ni réseau. Les vues paginées donnent accès aux blocs, manches, joueurs, profils, armes, incidents et décisions lentes. Les fiches de tirs indiquent les preuves et l’empreinte SHA-256 à passer à `--shot-hash`. Les motifs d’examen sont des observations, pas des verdicts de bogue. Le rejeu demeure explicite.
 
 La taille par défaut est 20 Mio d’octets UTF-8 par partie; un enregistrement indivisible plus gros reste seul et signalé. Le seuil de lenteur inclusif est 1000 ms. Ces paramètres sont configurables dans l’export et le pilote, sans modifier le combat ni son budget. Les générations sont actualisées aux fins de blocs et à l’arrêt; le téléchargement demeure manuel. Les boutons globaux JSONL et « Exporter les tirs » utilisent aussi le bundle. JSON et Markdown restent des résumés légers; les collections détaillées sont dans le bundle. Les anciens fichiers restent lisibles.
 
 Les temporaires d’export, les index sur disque et le ZIP demandent de l’espace supplémentaire au-delà d’IndexedDB. Un manque d’espace ou une annulation ne supprime pas la source. Une panne du rapport dérivé conserve les données et le dernier index publié avec sa borne; elle est signalée « rapport incomplet ». Voir [format, inventaire et validation](Scripts/endurance/README.md#bundles-progressifs--progressive-bundles-380).
 
-**English.** Global endurance exports now use a disk-streamed ZIP64 bundle. Extract it and open `index.html` offline, without a server. Paginated global views cover blocks, rounds, player identities and roles, profiles, weapons, incidents and slow decisions. Shot pages link to evidence and explicit extraction/replay commands. Review flags are factual observations, not automatic bug verdicts.
+**English.** Global endurance exports now use a disk-streamed ZIP64 bundle. Extract it and open `index.html` offline, without a server. Paginated global views cover blocks, rounds, player identities and roles, profiles, weapons, incidents and slow decisions. Shot pages link to evidence and show the SHA-256 digest for `--shot-hash`. Review flags are factual observations, not automatic bug verdicts.
 
 Parts default to 20 MiB of UTF-8 bytes and the inclusive slow-decision threshold to 1000 ms; oversized indivisible records are preserved and flagged. Export settings do not change gameplay or its archive budget. Reports refresh at block endings and stop; downloads remain manual. Global JSONL/shot buttons also use the bundle; JSON/Markdown contain lightweight summaries. Historical files remain readable. Disk temporaries and ZIP output require additional space. Cancellation or export failure preserves IndexedDB; derived-only failures report an incomplete report and preserve the last published index boundary.
 
 ```sh
-node Scripts/read-shot-archive.mjs path/to/manifest.json --shot 'FULL_SHOT_KEY' --output shot.json --replay
+node Scripts/read-shot-archive.mjs path/to/manifest.json --shot-hash SHOT_SHA256 --output shot.json --replay
 node Scripts/endurance/build-report.mjs path/to/manifest.json --output new-report-folder
 ```
+
+Depuis la racine du dépôt, remplacer `SHOT_SHA256` par l’empreinte de la fiche et indiquer le chemin du manifeste extrait. Régénérer les anciens rapports avant de s’en servir pour choisir un tir. `--shot` reste disponible pour les clés fournies directement au lecteur.
+
+From the repository root, replace `SHOT_SHA256` with the digest on the shot page and point to the extracted manifest. Regenerate older reports before using them to select a shot. `--shot` remains available for keys supplied directly to the reader.
 
 #### Collecte native JSON/JSONL et téléchargements natifs / Native JSON/JSONL collection and downloads (#381, v0.13.5)
 

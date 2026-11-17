@@ -6,18 +6,21 @@ import { createServer } from "vite";
 
 const [path, ...args] = process.argv.slice(2);
 if (!path) {
-  console.error("Usage: node Scripts/read-shot-archive.mjs <archive.json> [--shot <key>] [--replay] [--weapon <id> --angle <n> --power <n>]");
+  console.error("Usage: node Scripts/read-shot-archive.mjs <archive.json> [--shot <key> | --shot-hash <sha256>] [--replay] [--weapon <id> --angle <n> --power <n>]");
   process.exitCode = 1;
 } else {
   let server, disk, temporary;
   try {
-    const allowed = new Set(["--shot", "--replay", "--weapon", "--angle", "--power", "--output"]);
+    const allowed = new Set(["--shot", "--shot-hash", "--replay", "--weapon", "--angle", "--power", "--output"]);
     const options = new Map();
     for (let i = 0; i < args.length; i++) {
       if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
       const option = args[i]; options.set(option, option === "--replay" ? true : args[++i]);
       if (options.get(option) === undefined || (typeof options.get(option) === "string" && options.get(option).startsWith("--"))) throw new Error("MISSING_CLI_VALUE");
     }
+    let key = options.get("--shot");
+    const hash = options.get("--shot-hash");
+    if (options.has("--shot") && hash !== undefined) throw new Error("SELECT_SHOT_BY_KEY_OR_HASH");
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }
@@ -27,14 +30,18 @@ if (!path) {
       value = { schemaVersion: rows[0].schemaVersion, format: "legacy-journal", events: rows.length - 1 };
     }
     if (value.format === "tankwars-endurance-bundle") {
-      const key = options.get("--shot");
-      if (!key) throw new Error("SELECT_SHOT_FIRST");
+      if (!key && hash === undefined) throw new Error("SELECT_SHOT_FIRST");
       server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, optimizeDeps: { noDiscovery: true }, appType: "custom" });
       temporary = await mkdtemp(join(tmpdir(), "tankwars-shot-"));
       disk = new NodeBundleDisk(dirname(resolve(path)), join(temporary, "index.sqlite"));
-      const { extractShot } = await server.ssrLoadModule("/src/game/endurance/bundle/read.ts");
-      value = await extractShot(disk, key);
-    }
+      const { extractShot, extractShotByHash } = await server.ssrLoadModule("/src/game/endurance/bundle/read.ts");
+      if (hash === undefined) value = await extractShot(disk, key);
+      else {
+        const selected = await extractShotByHash(disk, hash);
+        value = selected.archive;
+        key = selected.shotKey;
+      }
+    } else if (hash !== undefined) throw new Error("SHOT_HASH_REQUIRES_BUNDLE");
     if (value.format !== "tankwars-shot-archive") {
       if (value.schemaVersion !== 1 || (value.format !== "legacy-journal" &&
         (typeof value.session !== "object" || value.session === null || !Array.isArray(value.blocks)))) throw new Error("NOT_A_SUPPORTED_ARCHIVE");
@@ -47,11 +54,11 @@ if (!path) {
       const archive = validateArchive(value);
       const shots = archive.records.filter(r => r.input.kind === "pre-shot");
       const recordedLaunches = new Set(archive.records.filter(r => r.input.kind === "projectile-launched").map(r => r.shotKey));
-      const key = options.get("--shot");
-      const matches = key ? shots.filter(r => r.shotKey === key || String(r.input.shot.shotId) === key) : [];
+      const matches = key || hash !== undefined
+        ? shots.filter(r => r.shotKey === key || (hash === undefined && String(r.input.shot.shotId) === key)) : [];
       if (matches.length > 1) throw new Error("AMBIGUOUS_SHOT_ID_USE_FULL_KEY");
       const selected = matches[0];
-      if (key && !selected) throw new Error("SHOT_NOT_FOUND");
+      if ((key || hash !== undefined) && !selected) throw new Error("SHOT_NOT_FOUND");
       if ((options.has("--replay") || options.has("--weapon")) && !selected) throw new Error("SELECT_SHOT_FIRST");
       const alternativeFields = ["--weapon", "--angle", "--power"].filter(flag => options.has(flag)).length;
       if (alternativeFields !== 0 && alternativeFields !== 3) throw new Error("INCOMPLETE_ALTERNATIVE_COMMAND");

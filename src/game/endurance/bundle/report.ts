@@ -219,9 +219,8 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
       refs.push(row.value);
     }
     await flush(false);
-    const command = `node Scripts/read-shot-archive.mjs manifest.json --shot ${JSON.stringify(item.key)} --output shot.json --replay`;
     await output.write(`report/shot-${hash}.html`, one(page(item.key,
-      `<a href="../index.html">Index</a><p>${await disk.get("launched", item.key) ? "Lancement confirmé / Launch confirmed" : "Lancement non confirmé / Launch unconfirmed"}</p><p>Rejeu : non exécuté / Replay: not executed. Champs absents : inconnus / Missing fields: unknown.</p><pre>${escape(JSON.stringify(await disk.get("turn-summary", context), null, 2))}</pre><a href="../index/shots/${hash}.json">Références exactes / Exact references</a><pre>${escape(command)}</pre>`)));
+      `<a href="../index.html">Index</a><p>${await disk.get("launched", item.key) ? "Lancement confirmé / Launch confirmed" : "Lancement non confirmé / Launch unconfirmed"}</p><p>Rejeu : non exécuté / Replay: not executed. Champs absents : inconnus / Missing fields: unknown.</p><pre>${escape(JSON.stringify(await disk.get("turn-summary", context), null, 2))}</pre><a href="../index/shots/${hash}.json">Références exactes / Exact references</a><p>Empreinte de rejeu SHA-256 / Replay SHA-256 (<code>--shot-hash</code>)</p><pre><code>${hash}</code></pre>`)));
   }
   const stats: unknown[] = [];
   for await (const item of disk.scan("profiles")) {

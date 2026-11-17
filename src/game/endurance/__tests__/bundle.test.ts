@@ -3,7 +3,7 @@ import { MemoryDisk } from "./bundleMemory";
 import { buildBundle, type BundleSource } from "../bundle/build";
 import { exportOptions, PartWriter, type FileReference } from "../bundle/format";
 import { encoder, identity, jsonBytes, one, readBytes, readJson, safePath, sha256 } from "../bundle/io";
-import { extractShot, readManifest, validateBundle } from "../bundle/read";
+import { extractShot, extractShotByHash, readManifest, validateBundle } from "../bundle/read";
 import { writeZip } from "../bundle/zip";
 import { fixture } from "./helpers";
 import type { JournalEntry } from "../journal";
@@ -147,6 +147,7 @@ describe("progressive endurance bundle", () => {
   });
   it("extracts and replays a real shot across parts with an earlier terrain dependency", async () => {
     const engine = new GameEngine(800, 480, { headless: true }), recorder = new ShotRecorder("test-session");
+    recorder.context("Bloc d’essai numéro 1");
     engine.setPlayers([makePlayer({ id: "a", tank: makeTank("ta", 120, 300) }), makePlayer({ id: "b", tank: makeTank("tb", 420, 300) })], makeRoundMap());
     engine.diagnosticSink = input => recorder.record(input);
     const observer = { emit: (event: import("../types").EnduranceEvent) => { recorder.record({ kind: "combat", event }); return true; } };
@@ -166,13 +167,34 @@ describe("progressive endurance bundle", () => {
     records.forEach((record, i) => { record.sequence = i + 1; record.integrity = fingerprint({ ...record, integrity: undefined }); });
     const rows = records.map((record, i) => entry(i + 1, { kind: "archive", write: { record, terrains: [] } }));
     const input = source(rows); input.terrain = async id => original.terrains.find(t => t.id === id)!;
-    const disk = new MemoryDisk(); await buildBundle(input, disk, { partSizeMiB: 1 });
+    const disk = new MemoryDisk(); const manifest = await buildBundle(input, disk, { partSizeMiB: 1 });
     expect([...disk.files.keys()].filter(p => p.startsWith("captures/")).length).toBeGreaterThanOrEqual(3);
-    const archive = await extractShot(disk, key), replay = replayShot(archive, key);
+    const hash = await identity(key);
+    const prefix = manifest.index.slice(0, -"index/root.json".length);
+    const html = new TextDecoder().decode(await readBytes(disk, `${prefix}report/shot-${hash}.html`));
+    expect(html).toContain(`<code>${hash}</code>`);
+    expect(html).toContain(`href="../index/shots/${hash}.json"`);
+    expect(html).not.toContain("node Scripts/read-shot-archive.mjs");
+    const byKey = new MemoryDisk(); byKey.files = new Map(disk.files);
+    const archive = await extractShot(byKey, key);
+    const byHash = new MemoryDisk(); byHash.files = new Map(disk.files);
+    const selected = await extractShotByHash(byHash, hash);
+    expect(selected).toEqual({ archive, shotKey: key });
+    const replay = replayShot(selected.archive, selected.shotKey);
     expect(replay.complete).toBe(true); expect(replay.physicalDivergence).toBeNull(); expect(replay.economicDivergence).toBeNull();
-    // A fresh reader validates the full source independently of a prior targeted read.
-    disk.tables.delete("verified-files");
     expect((await validateBundle(disk)).captureLast).toBe(records.length);
+  });
+  it("requires a canonical SHA-256 selector and verifies it against the indexed shot key", async () => {
+    const disk = new MemoryDisk();
+    await expect(extractShotByHash(disk, "é".repeat(64))).rejects.toThrow("INVALID_SHOT_HASH");
+    const manifest = await buildBundle(source([]), disk);
+    const prefix = manifest.index.slice(0, -"index/root.json".length);
+    const hash = await identity("Séance A");
+    const path = `${prefix}index/shots/${hash}.json`;
+    const bytes = jsonBytes({ shotKey: "Séance B", refs: [], next: null });
+    await disk.write(path, one(bytes));
+    await disk.put("derived-files", path, { path, bytes: bytes.length, sha256: await sha256(bytes) });
+    await expect(extractShotByHash(disk, hash)).rejects.toThrow("INVALID_SHOT_INDEX");
   });
   it("rejects incomplete options or invalid fields in readManifest", async () => {
     const disk = new MemoryDisk();
