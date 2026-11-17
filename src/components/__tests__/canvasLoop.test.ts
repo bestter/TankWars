@@ -376,20 +376,28 @@ describe("startCanvasLoop", () => {
     controller.setPhaseActive(false);
     expect(renderFn).toHaveBeenCalledTimes(1);
 
-    // Returning visible while phase is inactive keeps rendering paused.
+    // Returning visible while phase is inactive draws the deferred static frame once without starting rAF.
     setDocumentVisibility("visible");
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(renderFn).toHaveBeenCalledTimes(1);
+    expect(renderFn).toHaveBeenCalledTimes(2);
+    expect(raf.pendingCount()).toBe(0);
+
+    // Repeated hidden -> visible transitions while inactive do not redraw static frames.
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderFn).toHaveBeenCalledTimes(2);
     expect(raf.pendingCount()).toBe(0);
 
     // Returning to active phase resumes cleanly with a single rAF.
     controller.setPhaseActive(true);
-    expect(renderFn).toHaveBeenCalledTimes(2);
+    expect(renderFn).toHaveBeenCalledTimes(3);
     expect(raf.pendingCount()).toBe(1);
 
     // Repeated visible events never schedule duplicate rAFs.
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(renderFn).toHaveBeenCalledTimes(2);
+    expect(renderFn).toHaveBeenCalledTimes(3);
     expect(raf.pendingCount()).toBe(1);
 
     // Hidden while active -> visible again resumes immediately.
@@ -398,8 +406,99 @@ describe("startCanvasLoop", () => {
     expect(raf.pendingCount()).toBe(0);
     setDocumentVisibility("visible");
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(renderFn).toHaveBeenCalledTimes(3);
+    expect(renderFn).toHaveBeenCalledTimes(4);
     expect(raf.pendingCount()).toBe(1);
+
+    // Returning to active while still hidden clears pending static render and resumes normally once visible.
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    controller.setPhaseActive(false);
+    controller.setPhaseActive(true);
+    expect(renderFn).toHaveBeenCalledTimes(4);
+    expect(raf.pendingCount()).toBe(0);
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderFn).toHaveBeenCalledTimes(5);
+    expect(raf.pendingCount()).toBe(1);
+
+    controller.dispose();
+  });
+
+  it("defers initial static frame when started hidden and draws once on visible without repeating", () => {
+    const raf = installRafHarness();
+    const renderFn = vi.fn();
+    setDocumentVisibility("hidden");
+
+    const controller = startCanvasLoop(renderFn, { initialPhaseActive: false });
+    expect(renderFn).not.toHaveBeenCalled();
+    expect(raf.requestSpy).not.toHaveBeenCalled();
+    expect(raf.pendingCount()).toBe(0);
+
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderFn).toHaveBeenCalledTimes(1);
+    expect(raf.requestSpy).not.toHaveBeenCalled();
+    expect(raf.pendingCount()).toBe(0);
+
+    // Subsequent visibility toggles in static phase do not repeat the static draw.
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderFn).toHaveBeenCalledTimes(1);
+    expect(raf.pendingCount()).toBe(0);
+
+    controller.dispose();
+
+    // Disposing while a static frame is pending cancels any deferred draw on later visibility.
+    setDocumentVisibility("hidden");
+    const disposedRenderFn = vi.fn();
+    const disposedController = startCanvasLoop(disposedRenderFn, {
+      initialPhaseActive: false,
+    });
+    disposedController.dispose();
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(disposedRenderFn).not.toHaveBeenCalled();
+  });
+
+  it("defers static frame when paused off-screen via contentvisibilityautostatechange and draws once when back in viewport", () => {
+    const raf = installRafHarness();
+    const canvas = document.createElement("canvas");
+    Object.defineProperty(document.documentElement.style, "contentVisibility", {
+      configurable: true,
+      value: "auto",
+      writable: true,
+    });
+
+    const renderFn = vi.fn();
+    const controller = startCanvasLoop(renderFn, { canvas });
+    expect(renderFn).toHaveBeenCalledTimes(1);
+    expect(raf.pendingCount()).toBe(1);
+
+    canvas.dispatchEvent(createContentVisibilityEvent(true));
+    expect(raf.pendingCount()).toBe(0);
+
+    controller.setPhaseActive(false);
+    expect(renderFn).toHaveBeenCalledTimes(1);
+
+    // Tab visibility changes while still off-screen must not draw.
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderFn).toHaveBeenCalledTimes(1);
+
+    // Returning to viewport draws the pending static frame once without scheduling rAF.
+    canvas.dispatchEvent(createContentVisibilityEvent(false));
+    expect(renderFn).toHaveBeenCalledTimes(2);
+    expect(raf.pendingCount()).toBe(0);
+
+    // Repeated off-screen toggles in static phase do not redraw.
+    canvas.dispatchEvent(createContentVisibilityEvent(true));
+    canvas.dispatchEvent(createContentVisibilityEvent(false));
+    expect(renderFn).toHaveBeenCalledTimes(2);
+    expect(raf.pendingCount()).toBe(0);
 
     controller.dispose();
   });
@@ -495,13 +594,87 @@ describe("startCanvasLoop", () => {
     expect(renderFn).toHaveBeenCalledTimes(2);
     expect(raf.pendingCount()).toBe(1);
 
+    // Pausing off-screen via IntersectionObserver defers static frame until re-entering viewport.
+    observerState.callback?.(
+      [{ isIntersecting: false } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+    expect(raf.pendingCount()).toBe(0);
+
+    controller.setPhaseActive(false);
+    expect(renderFn).toHaveBeenCalledTimes(2);
+
+    observerState.callback?.(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+    expect(renderFn).toHaveBeenCalledTimes(3);
+    expect(raf.pendingCount()).toBe(0);
+
+    observerState.callback?.(
+      [{ isIntersecting: false } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+    observerState.callback?.(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+    expect(renderFn).toHaveBeenCalledTimes(3);
+
     controller.dispose();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(raf.pendingCount()).toBe(0);
   });
 });
 
+function createOnlineResumeSnapshot(
+  players: Player[],
+  gamePhase: "COMBAT" | "SUMMARY" | "SHOP",
+): OnlineCanvasSnapshot {
+  const isPostRound = gamePhase === "SUMMARY" || gamePhase === "SHOP";
+  return {
+    map: makeRoundMap(1),
+    gamePhase,
+    currentManche: isPostRound ? 2 : 1,
+    uiPlayers: players,
+    shopPlayers: gamePhase === "SHOP" ? players : [],
+    currentShopIndex: 0,
+    roundResult: isPostRound
+      ? {
+          damageDealt: { "player-1": 100, "player-2": 0 },
+          earningsByPlayer: { "player-1": 200, "player-2": 0 },
+          terrainDestroyed: 50,
+          survivors: ["player-1"],
+        }
+      : null,
+    lastRoundOutcome: isPostRound ? { isDraw: false, winner: players[0] } : null,
+    wind: 0,
+    authoritySlot: 0,
+    authorityEpoch: 1,
+    lastAppliedShotId: 0,
+    lastAppliedZeusStrikeId: 0,
+    shopSession: {
+      ...createEmptyShopSession(),
+      epoch: isPostRound ? 1 : 0,
+      roundNumber: isPostRound ? 1 : 0,
+      authoritativeReceived: gamePhase === "SHOP",
+    },
+    lastAppliedShopEpoch: 0,
+    lastCompletedRoundNumber: isPostRound ? 1 : 0,
+    lastSeenShotId: 0,
+    pendingFireIntent: null,
+    fireRejection: null,
+    roundEarningsByPlayer: {},
+    earningsOverlay: null,
+  };
+}
+
 describe("useGameSession canvasLoop integration", () => {
+  const originalVisibilityDescriptor = Object.getOwnPropertyDescriptor(
+    document,
+    "visibilityState",
+  );
+
   beforeEach(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
@@ -513,6 +686,11 @@ describe("useGameSession canvasLoop integration", () => {
 
   afterEach(() => {
     cleanup();
+    if (originalVisibilityDescriptor) {
+      Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
+    } else {
+      delete (document as { visibilityState?: DocumentVisibilityState }).visibilityState;
+    }
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -604,39 +782,7 @@ describe("useGameSession canvasLoop integration", () => {
       const renderSpy = vi.spyOn(GameEngine.prototype, "render");
       const players = createOnlinePlayers();
       const ws = new MockCombatWebSocket();
-      const resumeCanvas: OnlineCanvasSnapshot = {
-        map: makeRoundMap(1),
-        gamePhase: initialPhase,
-        currentManche: 2,
-        uiPlayers: players,
-        shopPlayers: initialPhase === "SHOP" ? players : [],
-        currentShopIndex: 0,
-        roundResult: {
-          damageDealt: { "player-1": 100, "player-2": 0 },
-          earningsByPlayer: { "player-1": 200, "player-2": 0 },
-          terrainDestroyed: 50,
-          survivors: ["player-1"],
-        },
-        lastRoundOutcome: { isDraw: false, winner: players[0] },
-        wind: 0,
-        authoritySlot: 0,
-        authorityEpoch: 1,
-        lastAppliedShotId: 0,
-        lastAppliedZeusStrikeId: 0,
-        shopSession: {
-          ...createEmptyShopSession(),
-          epoch: 1,
-          roundNumber: 1,
-          authoritativeReceived: initialPhase === "SHOP",
-        },
-        lastAppliedShopEpoch: 0,
-        lastCompletedRoundNumber: 1,
-        lastSeenShotId: 0,
-        pendingFireIntent: null,
-        fireRejection: null,
-        roundEarningsByPlayer: {},
-        earningsOverlay: null,
-      };
+      const resumeCanvas = createOnlineResumeSnapshot(players, initialPhase);
       const sessionRef: { current: SessionApi | null } = { current: null };
 
       render(
@@ -672,34 +818,121 @@ describe("useGameSession canvasLoop integration", () => {
     },
   );
 
+  it("defers static SUMMARY render when round ends while tab is hidden and draws once when visible", async () => {
+    const raf = installRafHarness();
+    const renderSpy = vi.spyOn(GameEngine.prototype, "render");
+    const players = createLocalPlayers();
+    const sessionRef: { current: SessionApi | null } = { current: null };
+
+    render(createElement(LocalLoopHarness, { players, sessionRef }));
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(raf.pendingCount()).toBe(2);
+
+    const activeEngine = renderSpy.mock.instances[0] as GameEngine;
+    const roster = activeEngine.getTankManager().getPlayers();
+    roster[1].tank.isDead = true;
+
+    await act(async () => {
+      activeEngine.onRoundEnded?.({
+        survivors: [roster[0]],
+        roundWinner: roster[0],
+        isDraw: false,
+      });
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("CELEBRATION");
+
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(raf.pendingCount()).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("SUMMARY");
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(raf.pendingCount()).toBe(1);
+
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderSpy).toHaveBeenCalledTimes(2);
+    expect(raf.pendingCount()).toBe(1);
+
+    raf.flushAllOnce(64);
+    setDocumentVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    setDocumentVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(renderSpy).toHaveBeenCalledTimes(2);
+    expect(raf.pendingCount()).toBe(1);
+  });
+
+  it.each(["SUMMARY", "SHOP"] as const)(
+    "defers initial static frame when online resumeCanvas starts in %s while hidden and draws once on visible",
+    async (initialPhase) => {
+      const raf = installRafHarness();
+      const renderSpy = vi.spyOn(GameEngine.prototype, "render");
+      const players = createOnlinePlayers();
+      const ws = new MockCombatWebSocket();
+      const resumeCanvas = createOnlineResumeSnapshot(players, initialPhase);
+      const sessionRef: { current: SessionApi | null } = { current: null };
+
+      setDocumentVisibility("hidden");
+      render(
+        createElement(OnlineResumeHarness, {
+          players,
+          resumeCanvas,
+          ws: ws as unknown as WebSocket,
+          sessionRef,
+        }),
+      );
+
+      expect(sessionRef.current?.state.gamePhase).toBe(initialPhase);
+      expect(renderSpy).not.toHaveBeenCalled();
+      expect(raf.pendingCount()).toBe(1); // Only GameEngine physics loop
+
+      raf.flushAllOnce(32);
+      expect(renderSpy).not.toHaveBeenCalled();
+
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+      expect(raf.pendingCount()).toBe(1);
+
+      // Repeated visibility toggles in static phase do not repeat the static render.
+      setDocumentVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+      expect(raf.pendingCount()).toBe(1);
+
+      await act(async () => {
+        ws.receive({
+          type: "SHOP_FINISH",
+          shopEpoch: 1,
+          completedRoundNumber: 1,
+          nextRoundNumber: 2,
+          players,
+          map: makeRoundMap(2),
+        });
+      });
+
+      expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+      expect(renderSpy).toHaveBeenCalledTimes(2);
+      expect(raf.pendingCount()).toBe(2);
+    },
+  );
+
   it("pauses Canvas drawing after 1 static frame on blocking protocolMismatch in COMBAT", async () => {
     const raf = installRafHarness();
     const renderSpy = vi.spyOn(GameEngine.prototype, "render");
     const players = createOnlinePlayers();
     const ws = new MockCombatWebSocket();
-    const resumeCanvas: OnlineCanvasSnapshot = {
-      map: makeRoundMap(1),
-      gamePhase: "COMBAT",
-      currentManche: 1,
-      uiPlayers: players,
-      shopPlayers: [],
-      currentShopIndex: 0,
-      roundResult: null,
-      lastRoundOutcome: null,
-      wind: 0,
-      authoritySlot: 0,
-      authorityEpoch: 1,
-      lastAppliedShotId: 0,
-      lastAppliedZeusStrikeId: 0,
-      shopSession: createEmptyShopSession(),
-      lastAppliedShopEpoch: 0,
-      lastCompletedRoundNumber: 0,
-      lastSeenShotId: 0,
-      pendingFireIntent: null,
-      fireRejection: null,
-      roundEarningsByPlayer: {},
-      earningsOverlay: null,
-    };
+    const resumeCanvas = createOnlineResumeSnapshot(players, "COMBAT");
     const sessionRef: { current: SessionApi | null } = { current: null };
 
     render(

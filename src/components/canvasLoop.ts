@@ -40,6 +40,7 @@ export function startCanvasLoop(
   const canvas = options?.canvas ?? null;
   let disposed = false;
   let phaseActive = options?.initialPhaseActive ?? true;
+  let pendingStaticRender = !phaseActive;
   let documentVisible =
     typeof document === "undefined" || document.visibilityState === "visible";
   let canvasInViewport = true;
@@ -52,12 +53,15 @@ export function startCanvasLoop(
     }
   };
 
-  const shouldRun = (): boolean =>
-    !disposed && phaseActive && documentVisible && canvasInViewport;
+  const canRender = (): boolean =>
+    !disposed && documentVisible && canvasInViewport;
+
+  const shouldRun = (): boolean => phaseActive && canRender();
 
   const draw = (): void => {
     frame = undefined;
     if (!shouldRun()) return;
+    pendingStaticRender = false;
     render();
     if (shouldRun() && frame === undefined) {
       frame = requestAnimationFrame(draw);
@@ -67,8 +71,13 @@ export function startCanvasLoop(
   const syncLoop = (): void => {
     if (!shouldRun()) {
       cancelScheduledFrame();
+      if (!phaseActive && pendingStaticRender && canRender()) {
+        pendingStaticRender = false;
+        render();
+      }
       return;
     }
+    pendingStaticRender = false;
     if (frame === undefined) {
       draw();
     }
@@ -122,28 +131,19 @@ export function startCanvasLoop(
     observer.observe(canvas);
   }
 
-  if (phaseActive) {
-    syncLoop();
-  } else if (documentVisible && canvasInViewport) {
-    render();
-  }
+  syncLoop();
 
   return {
     setPhaseActive: (nextPhaseActive: boolean): void => {
       if (disposed || nextPhaseActive === phaseActive) return;
       phaseActive = nextPhaseActive;
-      if (!phaseActive) {
-        if (documentVisible && canvasInViewport) {
-          render();
-        }
-        cancelScheduledFrame();
-        return;
-      }
+      pendingStaticRender = !phaseActive;
       syncLoop();
     },
     dispose: (): void => {
       if (disposed) return;
       disposed = true;
+      pendingStaticRender = false;
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
