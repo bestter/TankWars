@@ -131,9 +131,13 @@ Views work through `file://` with static links. Global filters are paginated. Id
 
 ```sh
 node Scripts/endurance/validate-archive.mjs bundle/manifest.json
-node Scripts/read-shot-archive.mjs bundle/manifest.json --shot 'FULL_KEY' --output shot.json --replay
+node Scripts/read-shot-archive.mjs bundle/manifest.json --shot-hash SHOT_SHA256 --output shot.json --replay
 node Scripts/endurance/build-report.mjs bundle/manifest.json --output report-regenerated
 ```
+
+Remplacer `SHOT_SHA256` par l’empreinte de 64 caractères affichée sur la fiche de tir. Régénérer les anciens rapports dans un dossier neuf avant de s’en servir pour choisir un tir. Le lecteur conserve le mode `--shot` par clé complète.
+
+Replace `SHOT_SHA256` with the 64-character digest shown on the shot page. Regenerate older reports in a new directory before using them to select a shot. The reader still accepts a full key via `--shot`.
 
 L’extraction refuse l’écrasement implicite, valide seulement les fichiers lus et réutilise le validateur TypeScript. La validation intégrale parcourt les parties. La récupération rouvre le même profil une fois après fermeture confirmée; les flux journal/captures/terrains sont comparés octet par octet même si leurs parties diffèrent. Les dernières révisions de collections et la session sont comparées séparément. Les fichiers de preuve sont revérifiés après fermeture. Seuls les échecs des vues dérivées sont non bloquants; les verdicts et codes 0/2/3/1 restent inchangés.
 

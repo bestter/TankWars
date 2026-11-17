@@ -52,15 +52,20 @@ export async function* catalogueFiles(disk: BundleDisk, manifest: BundleManifest
     expectedHash = page.nextSha256;
   }
 }
-export async function loadCatalogue(disk: BundleDisk, manifest: BundleManifest): Promise<void> {
+async function loadCatalogue(disk: BundleDisk, manifest: BundleManifest, table: "read-files" | "derived-files" = "read-files"): Promise<void> {
   // Persistent map, never a root list proportional to the session.
-  if (await disk.get("read-state", manifest.generation)) return;
+  const stateKey = `${table}:${manifest.generation}`;
+  if (await disk.get("read-state", stateKey)) return;
+  let sawRootIndex = false;
   for await (const file of catalogueFiles(disk, manifest)) {
-    const prior = await disk.get("read-files", file.path);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(file)) throw new Error("BUNDLE_REFERENCE_CHANGED");
-    await disk.put("read-files", file.path, file);
+    const prior = await disk.get(table, file.path);
+    // index.html at the bundle root is rewritten for each published generation.
+    const allowCrossGenerationRootUpdate = table === "derived-files" && file.path === "index.html" && !sawRootIndex;
+    if (file.path === "index.html") sawRootIndex = true;
+    if (prior && !allowCrossGenerationRootUpdate && JSON.stringify(prior) !== JSON.stringify(file)) throw new Error("BUNDLE_REFERENCE_CHANGED");
+    await disk.put(table, file.path, file);
   }
-  await disk.put("read-state", manifest.generation, true);
+  await disk.put("read-state", stateKey, true);
 }
 export async function verifyFile(disk: BundleDisk, path: string): Promise<void> {
   safePath(path);
@@ -95,14 +100,14 @@ function archiveHeader(manifest: BundleManifest): ShotArchive {
   return { ...emptyArchive(manifest.session.id, manifest.session.build), gameVersion: manifest.session.gameVersion,
     rules: manifest.rules, complete: manifest.journal.complete, error: manifest.journal.error };
 }
-export async function extractShot(disk: BundleDisk, key: string): Promise<ShotArchive> {
+async function readIndexedShot(disk: BundleDisk, hash: string, key?: string): Promise<{ archive: ShotArchive; shotKey: string }> {
   const manifest = await readManifest(disk); await loadCatalogue(disk, manifest);
   if (manifest.derivedCatalogue) {
     const derivedManifest = { ...manifest, generation: `${manifest.generation}-derived`, catalogue: manifest.derivedCatalogue, catalogueSha256: manifest.derivedCatalogueSha256 };
-    for await (const file of catalogueFiles(disk, derivedManifest)) await disk.put("derived-files", file.path, file);
+    await loadCatalogue(disk, derivedManifest, "derived-files");
   }
   const prefix = manifest.index.slice(0, -"index/root.json".length);
-  let path: string | null = `${prefix}index/shots/${await identity(key)}.json`;
+  let path: string | null = `${prefix}index/shots/${hash}.json`;
   const records: ArchiveRecord[] = [], terrains = new Map<string, TerrainRecord>();
   let previous = 0;
   const visited = new Set<string>();
@@ -111,8 +116,12 @@ export async function extractShot(disk: BundleDisk, key: string): Promise<ShotAr
     visited.add(path);
     await verifyFile(disk, path);
     const page = await readJson(disk, path);
-    if (!object(page) || page.shotKey !== key || !Array.isArray(page.refs) || page.refs.length > 256 ||
-      (page.next !== null && typeof page.next !== "string")) throw new Error("INVALID_SHOT_INDEX");
+    if (!object(page) || typeof page.shotKey !== "string" || !Array.isArray(page.refs) || page.refs.length > 256 ||
+      (page.next !== null && (typeof page.next !== "string" || page.next.length === 0))) throw new Error("INVALID_SHOT_INDEX");
+    if (key === undefined) {
+      if (await identity(page.shotKey) !== hash) throw new Error("INVALID_SHOT_INDEX");
+      key = page.shotKey;
+    } else if (page.shotKey !== key) throw new Error("INVALID_SHOT_INDEX");
     for (const ref of page.refs) {
       if (!object(ref) || !object(ref.location)) throw new Error("INVALID_CAPTURE_REFERENCE");
       // Validation advances a strict sequence and retains only this shot's context.
@@ -123,11 +132,19 @@ export async function extractShot(disk: BundleDisk, key: string): Promise<ShotAr
       records.push(record);
       if ("snapshot" in record.input && !terrains.has(record.input.snapshot.terrainId)) terrains.set(record.input.snapshot.terrainId, await terrain(disk, record.input.snapshot.terrainId));
     }
-    path = page.next ? prefix + String(page.next) : null;
+    path = page.next !== null ? prefix + page.next : null;
   }
-  if (!records.some(r => r.shotKey === key && r.input.kind === "pre-shot")) throw new Error("SHOT_NOT_FOUND");
-  return validateArchive(sealArchive({ ...archiveHeader(manifest), records, terrains: [...terrains.values()],
+  if (key === undefined || !records.some(r => r.shotKey === key && r.input.kind === "pre-shot")) throw new Error("SHOT_NOT_FOUND");
+  const archive = validateArchive(sealArchive({ ...archiveHeader(manifest), records, terrains: [...terrains.values()],
     firstSequence: records[0]?.sequence ?? 0, lastSequence: records.at(-1)?.sequence ?? 0 }));
+  return { archive, shotKey: key };
+}
+export async function extractShot(disk: BundleDisk, key: string): Promise<ShotArchive> {
+  return (await readIndexedShot(disk, await identity(key), key)).archive;
+}
+export async function extractShotByHash(disk: BundleDisk, hash: string): Promise<{ archive: ShotArchive; shotKey: string }> {
+  if (hash.length !== 64 || /[^0-9a-f]/.test(hash)) throw new Error("INVALID_SHOT_HASH");
+  return readIndexedShot(disk, hash);
 }
 export async function validateBundle(disk: BundleDisk): Promise<BundleManifest> {
   const manifest = await readManifest(disk); await loadCatalogue(disk, manifest);

@@ -18,6 +18,7 @@ import {
   MINIMUM_CLIENT_PROTOCOL_VERSION,
   ONLINE_PROTOCOL_VERSION,
 } from '../../src/game/online/protocol';
+import { ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
 
 // Env bindings injected by wrangler (see wrangler.toml)
 export interface Env {
@@ -25,12 +26,28 @@ export interface Env {
   RATE_LIMITER: DurableObjectNamespace;
 }
 
+const RATE_LIMIT_BUCKETS = {
+  rooms: { prefix: 'rate_limit_', path: ROOM_RATE_LIMIT_PATH },
+  websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
+} as const;
+const TEXT_ENCODER = new TextEncoder();
+
+const isHeaderSafeToken = (value: string): boolean => {
+  if (value.length === 0 || value.length > 256 || value.trim() !== value) return false;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code > 0xff) return false;
+  }
+  return true;
+};
+
 // Simple REST + WS router. In production you may front this with a custom domain
 // or route /api/* through the worker while Pages serves the SPA.
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
+    const isWebSocketUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
 
     const origin = request.headers.get('Origin');
     const isAllowedOrigin = origin && (
@@ -56,14 +73,15 @@ export default {
       });
     };
 
-    const enforceRateLimit = async (): Promise<Response | null> => {
+    const enforceRateLimit = async (scope: keyof typeof RATE_LIMIT_BUCKETS = 'rooms'): Promise<Response | null> => {
       // Cloudflare supplies this header in production. Local/non-proxied requests
       // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-      const limiterName = 'rate_limit_' + ip;
+      const { prefix, path } = RATE_LIMIT_BUCKETS[scope];
+      const limiterName = prefix + ip;
 
       // Bound the complete identifier in UTF-8 bytes, including our namespace prefix.
-      if (new TextEncoder().encode(limiterName).byteLength > 256) {
+      if (TEXT_ENCODER.encode(limiterName).byteLength > 256) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
@@ -72,7 +90,7 @@ export default {
 
       try {
         const id = env.RATE_LIMITER.idFromName(limiterName);
-        const response = await env.RATE_LIMITER.get(id).fetch('https://internal/internal/rate-limit', {
+        const response = await env.RATE_LIMITER.get(id).fetch(`https://internal${path}`, {
           method: 'POST',
         });
         const retryAfter = response.headers.get('Retry-After');
@@ -87,7 +105,7 @@ export default {
         }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('[Worker] Room creation rate limiter unavailable or failed:', errorMessage);
+        console.error(`[Worker] Rate limiter unavailable or failed (${scope}):`, errorMessage);
 
         // Fail closed for limiter failures to prevent bypassing rate limit
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
@@ -123,6 +141,10 @@ export default {
       }));
     }
 
+    const rejectRestUpgrade = () => withResponseHeaders(Response.json({
+      error: 'Use the WebSocket endpoint for an upgrade',
+    }, { status: 400 }));
+
     // POST /api/rooms  -> create a new room, return roomId + per-slot join URLs/tokens
     if (pathname === '/api/rooms' && request.method === 'POST') {
       // Strict origin validation to prevent CSRF
@@ -132,6 +154,8 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
+
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
 
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
@@ -215,6 +239,7 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
       const parts = pathname.split('/');
       const roomId = parts[3];
       if (parts.length !== 5 || !roomId || roomId.length > 256) {
@@ -254,17 +279,29 @@ export default {
     if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/ws')) {
       const parts = pathname.split('/');
       const roomId = parts[3];
-      const slot = Number(searchParams.get('slot') ?? '-1');
-      const token = searchParams.get('token') ?? '';
 
       // Strict origin validation for WebSocket to prevent CSRF/Cross-Site WebSocket Hijacking
       if (origin !== null && !isAllowedOrigin) {
         return withResponseHeaders(new Response('Forbidden: Invalid Origin', { status: 403 }));
       }
-
-      if (parts.length !== 5 || !roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
+      if (parts.length !== 5 || !roomId || roomId.length > 256) {
         return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
+      if (request.method !== 'GET') {
+        return withResponseHeaders(new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } }));
+      }
+      if (!isWebSocketUpgrade) {
+        return withResponseHeaders(new Response('WebSocket upgrade required', { status: 426, headers: { Upgrade: 'websocket' } }));
+      }
+
+      const slot = searchParams.get('slot');
+      const token = searchParams.get('token');
+      if (slot === null || !/^[0-3]$/.test(slot) || token === null || !isHeaderSafeToken(token)) {
+        return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
+      }
+
+      const rateLimitResponse = await enforceRateLimit('websocket');
+      if (rateLimitResponse) return rateLimitResponse;
 
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
@@ -273,8 +310,9 @@ export default {
       const upgradeReq = new Request(request, {
         headers: {
           ...Object.fromEntries(request.headers),
+          upgrade: 'websocket',
           'x-room-id': roomId,
-          'x-slot': String(slot),
+          'x-slot': slot,
           'x-token': token,
         },
       });
