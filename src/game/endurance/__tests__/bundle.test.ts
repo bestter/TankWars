@@ -180,8 +180,41 @@ describe("progressive endurance bundle", () => {
     expect(selected).toEqual({ archive, shotKey: key });
     const replay = replayShot(selected.archive, selected.shotKey);
     expect(replay.complete).toBe(true); expect(replay.physicalDivergence).toBeNull(); expect(replay.economicDivergence).toBeNull();
+    // A fresh reader validates the full source independently of a prior targeted read.
+    disk.tables.delete("verified-files");
     expect((await validateBundle(disk)).captureLast).toBe(records.length);
     expect(await extractShot(disk, key)).toEqual(archive);
+  });
+  it("extracts shots across consecutive bundle generations on the same disk", async () => {
+    const engine = new GameEngine(800, 480, { headless: true }), recorder = new ShotRecorder("test-session");
+    recorder.context("Bloc d’essai numéro 2");
+    engine.setPlayers([makePlayer({ id: "a", tank: makeTank("ta", 120, 300) }), makePlayer({ id: "b", tank: makeTank("tb", 420, 300) })], makeRoundMap());
+    engine.diagnosticSink = input => recorder.record(input);
+    const observer = { emit: (event: import("../types").EnduranceEvent) => { recorder.record({ kind: "combat", event }); return true; } };
+    engine.combatObserver = observer; engine.getTurnManager().combatObserver = observer;
+    const actor = engine.getTankManager().getPlayers()[0]; actor.tank.angle = 50; actor.tank.power = 55;
+    expect(engine.getTurnManager().tryFire()).toBe(true);
+    const update = Reflect.get(engine, "update") as (dt: number) => void;
+    for (let i = 0; i < 10000 && !engine.getPendingShotResult(); i++) update.call(engine, 1 / 120);
+    const original = recorder.export(); engine.stop();
+    const key = original.records.find(r => r.input.kind === "pre-shot")!.shotKey!;
+    const rows = original.records.map((record, i) => entry(i + 1, { kind: "archive", write: { record, terrains: [] } }));
+    const tail = entry(rows.length + 1);
+    const input = source([...rows, tail]);
+    input.terrain = async id => original.terrains.find(t => t.id === id)!;
+    input.status.persisted = rows.length;
+    input.status.emitted = rows.length;
+    const disk = new MemoryDisk();
+    const first = await buildBundle(input, disk);
+    const hash = await identity(key);
+    const extractedFirst = await extractShotByHash(disk, hash);
+    expect(extractedFirst.shotKey).toBe(key);
+    input.status.persisted = rows.length + 1;
+    input.status.emitted = rows.length + 1;
+    const second = await buildBundle(input, disk);
+    expect(second.generation).not.toBe(first.generation);
+    expect(await extractShotByHash(disk, hash)).toEqual(extractedFirst);
+    expect(await extractShot(disk, key)).toEqual(extractedFirst.archive);
   });
   it("requires a canonical SHA-256 selector and verifies it against the indexed shot key", async () => {
     const disk = new MemoryDisk();
@@ -193,6 +226,10 @@ describe("progressive endurance bundle", () => {
     const bytes = jsonBytes({ shotKey: "Séance B", refs: [], next: null });
     await disk.write(path, one(bytes));
     await disk.put("derived-files", path, { path, bytes: bytes.length, sha256: await sha256(bytes) });
+    await expect(extractShotByHash(disk, hash)).rejects.toThrow("INVALID_SHOT_INDEX");
+    const emptyNext = jsonBytes({ shotKey: "Séance A", refs: [], next: "" });
+    await disk.write(path, one(emptyNext));
+    await disk.put("derived-files", path, { path, bytes: emptyNext.length, sha256: await sha256(emptyNext) });
     await expect(extractShotByHash(disk, hash)).rejects.toThrow("INVALID_SHOT_INDEX");
   });
   it("rejects incomplete options or invalid fields in readManifest", async () => {

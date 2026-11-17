@@ -28,6 +28,17 @@ if (!path) {
     const hash = options.get("--shot-hash");
     if (options.has("--shot") && hash !== undefined) throw new Error("SELECT_SHOT_BY_KEY_OR_HASH");
     if (hash !== undefined && (hash.length !== 64 || /[^0-9a-f]/.test(hash))) throw new Error("INVALID_SHOT_HASH");
+    const alternativeFields = ["--weapon", "--angle", "--power"].filter(flag => options.has(flag)).length;
+    if (alternativeFields !== 0 && alternativeFields !== 3) throw new Error("INCOMPLETE_ALTERNATIVE_COMMAND");
+    let alternative;
+    if (alternativeFields === 3) {
+      const angle = Number(options.get("--angle"));
+      const power = Number(options.get("--power"));
+      if (!Number.isFinite(angle) || angle < 0 || angle > 180 || !Number.isInteger(power) || power < 1 || power > 99) {
+        throw new Error("INVALID_ALTERNATIVE_COMMAND");
+      }
+      alternative = { weaponId: options.get("--weapon"), angle, power };
+    }
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }
@@ -36,7 +47,7 @@ if (!path) {
       if (!rows.length || rows[0].kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
       value = { schemaVersion: rows[0].schemaVersion, format: "legacy-journal", events: rows.length - 1 };
     }
-    const isBundle = value.format === "tankwars-endurance-bundle";
+    const isBundle = typeof value === "object" && value !== null && !Array.isArray(value) && value.format === "tankwars-endurance-bundle";
     let archive;
     if (isBundle) {
       if (!key && hash === undefined) throw new Error("SELECT_SHOT_FIRST");
@@ -69,8 +80,6 @@ if (!path) {
       const selected = matches[0];
       if ((key || hash !== undefined) && !selected) throw new Error("SHOT_NOT_FOUND");
       if ((options.has("--replay") || options.has("--weapon")) && !selected) throw new Error("SELECT_SHOT_FIRST");
-      const alternativeFields = ["--weapon", "--angle", "--power"].filter(flag => options.has(flag)).length;
-      if (alternativeFields !== 0 && alternativeFields !== 3) throw new Error("INCOMPLETE_ALTERNATIVE_COMMAND");
       let chain;
       if (selected) {
         const { filterArchive } = await server.ssrLoadModule("/src/game/diagnostics/export.ts");
@@ -85,7 +94,6 @@ if (!path) {
         chain };
       if (selected && (options.has("--replay") || options.has("--weapon"))) {
         const { replayShot } = await server.ssrLoadModule("/src/game/diagnostics/replay.ts");
-        const alternative = options.has("--weapon") ? { weaponId: options.get("--weapon"), angle: Number(options.get("--angle")), power: Number(options.get("--power")) } : undefined;
         const replay = replayShot(archive, selected.shotKey, alternative);
         result.replay = replay;
         if (!replay.complete || replay.physicalDivergence || replay.economicDivergence) process.exitCode = 2;

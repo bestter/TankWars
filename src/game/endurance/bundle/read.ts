@@ -54,13 +54,18 @@ export async function* catalogueFiles(disk: BundleDisk, manifest: BundleManifest
 }
 async function loadCatalogue(disk: BundleDisk, manifest: BundleManifest, table: "read-files" | "derived-files" = "read-files"): Promise<void> {
   // Persistent map, never a root list proportional to the session.
-  if (await disk.get("read-state", manifest.generation)) return;
+  const stateKey = `${table}:${manifest.generation}`;
+  if (await disk.get("read-state", stateKey)) return;
+  let sawRootIndex = false;
   for await (const file of catalogueFiles(disk, manifest)) {
     const prior = await disk.get(table, file.path);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(file)) throw new Error("BUNDLE_REFERENCE_CHANGED");
+    // index.html at the bundle root is rewritten for each published generation.
+    const allowCrossGenerationRootUpdate = table === "derived-files" && file.path === "index.html" && !sawRootIndex;
+    if (file.path === "index.html") sawRootIndex = true;
+    if (prior && !allowCrossGenerationRootUpdate && JSON.stringify(prior) !== JSON.stringify(file)) throw new Error("BUNDLE_REFERENCE_CHANGED");
     await disk.put(table, file.path, file);
   }
-  await disk.put("read-state", manifest.generation, true);
+  await disk.put("read-state", stateKey, true);
 }
 export async function verifyFile(disk: BundleDisk, path: string): Promise<void> {
   safePath(path);
@@ -112,7 +117,7 @@ async function readIndexedShot(disk: BundleDisk, hash: string, key?: string): Pr
     await verifyFile(disk, path);
     const page = await readJson(disk, path);
     if (!object(page) || typeof page.shotKey !== "string" || !Array.isArray(page.refs) || page.refs.length > 256 ||
-      (page.next !== null && typeof page.next !== "string")) throw new Error("INVALID_SHOT_INDEX");
+      (page.next !== null && (typeof page.next !== "string" || page.next.length === 0))) throw new Error("INVALID_SHOT_INDEX");
     if (key === undefined) {
       if (await identity(page.shotKey) !== hash) throw new Error("INVALID_SHOT_INDEX");
       key = page.shotKey;
@@ -127,7 +132,7 @@ async function readIndexedShot(disk: BundleDisk, hash: string, key?: string): Pr
       records.push(record);
       if ("snapshot" in record.input && !terrains.has(record.input.snapshot.terrainId)) terrains.set(record.input.snapshot.terrainId, await terrain(disk, record.input.snapshot.terrainId));
     }
-    path = page.next ? prefix + String(page.next) : null;
+    path = page.next !== null ? prefix + page.next : null;
   }
   if (key === undefined || !records.some(r => r.shotKey === key && r.input.kind === "pre-shot")) throw new Error("SHOT_NOT_FOUND");
   const archive = validateArchive(sealArchive({ ...archiveHeader(manifest), records, terrains: [...terrains.values()],

@@ -302,6 +302,27 @@ describe('Worker Entrypoint', () => {
       },
     );
 
+    it.each(['', '&token=', '&token=%20', '&token=%20abc', '&token=a%0Ab', '&token=a%00b', '&token=%E2%82%AC', `&token=${'a'.repeat(257)}`])(
+      'rejects missing or header-unsafe token (%s) before admission',
+      async query => {
+        const { env } = createMockEnv();
+        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/room1/ws?slot=0${query}`), env);
+        expect(response.status).toBe(400);
+        expectSecurityHeaders(response);
+        expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
+        expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
+      },
+    );
+
+    it('forwards Latin-1 non-ASCII token values to GameRoom for constant-time rejection', async () => {
+      const { env, mockStub } = createMockEnv();
+      const response = await worker.fetch(upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=%C3%A9'), env);
+      expect(response.status).toBe(200);
+      expect(mockStub.fetch).toHaveBeenCalledOnce();
+      const forwarded: Request = mockStub.fetch.mock.calls[0][0];
+      expect(forwarded.headers.get('x-token')).toBe('é');
+    });
+
     it('accepts upgrade without Origin header (non-browser client)', async () => {
       const { env, mockStub } = createMockEnv();
       const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=123');

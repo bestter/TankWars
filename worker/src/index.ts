@@ -32,6 +32,15 @@ const RATE_LIMIT_BUCKETS = {
 } as const;
 const TEXT_ENCODER = new TextEncoder();
 
+const isHeaderSafeToken = (value: string): boolean => {
+  if (value.length === 0 || value.length > 256 || value.trim() !== value) return false;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code > 0xff) return false;
+  }
+  return true;
+};
+
 // Simple REST + WS router. In production you may front this with a custom domain
 // or route /api/* through the worker while Pages serves the SPA.
 export default {
@@ -287,7 +296,7 @@ export default {
 
       const slot = searchParams.get('slot');
       const token = searchParams.get('token');
-      if (slot === null || !/^[0-3]$/.test(slot) || !token) {
+      if (slot === null || !/^[0-3]$/.test(slot) || token === null || !isHeaderSafeToken(token)) {
         return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
 
