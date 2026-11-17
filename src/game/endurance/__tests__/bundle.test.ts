@@ -175,14 +175,13 @@ describe("progressive endurance bundle", () => {
     expect(html).toContain(`<code>${hash}</code>`);
     expect(html).toContain(`href="../index/shots/${hash}.json"`);
     expect(html).not.toContain("node Scripts/read-shot-archive.mjs");
-    const byKey = new MemoryDisk(); byKey.files = new Map(disk.files);
-    const archive = await extractShot(byKey, key);
-    const byHash = new MemoryDisk(); byHash.files = new Map(disk.files);
-    const selected = await extractShotByHash(byHash, hash);
+    const archive = await extractShot(disk, key);
+    const selected = await extractShotByHash(disk, hash);
     expect(selected).toEqual({ archive, shotKey: key });
     const replay = replayShot(selected.archive, selected.shotKey);
     expect(replay.complete).toBe(true); expect(replay.physicalDivergence).toBeNull(); expect(replay.economicDivergence).toBeNull();
     expect((await validateBundle(disk)).captureLast).toBe(records.length);
+    expect(await extractShot(disk, key)).toEqual(archive);
   });
   it("requires a canonical SHA-256 selector and verifies it against the indexed shot key", async () => {
     const disk = new MemoryDisk();

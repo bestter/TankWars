@@ -30,6 +30,7 @@ const RATE_LIMIT_BUCKETS = {
   rooms: { prefix: 'rate_limit_', path: ROOM_RATE_LIMIT_PATH },
   websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
 } as const;
+const TEXT_ENCODER = new TextEncoder();
 
 // Simple REST + WS router. In production you may front this with a custom domain
 // or route /api/* through the worker while Pages serves the SPA.
@@ -71,7 +72,7 @@ export default {
       const limiterName = prefix + ip;
 
       // Bound the complete identifier in UTF-8 bytes, including our namespace prefix.
-      if (new TextEncoder().encode(limiterName).byteLength > 256) {
+      if (TEXT_ENCODER.encode(limiterName).byteLength > 256) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
@@ -131,6 +132,10 @@ export default {
       }));
     }
 
+    const rejectRestUpgrade = () => withResponseHeaders(Response.json({
+      error: 'Use the WebSocket endpoint for an upgrade',
+    }, { status: 400 }));
+
     // POST /api/rooms  -> create a new room, return roomId + per-slot join URLs/tokens
     if (pathname === '/api/rooms' && request.method === 'POST') {
       // Strict origin validation to prevent CSRF
@@ -140,6 +145,8 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
+
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
 
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
@@ -223,9 +230,7 @@ export default {
           headers: { 'content-type': 'application/json' },
         }));
       }
-      if (isWebSocketUpgrade) {
-        return withResponseHeaders(new Response('Use the WebSocket endpoint for an upgrade', { status: 400 }));
-      }
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
       const parts = pathname.split('/');
       const roomId = parts[3];
       if (parts.length !== 5 || !roomId || roomId.length > 256) {
@@ -265,12 +270,13 @@ export default {
     if (pathname.startsWith('/api/rooms/') && pathname.endsWith('/ws')) {
       const parts = pathname.split('/');
       const roomId = parts[3];
-      const slot = Number(searchParams.get('slot') ?? '-1');
-      const token = searchParams.get('token') ?? '';
 
       // Strict origin validation for WebSocket to prevent CSRF/Cross-Site WebSocket Hijacking
       if (origin !== null && !isAllowedOrigin) {
         return withResponseHeaders(new Response('Forbidden: Invalid Origin', { status: 403 }));
+      }
+      if (parts.length !== 5 || !roomId || roomId.length > 256) {
+        return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
       if (request.method !== 'GET') {
         return withResponseHeaders(new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } }));
@@ -279,7 +285,9 @@ export default {
         return withResponseHeaders(new Response('WebSocket upgrade required', { status: 426, headers: { Upgrade: 'websocket' } }));
       }
 
-      if (parts.length !== 5 || !roomId || roomId.length > 256 || !Number.isInteger(slot) || slot < 0 || slot > 3 || !token) {
+      const slot = searchParams.get('slot');
+      const token = searchParams.get('token');
+      if (slot === null || !/^[0-3]$/.test(slot) || !token) {
         return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
 
@@ -295,7 +303,7 @@ export default {
           ...Object.fromEntries(request.headers),
           upgrade: 'websocket',
           'x-room-id': roomId,
-          'x-slot': String(slot),
+          'x-slot': slot,
           'x-token': token,
         },
       });

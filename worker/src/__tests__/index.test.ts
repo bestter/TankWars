@@ -266,15 +266,41 @@ describe('Worker Entrypoint', () => {
       expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
     });
 
-    it('keeps WebSocket upgrades off the REST join route', async () => {
+    it.each(['/api/rooms', '/api/rooms/room1/join'])('rejects upgrades on POST %s with a JSON error', async path => {
       const { env } = createMockEnv();
-      const request = new Request('http://localhost/api/rooms/room1/join', {
+      const request = new Request(`http://localhost${path}`, {
         method: 'POST', headers: { Upgrade: 'websocket' },
       });
-      expect((await worker.fetch(request, env)).status).toBe(400);
+      const response = await worker.fetch(request, env);
+      expect(response.status).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      expect(await response.json()).toEqual({ error: 'Use the WebSocket endpoint for an upgrade' });
       expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
       expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['GET', '/api/rooms/ws'],
+      ['GET', '/api/rooms//ws'],
+      ['POST', '/api/rooms/a/b/ws'],
+    ])('rejects malformed route %s %s before checking method or Upgrade', async (method, path) => {
+      const { env } = createMockEnv();
+      const response = await worker.fetch(new Request(`http://localhost${path}`, { method }), env);
+      expect(response.status).toBe(400);
+      expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
+      expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
+    });
+
+    it.each(['', '&slot=', '&slot=%20', '&slot=0x0', '&slot=%2B1', '&slot=1.0', '&slot=04', '&slot=4', '&slot=0%0A'])(
+      'rejects missing or noncanonical seat (%s) before admission',
+      async query => {
+        const { env } = createMockEnv();
+        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/room1/ws?token=123${query}`), env);
+        expect(response.status).toBe(400);
+        expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
+        expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
+      },
+    );
 
     it('accepts upgrade without Origin header (non-browser client)', async () => {
       const { env, mockStub } = createMockEnv();

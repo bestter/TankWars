@@ -52,13 +52,13 @@ export async function* catalogueFiles(disk: BundleDisk, manifest: BundleManifest
     expectedHash = page.nextSha256;
   }
 }
-export async function loadCatalogue(disk: BundleDisk, manifest: BundleManifest): Promise<void> {
+async function loadCatalogue(disk: BundleDisk, manifest: BundleManifest, table: "read-files" | "derived-files" = "read-files"): Promise<void> {
   // Persistent map, never a root list proportional to the session.
   if (await disk.get("read-state", manifest.generation)) return;
   for await (const file of catalogueFiles(disk, manifest)) {
-    const prior = await disk.get("read-files", file.path);
+    const prior = await disk.get(table, file.path);
     if (prior && JSON.stringify(prior) !== JSON.stringify(file)) throw new Error("BUNDLE_REFERENCE_CHANGED");
-    await disk.put("read-files", file.path, file);
+    await disk.put(table, file.path, file);
   }
   await disk.put("read-state", manifest.generation, true);
 }
@@ -99,7 +99,7 @@ async function readIndexedShot(disk: BundleDisk, hash: string, key?: string): Pr
   const manifest = await readManifest(disk); await loadCatalogue(disk, manifest);
   if (manifest.derivedCatalogue) {
     const derivedManifest = { ...manifest, generation: `${manifest.generation}-derived`, catalogue: manifest.derivedCatalogue, catalogueSha256: manifest.derivedCatalogueSha256 };
-    for await (const file of catalogueFiles(disk, derivedManifest)) await disk.put("derived-files", file.path, file);
+    await loadCatalogue(disk, derivedManifest, "derived-files");
   }
   const prefix = manifest.index.slice(0, -"index/root.json".length);
   let path: string | null = `${prefix}index/shots/${hash}.json`;
