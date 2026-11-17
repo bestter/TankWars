@@ -1,0 +1,140 @@
+import { useEffect, useId, useRef, type SyntheticEvent } from "react";
+import { useTranslation } from "react-i18next";
+import { VGA_PALETTE } from "../types/game";
+import { useModalDialog } from "./modalDialog";
+
+export function ProtocolMismatchDialog() {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const { dialogRef, handleClose } = useModalDialog();
+  const refreshBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    refreshBtnRef.current?.focus();
+  }, []);
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="retro-modal protocol-mismatch-overlay"
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      onClose={handleClose}
+    >
+      <h2 id={titleId} style={{ margin: 0, fontSize: "16px" }}>
+        {t("protocol_mismatch_title")}
+      </h2>
+      <p role="alert">{t("protocol_mismatch_body")}</p>
+      <button
+        ref={refreshBtnRef}
+        type="button"
+        onClick={() => window.location.reload()}
+      >
+        {t("protocol_mismatch_refresh")}
+      </button>
+    </dialog>
+  );
+}
+
+export interface SessionErrorDialogProps {
+  readonly roundPreparationError?: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null;
+  readonly networkError?: string | null;
+  readonly onRetry: () => void;
+  readonly onReturnToMenu?: () => void;
+}
+
+export function SessionErrorDialog({
+  roundPreparationError,
+  networkError,
+  onRetry,
+  onReturnToMenu,
+}: SessionErrorDialogProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const { dialogRef, handleClose } = useModalDialog();
+  const retryBtnRef = useRef<HTMLButtonElement | null>(null);
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const canRetry =
+    roundPreparationError === "EXHAUSTED" ||
+    (!roundPreparationError && Boolean(networkError));
+
+  useEffect(() => {
+    if (canRetry) {
+      retryBtnRef.current?.focus();
+    } else {
+      menuBtnRef.current?.focus();
+    }
+  }, [canRetry]);
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+  };
+
+  let message = "";
+  if (roundPreparationError) {
+    message = t(
+      roundPreparationError === "NEW_GAME_REQUIRED"
+        ? "round_new_game_required"
+        : "round_preparation_failed",
+    );
+  } else if (networkError) {
+    message = t(networkError, { defaultValue: networkError });
+  }
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="retro-modal retro-modal-error"
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      onClose={handleClose}
+      style={{
+        border: `4px solid ${VGA_PALETTE.RED}`,
+        width: "min(460px, 92%)",
+        backgroundColor: "rgba(0, 0, 0, 0.94)",
+      }}
+    >
+      <h2
+        id={titleId}
+        role="alert"
+        style={{
+          margin: 0,
+          fontSize: "14px",
+          fontWeight: "normal",
+          color: VGA_PALETTE.RED,
+          lineHeight: 1.4,
+        }}
+      >
+        {message}
+      </h2>
+      <div className="retro-modal-error-actions">
+        {canRetry && (
+          <button
+            ref={retryBtnRef}
+            type="button"
+            onClick={onRetry}
+            className="retro-btn"
+            style={{ padding: "8px 24px" }}
+          >
+            {t("btn_retry")}
+          </button>
+        )}
+        {onReturnToMenu && (
+          <button
+            ref={menuBtnRef}
+            type="button"
+            onClick={onReturnToMenu}
+            className="round-summary-menu-btn"
+          >
+            {t("btn_menu")}
+          </button>
+        )}
+      </div>
+    </dialog>
+  );
+}

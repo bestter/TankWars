@@ -22,6 +22,7 @@ import { GameShopOverlay } from "./GameShopOverlay";
 import type { GameCanvasState } from "./gameCanvasReducer";
 import type { WeaponId } from "../types/weapon";
 import { CombatStatusAnnouncer } from "./CombatStatusAnnouncer";
+import { ProtocolMismatchDialog, SessionErrorDialog } from "./RecoveryDialogs";
 
 const FIRE_REJECTION_KEYS = {
   ZEUS_TURN: "fire_rejected_zeus_turn",
@@ -191,15 +192,7 @@ function TransientOverlays({
           {t(FIRE_REJECTION_KEYS[fireRejection])}
         </div>
       )}
-      {protocolMismatch && (
-        <div className="protocol-mismatch-overlay" role="alert">
-          <strong>{t("protocol_mismatch_title")}</strong>
-          <p>{t("protocol_mismatch_body")}</p>
-          <button type="button" onClick={() => window.location.reload()}>
-            {t("protocol_mismatch_refresh")}
-          </button>
-        </div>
-      )}
+      {protocolMismatch && <ProtocolMismatchDialog />}
     </>
   );
 }
@@ -215,6 +208,8 @@ function RoundPhaseOverlay({
   onNewGameFromSummary,
   onShopBuySell,
   onShopReady,
+  onRetry,
+  onReturnToMenu,
 }: {
   readonly state: GameCanvasState;
   readonly gameMode: GameCanvasProps["gameMode"];
@@ -226,8 +221,24 @@ function RoundPhaseOverlay({
   readonly onNewGameFromSummary: () => void;
   readonly onShopBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
   readonly onShopReady: () => void;
+  readonly onRetry: () => void;
+  readonly onReturnToMenu?: () => void;
 }) {
   const { t } = useTranslation();
+  if (state.protocolMismatch) return null;
+  if (
+    (state.gamePhase === "SHOP" || state.gamePhase === "SUMMARY") &&
+    (state.roundPreparationError || state.networkError)
+  ) {
+    return (
+      <SessionErrorDialog
+        roundPreparationError={state.roundPreparationError}
+        networkError={state.networkError}
+        onRetry={onRetry}
+        onReturnToMenu={onReturnToMenu}
+      />
+    );
+  }
   switch (state.gamePhase) {
     case "SUMMARY":
       return (
@@ -283,6 +294,55 @@ function NewGameButton({
   );
 }
 
+function InlineSessionErrors({
+  suppressed,
+  networkError,
+  roundPreparationError,
+  onRetry,
+}: {
+  readonly suppressed: boolean;
+  readonly networkError: GameCanvasState["networkError"];
+  readonly roundPreparationError: GameCanvasState["roundPreparationError"];
+  readonly onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  if (suppressed) return null;
+  return (
+    <>
+      {networkError && (
+        <div role="alert">
+          {t(networkError, { defaultValue: networkError })}{" "}
+          <button type="button" onClick={onRetry}>
+            {t("btn_retry")}
+          </button>
+        </div>
+      )}
+      {roundPreparationError && (
+        <div role="alert">
+          {t(
+            roundPreparationError === "NEW_GAME_REQUIRED"
+              ? "round_new_game_required"
+              : "round_preparation_failed",
+          )}
+          {roundPreparationError === "EXHAUSTED" && (
+            <button type="button" onClick={onRetry}>
+              {t("btn_retry")}
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function isBlockingModalErrorActive(state: GameCanvasState): boolean {
+  if (state.protocolMismatch) return true;
+  return (
+    (state.gamePhase === "SHOP" || state.gamePhase === "SUMMARY") &&
+    Boolean(state.roundPreparationError || state.networkError)
+  );
+}
+
 export function GameCanvas({
   endurance,
   initialPlayers,
@@ -335,6 +395,8 @@ export function GameCanvas({
     protocolMismatch,
   } = state;
 
+  const hasBlockingModalError = isBlockingModalErrorActive(state);
+
   return (
     <div
       style={{
@@ -345,13 +407,12 @@ export function GameCanvas({
       }}
     >
       {!endurance && gameMode === "local" && diagnostics && DiagnosticPanel && <Suspense fallback={null}><DiagnosticPanel source={diagnostics} /></Suspense>}
-      {state.networkError && <div role="alert">{t(state.networkError, { defaultValue: state.networkError })} <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button></div>}
-      {state.roundPreparationError && (
-        <div role="alert">
-          {t(state.roundPreparationError === "NEW_GAME_REQUIRED" ? "round_new_game_required" : "round_preparation_failed")}
-          {state.roundPreparationError === "EXHAUSTED" && <button type="button" onClick={retryRoundPreparation}>{t("btn_retry")}</button>}
-        </div>
-      )}
+      <InlineSessionErrors
+        suppressed={hasBlockingModalError}
+        networkError={state.networkError}
+        roundPreparationError={state.roundPreparationError}
+        onRetry={retryRoundPreparation}
+      />
       <MenuButton canvasWidth={CANVAS_WIDTH} onReturnToMenu={endurance ? undefined : onReturnToMenu} />
 
       <div style={{ position: "relative" }}>
@@ -423,6 +484,8 @@ export function GameCanvas({
           onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
           onShopBuySell={handleShopBuySell}
           onShopReady={handleShopReady}
+          onRetry={retryRoundPreparation}
+          onReturnToMenu={endurance ? undefined : onReturnToMenu}
         />
       </div>
 

@@ -32,6 +32,15 @@ describe('styles CSS cleanup (#405)', () => {
     expect(appCss).toContain('.retro-btn');
   });
 
+  it('centers native <dialog> modals in the top layer and contains overscroll (#410)', () => {
+    expect(appCss).toContain('inset: 0;');
+    expect(appCss).toContain('margin: auto;');
+    expect(appCss).toContain('.retro-modal-shop[open]');
+    expect(appCss).toContain('dialog.retro-modal:modal');
+    expect(appCss).toContain('dialog.retro-modal::backdrop');
+    expect(appCss).toContain('overscroll-behavior: contain;');
+  });
+
   it('removes orphaned CSS variables and demo selectors from index.css', () => {
     const orphanedVariables = [
       '--accent:',
