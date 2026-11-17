@@ -427,6 +427,7 @@ export function GameCanvas({
 
         <canvas
           ref={canvasRef}
+          className="game-canvas"
           onClick={handleCanvasClick}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
