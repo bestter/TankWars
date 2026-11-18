@@ -93,9 +93,17 @@ import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
 const REPORT_WINDOW_MS = 20_000;
 
+interface ShotReportRecovery {
+  deadlineAt: number;
+  relayed: boolean;
+  /** Older shots may lack this field, even if an authority was assigned. */
+  initialAuthoritySlot?: number | null;
+  timedOutSlot?: number;
+}
+
 interface PersistedActiveShot extends ActiveCombatShot {
   /** Absent in rooms persisted before the report watchdog. */
-  reportRecovery?: { deadlineAt: number; relayed: boolean; timedOutSlot?: number };
+  reportRecovery?: ShotReportRecovery;
 }
 
 interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
@@ -281,7 +289,7 @@ export class GameRoom extends DurableObject {
   private syncedRoundNumber = 0;
   private sockets: Map<number, WebSocket> = new Map(); // slot -> ws (only connected humans)
   private aiProfiles: Map<number, string> = new Map();
-  private shotSettledTimeout: ReturnType<typeof setTimeout> | null = null;
+  private cancelShotSettledTimeout: (() => void) | null = null;
   private shotOperation: Promise<void> = Promise.resolve();
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
@@ -419,19 +427,14 @@ export class GameRoom extends DurableObject {
           if (this.state.activeShot) {
             if (!this.state.activeShot.earningsApplied && !this.state.activeShot.reportRecovery) {
               const deadlineAt = Date.now() + REPORT_WINDOW_MS;
-              this.state.activeShot.reportRecovery = { deadlineAt, relayed: false };
+              this.state.activeShot.reportRecovery = {
+                deadlineAt, relayed: false, initialAuthoritySlot: this.state.earningsAuthoritySlot,
+              };
               await this.saveState(deadlineAt);
               shouldPersistMigration = false;
             }
             if (!this.state.activeShot.shooterSettled && this.state.slotConfigs[this.state.activeShot.slot]?.type === "human") {
-              const shotId = this.state.activeShot.shotId;
-              const recovery = new Promise<void>((resolve) => {
-                this.shotSettledTimeout = setTimeout(() => {
-                  this.shotSettledTimeout = null;
-                  this.completeSettlementWatchdog(shotId).then(resolve);
-                }, 8000);
-              });
-              this.ctx.waitUntil(recovery);
+              this.armShotSettledTimeout(this.state.activeShot.shotId);
             }
             await this.maybeCompleteActiveShot();
           }
@@ -567,10 +570,8 @@ export class GameRoom extends DurableObject {
   }
 
   private clearShotSettledTimeout(): void {
-    if (this.shotSettledTimeout) {
-      clearTimeout(this.shotSettledTimeout);
-      this.shotSettledTimeout = null;
-    }
+    this.cancelShotSettledTimeout?.();
+    this.cancelShotSettledTimeout = null;
   }
 
   /** Clears in-flight shot bookkeeping (timeouts, epoch, awaiting slot). */
@@ -868,7 +869,7 @@ export class GameRoom extends DurableObject {
         const name = (nameFromQuery || `Joueur-${slot + 1}`).trim().slice(0, 16);
         const postSetupPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            this.initializeSocket(slot, name, server)
+            this.claimHumanSlot(slot, name, server)
               .then(resolve)
               .catch((err) => {
                 const errorMessage = err instanceof Error ? err.message : String(err);
@@ -931,25 +932,31 @@ export class GameRoom extends DurableObject {
         this.rejectProtocolMismatch(slot, typeof msg.protocolVersion === 'number' ? msg.protocolVersion : null);
         return;
       }
-      if (!this.state.started) await this.maybeAutoStart();
-      const session = this.state.shopSession;
-      if (session?.closingAction && this.allHumansReady(session)) {
-        await this.completeShopPhase();
-      }
-      if (this.state.started) {
-        const wsConn = this.sockets.get(slot);
-        if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
-      }
+      await this.runShotOperation(async () => {
+        if (!this.state) return;
+        if (!this.state.started) await this.maybeAutoStart();
+        const session = this.state.shopSession;
+        if (session?.closingAction && this.allHumansReady(session)) {
+          await this.completeShopPhase();
+        }
+        if (this.state.started) {
+          const wsConn = this.sockets.get(slot);
+          if (wsConn) this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
+        }
+      });
       return;
     }
 
     // Handle name identification / update (sent by client after WS open)
     if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
-      if (this.state.joinedHumans[slot]) {
-        this.state.joinedHumans[slot].name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
+      const name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
+      await this.runShotOperation(async () => {
+        const joined = this.state?.joinedHumans[slot];
+        if (!joined || joined.name === name) return;
+        joined.name = name;
         await this.saveState();
         this.sendRosterUpdate();
-      }
+      });
       return;
     }
 
@@ -1092,33 +1099,20 @@ export class GameRoom extends DurableObject {
     } catch {
       // ignore if already closed
     }
-    if (!this.state) return;
-    if (this.state.started) {
-      await this.runShotOperation(async () => {
-        if (this.state?.earningsAuthoritySlot !== slot || this.sockets.has(slot)) return;
+    await this.runShotOperation(async () => {
+      if (!this.state || this.sockets.has(slot)) return;
+      if (this.state.started) {
+        if (this.state.earningsAuthoritySlot !== slot) return;
         const active = this.state.activeShot;
-        if (!active || active.earningsApplied) {
-          await this.electEarningsAuthority();
-          return;
-        }
-
-        const next = this.nextReportingAuthority();
-        const recovery = active.reportRecovery;
-        const now = Date.now();
-        let alarmAt: number | undefined;
-        if (next !== null && recovery && !recovery.relayed && now < recovery.deadlineAt + REPORT_WINDOW_MS) {
-          alarmAt = Math.min(now + REPORT_WINDOW_MS, recovery.deadlineAt + REPORT_WINDOW_MS);
-          active.reportRecovery = { ...recovery, deadlineAt: alarmAt, relayed: true };
-        }
-        await this.electEarningsAuthority(next, alarmAt);
-      });
-      return;
-    }
-    if (this.state.slotConfigs[slot]?.type !== 'human') return;
-    if (!this.state.joinedHumans[slot]) return;
-    delete this.state.joinedHumans[slot];
-    await this.saveState();
-    this.sendRosterUpdate();
+        const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
+        await this.electEarningsAuthority(next);
+        return;
+      }
+      if (this.state.slotConfigs[slot]?.type !== 'human' || !this.state.joinedHumans[slot]) return;
+      delete this.state.joinedHumans[slot];
+      await this.saveState();
+      this.sendRosterUpdate();
+    });
   }
 
   private buildGameStartMessage(): GameStartMessage | null {
@@ -1164,37 +1158,38 @@ export class GameRoom extends DurableObject {
     }
   }
 
-  private async initializeSocket(slot: number, name: string, socket: WebSocket): Promise<void> {
-    await this.claimHumanSlot(slot, name, socket);
-    if (this.state?.started && this.sockets.get(slot) === socket) {
-      this.sendCombatCatchUpToSocket(socket, slot);
-    }
-  }
-
   // Claim a human slot (called on WS connect for the slot)
-  private async claimHumanSlot(slot: number, name: string, catchUpSocket?: WebSocket): Promise<void> {
-    if (!this.state) return;
-    if (this.state.slotConfigs[slot]?.type !== 'human') return;
-    const existing = this.state.joinedHumans[slot];
-    const joinOrdinal = this.state.joinOrdinals[slot] ?? this.state.nextJoinOrdinal++;
-    this.state.joinOrdinals[slot] = joinOrdinal;
-    this.state.joinedHumans[slot] = {
-      name: name.trim().slice(0, 16) || `Joueur-${slot + 1}`,
-      joinedAt: existing?.joinedAt ?? Date.now(),
-      joinOrdinal: existing?.joinOrdinal ?? joinOrdinal,
-    };
-    await this.saveState();
-    if (this.state.started) {
-      await this.runShotOperation(async () => {
-        if (!this.state || (this.state.earningsAuthoritySlot !== null &&
-            this.sockets.has(this.state.earningsAuthoritySlot))) return;
+  private claimHumanSlot(slot: number, name: string, socket?: WebSocket): Promise<void> {
+    return this.runShotOperation(async () => {
+      if (this.state?.slotConfigs[slot]?.type !== 'human' ||
+          (socket && this.sockets.get(slot) !== socket)) return;
+
+      const normalizedName = name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
+      const existing = this.state.joinedHumans[slot];
+      const rosterChanged = existing?.name !== normalizedName || this.state.joinOrdinals[slot] === undefined;
+      if (rosterChanged) {
+        const joinOrdinal = this.state.joinOrdinals[slot] ?? this.state.nextJoinOrdinal++;
+        this.state.joinOrdinals[slot] = joinOrdinal;
+        this.state.joinedHumans[slot] = {
+          name: normalizedName, joinedAt: existing?.joinedAt ?? Date.now(), joinOrdinal: existing?.joinOrdinal ?? joinOrdinal,
+        };
+      }
+
+      const authority = this.state.earningsAuthoritySlot;
+      let elected: number | null | undefined;
+      if (this.state.started && (authority === null || !this.sockets.has(authority))) {
         const active = this.state.activeShot;
         const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
-        await this.electEarningsAuthority(next, undefined, catchUpSocket);
-      });
-    }
-    this.sendRosterUpdate();
-    await this.maybeAutoStart();
+        elected = await this.electEarningsAuthority(next);
+      }
+      if (elected === undefined && rosterChanged) await this.saveState();
+      this.sendRosterUpdate();
+      await this.maybeAutoStart();
+      if (socket && this.state.started && this.sockets.get(slot) === socket &&
+          !(elected === slot && this.state.activeShot)) {
+        this.sendCombatCatchUpToSocket(socket, slot);
+      }
+    });
   }
 
   // Auto-start when every human-configured slot has a joined human
@@ -1304,21 +1299,48 @@ export class GameRoom extends DurableObject {
     ) ?? null;
   }
 
+  private getReportRelay(next: number | null): ShotReportRecovery | undefined {
+    const active = this.state?.activeShot;
+    const recovery = active?.reportRecovery;
+    if (!this.state || !active || active.earningsApplied || !recovery || recovery.relayed || next === null) return;
+    const current = this.state.earningsAuthoritySlot;
+    const initial = recovery.initialAuthoritySlot === undefined ? (current ?? undefined) : recovery.initialAuthoritySlot;
+    const now = Date.now();
+    const limit = recovery.deadlineAt + REPORT_WINDOW_MS;
+    if (initial === undefined || next === initial || now >= limit) return;
+    return {
+      ...recovery,
+      initialAuthoritySlot: initial,
+      deadlineAt: Math.min(now + REPORT_WINDOW_MS, limit),
+      relayed: true,
+      timedOutSlot: now >= recovery.deadlineAt ? current ?? undefined : undefined,
+    };
+  }
+
   private async electEarningsAuthority(
     next = this.state?.authorityOrder.find((slot) => this.sockets.has(slot)) ?? null,
-    alarmAt?: number,
-    catchUpSocket?: WebSocket,
-  ): Promise<void> {
-    if (!this.state) return;
-    if (next === this.state.earningsAuthoritySlot) return;
+    relay = this.getReportRelay(next),
+  ): Promise<number | null | undefined> {
+    if (!this.state || next === this.state.earningsAuthoritySlot) return;
+    const active = this.state.activeShot;
+    const recovery = active?.reportRecovery;
+    if (active && relay) {
+      active.reportRecovery = relay;
+    } else if (recovery && recovery.initialAuthoritySlot === undefined &&
+        !recovery.relayed && this.state.earningsAuthoritySlot !== null) {
+      // Capture the known authority before a legacy shot loses its last connection.
+      recovery.initialAuthoritySlot = this.state.earningsAuthoritySlot;
+    }
     this.state.earningsAuthoritySlot = next;
     this.state.authorityEpoch++;
-    await this.saveState(alarmAt);
-    this.broadcastAuthorityChanged();
-    if (next !== null && this.state.activeShot) {
+    await this.saveState(relay?.deadlineAt);
+    if (next !== null && active) {
       const socket = this.sockets.get(next);
-      if (socket && socket !== catchUpSocket) this.sendCombatCatchUpToSocket(socket, next);
+      // Invalidate the replacement's old preview before announcing its new epoch.
+      if (socket) this.sendCombatCatchUpToSocket(socket, next);
     }
+    this.broadcastAuthorityChanged();
+    return next;
   }
 
   // Very naive color assignment (stable, no collision). Real version can be richer.
@@ -1457,7 +1479,6 @@ export class GameRoom extends DurableObject {
     this.clearShotSettledTimeout();
     this.shotInFlight = true;
     this.shotEpoch++;
-    const epoch = this.shotEpoch;
     const shotId = this.state.nextShotId++;
     const reportDeadlineAt = Date.now() + REPORT_WINDOW_MS;
     this.state.shotNumberInRound++;
@@ -1476,7 +1497,9 @@ export class GameRoom extends DurableObject {
       earningsApplied: false,
       releaseAt: null,
       zeusEvaluated: false, appointment: null,
-      reportRecovery: { deadlineAt: reportDeadlineAt, relayed: false },
+      reportRecovery: {
+        deadlineAt: reportDeadlineAt, relayed: false, initialAuthoritySlot: this.state.earningsAuthoritySlot,
+      },
     };
     const shotEvent: ShotMessage = {
       type: 'SHOT',
@@ -1501,41 +1524,27 @@ export class GameRoom extends DurableObject {
     await this.saveState(reportDeadlineAt);
     this.broadcast(shotEvent);
 
-    const cfg = this.state.slotConfigs[fromSlot];
-    if (cfg && cfg.type === 'ai') {
-      console.log(`[GameRoom] executeFire: active slot ${fromSlot} is AI. Arming 4.5s safety timer...`);
-      const aiTimeoutPromise = new Promise<void>((resolve) => {
-        this.shotSettledTimeout = setTimeout(() => {
-          this.shotSettledTimeout = null;
-          if (epoch !== this.shotEpoch || !this.shotInFlight) {
-            console.log(`[GameRoom] AI turn advance timer ignored (stale epoch ${epoch} vs ${this.shotEpoch})`);
-            resolve();
-            return;
-          }
-          console.warn(`[GameRoom] AI safety timer elapsed; waiting for authoritative earnings.`);
-          resolve();
-        }, 4500);
-      });
-      this.ctx.waitUntil(aiTimeoutPromise);
-    } else {
+    if (currentConfig?.type === 'human') {
       this.awaitingShotFromSlot = fromSlot;
       console.log(`[GameRoom] executeFire: active slot ${fromSlot} is Human. Waiting for SHOT_SETTLED... (8s watchdog armed)`);
-      // Pour un humain, on attend le message SHOT_SETTLED du client.
-      // Par sécurité, on force le passage au tour suivant après 8 secondes.
-      const humanTimeoutPromise = new Promise<void>((resolve) => {
-        this.shotSettledTimeout = setTimeout(() => {
-          this.shotSettledTimeout = null;
-          if (epoch !== this.shotEpoch || !this.shotInFlight) {
-            console.log(`[GameRoom] Human shot safety timeout ignored (stale epoch ${epoch} vs ${this.shotEpoch})`);
-            resolve();
-            return;
-          }
-          console.warn(`[GameRoom] Human settlement watchdog elapsed; marking physics settled only.`);
-          this.completeSettlementWatchdog(shotId).then(resolve);
-        }, 8000);
-      });
-      this.ctx.waitUntil(humanTimeoutPromise);
+      this.armShotSettledTimeout(shotId);
     }
+  }
+
+  private armShotSettledTimeout(shotId: number): void {
+    this.clearShotSettledTimeout();
+    const watchdog = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.cancelShotSettledTimeout = null;
+        console.warn('[GameRoom] Human settlement watchdog elapsed; marking physics settled only.');
+        this.completeSettlementWatchdog(shotId).then(resolve);
+      }, 8000);
+      this.cancelShotSettledTimeout = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+    this.ctx.waitUntil(watchdog);
   }
 
   private runShotOperation(operation: () => Promise<void>): Promise<void> {
@@ -1548,9 +1557,9 @@ export class GameRoom extends DurableObject {
   private async markShooterSettled(shotId: number): Promise<void> {
     const active = this.state?.activeShot;
     if (!active || active.shotId !== shotId || active.shooterSettled) return;
-    this.clearShotSettledTimeout();
     active.shooterSettled = true;
     await this.saveState();
+    this.clearShotSettledTimeout();
     await this.maybeCompleteActiveShot();
   }
 
@@ -1586,14 +1595,10 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    const current = this.state.earningsAuthoritySlot;
     const next = this.nextReportingAuthority();
-    const finalDeadlineAt = recovery.deadlineAt + REPORT_WINDOW_MS;
-    if (!recovery.relayed && next !== null && now < finalDeadlineAt) {
-      active.reportRecovery = {
-        deadlineAt: finalDeadlineAt, relayed: true, timedOutSlot: current ?? undefined,
-      };
-      await this.electEarningsAuthority(next, finalDeadlineAt);
+    const relay = this.getReportRelay(next);
+    if (relay) {
+      await this.electEarningsAuthority(next, relay);
       return;
     }
 

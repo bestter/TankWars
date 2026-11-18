@@ -122,6 +122,26 @@ describe("online authoritative economy updates", () => {
     expect(gameCanvasReducer(unrelated, { type: "CLEAR_EARNINGS_ERROR" })).toBe(unrelated);
   });
 
+  it.each(["SHOP_STATE", "SHOP_FINISH"] as const)("clears a report error on a direct %s transition", (type) => {
+    const { players, dispatch, receive, opts } = setup();
+    const reduceMessages = () => dispatch.mock.calls.reduce(
+      (state, [action]) => gameCanvasReducer(state, action),
+      INITIAL_STATE,
+    );
+    receive({ type: "EARNINGS_REJECTED", reason: "CAP_MISMATCH", shotId: 1, authorityEpoch: 1 });
+    expect(reduceMessages().networkError).toBe("earnings_rejected_cap_mismatch");
+    if (type === "SHOP_STATE") {
+      receive({ type, players, shopEpoch: 1, roundNumber: 1,
+        readySlots: [], purchasesByPlayerId: {}, aiShopApplied: true });
+      expect(opts.gamePhaseRef.current).toBe("SHOP");
+    } else {
+      const map = makeRoundMap(2);
+      receive({ type, players, shopEpoch: 1, completedRoundNumber: 1, nextRoundNumber: 2, map });
+      expect(opts.applyShopFinish).toHaveBeenCalledWith(players, 1, 2, map);
+    }
+    expect(reduceMessages().networkError).toBeNull();
+  });
+
   it("retires an unreported shot at the deferred round boundary and retains shop economy", () => {
     const { engine, players, receive, opts, send } = setup();
     const tm = engine.getTurnManager();

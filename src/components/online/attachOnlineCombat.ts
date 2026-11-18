@@ -365,6 +365,7 @@ export function attachOnlineCombat(
     opts.pendingShotPreviewsRef.current.clear();
     shotQueueRef.current?.clearActiveServerShotId();
     shotQueueRef.current?.setCatchUpActiveShotId(null);
+    dispatch({ type: "CLEAR_EARNINGS_ERROR" });
   };
 
   const applyRoundEndMessage = (message: RoundEndMessage): void => {
@@ -380,7 +381,6 @@ export function attachOnlineCombat(
       type: "SET_LAST_COMPLETED_ROUND",
       roundNumber: message.roundNumber,
     });
-    dispatch({ type: "CLEAR_EARNINGS_ERROR" });
     opts.roundEndFromNetworkRef.current = true;
     engine.syncRoundEndFromRemote(
       message.players,
