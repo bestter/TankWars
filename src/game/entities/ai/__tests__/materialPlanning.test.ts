@@ -418,6 +418,54 @@ describe("selected material aim is transported once to the real shot", () => {
     expect(selection.mock.calls[0][5]).toBe("NUKE");
   });
 
+  it("OK passes THERMONUCLEAR to material planner (kept or substituted) and never rolls THERMONUCLEAR after NUKE substitution (#429)", async () => {
+    const f = fixture();
+    f.target.tank.position.x = 600;
+    f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.SOFT);
+
+    // 1. THERMONUCLEAR conservée si utile et sûre
+    f.self.inventory = { THERMONUCLEAR: 1, DRILLER: 1 };
+    const resolveSafe = vi.spyOn(physical, "resolvePhysicalShot").mockReturnValue(forecast({ damage: [damage()] }));
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "THERMONUCLEAR", solver()).weaponId)
+      .toBe("THERMONUCLEAR");
+
+    // 2. THERMONUCLEAR remplacée par DRILLER sur SOFT si THERMONUCLEAR détruit le tireur
+    resolveSafe.mockImplementation((_s, _t, _p, weapon) =>
+      forecast({
+        survivors: weapon === "THERMONUCLEAR" ? ["target"] : ["self", "target"],
+        damage: [damage()],
+      }));
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "THERMONUCLEAR", solver()).weaponId)
+      .toBe("DRILLER");
+
+    // 3. THERMONUCLEAR remplacée par MISSILE sur DIRT/ROCK si THERMONUCLEAR détruit le tireur
+    f.terrain.setMaterialRange(0, 799, TERRAIN_MATERIAL.DIRT);
+    expect(chooseLocalMaterialShot("v2-heuristic", f.self, f.target, f.state, f.terrain, "THERMONUCLEAR", solver()).weaponId)
+      .toBe("MISSILE");
+
+    // 4. NUKE remplacée par le planificateur ne déclenche jamais un second jet THERMONUCLEAR; budget 12 et erreurs conservés
+    vi.restoreAllMocks();
+    f.self.inventory = { NUKE: 1, THERMONUCLEAR: 1 };
+    f.self.tank.hitReaction = { wasDirectHit: true, fallDistance: 0 };
+    const draws = [0.1, 0.5, 0.5, 0, 0, 0, 0, 0, 0];
+    const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => draws.shift() ?? 0.99);
+    const solve = vi.spyOn(ballistics, "searchBallisticSolution").mockImplementation(() => {
+      return { angle: 40, power: 50, err: 0, complete: true };
+    });
+    vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_s, _t, _p, weapon) =>
+      forecast({
+        survivors: weapon === "NUKE" ? ["target"] : ["self", "target"],
+        damage: weapon === "MISSILE" ? [damage()] : [],
+      }));
+    const selection = vi.spyOn(localPlanner, "chooseLocalMaterialShot");
+    const shot = await new AIHeuristicStrategy().executeTurn("self", f.state, f.terrain);
+    expect(selection.mock.calls[0][5]).toBe("NUKE");
+    expect(shot.weaponId).toBe("MISSILE");
+    // 1 seul jet d'arme (NUKE) + 2 offset + 2 reaction + 3 gaffe (occured=true + 2 signes) = 8 tirages (aucun jet THERMO)
+    expect(rng).toHaveBeenCalledTimes(8);
+    expect(solve).toHaveBeenCalled();
+  });
+
   it("SNIPER no longer draws a BULLET selection roll on attempt 1 or 2", async () => {
     const f = fixture();
     f.self.inventory = { BULLET: 1, DRILLER: 1 };

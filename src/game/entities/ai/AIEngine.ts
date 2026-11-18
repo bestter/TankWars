@@ -25,6 +25,7 @@ export interface AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
     isCurrent?: () => boolean,
+    onWeaponSelected?: (weaponId: WeaponId) => void,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }>;
 
   /**

@@ -60,6 +60,7 @@ export class AIByProfileStrategy implements AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
     isCurrent: () => boolean = () => true,
+    onWeaponSelected?: (weaponId: WeaponId) => void,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
     const p = gameState.players.find((pp) => pp.tank.id === tankId);
     const profile = p?.aiProfile ?? "v1-random";
@@ -69,26 +70,26 @@ export class AIByProfileStrategy implements AIEngine {
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
       strategy.onDecisionObserved = this.onDecisionObserved;
-      return strategy.executeTurn(tankId, gameState, terrainManager);
+      return strategy.executeTurn(tankId, gameState, terrainManager, isCurrent, onWeaponSelected);
     }
     if (profile === "v3-sniper") {
       const strategy = await this.loadSniper();
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
       strategy.onDecisionObserved = this.onDecisionObserved;
-      return strategy.executeTurn(tankId, gameState, terrainManager);
+      return strategy.executeTurn(tankId, gameState, terrainManager, isCurrent, onWeaponSelected);
     }
     if (profile === "v4-smart") {
       const strategy = await this.loadSmart();
       if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
       strategy.onTargetSelected = this.onTargetSelected;
       strategy.onDecisionObserved = this.onDecisionObserved;
-      return strategy.executeTurn(tankId, gameState, terrainManager);
+      return strategy.executeTurn(tankId, gameState, terrainManager, isCurrent, onWeaponSelected);
     }
 
     this.simple.onTargetSelected = this.onTargetSelected;
     this.simple.onDecisionObserved = this.onDecisionObserved;
-    return this.simple.executeTurn(tankId, gameState, terrainManager, isCurrent);
+    return this.simple.executeTurn(tankId, gameState, terrainManager, isCurrent, onWeaponSelected);
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {

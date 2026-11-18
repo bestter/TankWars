@@ -115,6 +115,12 @@ export class TurnManager {
   private readonly RESOLUTION_SAFETY_LIMIT = 10; // 10 seconds in game time
   private isResolutionSafetyArmed = false;
   private resolutionPlayer: Player | null = null;
+  private resolutionWeaponChoice: {
+    playerId: string;
+    turnGeneration: number;
+    turnNumber: number;
+    weaponId: WeaponId;
+  } | null = null;
 
   // 3. AI shot settlement safety net (4.5s): forces nextTurn if physics settlement doesn't notify
   private settlementAccumulatedTime = 0;
@@ -330,6 +336,21 @@ export class TurnManager {
         const player = this.resolutionPlayer;
         // Un refus laisse le délai armé : aucun repli, comme les autres récupérations.
         if (this.combatObserver?.emit({ kind: "recovery", reason: "decision-timeout" }) === false) return;
+        const establishedWeapon =
+          this.resolutionWeaponChoice &&
+          this.resolutionWeaponChoice.playerId === player.id &&
+          this.resolutionWeaponChoice.turnGeneration === this.aiTurnGeneration &&
+          this.resolutionWeaponChoice.turnNumber === this.turnNumber
+            ? this.resolutionWeaponChoice.weaponId
+            : null;
+        const equippedWeapon = player.tank.currentWeapon;
+        const fallbackWeapon: WeaponId =
+          establishedWeapon ??
+          (equippedWeapon &&
+          equippedWeapon !== "NUKE" &&
+          equippedWeapon !== "THERMONUCLEAR"
+            ? equippedWeapon
+            : "MISSILE");
         this.disarmDecisionWatchdog();
         console.warn(
           `[TurnManager] AI resolution timeout for (player redacted). Triggering fallback.`,
@@ -345,12 +366,13 @@ export class TurnManager {
         if (fallback) {
           player.tank.angle = Math.max(0, Math.min(180, fallback.angle));
           player.tank.power = Math.max(0, Math.min(100, fallback.power));
+          player.tank.currentWeapon = fallbackWeapon;
           this.notifyHudUpdate();
 
           const command: FireCommand = {
             angle: player.tank.angle,
             power: player.tank.power,
-            weaponId: player.tank.currentWeapon,
+            weaponId: fallbackWeapon,
           };
           if (this.fireIntentHandler) {
             this.isAwaitingFireAuthority = true;
@@ -358,7 +380,7 @@ export class TurnManager {
             this.fireIntentHandler(command);
           } else if (this.acceptedFire(player.tank.position, command, player.id)) {
             this.hasUnresolvedShot = true;
-            this.consumeAmmo(player, player.tank.currentWeapon);
+            this.consumeAmmo(player, command.weaponId);
             this.notifyHudUpdate();
             this.armSettlementSafety(player.id);
           }
@@ -1260,6 +1282,7 @@ export class TurnManager {
   private invalidatePendingAITurn(): void {
     this.aiTurnGeneration++;
     this.isProcessingAI = false;
+    this.resolutionWeaponChoice = null;
 
     if (this.aiThinkingTimeoutId !== null) {
       clearTimeout(this.aiThinkingTimeoutId);
@@ -1368,18 +1391,35 @@ export class TurnManager {
         this.disarmDecisionWatchdog();
         return;
       }
-      const decision = await (this.combatObserver ? this.aiEngine.executeTurn(
-        player.tank.id, gameState, this.terrainManager,
-        isDecisionCurrent,
-      ) : this.aiEngine.executeTurn(
+      const recordDecisionWeapon = (weaponId: WeaponId): void => {
+        if (
+          !isDecisionCurrent() ||
+          !this.isResolutionSafetyArmed ||
+          this.resolutionPlayer?.id !== player.id
+        ) {
+          return;
+        }
+        this.resolutionWeaponChoice = {
+          playerId: player.id,
+          turnGeneration,
+          turnNumber: decisionTurn,
+          weaponId,
+        };
+      };
+      const decision = await this.aiEngine.executeTurn(
         player.tank.id,
         gameState,
         this.terrainManager,
-      ));
+        isDecisionCurrent,
+        recordDecisionWeapon,
+      );
 
       // Abort if the game moved on (SUMMARY/SHOP) while we were awaiting the strategy.
-      if (this.aiTurnGeneration !== turnGeneration || (this.combatObserver && !isDecisionCurrent())) {
+      if (this.aiTurnGeneration !== turnGeneration || !isDecisionCurrent()) {
         return;
+      }
+      if (decision.weaponId) {
+        recordDecisionWeapon(decision.weaponId);
       }
       if (this.combatObserver?.emit({ kind: "decision", playerId: player.id,
         durationMs: performance.now() - decisionStarted,
@@ -1401,7 +1441,7 @@ export class TurnManager {
       await this.waitForAIThinkingDelay();
 
       // Abort before firing if we have been paused for inter-round in the meantime.
-      if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked || (this.combatObserver && !isDecisionCurrent())) {
+      if (this.aiTurnGeneration !== turnGeneration || !this.isInputLocked || !isDecisionCurrent()) {
         return;
       }
       console.log('[TurnManager] handleAITurnIfNeeded: thinking delay done');
@@ -1443,7 +1483,7 @@ export class TurnManager {
         this.armSettlementSafety(player.id);
       }
     } catch (error) {
-      if (this.aiTurnGeneration !== turnGeneration || (this.combatObserver && !isDecisionCurrent())) return;
+      if (this.aiTurnGeneration !== turnGeneration || !isDecisionCurrent()) return;
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error("[TurnManager] AI turn failed:", errorMessage);
       if (this.combatObserver?.emit({ kind: "failure", reason: "AI_DECISION_FAILED", error: error instanceof Error ? error.stack : errorMessage }) === false) return;
@@ -1453,7 +1493,7 @@ export class TurnManager {
     } finally {
       // Only the active generation may release its flag. Invalidation already
       // released stale work synchronously and a newer AI turn may now own it.
-      if (this.aiTurnGeneration === turnGeneration && (!this.combatObserver || isDecisionCurrent())) {
+      if (this.aiTurnGeneration === turnGeneration && isDecisionCurrent()) {
         this.isProcessingAI = false;
       }
     }
@@ -1471,6 +1511,7 @@ export class TurnManager {
     this.isResolutionSafetyArmed = false;
     this.resolutionAccumulatedTime = 0;
     this.resolutionPlayer = null;
+    this.resolutionWeaponChoice = null;
   }
 
   /** One post-shot recovery. It does not run while a projectile is still in flight. */
