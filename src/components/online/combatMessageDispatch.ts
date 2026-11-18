@@ -100,8 +100,14 @@ export function dispatchCombatMessage(
     return;
   }
   if (strictMessage?.type === "EARNINGS_REJECTED") {
-    // Reports can cross an authority transfer or a final settlement in flight.
-    if (strictMessage.reason === "STALE_AUTHORITY" || strictMessage.reason === "WRONG_SHOT") return;
+    // A rejection can arrive after the report or round has already been settled.
+    if (
+      ctx.gamePhaseRef.current !== "COMBAT" ||
+      tm.isInterRoundPaused() ||
+      (strictMessage.shotId !== null && strictMessage.shotId <= ctx.lastAppliedShotIdRef.current) ||
+      strictMessage.reason === "STALE_AUTHORITY" ||
+      strictMessage.reason === "WRONG_SHOT"
+    ) return;
     ctx.dispatch({ type: "SET_NETWORK_ERROR", key: `earnings_rejected_${strictMessage.reason.toLowerCase()}` });
     return;
   }

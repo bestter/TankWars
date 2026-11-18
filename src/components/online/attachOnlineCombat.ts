@@ -233,7 +233,7 @@ export function attachOnlineCombat(
   };
 
   const submitShotEarnings = (preview: ResolvedShotPreview): void => {
-    if (opts.authoritySlotRef.current !== localSlotNum) return;
+    if (opts.gamePhaseRef.current !== "COMBAT" || opts.authoritySlotRef.current !== localSlotNum) return;
     reapplyAuthoritativeEconomy();
     const message: ShotEarningsMessage = {
       type: "SHOT_EARNINGS",
@@ -355,9 +355,23 @@ export function attachOnlineCombat(
     dispatch({ type: "SET_FIRE_REJECTION", reason: message.reason });
   };
 
+  const rememberAuthoritativeEconomy = (players: readonly Player[]): void => {
+    authoritativeEconomyRef.current = players.map(({ id, money, inventory, tank }) => ({
+      id, money, inventory: { ...inventory }, currentWeapon: tank.currentWeapon,
+    }));
+  };
+
+  const clearCompletedShot = (): void => {
+    opts.pendingShotPreviewsRef.current.clear();
+    shotQueueRef.current?.clearActiveServerShotId();
+    shotQueueRef.current?.setCatchUpActiveShotId(null);
+  };
+
   const applyRoundEndMessage = (message: RoundEndMessage): void => {
     if (message.roundNumber <= opts.lastCompletedRoundNumberRef.current) return;
     if (opts.gamePhaseRef.current !== "COMBAT") return;
+    clearCompletedShot();
+    rememberAuthoritativeEconomy(message.players);
     opts.lastCompletedRoundNumberRef.current = Math.max(
       opts.lastCompletedRoundNumberRef.current,
       message.roundNumber,
@@ -377,6 +391,8 @@ export function attachOnlineCombat(
 
   const applyShopStateMessage = (message: ShopStateMessage): void => {
     if (message.shopEpoch <= opts.lastAppliedShopEpochRef.current) return;
+    clearCompletedShot();
+    rememberAuthoritativeEconomy(message.players);
     const pending = opts.shopSessionRef.current.pendingIntent;
     const acknowledged =
       pending?.shopEpoch === message.shopEpoch &&
@@ -457,6 +473,8 @@ export function attachOnlineCombat(
       return;
     }
     if (item.message.shopEpoch <= opts.lastAppliedShopEpochRef.current) return;
+    clearCompletedShot();
+    rememberAuthoritativeEconomy(item.message.players);
     opts.applyShopFinish(
       item.message.players,
       item.message.shopEpoch,

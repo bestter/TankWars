@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GameEngine, type ResolvedShotPreview } from "../../../game/engine/GameEngine";
-import { makePlayer } from "../../../game/__tests__/helpers";
+import { makePlayer, makeRoundMap, makeTank } from "../../../game/__tests__/helpers";
 import { isStrictOnlineMessage, type ShotEarningsAppliedMessage } from "../../../game/online/protocol";
 import { createEmptyShopSession, gameCanvasReducer, INITIAL_STATE, type GameCanvasAction } from "../../gameCanvasReducer";
 import { attachOnlineCombat, type AttachOnlineCombatOptions } from "../attachOnlineCombat";
@@ -24,7 +24,10 @@ describe("online authoritative economy updates", () => {
 
   function setup() {
     const engine = new GameEngine(800, 480);
-    const players = [makePlayer({ id: "a", money: 1000 }), makePlayer({ id: "b", money: 800 })];
+    const players = [
+      makePlayer({ id: "a", money: 1000 }),
+      makePlayer({ id: "b", money: 800, tank: makeTank("tank-2", 620, 300) }),
+    ];
     engine.getTankManager().setPlayers(players);
     const ws = {
       readyState: WebSocket.OPEN,
@@ -71,15 +74,16 @@ describe("online authoritative economy updates", () => {
     dispatch.mockClear();
 
     // Submission reapplies the private authoritative economy before reading live players.
-    const reapplyEconomy = (): void => {
-      const preview: ResolvedShotPreview = {
-        shotId: 2, awards: [], balances: [], damageDealtMilliByPlayer: {},
-        hasEarnings: false, directHitVictimIds: [],
-        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
-      };
-      opts.submitShotEarningsRef.current(preview);
+    const reapplyEconomy = (): void => opts.submitShotEarningsRef.current(preview(2));
+    return { engine, players, dispatch, receive, reapplyEconomy, opts, send: vi.mocked(ws.send) };
+  }
+
+  function preview(shotId: number): ResolvedShotPreview {
+    return {
+      shotId, awards: [], balances: [], damageDealtMilliByPlayer: {},
+      hasEarnings: false, directHitVictimIds: [],
+      roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
     };
-    return { engine, players, dispatch, receive, reapplyEconomy };
   }
 
   function result(balances: ShotEarningsAppliedMessage["balances"]): ShotEarningsAppliedMessage {
@@ -92,7 +96,7 @@ describe("online authoritative economy updates", () => {
   }
 
   it.each(["report", "draw"] as const)("clears a report error after the Worker confirms the %s", (resolution) => {
-    const { engine, players, dispatch, receive } = setup();
+    const { engine, players, dispatch, receive, opts } = setup();
     const reject = (reason: string) => receive({ type: "EARNINGS_REJECTED", reason, shotId: 1, authorityEpoch: 1 });
     const reduceMessages = () => dispatch.mock.calls.reduce(
       (state, [action]) => gameCanvasReducer(state, action),
@@ -106,12 +110,71 @@ describe("online authoritative economy updates", () => {
       const syncEnd = vi.spyOn(engine, "syncRoundEndFromRemote");
       receive({ type: "ROUND_END", players, roundNumber: 1, roundWinnerId: null, isDraw: true });
       expect(syncEnd).toHaveBeenCalledWith(players, null, true);
+      opts.gamePhaseRef.current = "SUMMARY";
+      receive({ type: "EARNINGS_REJECTED", reason: "MALFORMED", shotId: null, authorityEpoch: null });
+      opts.gamePhaseRef.current = "SHOP";
     }
+    reject("MALFORMED");
     reject("STALE_AUTHORITY");
     reject("WRONG_SHOT");
     expect(reduceMessages().networkError).toBeNull();
     const unrelated = { ...INITIAL_STATE, networkError: "combat_catch_up_invalid" };
     expect(gameCanvasReducer(unrelated, { type: "CLEAR_EARNINGS_ERROR" })).toBe(unrelated);
+  });
+
+  it("retires an unreported shot at the deferred round boundary and retains shop economy", () => {
+    const { engine, players, receive, opts, send } = setup();
+    const tm = engine.getTurnManager();
+    vi.spyOn(tm, "executeRemoteFire").mockImplementation(() => {});
+    const roundEnd = vi.spyOn(engine, "syncRoundEndFromRemote").mockImplementation(() => {
+      opts.gamePhaseRef.current = "SUMMARY";
+    });
+    vi.mocked(opts.applyShopFinish).mockImplementation((nextPlayers, epoch, nextRound) => {
+      engine.getTankManager().setPlayers(nextPlayers);
+      opts.lastAppliedShopEpochRef.current = epoch;
+      opts.currentMancheRef.current = nextRound;
+      opts.gamePhaseRef.current = "COMBAT";
+      vi.spyOn(tm, "isInterRoundPaused").mockReturnValue(false);
+    });
+    receive({
+      type: "SHOT", shotId: 1, roundNumber: 1, shotNumberInRound: 1, eventSequence: 1, physicsSeed: 1,
+      isFirstShotOfRound: true, ownerId: "a", slot: 0, actionId: "shot-1",
+      command: { angle: 45, power: 50, weaponId: "MISSILE" },
+    });
+    receive({ type: "ROUND_END", players, roundNumber: 1, roundWinnerId: null, isDraw: true });
+    expect(roundEnd).not.toHaveBeenCalled();
+    opts.pendingShotPreviewsRef.current.set(1, preview(1));
+    tm.onAuthoritativeShotSettled?.(1, "LIVE_LOCAL");
+    expect(roundEnd).toHaveBeenCalledOnce();
+    expect(opts.pendingShotPreviewsRef.current.size).toBe(0);
+
+    const shopPlayers = structuredClone(players);
+    shopPlayers[0].money = 700;
+    shopPlayers[0].inventory.GRENADE = 4;
+    receive({
+      type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, players: shopPlayers,
+      readySlots: [], purchasesByPlayerId: {}, aiShopApplied: true,
+    });
+    send.mockClear();
+    receive({ type: "AUTHORITY_CHANGED", authoritySlot: 0, authorityEpoch: 2 });
+    expect(send).not.toHaveBeenCalled();
+    expect(engine.getTankManager().getPlayers()[0]).toMatchObject({ money: 700, inventory: { GRENADE: 4 } });
+
+    const finalPlayers = structuredClone(shopPlayers);
+    finalPlayers[0].money = 600;
+    finalPlayers[0].inventory.GRENADE = 5;
+    receive({
+      type: "SHOP_FINISH", shopEpoch: 1, completedRoundNumber: 1, nextRoundNumber: 2,
+      map: makeRoundMap(2), players: finalPlayers,
+    });
+    receive({ type: "AUTHORITY_CHANGED", authoritySlot: 0, authorityEpoch: 3 });
+    expect(send).not.toHaveBeenCalled();
+    opts.submitShotEarningsRef.current(preview(2));
+    expect(send).toHaveBeenCalledOnce();
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      type: "SHOT_EARNINGS", shotId: 2,
+      players: [expect.objectContaining({ money: 600, inventory: { MISSILE: 99, GRENADE: 5 } }), expect.anything()],
+    });
   });
 
   it("updates live balances and retains them in the authoritative economy", () => {
