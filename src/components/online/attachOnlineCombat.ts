@@ -771,6 +771,12 @@ export function attachOnlineCombat(
             }
             if (snapshot.roundNumber < opts.currentMancheRef.current && opts.gamePhaseRef.current === "COMBAT") throw new Error("Old combat round");
             const active = snapshot.activeShot;
+            // Completed journal shots have a committed report. Only the active
+            // or explicitly abandoned shot can lack one.
+            const lastConfirmedShot = snapshot.events.findLast((event) => event.type === "SHOT" &&
+              event.shotId !== snapshot.abandonedShotId &&
+              (event.shotId !== active?.shotId || active.earningsApplied));
+            if (lastConfirmedShot?.type === "SHOT") engine.confirmOnlineShotDamage(lastConfirmedShot.shotId);
             if (active && !active.earningsApplied && snapshot.roundNumber === opts.currentMancheRef.current &&
                 opts.gamePhaseRef.current === "COMBAT" && !tm.isInterRoundPaused() &&
                 snapshot.authoritySlot === localSlotNum && snapshot.authorityEpoch > opts.authorityEpochRef.current &&

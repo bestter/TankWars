@@ -292,7 +292,6 @@ export class GameRoom extends DurableObject {
   private cancelShotSettledTimeout: (() => void) | null = null;
   private shotOperation: Promise<void> = Promise.resolve();
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
-  private skipFirstCatchUpRequest = new WeakSet<WebSocket>();
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
   /**
@@ -961,7 +960,7 @@ export class GameRoom extends DurableObject {
           shopCompleted = this.state.shopSession === null;
         }
         if (this.state.started && wsConn) {
-          if (!shopCompleted && (handledInitialCatchUp || this.skipFirstCatchUpRequest.delete(wsConn))) {
+          if (!shopCompleted && handledInitialCatchUp) {
             return;
           }
           this.sendCombatCatchUpToSocket(wsConn, slot, strictMessage);
@@ -1196,7 +1195,7 @@ export class GameRoom extends DurableObject {
     socket?: WebSocket,
     request?: RequestGameStartMessage,
   ): Promise<void> {
-    const fromPendingFetch = socket ? this.pendingClaimNames.delete(socket) : false;
+    if (socket) this.pendingClaimNames.delete(socket);
     if (this.state?.slotConfigs[slot]?.type !== 'human' ||
         (socket && this.sockets.get(slot) !== socket)) return;
 
@@ -1226,10 +1225,10 @@ export class GameRoom extends DurableObject {
     }
     if (wasStarted && socket && this.state.started && this.sockets.get(slot) === socket) {
       if (!(elected === slot && this.state.activeShot)) {
-        this.sendCombatCatchUpToSocket(socket, slot, request);
-      }
-      if (fromPendingFetch && !request) {
-        this.skipFirstCatchUpRequest.add(socket);
+        // A lobby only consumes GAME_START. Its combat handler requests the journal
+        // once it takes over the socket. An authority handoff still sends it first.
+        if (request) this.sendCombatCatchUpToSocket(socket, slot, request);
+        else this.sendGameStartToSocket(socket);
       }
     }
   }

@@ -119,6 +119,60 @@ describe("online authoritative economy updates", () => {
     };
   }
 
+  it.each(["before settlement", "after settlement", "in a catch-up"] as const)(
+    "counts confirmed damage once and discards abandoned damage (confirmation %s)",
+    (confirmation) => {
+      const { engine, players, receive } = setup();
+      engine.setLocalMatch(false);
+      engine.getTankManager().setPlayers(structuredClone(players));
+      const finalize = Reflect.get(engine, "finalizeActiveShot") as () => ResolvedShotPreview;
+      const settleDamagingShot = (shotId: number, damage: number): void => {
+        const [shooter, target] = engine.getTankManager().getPlayers();
+        const { command, physicsSeed } = shot(shotId);
+        expect(engine.fireProjectile(shooter.tank.position, command, shooter.id, {
+          shotId, physicsSeed, isFirstShotOfRound: shotId === 1,
+        })).toBe(true);
+        const projectile = engine.getActiveProjectiles()[0];
+        engine.getTankManager().applyExplosionDamage({
+          explosionX: target.tank.position.x, explosionY: target.tank.position.y,
+          radius: 80, maxDamage: damage, shooterId: shooter.id, weaponId: "MISSILE",
+          isDirectHit: false, shotId, munitionId: projectile.munitionId,
+        });
+        expect(finalize.call(engine).damageDealtMilliByPlayer).toEqual({ a: damage * 1_000 });
+        engine.getPhysicsEngine().clear(false);
+      };
+
+      const applied = result([{ playerId: "a", money: 1200 }, { playerId: "b", money: 800 }]);
+      const committedPlayers = structuredClone(players);
+      committedPlayers[1].tank.health = 80;
+      if (confirmation === "before settlement") receive(applied);
+      settleDamagingShot(1, 20);
+      if (confirmation !== "before settlement") {
+        expect(engine.buildRoundResult().damageDealt).toEqual({});
+      }
+      if (confirmation === "in a catch-up") {
+        const snapshot = relaySnapshot(players, [shot(1)]);
+        snapshot.activeShot = null;
+        snapshot.activeShotId = null;
+        snapshot.players = committedPlayers;
+        const tm = engine.getTurnManager();
+        vi.spyOn(tm, "executeRemoteFire").mockImplementationOnce(() => {});
+        for (const part of fragmentCombat(snapshot, "confirmed")) receive(part);
+        tm.onAuthoritativeShotSettled?.(1, "CATCH_UP");
+      } else {
+        receive(applied);
+      }
+      expect(engine.buildRoundResult().damageDealt).toEqual({ a: 20 });
+      receive(applied);
+      expect(engine.buildRoundResult().damageDealt).toEqual({ a: 20 });
+
+      settleDamagingShot(2, 30);
+      receive({ type: "ROUND_END", players: committedPlayers, roundNumber: 1, roundWinnerId: null, isDraw: true, abandonedShotId: 2 });
+      expect(engine.buildRoundResult().damageDealt).toEqual({ a: 20 });
+      expect(engine.getTankManager().getPlayers()[1].tank.health).toBe(80);
+    },
+  );
+
   it.each(["report", "draw"] as const)("clears a report error after the Worker confirms the %s", (resolution) => {
     const { engine, players, dispatch, receive, opts } = setup();
     const reject = (reason: string) => receive({ type: "EARNINGS_REJECTED", reason, shotId: 1, authorityEpoch: 1 });

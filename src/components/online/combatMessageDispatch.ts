@@ -140,6 +140,7 @@ export function dispatchCombatMessage(
   if (strictMessage?.type === "SHOT_EARNINGS_APPLIED") {
     if (ctx.applyEconomicResult) ctx.applyEconomicResult(strictMessage);
     else engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
+    engine.confirmOnlineShotDamage(strictMessage.shotId);
     if (shotQueue.activeServerShotId === strictMessage.shotId && !shotQueue.replayActiveNow) {
       shotQueue.clearActiveServerShotId();
     }

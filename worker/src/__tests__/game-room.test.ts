@@ -457,10 +457,13 @@ describe('Zeus v3 durable settlement', () => {
     const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
     const reconnecting = claim.call(room, 1, 'Reconnected', sockets[1]);
     const identifying = send(1, { type: 'IDENTIFY', name: 'Identified' });
+    const catchingUp = send(1, {
+      type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+    });
     await Promise.resolve();
     const transactionsDuringFire = storage.transaction.mock.calls.length;
     release();
-    await Promise.all([firing, reconnecting, identifying]);
+    await Promise.all([firing, reconnecting, identifying, catchingUp]);
     expect(transactionsDuringFire).toBe(1);
     expect(setup.mockStorage.storageData.get('state')).toMatchObject({
       activeShot: null,
@@ -899,11 +902,13 @@ describe('Zeus v3 durable settlement', () => {
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
     expect(earlyWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
 
-    // 3. setTimeout(0) claiming first skips ws.onopen's first REQUEST_GAME_START, while explicit retry still serves catch-up.
+    // 3. When the lobby observes GAME_START before mounting combat, the combat
+    // handler's first explicit request still receives the full catch-up.
     const lateWs = await connectViaFetch(room, 1);
     await vi.advanceTimersByTimeAsync(0);
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
-    expect(lateWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+    expect(lateWs.getAllMessages<{ type: string }>().some((m) => m.type === 'GAME_START')).toBe(true);
+    expect(catchUpSnapshot(lateWs)).toBeNull();
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
@@ -912,6 +917,7 @@ describe('Zeus v3 durable settlement', () => {
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
     expect(lateWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+    expect(catchUpSnapshot(lateWs)).toMatchObject({ activeShotId: shot.shotId });
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
