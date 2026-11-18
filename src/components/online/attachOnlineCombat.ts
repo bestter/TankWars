@@ -94,6 +94,7 @@ export interface OnlineCombatHandle {
   readonly send: (message: object) => void;
   readonly detach: () => void;
   readonly activeServerShotId: () => number | null;
+  readonly isReceivingCatchUp: () => boolean;
 }
 
 export function attachOnlineCombat(
@@ -484,6 +485,7 @@ export function attachOnlineCombat(
       item.message.map,
     );
     schedulePendingShopRetry();
+    seenBatchIds.clear();
     const queue = shotQueueRef.current;
     queue?.resetForNextRound();
     if (
@@ -608,8 +610,8 @@ export function attachOnlineCombat(
       snapshotPending = null;
       deferredControl = [];
       liveBuffered = [];
-      shotQueue.abandonRound(roundNumber);
       engine.invalidateCombatSimulation();
+      shotQueue.abandonRound(roundNumber);
       applyRoundEndMessage(item.message);
       flushDeferredTransitions(shotQueue, transitionBuffer, applyDeferredItem);
       return;
@@ -730,7 +732,23 @@ export function attachOnlineCombat(
             throw new Error("Invalid combat envelope");
           }
           const part = parsed;
-          if (part.roundNumber <= abandonedRoundNumber) return;
+          if (
+            part.roundNumber <= abandonedRoundNumber ||
+            part.roundNumber <= opts.lastCompletedRoundNumberRef.current
+          ) {
+            if (part.type === "COMBAT_CATCH_UP_FRAGMENT" && part.kind === "EVENTS") {
+              for (const event of part.events) {
+                if (event.type === "SHOT") {
+                  acknowledgePendingFire(event);
+                  if (event.shotId > opts.lastSeenShotIdRef.current) {
+                    opts.lastSeenShotIdRef.current = event.shotId;
+                    dispatch({ type: "SET_LAST_SEEN_SHOT", shotId: event.shotId });
+                  }
+                }
+              }
+            }
+            return;
+          }
           if (part.type === "COMBAT_CATCH_UP_BEGIN" && !seenBatchIds.has(part.catchUpId)) {
             seenBatchIds.add(part.catchUpId); receivingBatchId = part.catchUpId;
             shotQueue.startReceiving();
@@ -871,6 +889,7 @@ export function attachOnlineCombat(
   return {
     send,
     activeServerShotId: () => shotQueue.activeServerShotId,
+    isReceivingCatchUp: () => shotQueue.isReceivingCatchUp,
     detach: () => {
       isMounted = false;
       if (combatStartTimer !== null) {

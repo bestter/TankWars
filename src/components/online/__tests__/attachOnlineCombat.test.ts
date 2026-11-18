@@ -80,7 +80,7 @@ describe("online authoritative economy updates", () => {
       receive(shot(2, 1, 1));
       opts.submitShotEarningsRef.current(preview(2));
     };
-    return { engine, players, dispatch, receive, reapplyEconomy, opts, send: vi.mocked(ws.send) };
+    return { engine, players, dispatch, receive, reapplyEconomy, opts, send: vi.mocked(ws.send), handle };
   }
 
   function shot(shotId: number, roundNumber = 1, eventSequence = shotId): ShotMessage {
@@ -263,7 +263,7 @@ describe("online authoritative economy updates", () => {
   });
 
   it.each(["COMBAT", "SHOP"] as const)("restores an abandoned round from %s without starting historical shots", (phase) => {
-    const { engine, players, receive, opts } = setup();
+    const { engine, players, receive, opts, handle } = setup();
     const fire = vi.spyOn(engine.getTurnManager(), "executeRemoteFire");
     const roundEnd = vi.spyOn(engine, "syncRoundEndFromRemote");
     engine.onRoundEnded = () => { opts.gamePhaseRef.current = "SUMMARY"; };
@@ -283,6 +283,71 @@ describe("online authoritative economy updates", () => {
     expect(roundEnd).toHaveBeenCalledTimes(phase === "COMBAT" ? 1 : 0);
     expect(opts.gamePhaseRef.current).toBe(phase === "COMBAT" ? "SUMMARY" : "SHOP");
     if (phase === "COMBAT") expect(engine.getRoundEarningsByPlayer()).toEqual({ a: 200, b: 0 });
+    expect(handle.isReceivingCatchUp()).toBe(false);
+    expect(engine.getTurnManager().getCurrentTurnInfo()?.isCatchUp).toBe(false);
+  });
+
+  it("ignores stale COMBAT_CATCH_UP batches for completed rounds without locking TurnManager and acknowledges pending fires", () => {
+    const { engine, players, dispatch, receive, opts, handle } = setup();
+    const tm = engine.getTurnManager();
+    const lockSpy = vi.spyOn(tm, "lockForCatchUp");
+    opts.gamePhaseRef.current = "SHOP";
+    opts.currentMancheRef.current = 2;
+    opts.lastCompletedRoundNumberRef.current = 1;
+    opts.pendingFireRef.current = { actionId: "shot-2", command: shot(2).command };
+
+    const snapshot = relaySnapshot(players, [shot(1), shot(2)]);
+    const parts = fragmentCombat(snapshot, "stale-shop-batch");
+    // Omit COMBAT_CATCH_UP_END to confirm a truncated stale batch never leaves catch-up locked.
+    for (const part of parts.slice(0, -1)) receive(part);
+
+    expect(lockSpy).not.toHaveBeenCalled();
+    expect(handle.isReceivingCatchUp()).toBe(false);
+    expect(tm.getCurrentTurnInfo()?.isCatchUp).toBe(false);
+    expect(opts.pendingFireRef.current).toBeNull();
+    expect(dispatch).toHaveBeenCalledWith({ type: "SET_FIRE_PENDING", intent: null });
+  });
+
+  it("clears seenBatchIds on SHOP_FINISH so catch-up batch tracking stays bounded per round", () => {
+    const { engine, players, receive, opts, handle } = setup();
+    const tm = engine.getTurnManager();
+    const lockSpy = vi.spyOn(tm, "lockForCatchUp");
+    vi.mocked(opts.applyShopFinish).mockImplementation((nextPlayers, epoch, nextRound) => {
+      engine.getTankManager().setPlayers(nextPlayers);
+      opts.lastAppliedShopEpochRef.current = epoch;
+      opts.currentMancheRef.current = nextRound;
+      opts.gamePhaseRef.current = "COMBAT";
+    });
+
+    const round1Parts = fragmentCombat(relaySnapshot(players, [shot(1)]), "reused-id");
+    receive(round1Parts[0]);
+    expect(handle.isReceivingCatchUp()).toBe(true);
+    expect(lockSpy).toHaveBeenCalledTimes(1);
+
+    // A duplicate COMBAT_CATCH_UP_BEGIN in the same round is deduplicated by seenBatchIds.
+    receive(round1Parts[0]);
+    expect(lockSpy).toHaveBeenCalledTimes(1);
+    for (const part of round1Parts.slice(1)) receive(part);
+
+    receive({ type: "ROUND_END", players, roundNumber: 1, roundWinnerId: null, isDraw: true, abandonedShotId: 1 });
+    expect(handle.isReceivingCatchUp()).toBe(false);
+    receive({
+      type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, players,
+      readySlots: [], purchasesByPlayerId: {}, aiShopApplied: true,
+    });
+    receive({
+      type: "SHOP_FINISH", shopEpoch: 1, completedRoundNumber: 1, nextRoundNumber: 2,
+      map: makeRoundMap(2), players,
+    });
+
+    lockSpy.mockClear();
+    const round2Snapshot = { ...relaySnapshot(players, [shot(2, 2, 1)]), map: makeRoundMap(2), roundNumber: 2 };
+    const [beginRound2] = fragmentCombat(round2Snapshot, "reused-id");
+    receive(beginRound2);
+    expect(handle.isReceivingCatchUp()).toBe(true);
+    expect(lockSpy).toHaveBeenCalled();
+    for (const part of fragmentCombat(round2Snapshot, "round2-complete")) receive(part);
+    expect(handle.isReceivingCatchUp()).toBe(false);
   });
 
   it("abandons a never-settled shot immediately and retains committed earnings and shop economy", () => {

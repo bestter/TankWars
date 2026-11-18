@@ -427,7 +427,7 @@ export class GameRoom extends DurableObject {
         }
         if (this.state.combatSchemaVersion === ONLINE_PROTOCOL_VERSION && this.buildGameStartMessage()) {
           if (this.state.activeShot) {
-            if (!this.state.activeShot.earningsApplied && !this.state.activeShot.reportRecovery) {
+            if ((!this.state.activeShot.earningsApplied || !this.state.activeShot.shooterSettled) && !this.state.activeShot.reportRecovery) {
               const deadlineAt = Date.now() + REPORT_WINDOW_MS;
               this.state.activeShot.reportRecovery = {
                 deadlineAt, relayed: false, initialAuthoritySlot: this.state.earningsAuthoritySlot,
@@ -1620,8 +1620,13 @@ export class GameRoom extends DurableObject {
 
   private async recoverShotReport(): Promise<void> {
     const active = this.state?.activeShot;
-    const recovery = active?.reportRecovery;
-    if (!this.state || !active || !recovery) return;
+    if (!this.state || !active) return;
+    if (active.earningsApplied && active.shooterSettled) {
+      await this.maybeCompleteActiveShot();
+      return;
+    }
+    const recovery = active.reportRecovery;
+    if (!recovery) return;
     const now = Date.now();
     if (now < recovery.deadlineAt) {
       await this.ctx.storage.setAlarm(recovery.deadlineAt);
@@ -1632,6 +1637,7 @@ export class GameRoom extends DurableObject {
       // Also recover a committed report if the settlement timer was lost.
       if (!active.shooterSettled) {
         active.shooterSettled = true;
+        this.clearShotSettledTimeout();
         await this.saveState();
       }
       await this.maybeCompleteActiveShot();
@@ -1767,7 +1773,7 @@ export class GameRoom extends DurableObject {
     active.earningsApplied = true;
     active.releaseAt = Date.now();
     if (this.state.slotConfigs[active.slot]?.type === "ai") active.shooterSettled = true;
-    await this.saveState();
+    await this.saveState(active.shooterSettled ? undefined : active.reportRecovery?.deadlineAt);
     this.broadcast(applied);
     await this.maybeCompleteActiveShot();
   }
@@ -1776,8 +1782,10 @@ export class GameRoom extends DurableObject {
     if (!this.state?.activeShot || !this.state.lastAppliedEarnings) return;
     const active = this.state.activeShot;
     if (!active.shooterSettled || !active.earningsApplied) return;
-    const remaining = Math.max(0, (active.releaseAt ?? 0) - Date.now());
+    const releaseAt = active.releaseAt ?? 0;
+    const remaining = Math.max(0, releaseAt - Date.now());
     if (remaining > 0) {
+      await this.ctx.storage.setAlarm(releaseAt);
       const shotId = active.shotId;
       const releasePromise = new Promise<void>((resolve) => {
         setTimeout(() => {

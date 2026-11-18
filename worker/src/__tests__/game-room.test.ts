@@ -635,6 +635,66 @@ describe('Zeus v3 durable settlement', () => {
     expect(room.getRoster()!.players[0].money).toBe(275);
   });
 
+  it.each([false, true])('keeps the recovery alarm when SHOT_EARNINGS arrives before SHOT_SETTLED and completes on cold-start alarm (roundEnds=%s)', async (roundEnds) => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot(2);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+
+    const reportMessage = report(shot.shotId, 25);
+    if (roundEnds) {
+      reportMessage.players = reportPlayers(room, [false, true]);
+      reportMessage.deadSlots = [false, true];
+      Object.assign(reportMessage.roundOutcome, {
+        isRoundEnd: true, roundWinnerId: reportMessage.players[0].id,
+      });
+    }
+    await send(0, reportMessage);
+
+    expect(room.getRoster()!.activeShot).toMatchObject({
+      shotId: shot.shotId,
+      earningsApplied: true,
+      shooterSettled: false,
+    });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+
+    vi.setSystemTime(launchedAt + 20_000);
+    const restored = await restart();
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+
+    expect(restored.getRoster()).toMatchObject({
+      activeShot: null,
+      currentPlayerIndex: roundEnds ? 0 : 1,
+      roundEnded: roundEnds,
+      lastResolvedShotId: shot.shotId,
+      roundEarningsByPlayer: { 'player-1': 25 },
+    });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === (roundEnds ? 'ROUND_END' : 'STATE_UPDATE'))).toBe(true);
+  });
+
+  it('clears the recovery alarm once a delayed releaseAt shot finishes settling', async () => {
+    const { room, setup, send, fire, report } = await boot(2);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    await send(0, report(shot.shotId, 10));
+
+    const active = room.getRoster()!.activeShot!;
+    active.releaseAt = launchedAt + 500;
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 500);
+    expect(room.getRoster()!.activeShot).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(room.getRoster()).toMatchObject({
+      activeShot: null,
+      currentPlayerIndex: 1,
+      lastResolvedShotId: shot.shotId,
+    });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+  });
+
   it('serializes shop purchases, readiness, IDENTIFY and REQUEST_GAME_START through runShotOperation', async () => {
     const { room, setup, sockets, send } = await boot(2);
     room.getRoster()!.roundEnded = true;
