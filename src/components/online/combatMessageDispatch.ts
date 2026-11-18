@@ -100,6 +100,8 @@ export function dispatchCombatMessage(
     return;
   }
   if (strictMessage?.type === "EARNINGS_REJECTED") {
+    // Reports can cross an authority transfer or a final settlement in flight.
+    if (strictMessage.reason === "STALE_AUTHORITY" || strictMessage.reason === "WRONG_SHOT") return;
     ctx.dispatch({ type: "SET_NETWORK_ERROR", key: `earnings_rejected_${strictMessage.reason.toLowerCase()}` });
     return;
   }
@@ -135,6 +137,7 @@ export function dispatchCombatMessage(
     ctx.pendingShotPreviewsRef.current.delete(strictMessage.shotId);
     if (strictMessage.shotId <= ctx.lastAppliedShotIdRef.current) return;
     ctx.lastAppliedShotIdRef.current = strictMessage.shotId;
+    ctx.dispatch({ type: "CLEAR_EARNINGS_ERROR" });
     const roster = [...engine.getTankManager().getPlayers()];
     ctx.dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = ctx.buildOverlayAwards(strictMessage.awards, roster);

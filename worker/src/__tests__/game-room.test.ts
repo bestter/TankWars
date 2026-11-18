@@ -41,6 +41,7 @@ class MockWebSocket {
 
 interface MockStorageState {
   storageData: Map<string, unknown>;
+  alarmAt?: number;
 }
 
 function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
@@ -48,7 +49,7 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
   const mockStorage: MockStorageState = { storageData };
 
   let activeData = storageData;
-  const storage = {
+  const storageOps = {
     get: vi.fn(async (key: string) => structuredClone(activeData.get(key))),
     put: vi.fn(async (key: string | Record<string, unknown>, value?: unknown) => {
       if (typeof key === "string") activeData.set(key, structuredClone(value));
@@ -59,12 +60,21 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
       return key.reduce((count, entry) => count + Number(activeData.delete(entry)), 0);
     }),
     list: vi.fn(async (options: { prefix: string }) => new Map([...activeData].filter(([k]) => k.startsWith(options.prefix)).map(([k, v]) => [k, structuredClone(v)]))),
-    transaction: vi.fn(async (callback: (txn: { get: (key: string) => Promise<unknown>; put: (key: string | Record<string, unknown>, value?: unknown) => Promise<void>; delete: (key: string | string[]) => Promise<boolean | number>; list: (options: { prefix: string }) => Promise<Map<string, unknown>> }) => Promise<void>) => {
+  };
+  type MockTransaction = typeof storageOps & { setAlarm: (time: number | Date) => Promise<void> };
+  const storage = {
+    ...storageOps,
+    transaction: vi.fn(async (callback: (txn: MockTransaction) => Promise<void>) => {
       const staged = structuredClone(storageData);
+      let alarmAt = mockStorage.alarmAt;
       activeData = staged;
       try {
-        await callback(storage);
+        await callback({
+          ...storageOps,
+          setAlarm: async (time: number | Date) => { alarmAt = Number(time); },
+        });
         storageData.clear(); for (const [key, value] of staged) storageData.set(key, value);
+        mockStorage.alarmAt = alarmAt;
       } finally { activeData = storageData; }
     }),
   };
@@ -263,16 +273,18 @@ describe('Zeus v3 durable settlement', () => {
     const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
     for (let i = 0; i < (mixed ? 1 : count); i++) { connections.set(i, sockets[i] as unknown as WebSocket); await claim.call(room, i, `Human ${i}`); }
     const send = (slot: number, message: object) => (Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(room, slot, JSON.stringify(message));
-    const fire = async () => {
+    const fire = async (weaponId: WeaponId = 'MISSILE') => {
       const slot = room.getRoster()!.currentPlayerIndex;
-      await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' } });
+      await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId } });
       return room.getRoster()!.activeShot!;
     };
     const report = (shotId: number, amount = 0) => ({ type: 'SHOT_EARNINGS', shotId, authorityEpoch: room.getRoster()!.authorityEpoch,
       players: reportPlayers(room), awards: amount ? [{ playerId: 'player-1', amount }] : [], deadSlots: room.getRoster()!.players.map((p) => p.tank.isDead), directHitVictimIds: [],
       roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } });
     const restart = async () => {
+      const now = Date.now();
       vi.clearAllTimers();
+      vi.setSystemTime(now);
       const restored = new GameRoom(setup.ctx as DurableObjectState, {});
       Object.defineProperty(restored, 'ctx', { value: setup.ctx });
       await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
@@ -283,6 +295,99 @@ describe('Zeus v3 durable settlement', () => {
     };
     return { room, setup, sockets, send, fire, report, restart };
   }
+
+  it('relays an unreported shot to the next connected authority and applies its report once', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot(3);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    const oldReport = report(shot.shotId, 15);
+    const before = room.getRoster()!.players[0].money;
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false, false] });
+
+    await vi.advanceTimersByTimeAsync(19_999);
+    await room.alarm();
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({ earningsAuthoritySlot: 1, authorityEpoch: oldReport.authorityEpoch + 1 });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 40_000);
+    expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 1 });
+
+    await send(0, oldReport);
+    await send(1, { ...oldReport, awards: [] });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'STALE_AUTHORITY' });
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'STALE_AUTHORITY' });
+    expect(room.getRoster()!.players[0].money).toBe(before);
+
+    await send(1, report(shot.shotId, 30));
+    await send(1, report(shot.shotId, 90));
+    await send(0, oldReport);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({
+      activeShot: null, currentPlayerIndex: 1, roundEnded: false, lastResolvedShotId: shot.shotId,
+      roundEarningsByPlayer: { 'player-1': 30 },
+    });
+    expect(room.getRoster()!.players[0].money).toBe(before + 30);
+    expect(sockets[2].getAllMessages<{ type: string }>().filter((m) => m.type === 'STATE_UPDATE')).toHaveLength(1);
+  });
+
+  it('preserves the final deadline on restart and replays a single draw with existing earnings intact', async () => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot();
+    const first = await fire();
+    await send(0, report(first.shotId, 25));
+    await send(0, { type: 'SHOT_SETTLED', shotId: first.shotId, slot: 0, deadSlots: [false, false] });
+    const launchedAt = Date.now();
+    const grenades = room.getRoster()!.players[1].inventory.GRENADE!;
+    const pending = await fire('GRENADE');
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const restored = await restart();
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 40_000);
+    await restored.alarm();
+    expect(restored.getRoster()!.activeShot?.shotId).toBe(pending.shotId);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await restored.alarm();
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({
+      activeShot: null, roundEnded: true, lastResolvedShotId: first.shotId,
+      roundEarningsByPlayer: { 'player-1': 25 },
+    });
+    expect(Object.keys(restored.getRoster()!.earningsResults)).toEqual([String(first.shotId)]);
+    const messages = () => sockets[0].getAllMessages<{ type: string }>().filter((m) => m.type === 'ROUND_END');
+    expect(messages()).toHaveLength(1);
+    const draw = messages()[0];
+    expect(draw).toMatchObject({ roundWinnerId: null, isDraw: true });
+    const onceMore = await restart();
+    const handle = (slot: number, message: object) => (Reflect.get(onceMore, 'handleClientMessage') as
+      (slot: number, raw: string) => Promise<void>).call(onceMore, slot, JSON.stringify(message));
+    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    expect(messages()).toEqual([draw, draw]);
+    expect(catchUpSnapshot(sockets[0])?.activeShotId).toBeNull();
+    await handle(1, { ...report(pending.shotId, 100), authorityEpoch: onceMore.getRoster()!.authorityEpoch });
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
+    await handle(1, { type: 'FIRE', actionId: pending.actionId, command: pending.command });
+    expect(onceMore.getRoster()!.shotHistory).toHaveLength(2);
+    expect(onceMore.getRoster()!.players[1].inventory.GRENADE).toBe(grenades - 1);
+    expect(onceMore.getRoster()!.roundEarningsByPlayer['player-1']).toBe(25);
+  });
+
+  it('bounds a legacy pending shot after cold start when no alternate authority is available', async () => {
+    const { setup, fire, restart } = await boot(2, true);
+    const shot = await fire();
+    const stored = setup.mockStorage.storageData.get('state') as { activeShot: { reportRecovery?: unknown } };
+    delete stored.activeShot.reportRecovery;
+    delete setup.mockStorage.alarmAt;
+    const restored = await restart();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 20_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ roundEnded: true, activeShot: null, earningsResults: {} });
+    expect(restored.getRoster()!.shotHistory.map((message) => message.shotId)).toEqual([shot.shotId]);
+  });
 
   it.each([
     [{}, null, null], [{ shotId: 7 }, 7, null], [{ authorityEpoch: 3 }, null, 3],

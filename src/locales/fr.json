@@ -106,7 +106,7 @@
   "main_title": "Bestter's TankWars",
   "next_round_note": "Prochaine manche : nouveau terrain et nouvelles positions",
   "num_players": "NOMBRE DE JOUEURS :",
-  "outcome_draw": "Manche nulle — tous les tanks détruits",
+  "outcome_draw": "Manche nulle",
   "outcome_round_ended": "Manche terminée",
   "outcome_winner": "Vainqueur de la manche : {{name}}",
   "player_name_aria_label": "Nom du joueur {{num}}",

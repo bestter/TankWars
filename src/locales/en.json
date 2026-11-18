@@ -106,7 +106,7 @@
   "main_title": "Bestter's TankWars",
   "next_round_note": "Next round: new terrain and new positions",
   "num_players": "NUMBER OF PLAYERS:",
-  "outcome_draw": "Draw — all tanks destroyed",
+  "outcome_draw": "Draw",
   "outcome_round_ended": "Round ended",
   "outcome_winner": "Round winner: {{name}}",
   "player_name_aria_label": "Player {{num}} name",

@@ -91,7 +91,12 @@ import {
 } from '../../src/game/zeus/zeusDomain';
 import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
-type PersistedActiveShot = ActiveCombatShot;
+const REPORT_WINDOW_MS = 20_000;
+
+interface PersistedActiveShot extends ActiveCombatShot {
+  /** Absent in rooms persisted before the report watchdog. */
+  reportRecovery?: { deadlineAt: number; relayed: boolean };
+}
 
 interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   deadSlots: boolean[];
@@ -163,6 +168,7 @@ interface RoomState {
   preparationAttempt: number;
   currentPlayerIndex: number;
   roundEnded: boolean;
+  roundClosedWithoutReport?: boolean;
   authorityOrder: number[];
   earningsAuthoritySlot: number | null;
   authorityEpoch: number;
@@ -410,6 +416,12 @@ export class GameRoom extends DurableObject {
         }
         if (this.state.combatSchemaVersion === ONLINE_PROTOCOL_VERSION && this.buildGameStartMessage()) {
           if (this.state.activeShot) {
+            if (!this.state.activeShot.earningsApplied && !this.state.activeShot.reportRecovery) {
+              const deadlineAt = Date.now() + REPORT_WINDOW_MS;
+              this.state.activeShot.reportRecovery = { deadlineAt, relayed: false };
+              await this.saveState(deadlineAt);
+              shouldPersistMigration = false;
+            }
             if (!this.state.activeShot.shooterSettled && this.state.slotConfigs[this.state.activeShot.slot]?.type === "human") {
               const shotId = this.state.activeShot.shotId;
               const recovery = new Promise<void>((resolve) => {
@@ -435,7 +447,7 @@ export class GameRoom extends DurableObject {
     });
   }
 
-  private async saveState(): Promise<void> {
+  private async saveState(alarmAt?: number): Promise<void> {
     if (!this.state) return;
     const { combatJournal, earningsResults, shotHistory,
       processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
@@ -492,6 +504,7 @@ export class GameRoom extends DurableObject {
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
+        if (alarmAt !== undefined) await txn.setAlarm(alarmAt);
       });
       // Publish only committed serializations; replacing the map also removes obsolete keys.
       this.lastCombatStringified = stringified;
@@ -586,12 +599,17 @@ export class GameRoom extends DurableObject {
     this.sendGameStartToSocket(ws);
     if (!this.state?.started || !this.buildGameStartMessage()) return;
 
+    let activeShot: ActiveCombatShot | null = null;
+    if (this.state.activeShot) {
+      const { reportRecovery: _reportRecovery, ...wireShot } = this.state.activeShot;
+      activeShot = wireShot;
+    }
     const snapshot = {
       roundNumber: this.state.roundNumber, map: this.state.map!,
       initialPlayers: this.state.initialRoundPlayers, players: this.state.players,
       economicRevision: this.state.economicRevision, roundEarningsByPlayer: this.state.roundEarningsByPlayer,
       currentPlayerIndex: this.state.currentPlayerIndex, zeus: this.buildZeusStateMessage(),
-      activeShotId: this.state.activeShot?.shotId ?? null, activeShot: this.state.activeShot,
+      activeShotId: activeShot?.shotId ?? null, activeShot,
       completedShop: this.state.lastCompletedShop,
       lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
       authoritySlot: this.state.earningsAuthoritySlot, authorityEpoch: this.state.authorityEpoch,
@@ -609,12 +627,12 @@ export class GameRoom extends DurableObject {
       }
       if (this.state.roundEnded) {
         const alive = this.state.players.filter((p) => !p.tank.isDead && p.tank.health > 0);
-        const lastOutcome = { roundWinnerId: alive.length === 1 ? alive[0].id : null, isDraw: alive.length === 0 };
+        const abandoned = this.state.roundClosedWithoutReport === true;
         const roundEnd: RoundEndMessage = {
           type: 'ROUND_END',
           players: this.state.players,
-          roundWinnerId: lastOutcome?.roundWinnerId ?? null,
-          isDraw: lastOutcome?.isDraw ?? false,
+          roundWinnerId: !abandoned && alive.length === 1 ? alive[0].id : null,
+          isDraw: abandoned || alive.length === 0,
           roundNumber: this.state.roundNumber,
         };
         ws.send(JSON.stringify(roundEnd));
@@ -958,6 +976,7 @@ export class GameRoom extends DurableObject {
       if (
         this.shotInFlight &&
         strictMessage.shotId === this.state.activeShot?.shotId &&
+        !this.state.activeShot.shooterSettled &&
         slot === this.state.currentPlayerIndex &&
         slot === this.awaitingShotFromSlot
       ) {
@@ -1164,7 +1183,8 @@ export class GameRoom extends DurableObject {
       joinOrdinal: existing?.joinOrdinal ?? joinOrdinal,
     };
     await this.saveState();
-    if (this.state.started && this.state.earningsAuthoritySlot === null) {
+    if (this.state.started && (this.state.earningsAuthoritySlot === null ||
+        !this.sockets.has(this.state.earningsAuthoritySlot))) {
       await this.electEarningsAuthority();
     }
     this.sendRosterUpdate();
@@ -1267,13 +1287,15 @@ export class GameRoom extends DurableObject {
     this.broadcast(message);
   }
 
-  private async electEarningsAuthority(): Promise<void> {
+  private async electEarningsAuthority(
+    next = this.state?.authorityOrder.find((slot) => this.sockets.has(slot)) ?? null,
+    alarmAt?: number,
+  ): Promise<void> {
     if (!this.state) return;
-    const next = this.state.authorityOrder.find((slot) => this.sockets.has(slot)) ?? null;
     if (next === this.state.earningsAuthoritySlot) return;
     this.state.earningsAuthoritySlot = next;
     this.state.authorityEpoch++;
-    await this.saveState();
+    await this.saveState(alarmAt);
     this.broadcastAuthorityChanged();
     if (next !== null && this.state.activeShot) {
       const socket = this.sockets.get(next);
@@ -1419,6 +1441,7 @@ export class GameRoom extends DurableObject {
     this.shotEpoch++;
     const epoch = this.shotEpoch;
     const shotId = this.state.nextShotId++;
+    const reportDeadlineAt = Date.now() + REPORT_WINDOW_MS;
     this.state.shotNumberInRound++;
     this.state.activeShot = {
       shotId,
@@ -1435,6 +1458,7 @@ export class GameRoom extends DurableObject {
       earningsApplied: false,
       releaseAt: null,
       zeusEvaluated: false, appointment: null,
+      reportRecovery: { deadlineAt: reportDeadlineAt, relayed: false },
     };
     const shotEvent: ShotMessage = {
       type: 'SHOT',
@@ -1456,7 +1480,7 @@ export class GameRoom extends DurableObject {
       slot: fromSlot,
       result: shotEvent,
     };
-    await this.saveState();
+    await this.saveState(reportDeadlineAt);
     this.broadcast(shotEvent);
 
     const cfg = this.state.slotConfigs[fromSlot];
@@ -1499,6 +1523,52 @@ export class GameRoom extends DurableObject {
       });
       this.ctx.waitUntil(humanTimeoutPromise);
     }
+  }
+
+  async alarm(): Promise<void> {
+    const active = this.state?.activeShot;
+    const recovery = active?.reportRecovery;
+    if (!this.state || !active || !recovery || Date.now() < recovery.deadlineAt) return;
+
+    if (active.earningsApplied) {
+      // Also recover a committed report if the settlement timer was lost.
+      if (!active.shooterSettled) {
+        active.shooterSettled = true;
+        await this.saveState();
+      }
+      await this.maybeCompleteActiveShot();
+      return;
+    }
+
+    const current = this.state.earningsAuthoritySlot;
+    const next = this.state.authorityOrder.find((slot) => slot !== current && this.sockets.has(slot));
+    const finalDeadlineAt = recovery.deadlineAt + REPORT_WINDOW_MS;
+    if (!recovery.relayed && next !== undefined && Date.now() < finalDeadlineAt) {
+      active.reportRecovery = { deadlineAt: finalDeadlineAt, relayed: true };
+      await this.electEarningsAuthority(next, finalDeadlineAt);
+      return;
+    }
+
+    // Without a report we have no authoritative post-shot physics. End the
+    // round using its last committed roster and keep the debit for the shot.
+    this.state.roundClosedWithoutReport = true;
+    await this.closeShotRound(null, true);
+  }
+
+  private async closeShotRound(roundWinnerId: string | null, isDraw: boolean): Promise<void> {
+    if (!this.state) return;
+    this.resetShotCoordination();
+    this.state.roundEnded = true;
+    this.resetZeusRoundState();
+    await this.saveState();
+    const roundEnd: RoundEndMessage = {
+      type: 'ROUND_END',
+      players: this.state.players,
+      roundWinnerId,
+      isDraw,
+      roundNumber: this.state.roundNumber,
+    };
+    this.broadcast(roundEnd);
   }
 
   private async advanceTurnAndNotify(): Promise<void> {
@@ -1631,22 +1701,9 @@ export class GameRoom extends DurableObject {
       this.state.lastResolvedShotId = active.shotId;
       await this.saveState();
     }
+    if (this.state.activeShot !== active) return;
     if (outcome.isRoundEnd) {
-      this.clearShotSettledTimeout();
-      this.shotInFlight = false;
-      this.awaitingShotFromSlot = null;
-      this.state.activeShot = null;
-      this.state.roundEnded = true;
-      this.resetZeusRoundState();
-      await this.saveState();
-      const roundEnd: RoundEndMessage = {
-        type: 'ROUND_END',
-        players: this.state.players,
-        roundWinnerId: outcome.roundWinnerId,
-        isDraw: outcome.isDraw,
-        roundNumber: this.state.roundNumber,
-      };
-      this.broadcast(roundEnd);
+      await this.closeShotRound(outcome.roundWinnerId, outcome.isDraw);
       return;
     }
     if (active.appointment) {
@@ -2228,6 +2285,7 @@ export class GameRoom extends DurableObject {
     this.state.shopSession = null;
     this.resetShotCoordination();
     this.state.roundEnded = false;
+    delete this.state.roundClosedWithoutReport;
     this.state.roundNumber = nextRoundNumber;
     this.state.shotNumberInRound = 0;
     this.state.shotHistory = [];

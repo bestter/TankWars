@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GameEngine, type ResolvedShotPreview } from "../../../game/engine/GameEngine";
 import { makePlayer } from "../../../game/__tests__/helpers";
 import { isStrictOnlineMessage, type ShotEarningsAppliedMessage } from "../../../game/online/protocol";
-import { createEmptyShopSession } from "../../gameCanvasReducer";
+import { createEmptyShopSession, gameCanvasReducer, INITIAL_STATE, type GameCanvasAction } from "../../gameCanvasReducer";
 import { attachOnlineCombat, type AttachOnlineCombatOptions } from "../attachOnlineCombat";
 
 describe("online authoritative economy updates", () => {
@@ -32,7 +32,7 @@ describe("online authoritative economy updates", () => {
       close: vi.fn(),
       onmessage: null,
     } as unknown as WebSocket;
-    const dispatch = vi.fn();
+    const dispatch = vi.fn<(action: GameCanvasAction) => void>();
     const opts: AttachOnlineCombatOptions = {
       engine, dispatch, roomId: "room", slot: 0, token: "token", incomingWs: ws,
       gameWsRef: { current: null },
@@ -90,6 +90,29 @@ describe("online authoritative economy updates", () => {
       roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
     };
   }
+
+  it.each(["report", "draw"] as const)("clears a report error after the Worker confirms the %s", (resolution) => {
+    const { engine, players, dispatch, receive } = setup();
+    const reject = (reason: string) => receive({ type: "EARNINGS_REJECTED", reason, shotId: 1, authorityEpoch: 1 });
+    const reduceMessages = () => dispatch.mock.calls.reduce(
+      (state, [action]) => gameCanvasReducer(state, action),
+      INITIAL_STATE,
+    );
+    reject("MALFORMED");
+    expect(reduceMessages().networkError).toBe("earnings_rejected_malformed");
+    if (resolution === "report") {
+      receive(result([{ playerId: "a", money: 1200 }]));
+    } else {
+      const syncEnd = vi.spyOn(engine, "syncRoundEndFromRemote");
+      receive({ type: "ROUND_END", players, roundNumber: 1, roundWinnerId: null, isDraw: true });
+      expect(syncEnd).toHaveBeenCalledWith(players, null, true);
+    }
+    reject("STALE_AUTHORITY");
+    reject("WRONG_SHOT");
+    expect(reduceMessages().networkError).toBeNull();
+    const unrelated = { ...INITIAL_STATE, networkError: "combat_catch_up_invalid" };
+    expect(gameCanvasReducer(unrelated, { type: "CLEAR_EARNINGS_ERROR" })).toBe(unrelated);
+  });
 
   it("updates live balances and retains them in the authoritative economy", () => {
     const { engine, players, dispatch, receive, reapplyEconomy } = setup();

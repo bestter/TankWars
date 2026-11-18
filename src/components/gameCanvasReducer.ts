@@ -106,6 +106,7 @@ export interface GameCanvasState {
 export type GameCanvasAction =
   | { type: "RESET_COMBAT_PROGRESS"; roundNumber: number }
   | { type: "SET_NETWORK_ERROR"; key: string | null }
+  | { type: "CLEAR_EARNINGS_ERROR" }
   | { type: "SET_ROUND_PREPARATION_ERROR"; reason: "EXHAUSTED" | "NEW_GAME_REQUIRED" | null }
   | { type: "SET_CURRENT_MANCHE"; roundNumber: number }
   | { type: "SET_WIND"; wind: number }
@@ -420,6 +421,10 @@ export function gameCanvasReducer(
       };
     case "SET_NETWORK_ERROR":
       return { ...state, networkError: action.key };
+    case "CLEAR_EARNINGS_ERROR":
+      return state.networkError?.startsWith("earnings_rejected_")
+        ? { ...state, networkError: null }
+        : state;
     case "SET_FIRE_REJECTION":
       return { ...state, fireRejection: action.reason };
     case "SET_PROTOCOL_MISMATCH":

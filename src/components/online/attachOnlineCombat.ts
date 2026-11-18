@@ -366,6 +366,7 @@ export function attachOnlineCombat(
       type: "SET_LAST_COMPLETED_ROUND",
       roundNumber: message.roundNumber,
     });
+    dispatch({ type: "CLEAR_EARNINGS_ERROR" });
     opts.roundEndFromNetworkRef.current = true;
     engine.syncRoundEndFromRemote(
       message.players,
