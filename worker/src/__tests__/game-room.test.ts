@@ -9,6 +9,7 @@ import type { Player } from '../../../src/types/player';
 import type { ShotMessage } from '../../../src/game/online/protocol';
 import { autoBuyForAI } from '../../../src/game/entities/ai/aiShopHelper';
 import { normalizeInventoryAtShopOpen } from '../../../src/game/shop/shopTransaction';
+import { getRNG, setRNG, type RNG } from '../../../src/utils/random';
 
 // Node adapter for Cloudflare's extension; the workerd smoke test uses the real API.
 beforeEach(() => {
@@ -2383,6 +2384,234 @@ describe('GameRoom Durable Object', () => {
         JSON.stringify(restoredState.shopSession?.purchasesByPlayerId ?? {}),
       ).toBe(afterFirst.counters);
     });
+
+    it.each(['v1-random', 'v2-heuristic'] as const)(
+      'rolls occasional nuclears at most once per shop epoch for %s across repeat SHOP_ENTER and GameRoom restore when rolls fail',
+      async (aiProfile) => {
+        const previousRng: RNG = getRNG();
+        try {
+          const rolls = [0.1, 0.05];
+          let index = 0;
+          let drawCount = 0;
+          setRNG({
+            next() {
+              drawCount++;
+              return rolls[index++] ?? 0.99;
+            },
+          });
+
+          const setup = createMockCtx();
+          const aiRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(aiRoom, 'ctx', { value: setup.ctx, writable: true });
+          await aiRoom.fetchCreate(
+            new Request('http://localhost/api/room', {
+              method: 'POST',
+              body: JSON.stringify({
+                roomId: `room-ai-occasional-fail-${aiProfile}`,
+                numPlayers: 2,
+                slotConfigs: [
+                  { type: 'human' },
+                  { type: 'ai', aiProfile },
+                ],
+                origin: 'http://localhost:5173',
+              }),
+            }),
+          );
+          const socket = new MockWebSocket();
+          const sockets = Reflect.get(aiRoom, 'sockets') as Map<number, WebSocket>;
+          sockets.set(0, socket as unknown as WebSocket);
+          const claim = Reflect.get(aiRoom, 'claimHumanSlot') as (
+            slot: number,
+            name: string,
+          ) => Promise<void>;
+          await claim.call(aiRoom, 0, 'Alice');
+
+          const state = Reflect.get(aiRoom, 'state') as {
+            shopEpoch: number;
+            roundEnded: boolean;
+            players: Player[];
+            shopSession: {
+              shopEpoch: number;
+              purchasesByPlayerId: Record<string, Record<string, number>>;
+            } | null;
+          };
+          state.roundEnded = true;
+          state.players[1].money = 5_000;
+          state.players[1].inventory = {};
+          const handle = Reflect.get(aiRoom, 'handleClientMessage') as (
+            slot: number,
+            raw: string,
+          ) => Promise<void>;
+
+          await handle.call(
+            aiRoom,
+            0,
+            JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }),
+          );
+
+          expect(drawCount).toBe(2);
+          const expectedOrdinaryInventory =
+            aiProfile === 'v1-random'
+              ? { GRENADE: 1, CLUSTER: 1 }
+              : { GRENADE: 6, CLUSTER: 6, DRILLER: 2, BULLDOZER: 2 };
+          const expectedMoneyAfter =
+            aiProfile === 'v1-random'
+              ? 5_000 - (75 + 135)
+              : 5_000 - (6 * 75 + 6 * 135 + 2 * 90 + 2 * 150);
+          expect(state.players[1].inventory).toEqual(expectedOrdinaryInventory);
+          expect(state.players[1].money).toBe(expectedMoneyAfter);
+          expect(state.players[1].tank.currentWeapon).toBe('MISSILE');
+
+          // Changer le RNG vers des tirages gagnants ne doit rien déclencher au RESUME ni après restauration
+          setRNG({
+            next() {
+              drawCount++;
+              return 0.01;
+            },
+          });
+
+          await handle.call(
+            aiRoom,
+            0,
+            JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }),
+          );
+          expect(drawCount).toBe(2);
+          expect(state.players[1].inventory).toEqual(expectedOrdinaryInventory);
+          expect(state.players[1].money).toBe(expectedMoneyAfter);
+
+          const restoredRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(restoredRoom, 'ctx', {
+            value: setup.ctx,
+            writable: true,
+          });
+          await Promise.resolve();
+          await Promise.resolve();
+          const restoredState = Reflect.get(restoredRoom, 'state') as typeof state;
+          const restoredHandle = Reflect.get(
+            restoredRoom,
+            'handleClientMessage',
+          ) as (slot: number, raw: string) => Promise<void>;
+
+          await restoredHandle.call(
+            restoredRoom,
+            0,
+            JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }),
+          );
+          expect(drawCount).toBe(2);
+          expect(restoredState.players[1].inventory).toEqual(
+            expectedOrdinaryInventory,
+          );
+          expect(restoredState.players[1].money).toBe(expectedMoneyAfter);
+        } finally {
+          setRNG(previousRng);
+        }
+      },
+    );
+
+    it.each(['v1-random', 'v2-heuristic'] as const)(
+      'persists and broadcasts occasional NUKE and THERMONUCLEAR purchases once for %s when rolls succeed',
+      async (aiProfile) => {
+        const previousRng: RNG = getRNG();
+        try {
+          const rolls = [0.09, 0.04];
+          let index = 0;
+          let drawCount = 0;
+          setRNG({
+            next() {
+              drawCount++;
+              return rolls[index++] ?? 0.99;
+            },
+          });
+
+          const setup = createMockCtx();
+          const aiRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(aiRoom, 'ctx', { value: setup.ctx, writable: true });
+          await aiRoom.fetchCreate(
+            new Request('http://localhost/api/room', {
+              method: 'POST',
+              body: JSON.stringify({
+                roomId: `room-ai-occasional-win-${aiProfile}`,
+                numPlayers: 2,
+                slotConfigs: [
+                  { type: 'human' },
+                  { type: 'ai', aiProfile },
+                ],
+                origin: 'http://localhost:5173',
+              }),
+            }),
+          );
+          const socket = new MockWebSocket();
+          const sockets = Reflect.get(aiRoom, 'sockets') as Map<number, WebSocket>;
+          sockets.set(0, socket as unknown as WebSocket);
+          const claim = Reflect.get(aiRoom, 'claimHumanSlot') as (
+            slot: number,
+            name: string,
+          ) => Promise<void>;
+          await claim.call(aiRoom, 0, 'Alice');
+
+          const state = Reflect.get(aiRoom, 'state') as {
+            roundEnded: boolean;
+            players: Player[];
+            shopSession: {
+              purchasesByPlayerId: Record<string, Record<string, number>>;
+            } | null;
+          };
+          state.roundEnded = true;
+          state.players[1].money = 5_000;
+          state.players[1].inventory = {};
+          const handle = Reflect.get(aiRoom, 'handleClientMessage') as (
+            slot: number,
+            raw: string,
+          ) => Promise<void>;
+
+          socket.sent.length = 0;
+          await handle.call(
+            aiRoom,
+            0,
+            JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }),
+          );
+
+          const expectedInventory =
+            aiProfile === 'v1-random'
+              ? { GRENADE: 1, CLUSTER: 1, NUKE: 1, THERMONUCLEAR: 1 }
+              : {
+                  GRENADE: 6,
+                  CLUSTER: 6,
+                  DRILLER: 2,
+                  BULLDOZER: 2,
+                  NUKE: 1,
+                  THERMONUCLEAR: 1,
+                };
+          const expectedMoneyAfter =
+            aiProfile === 'v1-random'
+              ? 5_000 - (75 + 135 + 420 + 2_500)
+              : 5_000 - (6 * 75 + 6 * 135 + 2 * 90 + 2 * 150 + 420 + 2_500);
+
+          expect(drawCount).toBe(2);
+          expect(state.players[1].inventory).toEqual(expectedInventory);
+          expect(state.players[1].money).toBe(expectedMoneyAfter);
+          expect(state.players[1].tank.currentWeapon).toBe('MISSILE');
+          expect(
+            state.shopSession?.purchasesByPlayerId[state.players[1].id],
+          ).toEqual(expectedInventory);
+
+          const shopStateMsg = socket
+            .getAllMessages<ShopStateMessage>()
+            .find((m) => m.type === 'SHOP_STATE');
+          expect(shopStateMsg?.players[1].inventory).toEqual(expectedInventory);
+          expect(shopStateMsg?.players[1].money).toBe(expectedMoneyAfter);
+
+          await handle.call(
+            aiRoom,
+            0,
+            JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }),
+          );
+          expect(drawCount).toBe(2);
+        } finally {
+          setRNG(previousRng);
+        }
+      },
+    );
 
     it('broadcasts SHOP_FINISH only when all human slots have sent SHOP_READY', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (

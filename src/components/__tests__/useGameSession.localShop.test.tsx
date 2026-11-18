@@ -10,6 +10,12 @@ import { TurnManager } from "../../game/engine/TurnManager";
 import { TankManager } from "../../game/entities/TankManager";
 import { AIByProfileStrategy } from "../../game/entities/ai/AIByProfileStrategy";
 import { GameEngine } from "../../game/engine/GameEngine";
+import {
+  createSeededRNG,
+  getRNG,
+  setRNG,
+  type RNG,
+} from "../../utils/random";
 
 type SessionApi = ReturnType<typeof useGameSession>;
 
@@ -38,7 +44,11 @@ function ShopHarness({
 }
 
 describe("useGameSession local shop AI advance", () => {
+  let previousRng: RNG;
+
   beforeEach(() => {
+    previousRng = getRNG();
+    setRNG(createSeededRNG(218));
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
       value: () => stubCanvas2d(),
@@ -47,6 +57,7 @@ describe("useGameSession local shop AI advance", () => {
   });
 
   afterEach(() => {
+    setRNG(previousRng);
     cleanup();
     vi.clearAllTimers();
     vi.useRealTimers();
@@ -441,4 +452,114 @@ describe("useGameSession local shop AI advance", () => {
       2,
     ]);
   });
+
+  it.each(["v1-random", "v2-heuristic"] as const)(
+    "evaluates occasional NUKE and THERMONUCLEAR once per shop visit with locked RNG for %s",
+    (profile) => {
+      const originalAutoBuy = aiShopHelper.autoBuyForAI;
+      let inAutoBuy = false;
+      const autoBuySpy = vi
+        .spyOn(aiShopHelper, "autoBuyForAI")
+        .mockImplementation((...args) => {
+          inAutoBuy = true;
+          try {
+            return originalAutoBuy(...args);
+          } finally {
+            inAutoBuy = false;
+          }
+        });
+      const setPlayersSpy = vi.spyOn(TankManager.prototype, "setPlayers");
+
+      const runShopVisit = (rolls: readonly number[]) => {
+        let index = 0;
+        let drawCount = 0;
+        setRNG({
+          next() {
+            if (!inAutoBuy) {
+              return previousRng.next();
+            }
+            drawCount++;
+            return rolls[index++] ?? 0.99;
+          },
+        });
+        autoBuySpy.mockClear();
+
+        const players: Player[] = [
+          makePlayer({
+            id: "human-1",
+            name: "Joueur-1",
+            isHuman: true,
+            money: 1_000,
+            inventory: {},
+            tank: makeTank("tank-1", 120, 300),
+          }),
+          makePlayer({
+            id: "cpu-1",
+            name: "CPU-1",
+            isHuman: false,
+            aiProfile: profile,
+            money: 5_000,
+            inventory: {},
+            tank: makeTank("tank-2", 620, 300),
+          }),
+        ];
+
+        const sessionRef: { current: SessionApi | null } = { current: null };
+        const view = render(
+          <ShopHarness players={players} sessionRef={sessionRef} />,
+        );
+
+        act(() => {
+          sessionRef.current?.handleNextRound();
+        });
+        act(() => {
+          sessionRef.current?.handleShopReady();
+        });
+        act(() => {
+          vi.advanceTimersByTime(200);
+        });
+
+        const result = {
+          phase: sessionRef.current?.state.gamePhase,
+          aiPlayer: sessionRef.current?.state.uiPlayers[1],
+          tankManagerAi: setPlayersSpy.mock.calls.at(-1)?.[0]?.[1],
+          drawCount,
+          autoBuyCalls: autoBuySpy.mock.calls.length,
+        };
+        view.unmount();
+        return result;
+      };
+
+      const ordinaryExpected =
+        profile === "v1-random"
+          ? { GRENADE: 1, CLUSTER: 1 }
+          : { GRENADE: 6, CLUSTER: 6, DRILLER: 2, BULLDOZER: 2 };
+      const ordinaryCost =
+        profile === "v1-random"
+          ? 75 + 135
+          : 6 * 75 + 6 * 135 + 2 * 90 + 2 * 150;
+
+      const won = runShopVisit([0.09, 0.04]);
+      expect(won.phase).toBe("COMBAT");
+      expect(won.autoBuyCalls).toBe(1);
+      expect(won.drawCount).toBe(2);
+      expect(won.aiPlayer?.inventory).toEqual({
+        ...ordinaryExpected,
+        NUKE: 1,
+        THERMONUCLEAR: 1,
+      });
+      expect(won.aiPlayer?.money).toBe(5_000 - ordinaryCost - 420 - 2_500);
+      expect(won.aiPlayer?.tank.currentWeapon).toBe("MISSILE");
+      expect(won.tankManagerAi?.inventory).toEqual(won.aiPlayer?.inventory);
+      expect(won.tankManagerAi?.money).toBe(won.aiPlayer?.money);
+
+      const lost = runShopVisit([0.1, 0.05]);
+      expect(lost.phase).toBe("COMBAT");
+      expect(lost.autoBuyCalls).toBe(1);
+      expect(lost.drawCount).toBe(2);
+      expect(lost.aiPlayer?.inventory).toEqual(ordinaryExpected);
+      expect(lost.aiPlayer?.money).toBe(5_000 - ordinaryCost);
+      expect(lost.aiPlayer?.tank.currentWeapon).toBe("MISSILE");
+    },
+  );
 });

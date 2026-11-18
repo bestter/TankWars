@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { render, act, cleanup } from "@testing-library/react";
 import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
+import * as aiShopHelper from "../../game/entities/ai/aiShopHelper";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
 import { GameEngine } from "../../game/engine/GameEngine";
@@ -376,5 +377,78 @@ describe("useGameSession free weapons mode (#355)", () => {
     expect(human?.inventory.BULLET).toBe(12);
     expect(human?.inventory.NUKE).toBe(2);
     expect(sessionRef.current?.state.roundPreparationError).toBeNull();
+  });
+
+  it("keeps SIMPLE free of nuclear weapons and OK at NUKE=1 with zero autoBuyForAI shop rolls", async () => {
+    const autoBuySpy = vi.spyOn(aiShopHelper, "autoBuyForAI");
+    const setPlayersSpy = vi.spyOn(GameEngine.prototype, "setPlayers");
+    const players: Player[] = [
+      makePlayer({
+        id: "cpu-simple",
+        name: "CPU Simple",
+        isHuman: false,
+        aiProfile: "v1-random",
+        money: 20_000,
+        inventory: {},
+        tank: makeTank("tank-1", 120, 300),
+      }),
+      makePlayer({
+        id: "cpu-ok",
+        name: "CPU OK",
+        isHuman: false,
+        aiProfile: "v2-heuristic",
+        money: 20_000,
+        inventory: {},
+        tank: makeTank("tank-2", 620, 300),
+      }),
+    ];
+
+    const sessionRef: { current: SessionApi | null } = { current: null };
+    render(
+      <FreeWeaponsHarness
+        players={players}
+        freeWeapons={true}
+        sessionRef={sessionRef}
+      />,
+    );
+
+    const engine = setPlayersSpy.mock.instances[0] as GameEngine;
+    const roster = engine.getTankManager().getPlayers();
+    roster[1].tank.isDead = true;
+    await act(async () => {
+      engine.onRoundEnded?.({
+        survivors: [roster[0]],
+        roundWinner: roster[0],
+        isDraw: false,
+      });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(sessionRef.current?.state.gamePhase).toBe("SUMMARY");
+
+    await act(async () => {
+      sessionRef.current?.handleNextRound();
+    });
+
+    expect(sessionRef.current?.state.gamePhase).toBe("COMBAT");
+    expect(autoBuySpy).not.toHaveBeenCalled();
+
+    const uiPlayers = sessionRef.current?.state.uiPlayers ?? [];
+    const simpleAfter = uiPlayers.find((p) => p.id === "cpu-simple");
+    const okAfter = uiPlayers.find((p) => p.id === "cpu-ok");
+    expect(simpleAfter?.inventory).toEqual({ GRENADE: 1, CLUSTER: 1 });
+    expect(simpleAfter?.inventory.NUKE).toBeUndefined();
+    expect(simpleAfter?.inventory.THERMONUCLEAR).toBeUndefined();
+    expect(okAfter?.inventory).toEqual({
+      GRENADE: 6,
+      CLUSTER: 6,
+      DRILLER: 2,
+      BULLDOZER: 2,
+      NUKE: 1,
+    });
+    expect(okAfter?.inventory.THERMONUCLEAR).toBeUndefined();
+    expect(simpleAfter?.money).toBe(20_000);
+    expect(okAfter?.money).toBe(20_000);
   });
 });

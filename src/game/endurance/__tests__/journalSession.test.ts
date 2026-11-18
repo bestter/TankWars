@@ -56,49 +56,60 @@ it("exports #370 ballistic counters through endurance JSONL with DEV false", asy
 
 describe("session journal lifecycle and reconciliation", () => {
   it("reconciles 20 rounds of applied credits and unit purchases, skips the final shop and resets the next block", async () => {
-    const f = fixture(), storage = new JournalMemory(); const players = f.players;
-    const run = new EnduranceSession({ ...f.config, roundsPerBlock: 20 }, storage);
-    await run.start(); run.attach(f.host);
-    const initial = structuredClone(players);
-    for (let round = 1; round <= 20; round++) {
-      if (round > 1) { players.forEach(p => { p.tank.isDead = false; }); run.beginRound(round); }
-      for (const p of players) {
-        const before = p.money; p.money += 100;
-        run.emit({ kind: "credit", credit: { source: "shot", causalId: round, playerId: p.id, before, after: p.money, amount: 100, components: [] } });
-      }
-      players[1].tank.isDead = true; run.completeRound([players[0].id]);
-      if (round < 20) {
-        run.setPhase("SHOP");
-        for (let i = 0; i < players.length; i++) {
-          const visit = run.beginShopVisit(players[i])!;
-          const result = autoBuyForAI(players[i], 2, {}, true);
-          players[i] = result.player; run.endShopVisit(visit, players[i], result.purchases ?? []);
+    const previous = getRNG();
+    try {
+      let draws = 0;
+      setRNG({
+        next() {
+          draws++;
+          return draws === 1 ? 0.05 : 0.99;
+        },
+      });
+      const f = fixture(), storage = new JournalMemory(); const players = f.players;
+      const run = new EnduranceSession({ ...f.config, roundsPerBlock: 20 }, storage);
+      await run.start(); run.attach(f.host);
+      const initial = structuredClone(players);
+      for (let round = 1; round <= 20; round++) {
+        if (round > 1) { players.forEach(p => { p.tank.isDead = false; }); run.beginRound(round); }
+        for (const p of players) {
+          const before = p.money; p.money += 100;
+          run.emit({ kind: "credit", credit: { source: "shot", causalId: round, playerId: p.id, before, after: p.money, amount: 100, components: [] } });
+        }
+        players[1].tank.isDead = true; run.completeRound([players[0].id]);
+        if (round < 20) {
+          run.setPhase("SHOP");
+          for (let i = 0; i < players.length; i++) {
+            const visit = run.beginShopVisit(players[i])!;
+            const result = autoBuyForAI(players[i], 2, {}, true);
+            players[i] = result.player; run.endShopVisit(visit, players[i], result.purchases ?? []);
+          }
         }
       }
-    }
-    const final = structuredClone(players); run.finishPresentation(); await vi.waitFor(() => expect(run.block?.index).toBe(2));
-    expect(run.block?.index).toBe(2);
-    expect(run.block?.config.players).toEqual(initial);
-    await run.stop();
-    const rows = storage.entries;
-    expect(rows.filter(e => e.event.kind === "shop-start")).toHaveLength(38);
-    expect(rows.filter(e => e.event.kind === "shop-start" && e.round === 20)).toHaveLength(0);
-    for (const player of final) {
-      const purchases = rows.flatMap(e => e.event.kind === "purchase" && e.event.purchase.playerId === player.id ? [e.event.purchase] : []);
-      const origin = initial.find(p => p.id === player.id)!;
-      expect(player.money).toBe(origin.money + 2000 - purchases.reduce((sum, p) => sum + p.price, 0));
-      for (const purchase of purchases) {
-        expect(purchase.moneyAfter).toBe(purchase.moneyBefore - purchase.price);
-        expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
+      const final = structuredClone(players); run.finishPresentation(); await vi.waitFor(() => expect(run.block?.index).toBe(2));
+      expect(run.block?.index).toBe(2);
+      expect(run.block?.config.players).toEqual(initial);
+      await run.stop();
+      const rows = storage.entries;
+      expect(rows.filter(e => e.event.kind === "shop-start")).toHaveLength(38);
+      expect(rows.filter(e => e.event.kind === "shop-start" && e.round === 20)).toHaveLength(0);
+      expect(rows.some(e => e.event.kind === "purchase" && e.event.purchase.playerId === players[0].id && e.event.purchase.weaponId === "NUKE")).toBe(true);
+      for (const player of final) {
+        const purchases = rows.flatMap(e => e.event.kind === "purchase" && e.event.purchase.playerId === player.id ? [e.event.purchase] : []);
+        const origin = initial.find(p => p.id === player.id)!;
+        expect(player.money).toBe(origin.money + 2000 - purchases.reduce((sum, p) => sum + p.price, 0));
+        for (const purchase of purchases) {
+          expect(purchase.moneyAfter).toBe(purchase.moneyBefore - purchase.price);
+          expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
+        }
+        for (const [weapon, stock] of Object.entries(player.inventory)) {
+          expect(stock).toBe((origin.inventory[weapon as keyof typeof origin.inventory] ?? 0) + purchases.filter(p => p.weaponId === weapon).length);
+        }
       }
-      for (const [weapon, stock] of Object.entries(player.inventory)) {
-        expect(stock).toBe((origin.inventory[weapon as keyof typeof origin.inventory] ?? 0) + purchases.filter(p => p.weaponId === weapon).length);
-      }
-    }
-    const lines = (await run.journalJSONL()).trim().split("\n").map(line => JSON.parse(line) as unknown);
-    expect(lines[0]).toMatchObject({ kind: "journal-status", status: { complete: true } });
-    expect(lines.slice(1)).toEqual(rows);
-    expect(rows.map(e => e.sequence)).toEqual(rows.map((_e, i) => i + 1));
+      const lines = (await run.journalJSONL()).trim().split("\n").map(line => JSON.parse(line) as unknown);
+      expect(lines[0]).toMatchObject({ kind: "journal-status", status: { complete: true } });
+      expect(lines.slice(1)).toEqual(rows);
+      expect(rows.map(e => e.sequence)).toEqual(rows.map((_e, i) => i + 1));
+    } finally { setRNG(previous); }
   });
   it("cancels superseded and stopped decisions and never attaches late events to the next block", async () => {
     const f = fixture(), storage = new JournalMemory(), run = new EnduranceSession(f.config, storage);
