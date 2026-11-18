@@ -22,6 +22,14 @@ import { consumeHitReaction, getHitReactionIntensity } from "./hitReaction";
 import { shouldPickBulldozer } from "./bulldozerTactics";
 import { chooseLocalMaterialShot } from "./localMaterialPlanner";
 
+export type HeuristicWeaponSource =
+  | "grenade-relief"
+  | "cluster-grouping"
+  | "nuke-roll"
+  | "thermonuclear-roll"
+  | "bulldozer"
+  | "missile-default";
+
 export class AIHeuristicStrategy implements AIEngine {
   public onDecisionObserved?: AIObserver;
   public onTargetSelected?: (playerId: string, targetId: string) => void;
@@ -42,7 +50,10 @@ export class AIHeuristicStrategy implements AIEngine {
     tankId: string,
     gameState: GameState,
     terrainManager: TerrainManager,
+    isCurrent: () => boolean = () => true,
+    onWeaponSelected?: (weaponId: WeaponId) => void,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
+    if (!isCurrent()) throw new Error("AI_CANCELLED");
     const playerById = new Map<string, Player>();
     let self: Player | undefined;
     for (const player of gameState.players) {
@@ -104,15 +115,22 @@ export class AIHeuristicStrategy implements AIEngine {
     const targetReason = target.id === revengeId ? "revenge" : target.id === memory.currentTargetId ? "memory" : "weakest-ai-before-human";
     this.onTargetSelected?.(self.id, target.id);
     const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
-    const ordinaryWeapon = this.chooseWeapon(self, target, terrainManager, gameState);
+    const { weaponId: ordinaryWeapon, weaponSource } = this.chooseWeapon(
+      self,
+      target,
+      terrainManager,
+      gameState,
+    );
     const proposals: import("./localMaterialPlanner").MaterialProposalObservation[] | undefined = observation ? [] : undefined;
     const choice = chooseLocalMaterialShot("v2-heuristic", self, target, gameState, terrainManager,
       ordinaryWeapon, (point, weapon, variant) => solveHeuristicAim(
         self, point.x, point.y, gameState.windForce, gameState.gravity, terrainManager, weapon, variant,
       ), proposals ? proposal => proposals.push(proposal) : undefined);
+    if (!isCurrent()) throw new Error("AI_CANCELLED");
     const attempts = recordAimAttempt(memory, target.id);
     const weaponId = choice.weaponId;
     self.tank.currentWeapon = weaponId;
+    onWeaponSelected?.(weaponId);
 
     const aimX =
       choice.point.x +
@@ -164,7 +182,7 @@ export class AIHeuristicStrategy implements AIEngine {
     const finalized = finalizeAdvancedAim(command);
     observation?.step("finalize", command, finalized);
     observation?.finish({ ...finalized, weaponId }, choice.reason, { variant: choice.variant, point: choice.point,
-      proposals, ordinaryWeapon, searchLimit: 12, unexamined: "not-evaluated", targetReason });
+      proposals, ordinaryWeapon, weaponSource, searchLimit: 12, unexamined: "not-evaluated", targetReason });
     return { ...finalized, weaponId };
   }
 
@@ -173,7 +191,7 @@ export class AIHeuristicStrategy implements AIEngine {
     target: Player,
     terrain: TerrainManager,
     gameState: GameState,
-  ): WeaponId {
+  ): { weaponId: WeaponId; weaponSource: HeuristicWeaponSource } {
     const has = (id: WeaponId) => (self.inventory[id] ?? 0) > 0;
     let terrainVariance = 0;
     const steps = 6;
@@ -187,7 +205,9 @@ export class AIHeuristicStrategy implements AIEngine {
       );
       previousHeight = height;
     }
-    if (terrainVariance > 28 && has("GRENADE")) return "GRENADE";
+    if (terrainVariance > 28 && has("GRENADE")) {
+      return { weaponId: "GRENADE", weaponSource: "grenade-relief" };
+    }
 
     const nearby = gameState.players.filter(
       (player) =>
@@ -195,20 +215,27 @@ export class AIHeuristicStrategy implements AIEngine {
         !player.tank.isDead &&
         Math.abs(player.tank.position.x - target.tank.position.x) < 70,
     ).length;
-    if (nearby >= 2 && has("CLUSTER")) return "CLUSTER";
+    if (nearby >= 2 && has("CLUSTER")) {
+      return { weaponId: "CLUSTER", weaponSource: "cluster-grouping" };
+    }
 
     const targetHealthTotal = target.tank.health + target.tank.shield;
     if (
       Math.abs(target.tank.position.x - self.tank.position.x) > 380 &&
-      has("NUKE") &&
-      targetHealthTotal >= 40 &&
-      secureRandom() < 0.2
+      targetHealthTotal >= 40
     ) {
-      return "NUKE";
+      if (has("NUKE") && secureRandom() < 0.2) {
+        return { weaponId: "NUKE", weaponSource: "nuke-roll" };
+      }
+      if (has("THERMONUCLEAR") && secureRandom() < 0.1) {
+        return { weaponId: "THERMONUCLEAR", weaponSource: "thermonuclear-roll" };
+      }
     }
 
-    if (shouldPickBulldozer(self, target, terrain)) return "BULLDOZER";
-    return "MISSILE";
+    if (shouldPickBulldozer(self, target, terrain)) {
+      return { weaponId: "BULLDOZER", weaponSource: "bulldozer" };
+    }
+    return { weaponId: "MISSILE", weaponSource: "missile-default" };
   }
 
   getResolutionFallback(): { angle: number; power: number } | null {

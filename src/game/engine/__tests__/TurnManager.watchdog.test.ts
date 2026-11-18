@@ -4,8 +4,11 @@ import { TurnManager } from "../TurnManager";
 import { TankManager } from "../../entities/TankManager";
 import type { TerrainManager } from "../Terrain";
 import type { AIEngine } from "../../entities/ai/AIEngine";
+import { AIHeuristicStrategy } from "../../entities/ai/AIHeuristicStrategy";
+import * as localPlanner from "../../entities/ai/localMaterialPlanner";
 import type { CombatObserver } from "../../endurance/types";
-import { makePlayer, makeTank } from "../../__tests__/helpers";
+import type { WeaponId } from "../../../types/weapon";
+import { makePlayer, makeTank, flatTerrain } from "../../__tests__/helpers";
 import * as random from "../../../utils/random";
 
 const DT = 1 / 120;
@@ -321,5 +324,244 @@ describe("watchdogs de tir IA (#358)", () => {
     step(update, 3);
     expect(resolutions).toHaveLength(1);
     expect(launch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "replie une ancienne arme %s équipée sur MISSILE si le délai expire avant tout choix établi (#429)",
+    async (equippedNuclear) => {
+      vi.useFakeTimers();
+      silence();
+      const self = makePlayer({
+        id: "s",
+        isHuman: false,
+        inventory: { [equippedNuclear]: 1, MISSILE: 99 },
+        tank: makeTank("s", 100, 336, { currentWeapon: equippedNuclear }),
+      });
+      const target = makePlayer({ id: "c", isHuman: true, tank: makeTank("c", 600, 336) });
+      const tanks = new TankManager();
+      tanks.setPlayers([self, target]);
+      let resolveLate: ((decision: { angle: number; power: number; weaponId: WeaponId }) => void) | undefined;
+      const fire = vi.fn();
+      const fallback = vi.fn(() => ({ angle: 45, power: 50 }));
+      const rngSpy = vi.spyOn(random, "secureRandom");
+      const turns = new TurnManager(tanks, {} as TerrainManager, fire, {
+        executeTurn: vi.fn().mockImplementation(() => new Promise((resolve) => {
+          resolveLate = resolve;
+        })),
+        getResolutionFallback: fallback,
+      });
+
+      turns.startFirstTurn();
+      rngSpy.mockClear();
+      step((dt) => turns.update(dt), 10.05);
+
+      expect(fallback).toHaveBeenCalledTimes(1);
+      expect(rngSpy).not.toHaveBeenCalled();
+      expect(fire).toHaveBeenCalledTimes(1);
+      expect(fire.mock.calls[0][1]).toMatchObject({ weaponId: "MISSILE" });
+      expect(self.inventory[equippedNuclear]).toBe(1);
+      expect(self.tank.currentWeapon).toBe("MISSILE");
+
+      // Réponse tardive ignorée sans tir supplémentaire ni consommation
+      resolveLate?.({ angle: 25, power: 80, weaponId: equippedNuclear });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fire).toHaveBeenCalledTimes(1);
+      expect(self.inventory[equippedNuclear]).toBe(1);
+    },
+  );
+
+  it("conserve l'arme nucléaire établie par SIMPLE même identique à l'arme équipée, puis replie sur MISSILE au tour suivant si rien n'est établi (#429)", async () => {
+    vi.useFakeTimers();
+    silence();
+    const self = makePlayer({
+      id: "s",
+      isHuman: false,
+      aiProfile: "v1-random",
+      inventory: { NUKE: 2, MISSILE: 99 },
+      tank: makeTank("s", 100, 336, { currentWeapon: "NUKE" }),
+    });
+    const other = makePlayer({ id: "c", isHuman: true, tank: makeTank("c", 600, 336) });
+    const tanks = new TankManager();
+    tanks.setPlayers([self, other]);
+    let resolveTurn1: ((decision: { angle: number; power: number; weaponId: WeaponId }) => void) | undefined;
+    let resolveTurn2: ((decision: { angle: number; power: number; weaponId: WeaponId }) => void) | undefined;
+    const fire = vi.fn();
+    const executeTurn = vi.fn<NonNullable<AIEngine["executeTurn"]>>()
+      .mockImplementationOnce((_tankId, _gs, _tm, _isCurrent, onWeaponSelected) => {
+        onWeaponSelected?.("NUKE");
+        return new Promise((resolve) => { resolveTurn1 = resolve; });
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveTurn2 = resolve; }));
+    const turns = new TurnManager(tanks, {} as TerrainManager, fire, {
+      executeTurn,
+      getResolutionFallback: () => ({ angle: 45, power: 50 }),
+    });
+
+    // Tour 1 : SIMPLE a établi NUKE pendant l'attente du solveur -> le timeout tire NUKE et débite 1 unité
+    turns.startFirstTurn();
+    step((dt) => turns.update(dt), 10.05);
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(fire.mock.calls[0][1]).toMatchObject({ weaponId: "NUKE" });
+    expect(self.inventory.NUKE).toBe(1);
+    expect(self.tank.currentWeapon).toBe("NUKE");
+
+    // La réponse tardive du tour 1 ne déclenche pas de second tir
+    resolveTurn1?.({ angle: 10, power: 10, weaponId: "MISSILE" });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fire).toHaveBeenCalledTimes(1);
+
+    // Fin de résolution -> tour humain -> tir humain -> retour à self (tour suivant)
+    step((dt) => turns.update(dt), 2.3);
+    expect(turns.getCurrentPlayer()?.id).toBe("c");
+    expect(turns.tryFire()).toBe(true);
+    Reflect.set(turns, "awaitingTankStabilization", true);
+    turns.update(DT);
+    expect(turns.getCurrentPlayer()?.id).toBe("s");
+
+    // Tour suivant : currentWeapon est toujours NUKE mais aucun nouveau choix n'est établi -> MISSILE
+    step((dt) => turns.update(dt), 10.05);
+    expect(fire).toHaveBeenCalledTimes(3);
+    expect(fire.mock.calls[2][1]).toMatchObject({ weaponId: "MISSILE" });
+    expect(self.inventory.NUKE).toBe(1);
+    expect(self.tank.currentWeapon).toBe("MISSILE");
+
+    resolveTurn2?.({ angle: 15, power: 25, weaponId: "NUKE" });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fire).toHaveBeenCalledTimes(3);
+    expect(self.inventory.NUKE).toBe(1);
+  });
+
+  it("utilise l'arme finale du planificateur d'OK (THERMONUCLEAR ou substitution) au timeout et refuse d'utiliser un jet amont seul (#429)", async () => {
+    vi.useFakeTimers();
+    silence();
+    const self = makePlayer({
+      id: "s",
+      isHuman: false,
+      aiProfile: "v2-heuristic",
+      inventory: { NUKE: 1, THERMONUCLEAR: 1, DRILLER: 1, MISSILE: 99 },
+      tank: makeTank("s", 100, 336, { currentWeapon: "GRENADE" }),
+    });
+    const target = makePlayer({ id: "c", isHuman: true, tank: makeTank("c", 600, 336, { health: 80 }) });
+    const tanks = new TankManager();
+    tanks.setPlayers([self, target]);
+
+    // 1. Vérifier qu'AIHeuristicStrategy n'établit son choix qu'après chooseLocalMaterialShot (substitution NUKE -> DRILLER)
+    vi.spyOn(random, "secureRandom").mockReturnValueOnce(0.1).mockReturnValue(0.99);
+    vi.spyOn(localPlanner, "chooseLocalMaterialShot").mockReturnValue({
+      weaponId: "DRILLER",
+      point: { x: 600, y: 330, kind: "tank" },
+      variant: "full",
+      reason: "useful",
+    });
+    const reportedWeapons: WeaponId[] = [];
+    const heuristic = new AIHeuristicStrategy();
+    const okCommand = await heuristic.executeTurn(
+      "s",
+      {
+        phase: "COMBAT",
+        players: [self, target],
+        currentPlayerIndex: 0,
+        turn: 1,
+        windForce: 0,
+        gravity: 260,
+        roundNumber: 1,
+      },
+      flatTerrain(800, 480),
+      () => true,
+      (weaponId) => reportedWeapons.push(weaponId),
+    );
+    expect(okCommand.weaponId).toBe("DRILLER");
+    expect(reportedWeapons).toEqual(["DRILLER"]);
+
+    // 2. Dans TurnManager : le choix THERMONUCLEAR établi pendant la décision déclenche THERMONUCLEAR au timeout,
+    //    et un refus du moteur préserve exactement l'inventaire.
+    self.tank.currentWeapon = "MISSILE";
+    const engine = new GameEngine(800, 480, { headless: true });
+    engines.push(engine);
+    const tanksEngine = new TankManager();
+    tanksEngine.setPlayers([self, target]);
+    const fireSpy = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const turns = new TurnManager(
+      tanksEngine,
+      engine.getTerrain(),
+      fireSpy,
+      {
+        executeTurn: vi.fn().mockImplementation((_t, _g, _tm, _ic, onWeaponSelected) => {
+          onWeaponSelected?.("THERMONUCLEAR");
+          return new Promise(() => {});
+        }),
+        getResolutionFallback: () => ({ angle: 45, power: 50 }),
+      },
+    );
+
+    // Refus du moteur : aucune consommation malgré le choix établi
+    turns.startFirstTurn();
+    step((dt) => turns.update(dt), 10.05);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy.mock.calls[0][1]).toMatchObject({ weaponId: "THERMONUCLEAR" });
+    expect(self.inventory.THERMONUCLEAR).toBe(1);
+
+    // Acceptation sur un nouveau tour avec THERMONUCLEAR établie : débite exactement 1 unité
+    self.tank.currentWeapon = "MISSILE";
+    const turnsAccepted = new TurnManager(
+      tanksEngine,
+      engine.getTerrain(),
+      fireSpy,
+      {
+        executeTurn: vi.fn().mockImplementation((_t, _g, _tm, _ic, onWeaponSelected) => {
+          onWeaponSelected?.("THERMONUCLEAR");
+          return new Promise(() => {});
+        }),
+        getResolutionFallback: () => ({ angle: 45, power: 50 }),
+      },
+    );
+    turnsAccepted.startFirstTurn();
+    step((dt) => turnsAccepted.update(dt), 10.05);
+    expect(fireSpy).toHaveBeenCalledTimes(2);
+    expect(fireSpy.mock.calls[1][1]).toMatchObject({ weaponId: "THERMONUCLEAR" });
+    expect(self.inventory.THERMONUCLEAR).toBe(0);
+    expect(self.tank.currentWeapon).toBe("MISSILE");
+  });
+
+  it("laisse le filet et le choix établi intacts lorsque l'observateur refuse decision-timeout puis les applique à l'autorisation (#429)", () => {
+    silence();
+    const self = makePlayer({
+      id: "s",
+      isHuman: false,
+      inventory: { THERMONUCLEAR: 1, MISSILE: 99 },
+      tank: makeTank("s", 100, 336, { currentWeapon: "MISSILE", power: 55 }),
+    });
+    const target = makePlayer({ id: "c", isHuman: true, tank: makeTank("c", 600, 336) });
+    const tanks = new TankManager();
+    tanks.setPlayers([self, target]);
+    const fire = vi.fn();
+    let allowDecisionTimeout = false;
+    const turns = new TurnManager(tanks, {} as TerrainManager, fire, {
+      executeTurn: vi.fn().mockImplementation((_t, _g, _tm, _ic, onWeaponSelected) => {
+        onWeaponSelected?.("THERMONUCLEAR");
+        return new Promise(() => {});
+      }),
+      getResolutionFallback: () => ({ angle: 45, power: 50 }),
+    });
+    turns.combatObserver = {
+      emit: (event) => {
+        if (event.kind === "recovery" && event.reason === "decision-timeout") {
+          return allowDecisionTimeout;
+        }
+        return true;
+      },
+    };
+
+    turns.startFirstTurn();
+    step((dt) => turns.update(dt), 10.2);
+    expect(fire).not.toHaveBeenCalled();
+    expect(self.inventory.THERMONUCLEAR).toBe(1);
+
+    allowDecisionTimeout = true;
+    turns.update(DT);
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(fire.mock.calls[0][1]).toMatchObject({ weaponId: "THERMONUCLEAR" });
+    expect(self.inventory.THERMONUCLEAR).toBe(0);
+    expect(self.tank.currentWeapon).toBe("MISSILE");
   });
 });

@@ -31,6 +31,32 @@ export interface SimpleErrorChances {
   power: number;
 }
 
+export type SimpleWeaponSource =
+  | "nuke-roll"
+  | "thermonuclear-roll"
+  | "currentWeapon-or-missile";
+
+function isNuclearWeapon(weaponId: WeaponId | undefined): boolean {
+  return weaponId === "NUKE" || weaponId === "THERMONUCLEAR";
+}
+
+function selectSimpleWeapon(
+  inventory: Partial<Record<WeaponId, number>>,
+  currentWeapon: WeaponId | undefined,
+): { weaponId: WeaponId; weaponSource: SimpleWeaponSource } {
+  if ((inventory.NUKE ?? 0) > 0 && secureRandom() < 0.2) {
+    return { weaponId: "NUKE", weaponSource: "nuke-roll" };
+  }
+  if ((inventory.THERMONUCLEAR ?? 0) > 0 && secureRandom() < 0.1) {
+    return { weaponId: "THERMONUCLEAR", weaponSource: "thermonuclear-roll" };
+  }
+  const weaponId =
+    currentWeapon && !isNuclearWeapon(currentWeapon)
+      ? currentWeapon
+      : "MISSILE";
+  return { weaponId, weaponSource: "currentWeapon-or-missile" };
+}
+
 const SIMPLE_ERROR_CHANCES: Record<number, SimpleErrorChances> = {
   1: { gaffe: 0.5, direction: 0.4, power: 0.5 },
   2: { gaffe: 0.4, direction: 0.35, power: 0.45 },
@@ -69,7 +95,9 @@ export class AISimpleStrategy implements AIEngine {
     gameState: GameState,
     terrainManager: TerrainManager,
     isCurrent: () => boolean = () => true,
+    onWeaponSelected?: (weaponId: WeaponId) => void,
   ): Promise<{ angle: number; power: number; weaponId?: WeaponId }> {
+    if (!this.isActive() || !isCurrent()) throw new Error("AI_CANCELLED");
     const self = gameState.players.find((player) => player.tank.id === tankId);
     const initial = this.onDecisionObserved ? captureDecisionInitial(gameState, self ? this.memories.get(self.id) : null) : undefined;
     if (!self || self.tank.isDead) {
@@ -103,8 +131,12 @@ export class AISimpleStrategy implements AIEngine {
     this.onTargetSelected?.(self.id, target.id);
     const observation = this.onDecisionObserved ? new DecisionObservation(this.onDecisionObserved, self, target, gameState, initial) : undefined;
     const attempts = recordAimAttempt(memory, target.id);
-    const weaponId = self.tank.currentWeapon || "MISSILE";
+    const { weaponId, weaponSource } = selectSimpleWeapon(
+      self.inventory,
+      self.tank.currentWeapon,
+    );
     self.tank.currentWeapon = weaponId;
+    onWeaponSelected?.(weaponId);
     const chances = getSimpleErrorChances(gameState.roundNumber);
     const reactionIntensity = getHitReactionIntensity(
       self.aiProfile ?? "v1-random",
@@ -117,7 +149,7 @@ export class AISimpleStrategy implements AIEngine {
       const final = { ...finalizeSimpleAim(sampled), weaponId };
       observation?.step("gaffe", null, sampled, { chance: chances.gaffe, occurred: true, shortCircuit: true });
       observation?.step("finalize", sampled, final);
-      observation?.finish(final, "early-gaffe", { targetReason, chances, weaponSource: "currentWeapon-or-missile", unexamined: "early-gaffe" });
+      observation?.finish(final, "early-gaffe", { targetReason, chances, weaponSource, unexamined: "early-gaffe" });
       return final;
     }
     observation?.step("gaffe", null, null, { chance: chances.gaffe, occurred: false, shortCircuit: true });
@@ -166,7 +198,7 @@ export class AISimpleStrategy implements AIEngine {
     consumeHitReaction(self.tank.hitReaction);
     const final = { ...finalizeSimpleAim(command), weaponId };
     observation?.step("finalize", command, final);
-    observation?.finish(final, "local-simple", { targetReason, chances, weaponSource: "currentWeapon-or-missile", unexamined: "not-evaluated" });
+    observation?.finish(final, "local-simple", { targetReason, chances, weaponSource, unexamined: "not-evaluated" });
     return final;
   }
 
