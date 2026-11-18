@@ -104,7 +104,10 @@ export function dispatchCombatMessage(
     if (
       ctx.gamePhaseRef.current !== "COMBAT" ||
       tm.isInterRoundPaused() ||
-      (strictMessage.shotId !== null && strictMessage.shotId <= ctx.lastAppliedShotIdRef.current) ||
+      (strictMessage.shotId !== null &&
+        (strictMessage.shotId <= ctx.lastAppliedShotIdRef.current ||
+          (shotQueue.activeServerShotId !== null &&
+            strictMessage.shotId < shotQueue.activeServerShotId))) ||
       strictMessage.reason === "STALE_AUTHORITY" ||
       strictMessage.reason === "WRONG_SHOT"
     ) return;

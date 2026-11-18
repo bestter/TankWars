@@ -142,6 +142,36 @@ describe("online authoritative economy updates", () => {
     expect(reduceMessages().networkError).toBeNull();
   });
 
+  it("ignores a stale EARNINGS_REJECTED for an earlier shot once a newer shot is active", () => {
+    const { engine, dispatch, receive } = setup();
+    const tm = engine.getTurnManager();
+    vi.spyOn(tm, "executeRemoteFire").mockImplementation(() => {});
+
+    receive({
+      type: "SHOT", shotId: 1, roundNumber: 1, shotNumberInRound: 1, eventSequence: 1, physicsSeed: 1,
+      isFirstShotOfRound: true, ownerId: "a", slot: 0, actionId: "shot-1",
+      command: { angle: 45, power: 50, weaponId: "MISSILE" },
+    });
+    tm.onAuthoritativeShotSettled?.(1, "LIVE_LOCAL");
+    receive({
+      type: "SHOT", shotId: 2, roundNumber: 1, shotNumberInRound: 2, eventSequence: 2, physicsSeed: 2,
+      isFirstShotOfRound: false, ownerId: "b", slot: 1, actionId: "shot-2",
+      command: { angle: 135, power: 55, weaponId: "MISSILE" },
+    });
+    dispatch.mockClear();
+
+    receive({ type: "EARNINGS_REJECTED", reason: "CAP_MISMATCH", shotId: 1, authorityEpoch: 1 });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "SET_NETWORK_ERROR" }),
+    );
+
+    receive({ type: "EARNINGS_REJECTED", reason: "CAP_MISMATCH", shotId: 2, authorityEpoch: 1 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_NETWORK_ERROR",
+      key: "earnings_rejected_cap_mismatch",
+    });
+  });
+
   it("retires an unreported shot at the deferred round boundary and retains shop economy", () => {
     const { engine, players, receive, opts, send } = setup();
     const tm = engine.getTurnManager();
