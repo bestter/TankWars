@@ -42,6 +42,32 @@ export class AuthoritativeShotQueue {
   public get processedEventSequence(): number { return this.lastEventSequence; }
   private activeZeusId: number | null = null;
 
+  public startReceiving(): void {
+    this.receivingCatchUp = true;
+    this.host.lockForCatchUp();
+  }
+
+  public canResumeShot(shotId: number, events: readonly CombatEvent[]): boolean {
+    const last = events.at(-1);
+    return last?.type === "SHOT" && last.shotId === shotId &&
+      this.activeShotId === shotId && this.queued.length === 0 &&
+      (this.replayActive
+        ? this.lastEventSequence === last.eventSequence - 1 && this.activeEventSequence === last.eventSequence
+        : this.lastEventSequence === last.eventSequence) &&
+      events.every((event) => this.eventIds.get(event.eventSequence) === JSON.stringify(event));
+  }
+
+  public abandonRound(roundNumber: number): void {
+    this.generation++;
+    this.receivingCatchUp = false;
+    this.replayActive = false;
+    this.activeShotId = null;
+    this.activeEventSequence = null;
+    this.activeZeusId = null;
+    this.catchUpShotId = null;
+    this.purgeCompletedRound(roundNumber);
+  }
+
   public resetForNextRound(): void {
     this.eventIds.clear(); this.economicShotIds.clear(); this.lastEventSequence = 0;
   }
@@ -52,8 +78,8 @@ export class AuthoritativeShotQueue {
     this.queued.length = 0;
     this.queuedShotIds.clear(); this.replayedShotIds.clear(); this.eventIds.clear();
     this.replayActive = false; this.activeShotId = null; this.activeZeusId = null;
-    this.catchUpShotId = null; this.receivingCatchUp = true;
-    this.host.lockForCatchUp();
+    this.catchUpShotId = null;
+    this.startReceiving();
   }
 
   public finishReceiving(): void {

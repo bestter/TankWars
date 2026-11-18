@@ -487,7 +487,7 @@ describe('Zeus v3 durable settlement', () => {
     const { room, setup, sockets, send, fire, report } = await boot();
     const launchedAt = Date.now();
     const shot = await fire();
-    vi.setSystemTime(launchedAt + 20_000);
+    vi.setSystemTime(launchedAt + 19_999);
     type Transaction = (callback: (txn: unknown) => Promise<void>) => Promise<void>;
     const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn<Transaction>> } }).storage;
     const transaction = storage.transaction.getMockImplementation()!;
@@ -551,19 +551,35 @@ describe('Zeus v3 durable settlement', () => {
     const messages = () => sockets[0].getAllMessages<{ type: string }>().filter((m) => m.type === 'ROUND_END');
     expect(messages()).toHaveLength(1);
     const draw = messages()[0];
-    expect(draw).toMatchObject({ roundWinnerId: null, isDraw: true });
+    expect(draw).toMatchObject({ roundWinnerId: null, isDraw: true, abandonedShotId: pending.shotId });
     const onceMore = await restart();
     const handle = (slot: number, message: object) => (Reflect.get(onceMore, 'handleClientMessage') as
       (slot: number, raw: string) => Promise<void>).call(onceMore, slot, JSON.stringify(message));
     await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     expect(messages()).toEqual([draw, draw]);
-    expect(catchUpSnapshot(sockets[0])?.activeShotId).toBeNull();
+    expect(catchUpSnapshot(sockets[0])).toMatchObject({ activeShotId: null, abandonedShotId: pending.shotId });
     await handle(1, { ...report(pending.shotId, 100), authorityEpoch: onceMore.getRoster()!.authorityEpoch });
     expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
     await handle(1, { type: 'FIRE', actionId: pending.actionId, command: pending.command });
     expect(onceMore.getRoster()!.shotHistory).toHaveLength(2);
     expect(onceMore.getRoster()!.players[1].inventory.GRENADE).toBe(grenades - 1);
     expect(onceMore.getRoster()!.roundEarningsByPlayer['player-1']).toBe(25);
+  });
+
+  it('rejects a report at the deadline even if the alarm has not run yet', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot();
+    const shot = await fire();
+    vi.setSystemTime(setup.mockStorage.alarmAt!);
+
+    await send(0, report(shot.shotId, 50));
+    expect(room.getRoster()).toMatchObject({ earningsAuthoritySlot: 1, activeShot: { earningsApplied: false }, earningsResults: {} });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED' });
+
+    vi.setSystemTime(setup.mockStorage.alarmAt!);
+    await send(1, report(shot.shotId, 50));
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
+    expect(room.getRoster()).toMatchObject({ activeShot: null, roundEnded: true, earningsResults: {} });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'ROUND_END', isDraw: true, abandonedShotId: shot.shotId });
   });
 
   it('bounds a legacy pending shot after cold start when no alternate authority is available', async () => {

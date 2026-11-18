@@ -24,6 +24,7 @@ export interface CombatSnapshot {
   completedShop?: ShopFinishMessage | null;
   activeShotId: number | null;
   activeShot: ActiveCombatShot | null;
+  abandonedShotId?: number;
   authoritySlot: number | null;
   authorityEpoch: number;
   events: CombatEvent[];
@@ -83,6 +84,12 @@ function validateSnapshot(snapshot: CombatSnapshot, roundNumber: number, boundar
       typeof active.shooterSettled !== "boolean" || typeof active.earningsApplied !== "boolean" || typeof active.zeusEvaluated !== "boolean" ||
       (active.releaseAt !== null && !integer(active.releaseAt)) ||
       !snapshot.events.some((e) => e.type === "SHOT" && e.shotId === active.shotId)) throw new Error("Invalid active shot");
+  if (snapshot.abandonedShotId !== undefined) {
+    const finalEvent = snapshot.events.at(-1);
+    if (active !== null || finalEvent?.type !== "SHOT" || finalEvent.shotId !== snapshot.abandonedShotId) {
+      throw new Error("Invalid abandoned shot");
+    }
+  }
   let lastShotId = 0;
   let strike: ZeusStrikeMessage | null = null;
   for (const event of snapshot.events) {

@@ -123,6 +123,7 @@ export function dispatchCombatMessage(
   }
 
   if (strictMessage?.type === "AUTHORITY_CHANGED") {
+    if (strictMessage.authorityEpoch <= ctx.authorityEpochRef.current) return;
     ctx.authoritySlotRef.current = strictMessage.authoritySlot;
     ctx.authorityEpochRef.current = strictMessage.authorityEpoch;
     if (

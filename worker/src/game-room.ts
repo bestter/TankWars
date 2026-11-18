@@ -608,12 +608,15 @@ export class GameRoom extends DurableObject {
       const { reportRecovery: _reportRecovery, ...wireShot } = this.state.activeShot;
       activeShot = wireShot;
     }
+    const abandoned = this.state.roundClosedWithoutReport === true;
+    const abandonedShotId = abandoned ? this.state.shotHistory.at(-1)?.shotId : undefined;
     const snapshot = {
       roundNumber: this.state.roundNumber, map: this.state.map!,
       initialPlayers: this.state.initialRoundPlayers, players: this.state.players,
       economicRevision: this.state.economicRevision, roundEarningsByPlayer: this.state.roundEarningsByPlayer,
       currentPlayerIndex: this.state.currentPlayerIndex, zeus: this.buildZeusStateMessage(),
       activeShotId: activeShot?.shotId ?? null, activeShot,
+      abandonedShotId,
       completedShop: this.state.lastCompletedShop,
       lastFireResult: this.state.lastFireResultBySlot[slot] ?? null,
       authoritySlot: this.state.earningsAuthoritySlot, authorityEpoch: this.state.authorityEpoch,
@@ -621,9 +624,7 @@ export class GameRoom extends DurableObject {
     };
     try {
       for (const message of fragmentCombat(snapshot, crypto.randomUUID())) ws.send(JSON.stringify(message));
-      if (this.state.shopSession) {
-        ws.send(JSON.stringify(this.buildShopStateMessage()));
-      } else if (
+      if (!this.state.shopSession &&
         this.state.lastCompletedShop &&
         this.state.lastCompletedShop.shopEpoch > request.lastAppliedShopEpoch
       ) {
@@ -631,16 +632,17 @@ export class GameRoom extends DurableObject {
       }
       if (this.state.roundEnded) {
         const alive = this.state.players.filter((p) => !p.tank.isDead && p.tank.health > 0);
-        const abandoned = this.state.roundClosedWithoutReport === true;
         const roundEnd: RoundEndMessage = {
           type: 'ROUND_END',
           players: this.state.players,
           roundWinnerId: !abandoned && alive.length === 1 ? alive[0].id : null,
           isDraw: abandoned || alive.length === 0,
           roundNumber: this.state.roundNumber,
+          abandonedShotId,
         };
         ws.send(JSON.stringify(roundEnd));
       }
+      if (this.state.shopSession) ws.send(JSON.stringify(this.buildShopStateMessage()));
     } catch {
       // ignore stale
     }
@@ -1376,7 +1378,7 @@ export class GameRoom extends DurableObject {
     await this.saveState(relay?.deadlineAt);
     if (next !== null && active) {
       const socket = this.sockets.get(next);
-      // Invalidate the replacement's old preview before announcing its new epoch.
+      // Send the journal before announcing the new epoch so the client can verify its replay.
       if (socket) this.sendCombatCatchUpToSocket(socket, next);
     }
     this.broadcastAuthorityChanged();
@@ -1646,10 +1648,10 @@ export class GameRoom extends DurableObject {
     // Without a report we have no authoritative post-shot physics. End the
     // round using its last committed roster and keep the debit for the shot.
     this.state.roundClosedWithoutReport = true;
-    await this.closeShotRound(null, true);
+    await this.closeShotRound(null, true, active.shotId);
   }
 
-  private async closeShotRound(roundWinnerId: string | null, isDraw: boolean): Promise<void> {
+  private async closeShotRound(roundWinnerId: string | null, isDraw: boolean, abandonedShotId?: number): Promise<void> {
     if (!this.state) return;
     this.resetShotCoordination();
     this.state.roundEnded = true;
@@ -1661,6 +1663,7 @@ export class GameRoom extends DurableObject {
       roundWinnerId,
       isDraw,
       roundNumber: this.state.roundNumber,
+      abandonedShotId,
     };
     this.broadcast(roundEnd);
   }
@@ -1726,6 +1729,11 @@ export class GameRoom extends DurableObject {
     if (slot !== this.state.earningsAuthoritySlot || authorityEpoch !== this.state.authorityEpoch) { reject("STALE_AUTHORITY"); return; }
     const active = this.state.activeShot;
     if (!active || shotId !== active.shotId) { reject("WRONG_SHOT"); return; }
+    if (active.reportRecovery && Date.now() >= active.reportRecovery.deadlineAt) {
+      await this.recoverShotReport();
+      reject("WRONG_SHOT");
+      return;
+    }
     const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId);
     if (!validated.ok) { reject(validated.reason); return; }
     const totals = { ...this.state.roundEarningsByPlayer };

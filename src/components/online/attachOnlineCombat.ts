@@ -1,4 +1,4 @@
-import { CombatCatchUpAssembler, isCombatEvent, type CombatCatchUpMessage, type CombatEvent, type CombatSnapshot } from "../../game/online/combatCatchUp";
+import { CombatCatchUpAssembler, isCombatEvent, type CombatEvent, type CombatSnapshot } from "../../game/online/combatCatchUp";
 import { earningsPlayers } from "../../game/online/earningsValidation";
 import { randomUUID } from "../../utils/randomUUID";
 import type { RoundMap } from "../../game/round/prepareRound";
@@ -120,6 +120,7 @@ export function attachOnlineCombat(
   let deferredControl: unknown[] = [];
   let liveBuffered: CombatEvent[] = [];
   let receivingBatchId: string | null = null;
+  let abandonedRoundNumber = 0;
   const seenBatchIds = new Set<string>();
   const authoritativeEconomyRef: { current: AuthoritativeEconomyPlayer[] } = {
     current: [],
@@ -233,7 +234,8 @@ export function attachOnlineCombat(
   };
 
   const submitShotEarnings = (preview: ResolvedShotPreview): void => {
-    if (opts.gamePhaseRef.current !== "COMBAT" || opts.authoritySlotRef.current !== localSlotNum) return;
+    if (opts.gamePhaseRef.current !== "COMBAT" || tm.isInterRoundPaused() || receivingBatchId !== null ||
+        opts.authoritySlotRef.current !== localSlotNum || shotQueueRef.current?.activeServerShotId !== preview.shotId) return;
     reapplyAuthoritativeEconomy();
     const message: ShotEarningsMessage = {
       type: "SHOT_EARNINGS",
@@ -505,6 +507,15 @@ export function attachOnlineCombat(
       money: balancesMap.get(p.id) ?? p.money }));
   }
 
+  const applySnapshotEconomy = (snapshot: CombatSnapshot): void => {
+    if (snapshot.economicRevision < latestEconomicRevision) {
+      reapplyAuthoritativeEconomy();
+      return;
+    }
+    syncWireEconomy(snapshot.players);
+    applyEconomicResult({ ...snapshot, balances: snapshot.players.map((p) => ({ playerId: p.id, money: p.money })) });
+  };
+
   const shotQueue = new AuthoritativeShotQueue({
     getGamePhase: () => opts.gamePhaseRef.current,
     isInterRoundPaused: () => tm.isInterRoundPaused(),
@@ -565,7 +576,6 @@ export function attachOnlineCombat(
           tm.releaseSpecialTurn(); tm.syncTurn(snapshot.currentPlayerIndex);
           if (snapshot.zeus.activeStrike || snapshot.players[snapshot.currentPlayerIndex]?.id === snapshot.zeus.activeZeusId) tm.lockSpecialTurn();
         }
-        if (snapshot.activeShotId !== null) tm.lockForCatchUp();
       }
       const controls = deferredControl;
       deferredControl = [];
@@ -585,6 +595,25 @@ export function attachOnlineCombat(
   const scheduleTransition = (
     item: DeferredAuthoritativeTransition,
   ): void => {
+    if (item.kind === "ROUND_END" && item.message.abandonedShotId !== undefined) {
+      const { roundNumber } = item.message;
+      if (roundNumber !== opts.currentMancheRef.current ||
+          roundNumber <= opts.lastCompletedRoundNumberRef.current || opts.gamePhaseRef.current !== "COMBAT") return;
+
+      // The Worker closed this round on the last committed roster. Any replay
+      // still running or queued for the round is now obsolete.
+      abandonedRoundNumber = roundNumber;
+      reconstructionGeneration++;
+      receivingBatchId = null;
+      snapshotPending = null;
+      deferredControl = [];
+      liveBuffered = [];
+      shotQueue.abandonRound(roundNumber);
+      engine.invalidateCombatSimulation();
+      applyRoundEndMessage(item.message);
+      flushDeferredTransitions(shotQueue, transitionBuffer, applyDeferredItem);
+      return;
+    }
     scheduleDeferredTransition(
       shotQueue,
       transitionBuffer,
@@ -673,6 +702,12 @@ export function attachOnlineCombat(
     }, parsed);
   }
 
+  const finishCatchUpReception = (roundNumber: number, boundary: number): void => {
+    shotQueue.enqueueCombat(liveBuffered.filter((e) => e.roundNumber === roundNumber && e.eventSequence > boundary), "LIVE_REMOTE");
+    liveBuffered = [];
+    shotQueue.finishReceiving();
+  };
+
   function bindCombatWsHandlers(ws: WebSocket): void {
     ws.onopen = () => {
       console.log("[Game] Combat WS connected to server");
@@ -686,21 +721,53 @@ export function attachOnlineCombat(
     };
 
     ws.onmessage = (ev) => {
+      if (!isMounted || gameWsRef.current !== ws) return;
       try {
         const parsed: unknown = JSON.parse(ev.data);
         if (parsed && typeof parsed === "object" && "type" in parsed && typeof parsed.type === "string" && parsed.type.startsWith("COMBAT_CATCH_UP_")) {
-          if (!isStrictOnlineMessage(parsed)) throw new Error("Invalid combat envelope");
-          const part = parsed as CombatCatchUpMessage;
+          if (!isStrictOnlineMessage(parsed) ||
+              (parsed.type !== "COMBAT_CATCH_UP_BEGIN" && parsed.type !== "COMBAT_CATCH_UP_FRAGMENT" && parsed.type !== "COMBAT_CATCH_UP_END")) {
+            throw new Error("Invalid combat envelope");
+          }
+          const part = parsed;
+          if (part.roundNumber <= abandonedRoundNumber) return;
           if (part.type === "COMBAT_CATCH_UP_BEGIN" && !seenBatchIds.has(part.catchUpId)) {
             seenBatchIds.add(part.catchUpId); receivingBatchId = part.catchUpId;
-            reconstructionGeneration++;
-            engine.invalidateCombatSimulation();
-            shotQueue.beginReconstruction(); deferredControl = []; liveBuffered = [];
+            shotQueue.startReceiving();
+            liveBuffered = [];
           }
           const snapshot = assembler.accept(part);
           if (snapshot && receivingBatchId === part.catchUpId) {
             receivingBatchId = null;
+            const abandoned = snapshot.abandonedShotId !== undefined;
+            if (abandoned) {
+              for (const event of snapshot.events) {
+                if (event.type === "SHOT") acknowledgePendingFire(event);
+              }
+              if (snapshot.roundNumber <= opts.lastCompletedRoundNumberRef.current) {
+                abandonedRoundNumber = snapshot.roundNumber;
+                liveBuffered = [];
+                shotQueue.finishReceiving();
+                return;
+              }
+            }
             if (snapshot.roundNumber < opts.currentMancheRef.current && opts.gamePhaseRef.current === "COMBAT") throw new Error("Old combat round");
+            const active = snapshot.activeShot;
+            if (active && !active.earningsApplied && snapshot.roundNumber === opts.currentMancheRef.current &&
+                opts.gamePhaseRef.current === "COMBAT" && !tm.isInterRoundPaused() &&
+                snapshot.authoritySlot === localSlotNum && snapshot.authorityEpoch > opts.authorityEpochRef.current &&
+                (tm.isResolvingAuthoritativeShot(active.shotId) || opts.pendingShotPreviewsRef.current.has(active.shotId)) &&
+                shotQueue.canResumeShot(active.shotId, snapshot.events)) {
+              applySnapshotEconomy(snapshot);
+              if (snapshot.lastFireResult) applyFireRejection(snapshot.lastFireResult);
+              shotQueue.setCatchUpActiveShotId(active.shotId);
+              finishCatchUpReception(snapshot.roundNumber, part.boundary);
+              dispatchMessage({ type: "AUTHORITY_CHANGED", authoritySlot: snapshot.authoritySlot, authorityEpoch: snapshot.authorityEpoch });
+              return;
+            }
+            reconstructionGeneration++;
+            shotQueue.beginReconstruction();
+            deferredControl = [];
             if (snapshot.completedShop && snapshot.completedShop.nextRoundNumber === snapshot.roundNumber) {
               const finish = snapshot.completedShop;
               opts.applyShopFinish(finish.players, finish.shopEpoch, finish.nextRoundNumber, finish.map);
@@ -714,20 +781,23 @@ export function attachOnlineCombat(
             opts.gamePhaseRef.current = "COMBAT";
             dispatch({ type: "SET_NETWORK_ERROR", key: null });
             dispatch({ type: "RESET_COMBAT_PROGRESS", roundNumber: snapshot.roundNumber });
-            if (snapshot.economicRevision >= latestEconomicRevision) {
-              syncWireEconomy(snapshot.players);
-              applyEconomicResult({ ...snapshot, balances: snapshot.players.map((p) => ({ playerId: p.id, money: p.money })) });
-            } else reapplyAuthoritativeEconomy();
+            applySnapshotEconomy(snapshot);
             if (snapshot.lastFireResult) applyFireRejection(snapshot.lastFireResult);
+            if (abandoned) {
+              // ROUND_END follows this snapshot. Keep input locked until it is applied.
+              snapshotPending = null;
+              liveBuffered = [];
+              return;
+            }
             snapshotPending = snapshot;
             shotQueue.setCatchUpActiveShotId(snapshot.activeShotId);
             shotQueue.enqueueCombat(snapshot.events, (event) => event.type === "SHOT" && event.shotId === snapshot.activeShotId ? "ACTIVE_RECOVERY" : "CATCH_UP");
-            shotQueue.enqueueCombat(liveBuffered.filter((e) => e.roundNumber === snapshot.roundNumber && e.eventSequence > part.boundary), "LIVE_REMOTE");
-            liveBuffered = [];
-            shotQueue.finishReceiving();
+            finishCatchUpReception(snapshot.roundNumber, part.boundary);
           }
-        } else if (receivingBatchId && isCombatEvent(parsed)) {
-          liveBuffered.push(parsed);
+        } else if (isCombatEvent(parsed)) {
+          if (parsed.roundNumber <= opts.lastCompletedRoundNumberRef.current) return;
+          if (receivingBatchId) liveBuffered.push(parsed);
+          else dispatchMessage(parsed);
         } else dispatchMessage(parsed);
       } catch (e) {
         console.error("[Game] invalid WS message", e);
