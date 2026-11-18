@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Player } from "../../../types/player";
+import { getRNG, setRNG } from "../../../utils/random";
 import { makePlayer } from "../../__tests__/helpers";
 import {
   HUMAN_FREE_WEAPONS_TARGETS,
@@ -200,5 +201,45 @@ describe("freeWeapons domain rules (#355)", () => {
     // Original roster untouched
     expect(roster[0].inventory).toEqual({});
     expect(roster[1].inventory).toEqual({ BULLET: 1 });
+  });
+
+  it("consumes zero RNG draws and preserves nuclear free-weapon targets for SIMPLE (none) and OK (NUKE: 1)", () => {
+    const previous = getRNG();
+    try {
+      let draws = 0;
+      setRNG({
+        next() {
+          draws++;
+          return 0.0;
+        },
+      });
+
+      for (const count of [2, 3, 4] as const) {
+        const simple = makePlayer({
+          id: `simple-${count}`,
+          isHuman: false,
+          aiProfile: "v1-random",
+          money: 20_000,
+          inventory: {},
+        });
+        const ok = makePlayer({
+          id: `ok-${count}`,
+          isHuman: false,
+          aiProfile: "v2-heuristic",
+          money: 20_000,
+          inventory: {},
+        });
+
+        const replenished = replenishRosterFreeWeapons([simple, ok], count);
+        expect(replenished[0].inventory.NUKE).toBeUndefined();
+        expect(replenished[0].inventory.THERMONUCLEAR).toBeUndefined();
+        expect(replenished[1].inventory.NUKE).toBe(1);
+        expect(replenished[1].inventory.THERMONUCLEAR).toBeUndefined();
+      }
+
+      expect(draws).toBe(0);
+    } finally {
+      setRNG(previous);
+    }
   });
 });
