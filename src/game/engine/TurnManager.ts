@@ -736,6 +736,10 @@ export class TurnManager {
     this.notifyHudUpdate();
   }
 
+  public isResolvingAuthoritativeShot(shotId: number): boolean {
+    return this.hasUnresolvedShot && this.settlingAuthoritativeShot?.shotId === shotId;
+  }
+
   /**
    * Command used for the most recent successful local tryFire (pre-ammo-consume).
    * Online clients should send this exact payload as FIRE so observers replay the same shot.

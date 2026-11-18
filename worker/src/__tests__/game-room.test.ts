@@ -41,6 +41,7 @@ class MockWebSocket {
 
 interface MockStorageState {
   storageData: Map<string, unknown>;
+  alarmAt?: number;
 }
 
 function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
@@ -48,7 +49,7 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
   const mockStorage: MockStorageState = { storageData };
 
   let activeData = storageData;
-  const storage = {
+  const storageOps = {
     get: vi.fn(async (key: string) => structuredClone(activeData.get(key))),
     put: vi.fn(async (key: string | Record<string, unknown>, value?: unknown) => {
       if (typeof key === "string") activeData.set(key, structuredClone(value));
@@ -59,12 +60,26 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
       return key.reduce((count, entry) => count + Number(activeData.delete(entry)), 0);
     }),
     list: vi.fn(async (options: { prefix: string }) => new Map([...activeData].filter(([k]) => k.startsWith(options.prefix)).map(([k, v]) => [k, structuredClone(v)]))),
-    transaction: vi.fn(async (callback: (txn: { get: (key: string) => Promise<unknown>; put: (key: string | Record<string, unknown>, value?: unknown) => Promise<void>; delete: (key: string | string[]) => Promise<boolean | number>; list: (options: { prefix: string }) => Promise<Map<string, unknown>> }) => Promise<void>) => {
+  };
+  type MockTransaction = typeof storageOps & {
+    setAlarm: (time: number | Date) => Promise<void>;
+    deleteAlarm: () => Promise<void>;
+  };
+  const storage = {
+    ...storageOps,
+    setAlarm: vi.fn(async (time: number | Date) => { mockStorage.alarmAt = Number(time); }),
+    transaction: vi.fn(async (callback: (txn: MockTransaction) => Promise<void>) => {
       const staged = structuredClone(storageData);
+      let alarmAt = mockStorage.alarmAt;
       activeData = staged;
       try {
-        await callback(storage);
+        await callback({
+          ...storageOps,
+          setAlarm: async (time: number | Date) => { alarmAt = Number(time); },
+          deleteAlarm: async () => { alarmAt = undefined; },
+        });
         storageData.clear(); for (const [key, value] of staged) storageData.set(key, value);
+        mockStorage.alarmAt = alarmAt;
       } finally { activeData = storageData; }
     }),
   };
@@ -263,26 +278,655 @@ describe('Zeus v3 durable settlement', () => {
     const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
     for (let i = 0; i < (mixed ? 1 : count); i++) { connections.set(i, sockets[i] as unknown as WebSocket); await claim.call(room, i, `Human ${i}`); }
     const send = (slot: number, message: object) => (Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(room, slot, JSON.stringify(message));
-    const fire = async () => {
+    const fire = async (weaponId: WeaponId = 'MISSILE') => {
       const slot = room.getRoster()!.currentPlayerIndex;
-      await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' } });
+      await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId } });
       return room.getRoster()!.activeShot!;
     };
     const report = (shotId: number, amount = 0) => ({ type: 'SHOT_EARNINGS', shotId, authorityEpoch: room.getRoster()!.authorityEpoch,
       players: reportPlayers(room), awards: amount ? [{ playerId: 'player-1', amount }] : [], deadSlots: room.getRoster()!.players.map((p) => p.tank.isDead), directHitVictimIds: [],
       roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } });
-    const restart = async () => {
+    const restart = async (reconnect = true) => {
+      const now = Date.now();
       vi.clearAllTimers();
+      vi.setSystemTime(now);
       const restored = new GameRoom(setup.ctx as DurableObjectState, {});
       Object.defineProperty(restored, 'ctx', { value: setup.ctx });
       await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
       const restoredConnections = Reflect.get(restored, 'sockets') as Map<number, WebSocket>;
-      for (let i = 0; i < (mixed ? 1 : count); i++) restoredConnections.set(i, sockets[i] as unknown as WebSocket);
+      if (reconnect) {
+        for (let i = 0; i < (mixed ? 1 : count); i++) restoredConnections.set(i, sockets[i] as unknown as WebSocket);
+      }
       await vi.advanceTimersByTimeAsync(0);
       return restored;
     };
     return { room, setup, sockets, send, fire, report, restart };
   }
+
+  it('relays an unreported shot to the next connected authority and applies its report once', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot(3);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    const oldReport = report(shot.shotId, 15);
+    const before = room.getRoster()!.players[0].money;
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false, false] });
+
+    await vi.advanceTimersByTimeAsync(19_999);
+    // The platform consumes the stored alarm when the handler starts.
+    setup.mockStorage.alarmAt = undefined;
+    await room.alarm();
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+    await vi.advanceTimersByTimeAsync(1);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({ earningsAuthoritySlot: 1, authorityEpoch: oldReport.authorityEpoch + 1 });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 40_000);
+    expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 1 });
+    const relayMessages = sockets[1].getAllMessages<{ type: string }>().map(({ type }) => type);
+    expect(relayMessages.filter((type) => type === 'COMBAT_CATCH_UP_END' || type === 'AUTHORITY_CHANGED'))
+      .toEqual(['AUTHORITY_CHANGED', 'COMBAT_CATCH_UP_END', 'AUTHORITY_CHANGED']);
+
+    await send(0, oldReport);
+    await send(1, { ...oldReport, awards: [] });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'STALE_AUTHORITY' });
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'STALE_AUTHORITY' });
+    expect(room.getRoster()!.players[0].money).toBe(before);
+
+    await send(1, report(shot.shotId, 30));
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    await send(1, report(shot.shotId, 90));
+    await send(0, oldReport);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({
+      activeShot: null, currentPlayerIndex: 1, roundEnded: false, lastResolvedShotId: shot.shotId,
+      roundEarningsByPlayer: { 'player-1': 30 },
+    });
+    expect(room.getRoster()!.players[0].money).toBe(before + 30);
+    expect(sockets[2].getAllMessages<{ type: string }>().filter((m) => m.type === 'STATE_UPDATE')).toHaveLength(1);
+  });
+
+  it('gives the first live replacement a bounded window after a last-second disconnect', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot();
+    const launchedAt = Date.now();
+    const shot = await fire();
+    await vi.advanceTimersByTimeAsync(19_800);
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    await disconnect.call(room, 0, sockets[0]);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 39_800);
+    expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 1 });
+    await vi.advanceTimersByTimeAsync(200);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({ roundEnded: false, earningsAuthoritySlot: 1 });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 39_800);
+    await send(1, report(shot.shotId, 30));
+    expect(room.getRoster()).toMatchObject({ lastResolvedShotId: shot.shotId, roundEnded: false });
+  });
+
+  it('skips the timed-out seat when the replacement disconnects and keeps the final deadline', async () => {
+    const { room, setup, sockets, fire, restart } = await boot(3);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+
+    const restored = await restart();
+    const disconnect = Reflect.get(restored, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    await disconnect.call(restored, 1, sockets[1]);
+    expect(restored.getRoster()!.earningsAuthoritySlot).toBe(2);
+    expect(catchUpSnapshot(sockets[2])).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 2 });
+    await disconnect.call(restored, 2, sockets[2]);
+    expect(restored.getRoster()!.earningsAuthoritySlot).toBeNull();
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 40_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ activeShot: null, roundEnded: true });
+  });
+
+  it.each(['cold start', 'empty room'])('grants only the first replacement a reporting window after a %s', async (scenario) => {
+    const { room, fire, restart, setup, sockets } = await boot(3);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    await vi.advanceTimersByTimeAsync(19_900);
+    const disconnect = (target: GameRoom, slot: number, socket: MockWebSocket) =>
+      (Reflect.get(target, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>).call(target, slot, socket);
+    if (scenario === 'empty room') {
+      await disconnect(room, 2, sockets[2]);
+      await disconnect(room, 1, sockets[1]);
+      await disconnect(room, 0, sockets[0]);
+      expect(room.getRoster()!.earningsAuthoritySlot).toBeNull();
+    }
+    const restored = scenario === 'cold start' ? await restart(false) : room;
+    const socket = new MockWebSocket();
+    const connections = Reflect.get(restored, 'sockets') as Map<number, MockWebSocket>;
+    connections.set(1, socket);
+    const claim = Reflect.get(restored, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
+    storage.transaction.mockClear();
+    await claim.call(restored, 1, 'Renamed Human 1', socket);
+    expect(storage.transaction).toHaveBeenCalledTimes(1);
+    expect(catchUpSnapshot(socket)).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 1 });
+    expect(socket.getAllMessages<{ type: string }>().filter(({ type }) => type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 39_900);
+    await vi.advanceTimersByTimeAsync(100);
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ roundEnded: false, earningsAuthoritySlot: 1 });
+
+    await disconnect(restored, 1, socket);
+    const finalSocket = new MockWebSocket();
+    connections.set(2, finalSocket);
+    await claim.call(restored, 2, 'Human 2', finalSocket);
+    expect(restored.getRoster()!.earningsAuthoritySlot).toBe(2);
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 39_900);
+  });
+
+  it('keeps the deadline when the original reporter reclaims its empty seat', async () => {
+    const { room, setup, sockets, fire } = await boot(2, true);
+    const launchedAt = Date.now();
+    await fire();
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    await disconnect.call(room, 0, sockets[0]);
+    await vi.advanceTimersByTimeAsync(19_900);
+    const socket = new MockWebSocket();
+    const connections = Reflect.get(room, 'sockets') as Map<number, MockWebSocket>;
+    connections.set(0, socket);
+    const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+    await claim.call(room, 0, 'Human 0', socket);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+  });
+
+  it('keeps reconnect and IDENTIFY writes behind a failed shot transaction', async () => {
+    const { room, setup, send, fire, sockets } = await boot();
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
+    storage.transaction.mockClear();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    storage.transaction.mockImplementationOnce(async () => {
+      enter();
+      await released;
+      throw new Error('shot storage unavailable');
+    });
+    const firing = expect(fire('GRENADE')).rejects.toThrow('shot storage unavailable');
+    await entered;
+    const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+    const reconnecting = claim.call(room, 1, 'Reconnected', sockets[1]);
+    const identifying = send(1, { type: 'IDENTIFY', name: 'Identified' });
+    const catchingUp = send(1, {
+      type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+    });
+    await Promise.resolve();
+    const transactionsDuringFire = storage.transaction.mock.calls.length;
+    release();
+    await Promise.all([firing, reconnecting, identifying, catchingUp]);
+    expect(transactionsDuringFire).toBe(1);
+    expect(setup.mockStorage.storageData.get('state')).toMatchObject({
+      activeShot: null,
+      joinedHumans: { 1: { name: 'Identified' } },
+    });
+    expect(room.getRoster()!.shotHistory).toEqual([]);
+    expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: null, events: [] });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+  });
+
+  it('resolves the watchdog waitUntil when human settlement cancels its timer', async () => {
+    const { setup, fire, send } = await boot();
+    const { waitUntil } = setup.ctx as { waitUntil: ReturnType<typeof vi.fn<(task: Promise<void>) => void>> };
+    const shot = await fire();
+    const watchdog = waitUntil.mock.calls.at(-1)![0];
+    const settled = vi.fn();
+    void watchdog.then(settled);
+    expect(settled).not.toHaveBeenCalled();
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+    expect(settled).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('publishes committed earnings before concurrent settlement (round ends: %s)', async (roundEnds) => {
+    const { room, setup, sockets, send, fire, report } = await boot();
+    const launchedAt = Date.now();
+    const shot = await fire();
+    vi.setSystemTime(launchedAt + 19_999);
+    type Transaction = (callback: (txn: unknown) => Promise<void>) => Promise<void>;
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn<Transaction>> } }).storage;
+    const transaction = storage.transaction.getMockImplementation()!;
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    storage.transaction.mockImplementationOnce(async (callback) => {
+      enter();
+      await released;
+      return transaction(callback);
+    });
+    const reportMessage = report(shot.shotId, 30);
+    if (roundEnds) {
+      reportMessage.players = reportPlayers(room, [false, true]);
+      reportMessage.deadSlots = [false, true];
+      Object.assign(reportMessage.roundOutcome, {
+        isRoundEnd: true, roundWinnerId: reportMessage.players[0].id,
+      });
+    }
+    const reporting = send(0, reportMessage);
+    await entered;
+    const settling = send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: reportMessage.deadSlots });
+    const alarm = room.alarm();
+    release();
+    await Promise.all([reporting, settling, alarm]);
+
+    const messages = sockets[1].getAllMessages<{ type: string }>();
+    expect(messages.map(({ type }) => type).filter((type) =>
+      ['SHOT_EARNINGS_APPLIED', 'STATE_UPDATE', 'ROUND_END'].includes(type),
+    )).toEqual(['SHOT_EARNINGS_APPLIED', roundEnds ? 'ROUND_END' : 'STATE_UPDATE']);
+    expect(room.getRoster()).toMatchObject({ activeShot: null, lastResolvedShotId: shot.shotId, roundEnded: roundEnds });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+  });
+
+  it('preserves the final deadline on restart and replays a single draw with existing earnings intact', async () => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot();
+    const first = await fire();
+    await send(0, report(first.shotId, 25));
+    await send(0, { type: 'SHOT_SETTLED', shotId: first.shotId, slot: 0, deadSlots: [false, false] });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    const launchedAt = Date.now();
+    const grenades = room.getRoster()!.players[1].inventory.GRENADE!;
+    const pending = await fire('GRENADE');
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const restored = await restart();
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 40_000);
+    await restored.alarm();
+    expect(restored.getRoster()!.activeShot?.shotId).toBe(pending.shotId);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await restored.alarm();
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({
+      activeShot: null, roundEnded: true, lastResolvedShotId: first.shotId,
+      roundEarningsByPlayer: { 'player-1': 25 },
+    });
+    expect(Object.keys(restored.getRoster()!.earningsResults)).toEqual([String(first.shotId)]);
+    const messages = () => sockets[0].getAllMessages<{ type: string }>().filter((m) => m.type === 'ROUND_END');
+    expect(messages()).toHaveLength(1);
+    const draw = messages()[0];
+    expect(draw).toMatchObject({ roundWinnerId: null, isDraw: true, abandonedShotId: pending.shotId });
+    const onceMore = await restart();
+    const handle = (slot: number, message: object) => (Reflect.get(onceMore, 'handleClientMessage') as
+      (slot: number, raw: string) => Promise<void>).call(onceMore, slot, JSON.stringify(message));
+    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    expect(messages()).toEqual([draw, draw]);
+    expect(catchUpSnapshot(sockets[0])).toMatchObject({ activeShotId: null, abandonedShotId: pending.shotId });
+    await handle(1, { ...report(pending.shotId, 100), authorityEpoch: onceMore.getRoster()!.authorityEpoch });
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
+    await handle(1, { type: 'FIRE', actionId: pending.actionId, command: pending.command });
+    expect(onceMore.getRoster()!.shotHistory).toHaveLength(2);
+    expect(onceMore.getRoster()!.players[1].inventory.GRENADE).toBe(grenades - 1);
+    expect(onceMore.getRoster()!.roundEarningsByPlayer['player-1']).toBe(25);
+  });
+
+  it('rejects a report at the deadline even if the alarm has not run yet', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot();
+    const shot = await fire();
+    vi.setSystemTime(setup.mockStorage.alarmAt!);
+
+    await send(0, report(shot.shotId, 50));
+    expect(room.getRoster()).toMatchObject({ earningsAuthoritySlot: 1, activeShot: { earningsApplied: false }, earningsResults: {} });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED' });
+
+    vi.setSystemTime(setup.mockStorage.alarmAt!);
+    await send(1, report(shot.shotId, 50));
+    expect(sockets[1].getLastMessage()).toMatchObject({ type: 'EARNINGS_REJECTED', reason: 'WRONG_SHOT' });
+    expect(room.getRoster()).toMatchObject({ activeShot: null, roundEnded: true, earningsResults: {} });
+    expect(sockets[0].getLastMessage()).toMatchObject({ type: 'ROUND_END', isDraw: true, abandonedShotId: shot.shotId });
+  });
+
+  it('bounds a legacy pending shot after cold start when no alternate authority is available', async () => {
+    const { setup, fire, restart } = await boot(2, true);
+    const shot = await fire();
+    const stored = setup.mockStorage.storageData.get('state') as { activeShot: { reportRecovery?: unknown } };
+    delete stored.activeShot.reportRecovery;
+    delete setup.mockStorage.alarmAt;
+    const restored = await restart();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 20_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ roundEnded: true, activeShot: null, earningsResults: {} });
+    expect(restored.getRoster()!.shotHistory.map((message) => message.shotId)).toEqual([shot.shotId]);
+  });
+
+  it('prevents a late-disconnecting timed-out authority from regaining authority and relays to survivor', async () => {
+    const { room, sockets, send, fire, report } = await boot(2);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+    const connections = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+
+    await vi.advanceTimersByTimeAsync(20_500);
+    // Slot 0 disconnects after deadlineAt before alarm() runs; relay still caps at launchedAt + 40_000.
+    await disconnect.call(room, 0, sockets[0]);
+    expect(room.getRoster()).toMatchObject({
+      earningsAuthoritySlot: 1,
+      activeShot: {
+        reportRecovery: {
+          relayed: true,
+          timedOutSlot: 0,
+          deadlineAt: launchedAt + 40_000,
+        },
+      },
+    });
+
+    await disconnect.call(room, 1, sockets[1]);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBeNull();
+
+    const reconnected0 = new MockWebSocket();
+    connections.set(0, reconnected0 as unknown as WebSocket);
+    await claim.call(room, 0, 'Human 0', reconnected0);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBeNull();
+
+    const reconnected1 = new MockWebSocket();
+    connections.set(1, reconnected1 as unknown as WebSocket);
+    await claim.call(room, 1, 'Human 1', reconnected1);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+
+    await send(1, report(shot.shotId, 25));
+    expect(room.getRoster()!.players[0].money).toBe(275);
+  });
+
+  it.each([false, true])('keeps the recovery alarm when SHOT_EARNINGS arrives before SHOT_SETTLED and completes on cold-start alarm (roundEnds=%s)', async (roundEnds) => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot(2);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+
+    const reportMessage = report(shot.shotId, 25);
+    if (roundEnds) {
+      reportMessage.players = reportPlayers(room, [false, true]);
+      reportMessage.deadSlots = [false, true];
+      Object.assign(reportMessage.roundOutcome, {
+        isRoundEnd: true, roundWinnerId: reportMessage.players[0].id,
+      });
+    }
+    await send(0, reportMessage);
+
+    expect(room.getRoster()!.activeShot).toMatchObject({
+      shotId: shot.shotId,
+      earningsApplied: true,
+      shooterSettled: false,
+    });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
+
+    vi.setSystemTime(launchedAt + 20_000);
+    const restored = await restart();
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+
+    expect(restored.getRoster()).toMatchObject({
+      activeShot: null,
+      currentPlayerIndex: roundEnds ? 0 : 1,
+      roundEnded: roundEnds,
+      lastResolvedShotId: shot.shotId,
+      roundEarningsByPlayer: { 'player-1': 25 },
+    });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === (roundEnds ? 'ROUND_END' : 'STATE_UPDATE'))).toBe(true);
+  });
+
+  it('clears the recovery alarm once a delayed releaseAt shot finishes settling', async () => {
+    const { room, setup, send, fire, report } = await boot(2);
+    const launchedAt = Date.now();
+    const shot = await fire();
+    await send(0, report(shot.shotId, 10));
+
+    const active = room.getRoster()!.activeShot!;
+    active.releaseAt = launchedAt + 500;
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+    expect(setup.mockStorage.alarmAt).toBe(launchedAt + 500);
+    expect(room.getRoster()!.activeShot).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(room.getRoster()).toMatchObject({
+      activeShot: null,
+      currentPlayerIndex: 1,
+      lastResolvedShotId: shot.shotId,
+    });
+    expect(setup.mockStorage.alarmAt).toBeUndefined();
+  });
+
+  it('serializes shop purchases, readiness, IDENTIFY and REQUEST_GAME_START through runShotOperation', async () => {
+    const { room, setup, sockets, send } = await boot(2);
+    room.getRoster()!.roundEnded = true;
+    await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
+    const shopEpoch = room.getRoster()!.shopSession!.shopEpoch;
+    const grenadesBefore = room.getRoster()!.players[1].inventory.GRENADE ?? 0;
+    await send(0, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-0' });
+
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
+    const originalTransaction = storage.transaction.getMockImplementation()! as (cb: unknown) => Promise<void>;
+    storage.transaction.mockClear();
+    let enteredBuy!: () => void;
+    let releaseBuy!: () => void;
+    const buyEntered = new Promise<void>((resolve) => { enteredBuy = resolve; });
+    const buyReleased = new Promise<void>((resolve) => { releaseBuy = resolve; });
+    storage.transaction.mockImplementationOnce(async (callback) => {
+      enteredBuy();
+      await buyReleased;
+      await originalTransaction(callback);
+    });
+
+    const buying = send(1, { type: 'SHOP_BUY_SELL', shopEpoch, actionId: 'buy-1', weaponId: 'GRENADE', delta: 1 });
+    await buyEntered;
+
+    const readying = send(1, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-1' });
+    const identifying = send(1, { type: 'IDENTIFY', name: 'UpdatedBob' });
+    const catchingUp = send(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await Promise.resolve();
+    const transactionsWhilePaused = storage.transaction.mock.calls.length;
+
+    releaseBuy();
+    await Promise.all([buying, readying, identifying, catchingUp]);
+
+    expect(transactionsWhilePaused).toBe(1);
+    const state = room.getRoster()!;
+    expect(state.roundNumber).toBe(2);
+    expect(state.shopSession).toBeNull();
+    expect(state.joinedHumans[1].name).toBe('UpdatedBob');
+    expect(state.players[1].inventory.GRENADE).toBe(grenadesBefore + 1);
+    expect(sockets[0].getAllMessages<ShopFinishMessage>().some((m) => m.type === 'SHOP_FINISH' && m.nextRoundNumber === 2)).toBe(true);
+    expect(catchUpSnapshot(sockets[0])?.roundNumber).toBe(2);
+  });
+
+  it('serializes completeZeusStrike behind in-flight shot transactions', async () => {
+    const { room, setup, fire, send, report } = await boot(2);
+    room.getRoster()!.zeusState.shotsWithoutEarnings = 9;
+    const shot = await fire();
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+    await send(0, report(shot.shotId));
+    await vi.advanceTimersByTimeAsync(0);
+    const strike = room.getRoster()!.activeZeusStrike;
+    expect(strike).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(699);
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
+    const originalTransaction = storage.transaction.getMockImplementation()! as (cb: unknown) => Promise<void>;
+    storage.transaction.mockClear();
+    let enteredIdentify!: () => void;
+    let releaseIdentify!: () => void;
+    const identifyEntered = new Promise<void>((resolve) => { enteredIdentify = resolve; });
+    const identifyReleased = new Promise<void>((resolve) => { releaseIdentify = resolve; });
+    storage.transaction.mockImplementationOnce(async (callback) => {
+      enteredIdentify();
+      await identifyReleased;
+      await originalTransaction(callback);
+    });
+
+    const identifying = send(0, { type: 'IDENTIFY', name: 'ZeusWatcher' });
+    await identifyEntered;
+    await vi.advanceTimersByTimeAsync(1);
+    const transactionsWhilePaused = storage.transaction.mock.calls.length;
+
+    releaseIdentify();
+    await identifying;
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+
+    expect(transactionsWhilePaused).toBe(1);
+    const state = room.getRoster()!;
+    expect(state.joinedHumans[0].name).toBe('ZeusWatcher');
+    expect(state.activeZeusStrike).toBeNull();
+    expect(state.combatJournal.filter((e) => e.type === 'ZEUS_STRIKE_APPLIED')).toHaveLength(1);
+  });
+
+  it('clears roundClosedWithoutReport after shopping and allows a normal Round 2 win', async () => {
+    const { room, setup, sockets, send, fire, report } = await boot(2);
+    await fire();
+    await vi.advanceTimersByTimeAsync(20_000);
+    setup.mockStorage.alarmAt = undefined;
+    await room.alarm();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await room.alarm();
+    expect(room.getRoster()).toMatchObject({ roundEnded: true, roundClosedWithoutReport: true });
+
+    await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
+    const shopEpoch = room.getRoster()!.shopSession!.shopEpoch;
+    await send(0, { type: 'SHOP_BUY_SELL', shopEpoch, actionId: 'buy-0', weaponId: 'GRENADE', delta: 1 });
+    await send(0, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-0' });
+    await send(1, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-1' });
+    expect(room.getRoster()!.roundNumber).toBe(2);
+    expect(room.getRoster()!.roundEnded).toBe(false);
+    expect(room.getRoster()!.roundClosedWithoutReport).toBeUndefined();
+
+    const shot2 = await fire();
+    const deadPlayers = reportPlayers(room, [false, true]);
+    const authoritySlot = room.getRoster()!.earningsAuthoritySlot!;
+    await send(0, { type: 'SHOT_SETTLED', shotId: shot2.shotId, slot: 0, deadSlots: [false, true] });
+    await send(authoritySlot, {
+      ...report(shot2.shotId, 50),
+      players: deadPlayers,
+      deadSlots: [false, true],
+      roundOutcome: { isRoundEnd: true, isDraw: false, roundWinnerId: 'player-1' },
+    });
+    const roundEnds = sockets[0].getAllMessages<{
+      type: string; roundNumber: number; isDraw: boolean; roundWinnerId: string | null;
+    }>().filter((m) => m.type === 'ROUND_END');
+    expect(roundEnds).toHaveLength(2);
+    expect(roundEnds[1]).toMatchObject({ roundNumber: 2, isDraw: false, roundWinnerId: 'player-1' });
+    expect(room.getRoster()!.roundClosedWithoutReport).toBeUndefined();
+  });
+
+  it('coordinates fetch WebSocket upgrades with IDENTIFY and REQUEST_GAME_START without duplicate writes or catch-ups', async () => {
+    class MockUpgradeWebSocket extends MockWebSocket {
+      private listeners = new Map<string, Array<(event: { data?: unknown }) => void>>();
+      public accept = vi.fn();
+      public addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+        const list = this.listeners.get(type) ?? [];
+        list.push(listener);
+        this.listeners.set(type, list);
+      }
+      public dispatch(type: string, event: { data?: unknown } = {}): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    const connectViaFetch = async (room: GameRoom, slot: number): Promise<MockUpgradeWebSocket> => {
+      const OriginalResponse = globalThis.Response;
+      let capturedServer!: MockUpgradeWebSocket;
+      class MockWebSocketPair {
+        public 0: MockUpgradeWebSocket;
+        public 1: MockUpgradeWebSocket;
+        constructor() {
+          this[0] = new MockUpgradeWebSocket();
+          this[1] = new MockUpgradeWebSocket();
+          capturedServer = this[1];
+        }
+      }
+      const WrappedResponse = function (body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+        if (init?.status === 101) {
+          return { status: 101, webSocket: init.webSocket } as unknown as Response;
+        }
+        return new OriginalResponse(body, init);
+      } as unknown as typeof Response;
+
+      vi.stubGlobal('WebSocketPair', MockWebSocketPair);
+      vi.stubGlobal('Response', WrappedResponse);
+      try {
+        const state = room.getRoster()!;
+        const token = state.tokens[slot];
+        const response = await room.fetch(new Request(
+          `http://localhost/ws?room=${state.roomId}&slot=${slot}&token=${token}&protocolVersion=4`,
+          { headers: { Upgrade: 'websocket' } },
+        ));
+        expect(response.status).toBe(101);
+        return capturedServer;
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    };
+
+    const { room, setup, sockets, send, fire } = await boot(2);
+    await send(0, { type: 'IDENTIFY', name: 'Ace' });
+    const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+
+    // 1. Reconnect without ?name= keeps 'Ace' and skips redundant saveState().
+    await disconnect.call(room, 0, sockets[0]);
+    storage.transaction.mockClear();
+    const aceWs = await connectViaFetch(room, 0);
+    await vi.advanceTimersByTimeAsync(0);
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(room.getRoster()!.joinedHumans[0].name).toBe('Ace');
+    expect(storage.transaction).not.toHaveBeenCalled();
+
+    // 2. REQUEST_GAME_START arriving before setTimeout(0) claims once, elects authority, and suppresses setTimeout duplicate.
+    const shot = await fire();
+    await disconnect.call(room, 1, sockets[1]);
+    await disconnect.call(room, 0, aceWs);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBeNull();
+
+    const earlyWs = await connectViaFetch(room, 0);
+    earlyWs.dispatch('message', {
+      data: JSON.stringify({
+        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+      }),
+    });
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+    expect(earlyWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+    expect(catchUpSnapshot(earlyWs)).toMatchObject({ activeShotId: shot.shotId, authoritySlot: 0 });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(earlyWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+
+    // 3. When the lobby observes GAME_START before mounting combat, the combat
+    // handler's first explicit request still receives the full catch-up.
+    const lateWs = await connectViaFetch(room, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(lateWs.getAllMessages<{ type: string }>().some((m) => m.type === 'GAME_START')).toBe(true);
+    expect(catchUpSnapshot(lateWs)).toBeNull();
+
+    lateWs.dispatch('message', {
+      data: JSON.stringify({
+        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+      }),
+    });
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(lateWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(1);
+    expect(catchUpSnapshot(lateWs)).toMatchObject({ activeShotId: shot.shotId });
+
+    lateWs.dispatch('message', {
+      data: JSON.stringify({
+        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+      }),
+    });
+    await (Reflect.get(room, 'shotOperation') as Promise<void>);
+    expect(lateWs.getAllMessages<{ type: string }>().filter((m) => m.type === 'COMBAT_CATCH_UP_BEGIN')).toHaveLength(2);
+  });
 
   it.each([
     [{}, null, null], [{ shotId: 7 }, 7, null], [{ authorityEpoch: 3 }, null, 3],
@@ -756,6 +1400,7 @@ describe('Authoritative safe round preparation', () => {
     });
     const completing = send(1, { type: "SHOP_READY", shopEpoch: 1, actionId: "ready-persist" });
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === "SHOP_FINISH")).toBe(false);
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
     releases[0]();
     await vi.waitFor(() => expect(releases).toHaveLength(2));
     expect(sockets[0].getAllMessages<{ type: string }>().some((m) => m.type === "SHOP_FINISH")).toBe(false);

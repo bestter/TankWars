@@ -245,6 +245,8 @@ export class GameEngine {
   private currentFirerId: string | null = null;
   private activeShotLedger: ActiveShotLedger | null = null;
   private pendingShotResult: ResolvedShotPreview | null = null;
+  private lastConfirmedOnlineShotId = 0;
+  private lastCountedOnlineShotId = 0;
   private nextShotId = 1;
   private shotNumberInRound = 0;
   private lastAppliedShotId = 0;
@@ -597,6 +599,24 @@ export class GameEngine {
     return this.pendingShotResult;
   }
 
+  public confirmOnlineShotDamage(shotId: number): void {
+    this.lastConfirmedOnlineShotId = Math.max(this.lastConfirmedOnlineShotId, shotId);
+    if (this.pendingShotResult) this.countConfirmedOnlineShotDamage(this.pendingShotResult);
+  }
+
+  private countConfirmedOnlineShotDamage(preview: ResolvedShotPreview): void {
+    if (preview.shotId > this.lastConfirmedOnlineShotId || preview.shotId <= this.lastCountedOnlineShotId) return;
+    this.lastCountedOnlineShotId = preview.shotId;
+    this.addRoundDamage(preview);
+  }
+
+  private addRoundDamage(shot: ShotRewardResult): void {
+    for (const [playerId, damageMilli] of Object.entries(shot.damageDealtMilliByPlayer)) {
+      this.roundDamageDealt[playerId] =
+        (this.roundDamageDealt[playerId] ?? 0) + damageMilli / 1_000;
+    }
+  }
+
   public getRoundEarningsByPlayer(): Record<string, number> {
     return { ...this.roundEarningsByPlayer };
   }
@@ -660,11 +680,6 @@ export class GameEngine {
         }));
       }
     }
-    for (const [playerId, damageMilli] of Object.entries(reward.damageDealtMilliByPlayer)) {
-      this.roundDamageDealt[playerId] =
-        (this.roundDamageDealt[playerId] ?? 0) + damageMilli / 1_000;
-    }
-
     const awardMap = new Map<string, number>();
     for (const award of reward.awards) {
       awardMap.set(award.playerId, award.amount);
@@ -693,6 +708,7 @@ export class GameEngine {
     this.tankManager.clearShotAttribution();
 
     if (this.localMatch) {
+      this.addRoundDamage(preview);
       this.applyResolvedEarnings(preview.shotId, balances, preview.awards);
       this.combatObserver?.emit({ kind: "shot-result", shotId: preview.shotId, awards: structuredClone(preview.awards) });
       this.diagnosticSink?.({ kind: "settled", snapshot: this.captureDiagnosticState() });
@@ -709,6 +725,8 @@ export class GameEngine {
         this.audio.playZeusAppointment();
         this.onZeusAppointed?.(evaluation.appointment);
       }
+    } else {
+      this.countConfirmedOnlineShotDamage(preview);
     }
     this.onShotResolved?.(preview);
     return preview;
@@ -2145,6 +2163,8 @@ export class GameEngine {
     this.shotNumberInRound = 0;
     this.nextShotId = 1;
     this.lastAppliedShotId = 0;
+    this.lastConfirmedOnlineShotId = 0;
+    this.lastCountedOnlineShotId = 0;
     this.zeusState = createZeusState();
     this.pendingZeusAppointment = null;
     this.pendingSpecialRoundOutcome = null;

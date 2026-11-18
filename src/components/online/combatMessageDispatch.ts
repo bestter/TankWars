@@ -100,6 +100,17 @@ export function dispatchCombatMessage(
     return;
   }
   if (strictMessage?.type === "EARNINGS_REJECTED") {
+    // A rejection can arrive after the report or round has already been settled.
+    if (
+      ctx.gamePhaseRef.current !== "COMBAT" ||
+      tm.isInterRoundPaused() ||
+      (strictMessage.shotId !== null &&
+        (strictMessage.shotId <= ctx.lastAppliedShotIdRef.current ||
+          (shotQueue.activeServerShotId !== null &&
+            strictMessage.shotId < shotQueue.activeServerShotId))) ||
+      strictMessage.reason === "STALE_AUTHORITY" ||
+      strictMessage.reason === "WRONG_SHOT"
+    ) return;
     ctx.dispatch({ type: "SET_NETWORK_ERROR", key: `earnings_rejected_${strictMessage.reason.toLowerCase()}` });
     return;
   }
@@ -112,6 +123,7 @@ export function dispatchCombatMessage(
   }
 
   if (strictMessage?.type === "AUTHORITY_CHANGED") {
+    if (strictMessage.authorityEpoch <= ctx.authorityEpochRef.current) return;
     ctx.authoritySlotRef.current = strictMessage.authoritySlot;
     ctx.authorityEpochRef.current = strictMessage.authorityEpoch;
     if (
@@ -128,6 +140,7 @@ export function dispatchCombatMessage(
   if (strictMessage?.type === "SHOT_EARNINGS_APPLIED") {
     if (ctx.applyEconomicResult) ctx.applyEconomicResult(strictMessage);
     else engine.applyResolvedEarnings(strictMessage.shotId, strictMessage.balances);
+    engine.confirmOnlineShotDamage(strictMessage.shotId);
     if (shotQueue.activeServerShotId === strictMessage.shotId && !shotQueue.replayActiveNow) {
       shotQueue.clearActiveServerShotId();
     }
@@ -135,6 +148,7 @@ export function dispatchCombatMessage(
     ctx.pendingShotPreviewsRef.current.delete(strictMessage.shotId);
     if (strictMessage.shotId <= ctx.lastAppliedShotIdRef.current) return;
     ctx.lastAppliedShotIdRef.current = strictMessage.shotId;
+    ctx.dispatch({ type: "CLEAR_EARNINGS_ERROR" });
     const roster = [...engine.getTankManager().getPlayers()];
     ctx.dispatch({ type: "SET_UI_PLAYERS", players: roster });
     const awards = ctx.buildOverlayAwards(strictMessage.awards, roster);

@@ -198,6 +198,7 @@ export interface RoundEndMessage {
   roundWinnerId: string | null;
   isDraw: boolean;
   roundNumber: number;
+  abandonedShotId?: number;
 }
 
 export interface ZeusAppointedMessage {
@@ -632,7 +633,10 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
         isPlayers(value.players) &&
         (value.roundWinnerId === null || typeof value.roundWinnerId === "string") &&
         typeof value.isDraw === "boolean" &&
-        isSafeNonNegativeInteger(value.roundNumber)
+        isSafeNonNegativeInteger(value.roundNumber) &&
+        (value.abandonedShotId === undefined ||
+          (isSafeNonNegativeInteger(value.abandonedShotId) && value.abandonedShotId > 0 &&
+            value.isDraw && value.roundWinnerId === null))
       );
     case "SHOP_STATE":
       return (

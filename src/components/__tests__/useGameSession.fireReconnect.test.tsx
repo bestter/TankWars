@@ -358,11 +358,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
-    const historicalManager = executeRemoteFire.mock.instances.at(-1)!;
-    act(() => {
-      (Reflect.get(historicalManager, "finishShotResolution") as () => void).call(historicalManager);
-    });
+    expect(executeRemoteFire).not.toHaveBeenCalled();
     expect(sessionRef.current?.state.pendingFireIntent).toBeNull();
     expect(sessionRef.current?.state.lastSeenShotId).toBe(5);
     expect(sessionRef.current?.state.gamePhase).toBe("SHOP");
@@ -398,7 +394,7 @@ describe("useGameSession FIRE reconnect", () => {
       });
     });
 
-    expect(executeRemoteFire).toHaveBeenCalledTimes(2);
+    expect(executeRemoteFire).toHaveBeenCalledTimes(1);
     expect(executeRemoteFire).toHaveBeenCalledWith(
       expect.objectContaining({ weaponId: "GRENADE" }),
       expect.objectContaining({
