@@ -25,7 +25,7 @@ describe("ImpactExplosions", () => {
 
     for (let i = 0; i < 14; i++) {
       recorder.clearLines();
-      explosions.draw(recorder.ctx);
+      explosions.drawFlash(recorder.ctx);
       expect(recorder.getGlobalAlpha()).toBe(1);
       if (recorder.getLines().includes(flashLine)) {
         flashFrames += 1;
@@ -35,7 +35,7 @@ describe("ImpactExplosions", () => {
     expect(flashFrames).toBe(13);
   });
 
-  it("draws flash first, then particles with size > 4 and size > 7 halos, restoring globalAlpha", () => {
+  it("draws particles with size > 4 and size > 7 halos, restoring globalAlpha", () => {
     // 0.9 sets size = 2.5 + 0.9 * 8.5 = 10.15 (> 7, triggers both halo layers)
     vi.spyOn(random, "secureRandom").mockReturnValue(0.9);
 
@@ -43,15 +43,11 @@ describe("ImpactExplosions", () => {
     explosions.spawnThermonuclear(100, 120);
 
     const recorder = createRecordingCanvasContext();
-    explosions.draw(recorder.ctx);
+    explosions.drawParticles(recorder.ctx);
     expect(recorder.getGlobalAlpha()).toBe(1);
 
-    const lines = recorder.getLines();
-    // 1 flash + 42 * 3 rects (base + >4 halo + >7 halo)
-    expect(lines).toHaveLength(1 + 42 * 3);
-    expect(lines[0]).toBe(
-      `fillRect x=0.000000 y=0.000000 w=200.000000 h=200.000000 fill=${VGA_PALETTE.RED} alpha=0.240000`,
-    );
+    // 42 particles, each with a base rectangle and two halos.
+    expect(recorder.getLines()).toHaveLength(42 * 3);
   });
 
   it("expands only in first half of life and compacts dead particles in place without reallocating", () => {
@@ -126,7 +122,8 @@ describe("ImpactExplosions", () => {
     expect(explosions.hasActiveVisuals).toBe(false);
 
     const recorder = createRecordingCanvasContext();
-    explosions.draw(recorder.ctx);
+    explosions.drawFlash(recorder.ctx);
+    explosions.drawParticles(recorder.ctx);
     expect(recorder.getLines()).toHaveLength(0);
   });
 });

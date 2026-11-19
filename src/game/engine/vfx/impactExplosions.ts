@@ -24,7 +24,7 @@ export interface ImpactExplosionsOptions {
 
 /**
  * Explosions et flash plein écran pour les impacts thermonucléaires (#414).
- * Avancé à 120 Hz dans update(), rendu et flash décrémenté dans draw(ctx).
+ * Particules avancées à 120 Hz dans update(), flash décrémenté dans drawFlash().
  */
 export class ImpactExplosions {
   private readonly width: number;
@@ -77,15 +77,17 @@ export class ImpactExplosions {
     this.explosions.length = write;
   }
 
-  public draw(ctx: CanvasRenderingContext2D): void {
-    if (this.thermoFlashLife > 0) {
-      ctx.globalAlpha = 0.24;
-      ctx.fillStyle = VGA_PALETTE.RED;
-      ctx.fillRect(0, 0, this.width, this.height);
-      ctx.globalAlpha = 1;
-      this.thermoFlashLife -= 1;
-    }
+  public drawFlash(ctx: CanvasRenderingContext2D): void {
+    if (this.thermoFlashLife <= 0) return;
 
+    ctx.globalAlpha = 0.24;
+    ctx.fillStyle = VGA_PALETTE.RED;
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.globalAlpha = 1;
+    this.thermoFlashLife -= 1;
+  }
+
+  public drawParticles(ctx: CanvasRenderingContext2D): void {
     if (this.explosions.length === 0) return;
 
     for (let i = 0; i < this.explosions.length; i++) {

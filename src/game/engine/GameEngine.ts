@@ -1212,6 +1212,11 @@ export class GameEngine {
       this.celebrationFireworks.draw(ctx);
     }
 
+    const hasImpactVisuals = this.impactExplosions.hasActiveVisuals;
+    if (hasImpactVisuals) {
+      this.impactExplosions.drawFlash(ctx);
+    }
+
     if (this.zeusFlashLife > 0) {
       ctx.globalAlpha = Math.min(0.65, this.zeusFlashLife / 10);
       ctx.fillStyle = VGA_PALETTE.WHITE;
@@ -1220,9 +1225,8 @@ export class GameEngine {
       this.zeusFlashLife--;
     }
 
-    // Huge impact explosions (THERMONUCLEAR etc.) + brief flash overlay
-    if (this.impactExplosions.hasActiveVisuals) {
-      this.impactExplosions.draw(ctx);
+    if (hasImpactVisuals) {
+      this.impactExplosions.drawParticles(ctx);
     }
 
     if (this.terrainImpactParticles.hasParticles) {

@@ -357,9 +357,9 @@ export class CelebrationFireworks {
   }
 
   public clear(): void {
+    // Préserver le demi-pas accumulé pour conserver la cadence entre les manches.
     this.fireworks.length = 0;
     this.spawnBuffer.length = 0;
-    this.fireworksUpdateAccum = 0;
     this.celebrationCenterX = 0;
     this.celebrationColor = "#FFFFFF";
     this.winner = null;

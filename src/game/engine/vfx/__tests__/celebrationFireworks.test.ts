@@ -280,8 +280,8 @@ describe("CelebrationFireworks", () => {
     expect(fireworks.getParticles().some((p) => p.type === "confetti")).toBe(false);
   });
 
-  it("clears buffers in place and resets all celebration state and accumulator", () => {
-    vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
+  it("clears celebration state in place and preserves the remaining half-tick", () => {
+    const draws = vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
     const winner = makePlayer({ id: "w", tank: makeTank("tw", 400, 360) });
     const fireworks = new CelebrationFireworks({
       width: 800,
@@ -306,13 +306,15 @@ describe("CelebrationFireworks", () => {
       winner: null,
       angle: 90,
       angleDir: 1,
-      updateAccum: 0,
+      updateAccum: PHYSICS_DT,
     });
 
-    // Behavioral check: one 1/120 step after clear+start must NOT trigger a 60 Hz tick
-    fireworks.start(200, 200, "#55FF55", null);
+    fireworks.start(200, 200, "#55FF55", winner);
     const lifeAfterRestart = fireworks.getParticles()[0].life;
+    draws.mockClear();
     fireworks.update(PHYSICS_DT);
-    expect(fireworks.getParticles()[0].life).toBe(lifeAfterRestart);
+    expect(fireworks.getParticles()[0].life).toBe(lifeAfterRestart - 1);
+    expect(fireworks.getCannonOverride()?.angle).toBe(79.5);
+    expect(draws).toHaveBeenCalledTimes(11);
   });
 });

@@ -148,7 +148,8 @@ describe("GameEngine VFX integration", () => {
     expect(engine.getTerrainImpactParticles()).toHaveLength(0);
   });
 
-  it("draws VFX in strict render order (fireworks -> zeusFlash -> impactExplosions -> terrainImpactParticles) and skips when inactive", () => {
+  it("draws thermonuclear and Zeus flashes in order before the blast particles", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
     const engine = new GameEngine(800, 480);
     const { live1 } = setupFlatPlayers(engine);
 
@@ -156,28 +157,23 @@ describe("GameEngine VFX integration", () => {
     vi.spyOn(engine.getPhysicsEngine(), "draw").mockImplementation(() => {});
     vi.spyOn(engine.getTankManager(), "draw").mockImplementation(() => {});
 
-    const order: string[] = [];
+    const recorder = createRecordingCanvasContext();
+    let blastStart = 0;
+    let blastEnd = 0;
     const drawFireworks = vi
       .spyOn(CelebrationFireworks.prototype, "draw")
       .mockImplementation(() => {
-        order.push("fireworks");
-      });
-    const drawExplosions = vi
-      .spyOn(ImpactExplosions.prototype, "draw")
-      .mockImplementation(() => {
-        order.push("impactExplosions");
+        blastStart = recorder.getLines().length;
       });
     const drawTerrain = vi
       .spyOn(TerrainImpactParticles.prototype, "drawAndAdvance")
       .mockImplementation(() => {
-        order.push("terrainImpactParticles");
+        blastEnd = recorder.getLines().length;
       });
 
-    // When all 3 are empty/inactive, none of their draw methods are invoked
-    const recorder = createRecordingCanvasContext();
     engine.render(recorder.ctx);
+    expect(recorder.getLines()).toHaveLength(1); // Sky only.
     expect(drawFireworks).not.toHaveBeenCalled();
-    expect(drawExplosions).not.toHaveBeenCalled();
     expect(drawTerrain).not.toHaveBeenCalled();
 
     // Activate all 3 VFX + Zeus flash via public API
@@ -194,28 +190,16 @@ describe("GameEngine VFX integration", () => {
       }),
     ).toBe(true);
 
-    const wrappedCtx = new Proxy(recorder.ctx, {
-      get(target, prop, receiver) {
-        if (prop === "fillRect") {
-          return (x: number, y: number, w: number, h: number) => {
-            if (target.fillStyle === VGA_PALETTE.WHITE && w === 800 && h === 480) {
-              order.push("zeusFlash");
-            }
-            target.fillRect(x, y, w, h);
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    });
-
-    order.length = 0;
-    engine.render(wrappedCtx);
-    expect(order).toEqual([
-      "fireworks",
-      "zeusFlash",
-      "impactExplosions",
-      "terrainImpactParticles",
+    recorder.clearLines();
+    engine.render(recorder.ctx);
+    expect(drawFireworks).toHaveBeenCalledOnce();
+    expect(drawTerrain).toHaveBeenCalledOnce();
+    const [thermoFlash, zeusFlash, ...blastParticles] = recorder.getLines().slice(blastStart, blastEnd);
+    expect([thermoFlash, zeusFlash]).toEqual([
+      `fillRect x=0.000000 y=0.000000 w=800.000000 h=480.000000 fill=${VGA_PALETTE.RED} alpha=0.240000`,
+      `fillRect x=0.000000 y=0.000000 w=800.000000 h=480.000000 fill=${VGA_PALETTE.WHITE} alpha=0.650000`,
     ]);
+    expect(blastParticles.length).toBeGreaterThan(0);
   });
 
   it("overrides winner cannon angle during tankManager.draw and restores it even if draw throws", () => {
