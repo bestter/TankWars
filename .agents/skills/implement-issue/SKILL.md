@@ -143,7 +143,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
   - Conformément à l'exception de `AGENTS.md`, la batterie applicative (`npm run lint`, `npm run build`, `npm run test`, `react-doctor`) n'est pas requise.
   - Exécuter les contrôles de diff et de formatage applicables (`git diff --check`, conformité `.editorconfig`, puis `git diff --cached --check` à l'Étape 6 avant le commit) et mentionner explicitement cette exemption dans la description de la PR et le compte rendu.
 - Ne pas passer à l'Étape 6 tant que tous les contrôles applicables ne passent pas.
-- Pour un changement d'interface, de moteur ou de réseau, indiquer clairement dans le compte rendu si la vérification manuelle a été effectuée ou non.
+- Pour un changement d'interface ou de moteur, vérifier manuellement le parcours concerné (menu, partie, fin de manche, boutique et manche suivante). Pour un changement réseau, couvrir aussi les reconnexions et les reprises pertinentes. Dans le compte rendu, indiquer les contrôles effectués et ceux qui n'ont pas pu l'être.
 
 ### Étape 6 : Commit, push et Pull Request
 
