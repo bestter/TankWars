@@ -16,7 +16,10 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 
 ## Entrées
 
-- **Issue** *(requis)* : numéro (`440`, `#440`) ou URL GitHub complète.
+- **Issue** *(requis)* :
+  - Numéro entier strictement positif (`440`, `#440`), interprété comme un ticket de `bestter/TankWars`.
+  - Ou URL GitHub complète d'une issue de `bestter/TankWars` uniquement : `https://github.com/bestter/TankWars/issues/<N>` (casse libre sur l'hôte et `bestter/TankWars`, `/` final, requête `?…` ou fragment `#…` autorisés).
+  - **Refuser et arrêter immédiatement** toute URL ou référence explicite visant un autre hôte, un autre dépôt (ex. `autre/repo#440` ou `https://github.com/autre/repo/issues/440`) ou une ressource qui n'est pas une issue (ex. `/pull/<N>`).
 - **Version cible** *(optionnel)* : version explicite (`0.16.2`, `v0.16.2`) ou mot-clé (`patch`, `minor`). **Si non précisée, aucun bump de version n'est effectué.**
 - **Validation du plan** *(optionnel)* : si le ticket est clair, enchaîner directement jusqu'à la PR. N'attendre le feu vert après le plan que s'il existe une ambiguïté ou si l'utilisateur demande explicitement « plan d'abord ».
 
@@ -24,26 +27,39 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 
 ## Procédure étape par étape
 
-### Étape 1 : Vérifier le dépôt et lire l'issue
+### Étape 1 : Valider la cible, vérifier le dépôt et lire l'issue
 
-1. Vérifier l'état local Git :
+1. Valider la référence d'issue avant toute action Git ou GitHub :
+   - Si l'entrée est une URL complète, vérifier que le schéma est `https://`, l'hôte est `github.com`, le dépôt est `bestter/TankWars` (insensible à la casse) et le segment suivant est `/issues/<N>` avec `<N>` entier strictement positif; sinon **arrêter** et signaler l'erreur.
+   - Si l'entrée est une référence explicite `<owner>/<repo>#<N>`, exiger `bestter/TankWars` (insensible à la casse); sinon **arrêter**.
+   - Si l'entrée est un numéro seul (`<N>` ou `#<N>`), vérifier que `<N>` est un entier strictement positif et cibler `bestter/TankWars`.
+2. Vérifier l'état local Git et le dépôt distant :
    ```bash
    git status --short
    git branch --show-current
+   git remote get-url origin
    ```
+   - Si `origin` ne pointe pas vers `bestter/TankWars`, **arrêter** et avertir l'utilisateur.
    - Si l'arbre contient des modifications locales non commitées hors mandat, **arrêter** et demander à l'utilisateur quoi en faire (ne jamais écraser ni `stash` silencieusement).
-2. Lire l'issue complète (description et commentaires) :
+3. Lire l'issue complète (y compris les références structurées de PR liées) en ciblant explicitement `bestter/TankWars` :
    ```bash
-   gh issue view <N> --json number,title,state,labels,body,comments,url
+   gh issue view <N> -R bestter/TankWars --json number,title,state,labels,body,comments,url,closedByPullRequestsReferences
    ```
    - Si l'issue n'est pas ouverte (`state != "OPEN"`), **arrêter** et informer l'utilisateur.
-3. Vérifier qu'aucune PR ouverte ne traite déjà cette issue :
-   ```bash
-   gh pr list --search "<N>" --state open --json number,title,headRefName,url,author
-   ```
-   - Si une PR existe déjà pour ce ticket, **arrêter** et consulter l'utilisateur avant d'agir (et respecter les consignes pour les PR Google Labs Jules dans `AGENTS.md`).
-4. Consulter `AGENTS.md` pour les contrats sensibles et les points d'entrée concernés.
-5. Si l'issue touche l'HTML, le CSS, le DOM, l'accessibilité, les formulaires, les modales, les animations, la performance Web ou les API navigateur côté client (y compris dans React) : lire et appliquer **impérativement en premier** le skill [modern-web-guidance](../modern-web-guidance/SKILL.md).
+4. Vérifier qu'aucune PR ouverte ne traite déjà cette issue (sources structurées d'abord, puis complément textuel) :
+   - **Liens structurés (panneau *Development* et mots-clés de fermeture)** : pour chaque PR retournée dans `closedByPullRequestsReferences` (qui inclut les PR liées manuellement dans le panneau *Development* même sans `#<N>` dans le titre ni la description, mais aussi des PR déjà `MERGED`), vérifier son état réel et ses métadonnées :
+     ```bash
+     gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits
+     ```
+     Retenir toute PR dont `state == "OPEN"`.
+   - **Complément par recherche textuelle** (pour repérer une PR ouverte qui mentionne `#<N>` sans lien *Development* ni mot-clé de fermeture) :
+     ```bash
+     gh pr list -R bestter/TankWars --state open --search "<N>" --json number,title,headRefName,url,author,body,closingIssuesReferences
+     ```
+     Pour chaque résultat retourné, **confirmer qu'il correspond réellement à `bestter/TankWars#<N>`** (via `closingIssuesReferences` pointant sur `bestter/TankWars` et `#<N>`, une référence explicite `#<N>` / `bestter/TankWars#<N>` / URL TankWars dans le titre ou la description, ou une branche dédiée `issue-<N>`; si le lien n'apparaît pas dans ces champs, inspecter `gh pr view <pr_url> --json comments,commits` pour trancher) et écarter les faux positifs (nombre sans rapport ou ticket `#<N>` d'un autre dépôt).
+   - Si au moins une PR ouverte correspondante est confirmée, **arrêter** et consulter l'utilisateur avant d'agir (après inspection des métadonnées `author,body,commits` pour respecter les consignes de `AGENTS.md` sur les PR Google Labs Jules).
+5. Consulter `AGENTS.md` pour les contrats sensibles et les points d'entrée concernés.
+6. Si l'issue touche l'HTML, le CSS, le DOM, l'accessibilité, les formulaires, les modales, les animations, la performance Web ou les API navigateur côté client (y compris dans React) : lire et appliquer **impérativement en premier** le skill [modern-web-guidance](../modern-web-guidance/SKILL.md).
 
 ### Étape 2 : Analyser et planifier
 
@@ -77,8 +93,10 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
      - Mettre à jour les deux champs `"version"` racine dans `package-lock.json` (racine et `packages[""]`).
      - Inclure la version dans l'entrée correspondante de `README.md`.
 2. **Documentation** :
-   - Mettre à jour `README.md` si le comportement documenté, les fonctionnalités ou les notes de version changent.
-   - Mettre à jour `AGENTS.md` **uniquement** si un contrat sensible, une convention opérationnelle ou un point d'entrée d'architecture change (sans y tenir de journal de changements et sans toucher `CLAUDE.md` ni `.github/copilot-instructions.md`).
+   - Mettre à jour `README.md` (et la documentation technique touchée hors fichiers de règles) si le comportement documenté, les fonctionnalités ou les notes de version changent.
+   - **Ne modifier aucun fichier de règles (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`) sans demande explicite de l'utilisateur**, conformément à `AGENTS.md`.
+   - Si les changements touchent un contrat sensible, une convention opérationnelle ou un point d'entrée d'architecture (ou si le corps du ticket évoque `AGENTS.md`) sans demande explicite de l'utilisateur, **ne pas modifier `AGENTS.md`** : le signaler simplement dans la description de la PR et le compte rendu final afin que l'utilisateur décide s'il souhaite une mise à jour.
+   - Même lorsqu'une demande explicite vise `AGENTS.md`, ne pas modifier automatiquement les compagnons (`CLAUDE.md`, `.github/copilot-instructions.md`) et ne pas y maintenir de journal de changements.
 
 ### Étape 5 : Validation (bloquante)
 
@@ -110,14 +128,15 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
    ```bash
    git push -u origin <type>/issue-<N>
    ```
-4. Créer la Pull Request vers `main` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
+4. Créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
    ```bash
-   gh pr create --base main --head <type>/issue-<N> --title "<titre>" --body-file <fichier_temp>
+   gh pr create -R bestter/TankWars --base main --head <type>/issue-<N> --title "<titre>" --body-file <fichier_temp>
    ```
    La description de la PR doit contenir :
    - `Closes #<N>`
    - Résumé des changements et fichiers clés modifiés
    - Commandes de validation réellement exécutées et leurs résultats (incluant statut/diagnostics `react-doctor` et état du contrôle manuel)
+   - Mention explicite si un contrat sensible ou un point d'entrée a changé et qu'une mise à jour de `AGENTS.md` pourrait être utile sur demande (sans l'avoir modifié sans autorisation explicite)
 5. **Ne jamais merger la PR ni lancer de déploiement.**
 
 ### Étape 7 : Vérification finale et compte rendu
@@ -125,7 +144,7 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
 1. Confirmer l'état final :
    ```bash
    git status --short
-   gh pr view --json number,url,title,state
+   gh pr view -R bestter/TankWars <type>/issue-<N> --json number,url,title,state
    ```
 2. Présenter un compte rendu concis en français québécois :
    - Ce qui a changé et pourquoi
