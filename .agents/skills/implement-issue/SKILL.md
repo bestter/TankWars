@@ -33,30 +33,36 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
    - Si l'entrée est une URL complète, vérifier que le schéma est `https://`, l'hôte est `github.com`, le dépôt est `bestter/TankWars` (insensible à la casse) et le segment suivant est `/issues/<N>` avec `<N>` entier strictement positif; sinon **arrêter** et signaler l'erreur.
    - Si l'entrée est une référence explicite `<owner>/<repo>#<N>`, exiger `bestter/TankWars` (insensible à la casse); sinon **arrêter**.
    - Si l'entrée est un numéro seul (`<N>` ou `#<N>`), vérifier que `<N>` est un entier strictement positif et cibler `bestter/TankWars`.
-2. Vérifier l'état local Git et le dépôt distant :
+2. Vérifier l'état local Git et toutes les URL du dépôt distant (lecture et push) :
    ```bash
    git status --short
    git branch --show-current
-   git remote get-url origin
+   git remote get-url --all origin
+   git remote get-url --push --all origin
    ```
-   - Si `origin` ne pointe pas vers `bestter/TankWars`, **arrêter** et avertir l'utilisateur.
+   - Vérifier que **chaque** URL retournée (lecture et **toutes** les destinations de push) correspond sans ambiguïté au dépôt GitHub `bestter/TankWars` (ex. `https://github.com/bestter/TankWars[.git]`, `git@github.com:bestter/TankWars[.git]` ou `ssh://git@github.com/bestter/TankWars[.git]`, insensible à la casse). Si une destination est absente, inattendue ou impossible à confirmer, **arrêter** et expliquer le problème à l'utilisateur.
    - Si l'arbre contient des modifications locales non commitées hors mandat, **arrêter** et demander à l'utilisateur quoi en faire (ne jamais écraser ni `stash` silencieusement).
 3. Lire l'issue complète (y compris les références structurées de PR liées) en ciblant explicitement `bestter/TankWars` :
    ```bash
    gh issue view <N> -R bestter/TankWars --json number,title,state,labels,body,comments,url,closedByPullRequestsReferences
    ```
    - Si l'issue n'est pas ouverte (`state != "OPEN"`), **arrêter** et informer l'utilisateur.
-4. Vérifier qu'aucune PR ouverte ne traite déjà cette issue (sources structurées d'abord, puis complément textuel) :
+4. Vérifier qu'aucune PR ouverte ne traite déjà cette issue (sources structurées, noms de branches paginés, puis complément textuel) :
    - **Liens structurés (panneau *Development* et mots-clés de fermeture)** : pour chaque PR retournée dans `closedByPullRequestsReferences` (qui inclut les PR liées manuellement dans le panneau *Development* même sans `#<N>` dans le titre ni la description, mais aussi des PR déjà `MERGED`), vérifier son état réel et ses métadonnées :
      ```bash
      gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits
      ```
      Retenir toute PR dont `state == "OPEN"`.
-   - **Complément par recherche textuelle** (pour repérer une PR ouverte qui mentionne `#<N>` sans lien *Development* ni mot-clé de fermeture) :
+   - **Recherche par nom de branche sur toutes les PR ouvertes (paginée)** (pour repérer une PR dont le numéro du ticket figure uniquement dans la branche, ex. `fix/issue-<N>`, sans lien *Development* ni mention dans le titre ou la description) :
+     ```bash
+     gh api --paginate "repos/bestter/TankWars/pulls?state=open&per_page=100" --jq ".[] | {number, state, headRefName: .head.ref, title, url: .html_url, author: .user.login}"
+     ```
+     Repérer toute PR dont `headRefName` contient le **numéro exact `<N>`** dans un segment dédié au ticket (ex. `<type>/issue-<N>`, `issue-<N>`, `.../issue-<N>-...`, en vérifiant que `<N>` n'est ni précédé ni suivi d'un autre chiffre afin d'exclure `issue-<N>0` ou `issue-1<N>`). Pour chaque candidate, inspecter `gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits` afin de confirmer qu'elle correspond bien à `bestter/TankWars#<N>`.
+   - **Complément par recherche textuelle** (pour repérer une PR ouverte qui mentionne `#<N>` sans lien *Development*, mot-clé de fermeture ni branche dédiée) :
      ```bash
      gh pr list -R bestter/TankWars --state open --search "<N>" --json number,title,headRefName,url,author,body,closingIssuesReferences
      ```
-     Pour chaque résultat retourné, **confirmer qu'il correspond réellement à `bestter/TankWars#<N>`** (via `closingIssuesReferences` pointant sur `bestter/TankWars` et `#<N>`, une référence explicite `#<N>` / `bestter/TankWars#<N>` / URL TankWars dans le titre ou la description, ou une branche dédiée `issue-<N>`; si le lien n'apparaît pas dans ces champs, inspecter `gh pr view <pr_url> --json comments,commits` pour trancher) et écarter les faux positifs (nombre sans rapport ou ticket `#<N>` d'un autre dépôt).
+     Pour chaque résultat retourné, **confirmer qu'il correspond réellement à `bestter/TankWars#<N>`** (via `closingIssuesReferences` pointant sur `bestter/TankWars` et `#<N>`, une référence explicite `#<N>` / `bestter/TankWars#<N>` / URL TankWars dans le titre ou la description, ou une branche dédiée au numéro exact `<N>`; si le lien n'apparaît pas dans ces champs, inspecter `gh pr view <pr_url> --json comments,commits` pour trancher) et écarter les faux positifs (nombre sans rapport ou ticket `#<N>` d'un autre dépôt).
    - Si au moins une PR ouverte correspondante est confirmée, **arrêter** et consulter l'utilisateur avant d'agir (après inspection des métadonnées `author,body,commits` pour respecter les consignes de `AGENTS.md` sur les PR Google Labs Jules).
 5. Consulter `AGENTS.md` pour les contrats sensibles et les points d'entrée concernés.
 6. Si l'issue touche l'HTML, le CSS, le DOM, l'accessibilité, les formulaires, les modales, les animations, la performance Web ou les API navigateur côté client (y compris dans React) : lire et appliquer **impérativement en premier** le skill [modern-web-guidance](../modern-web-guidance/SKILL.md).
@@ -122,15 +128,25 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
    git diff --stat
    ```
    - S'assurer qu'aucun fichier temporaire, secret ou changement hors mandat n'est inclus.
-2. Stager explicitement les fichiers pertinents (`git add -- <fichiers>`) et créer un commit atomique conforme à `AGENTS.md` :
+2. Stager explicitement les fichiers pertinents (`git add -- <fichiers>`), puis vérifier l'intégralité du diff indexé (y compris les nouveaux fichiers nouvellement ajoutés) avant le commit :
+   ```bash
+   git diff --cached --check
+   ```
+   - En cas d'échec (espaces en fin de ligne, marqueurs de conflit, etc.), corriger les problèmes dans les fichiers visés, les ré-indexer, relancer les contrôles de l'Étape 5 si du code a changé, et vérifier que `git diff --cached --check` passe sans erreur avant de poursuivre.
+3. Créer un commit atomique conforme à `AGENTS.md` :
    - Titre à l'impératif : `<type>(<scope>): <résumé à l'impératif> (#<N>)` (ou `— v<X.Y.Z> (#<N>)` si une version a été bumpée).
    - Corps concis expliquant le changement et son objectif.
    - Signature avec le nom de l'application, l'identité de l'agent et le modèle exact fourni par l'environnement.
-3. Vérifier le commit créé (`git log -1 --stat`) et pousser la branche (jamais de `git push --force`) :
+4. Vérifier le commit créé (`git log -1 --stat`) et confirmer **toutes** les destinations effectives du push avant de pousser :
    ```bash
-   git push -u origin <type>/issue-<N>
+   git remote get-url --push --all origin
    ```
-4. Créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
+   - Vérifier que chaque destination retournée correspond sans ambiguïté au dépôt GitHub `bestter/TankWars`. Si une destination est absente, inattendue ou impossible à confirmer, **interrompre la poussée** et expliquer le problème à l'utilisateur.
+   - Une fois toutes les destinations confirmées, pousser la branche (jamais de `git push --force`) :
+     ```bash
+     git push -u origin <type>/issue-<N>
+     ```
+5. Créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
    ```bash
    gh pr create -R bestter/TankWars --base main --head <type>/issue-<N> --title "<titre>" --body-file <fichier_temp>
    ```
@@ -139,7 +155,7 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
    - Résumé des changements et fichiers clés modifiés
    - Commandes de validation réellement exécutées et leurs résultats (incluant statut/diagnostics `react-doctor` et état du contrôle manuel)
    - Mention explicite si un contrat sensible ou un point d'entrée a changé et qu'une mise à jour de `AGENTS.md` pourrait être utile sur demande (sans l'avoir modifié sans autorisation explicite)
-5. **Ne jamais merger la PR ni lancer de déploiement.**
+6. **Ne jamais merger la PR ni lancer de déploiement.**
 
 ### Étape 7 : Vérification finale et compte rendu
 
