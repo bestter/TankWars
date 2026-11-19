@@ -2,6 +2,14 @@ import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type Prep
 import type { DiagnosticInput, DiagnosticState } from "../diagnostics/types";
 import { secureRandom } from "../../utils/random";
 import { CombatAudio } from "./audio/CombatAudio";
+import { CelebrationFireworks } from "./vfx/celebrationFireworks";
+import { ImpactExplosions, type ImpactExplosion } from "./vfx/impactExplosions";
+import {
+  TerrainImpactParticles,
+  type TerrainImpactParticle,
+} from "./vfx/terrainImpactParticles";
+
+export type { TerrainImpactParticle };
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
  *
@@ -25,7 +33,6 @@ import { WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
 import type { CombatObserver } from "../endurance/types";
 import type { Player } from "../../types/player";
 import { VGA_PALETTE } from "../../types/game";
-import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../types/terrain";
 import type { Vector2, FireCommand, RoundResult, GamePhase } from "../../types/game";
 import type { RoundEndPayload } from "../../types/round";
 import type { AIEngine } from "../entities/ai/AIEngine";
@@ -94,55 +101,6 @@ interface ActiveZeusVisual {
   result: ZeusStrikeResult | null;
 }
 
-export interface TerrainImpactParticle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  size: 1 | 2;
-  color: string;
-  kind: "dust" | "grain" | "shard";
-  material: TerrainMaterial;
-}
-
-type FireworkParticle = {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  color: string;
-  size: number;
-  type: "rocket" | "particle" | "confetti";
-  trail?: Array<{ x: number; y: number; alpha: number }>;
-  swaySpeed?: number;
-  swayOffset?: number;
-  swayWidth?: number;
-  rotation?: number;
-  rotationSpeed?: number;
-};
-
-const FESTIVE_COLORS: readonly string[] = [
-  VGA_PALETTE.ELECTRIC_CYAN,
-  VGA_PALETTE.FLASH_GREEN,
-  VGA_PALETTE.NEON_PINK,
-  VGA_PALETTE.CYBER_YELLOW,
-  VGA_PALETTE.FLUO_ORANGE,
-  VGA_PALETTE.VOLT_PURPLE,
-  VGA_PALETTE.CYAN,
-  VGA_PALETTE.MAGENTA,
-  VGA_PALETTE.YELLOW,
-  VGA_PALETTE.GREEN,
-  VGA_PALETTE.BLUE,
-  VGA_PALETTE.WHITE,
-];
-
-const FIREWORKS_TICK_DT = 1 / 60;
-const MAX_FIREWORKS = 250;
-
 export class GameEngine {
   public diagnosticSink?: (input: DiagnosticInput) => void;
   public diagnosticPhase?: () => GamePhase;
@@ -185,14 +143,6 @@ export class GameEngine {
   private gameOver = false;
   private winner: import("../../types/player").Player | null = null;
 
-  // For round-end (non-match) celebration fireworks (color/position when !gameOver)
-  private celebrationCenterX: number = 0;
-  private celebrationColor: string = "#FFFFFF";
-  private celebrationWinnerTankId: string | null = null;
-  private celebrationWinner: import("../../types/player").Player | null = null;
-  private celebrationAngle: number = 90;
-  private celebrationAngleDir: number = 1;
-
   /** True while tanks are fighting within a single combat round (until <= 1 alive: last man standing). */
   private roundCombatActive = true;
 
@@ -213,30 +163,9 @@ export class GameEngine {
     this.roundCombatActive = false;
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
-    this.terrainImpactParticles = [];
+    this.terrainImpactParticles.clear();
     this.clearZeusVisuals();
   }
-
-  // Enriched fireworks for winner celebration
-  private fireworks: FireworkParticle[] = [];
-  private readonly fireworkSpawnBuffer: FireworkParticle[] = [];
-  private fireworksUpdateAccum = 0;
-
-  // Impact explosion VFX for huge weapons (e.g. THERMONUCLEAR). Separate from celebration fireworks.
-  // Particles use red/orange VGA tones + alpha for "red-orange" blast + flash.
-  private impactExplosions: Array<{
-    x: number;
-    y: number;
-    life: number;
-    maxLife: number;
-    size: number;
-    color: string;
-  }> = [];
-  private thermoFlashLife = 0; // short full-screen red flash on thermonuclear impact for "huge" punch
-
-  // Particules VGA dédiées aux impacts terrain/puits (séparées de impactExplosions, jamais de secureRandom/Math.random).
-  private terrainImpactParticles: TerrainImpactParticle[] = [];
-  private terrainVfxSeed = 0x9e3779b9;
 
   // === Registre économique de la manche et de la résolution active ===
   private roundDamageDealt: Record<string, number> = {};
@@ -264,6 +193,9 @@ export class GameEngine {
   > = {};
 
   private readonly audio: CombatAudio;
+  private readonly celebrationFireworks: CelebrationFireworks;
+  private readonly impactExplosions: ImpactExplosions;
+  private readonly terrainImpactParticles: TerrainImpactParticles;
 
   // === Callbacks for React layer decoupling ===
   public onProjectileHit?: (event: HitEvent) => void;
@@ -297,6 +229,17 @@ export class GameEngine {
     this.width = Math.floor(width);
     this.height = Math.floor(height);
     this.audio = new CombatAudio({ getWidth: () => this.width });
+    this.celebrationFireworks = new CelebrationFireworks({
+      width: this.width,
+      height: this.height,
+      getGroundHeight: (x) => this.terrain.getHeightAt(x),
+      onBurst: (x) => this.audio.playFireworkPop(x),
+    });
+    this.impactExplosions = new ImpactExplosions({
+      width: this.width,
+      height: this.height,
+    });
+    this.terrainImpactParticles = new TerrainImpactParticles();
 
     this.terrain = new TerrainManager(this.width, this.height);
 
@@ -385,13 +328,13 @@ export class GameEngine {
 
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
       if (hit.weaponId === "THERMONUCLEAR") {
-        this.spawnThermonuclearExplosion(hit.x, hit.y);
+        this.impactExplosions.spawnThermonuclear(hit.x, hit.y);
       } else if (
         !this.config.headless &&
         hit.weaponId !== "BULLDOZER" &&
         (hit.weaponId === "DRILLER" || blastRadius > 0)
       ) {
-        this.spawnTerrainImpactParticles(
+        this.terrainImpactParticles.spawn(
           hit.x,
           hit.y,
           this.physicsEngine.getLastImpactMaterial(),
@@ -966,29 +909,19 @@ export class GameEngine {
       : (this.tankManager.getAlivePlayers()[0]?.tank.position.x ??
         this.width / 2);
     const cy = roundWinner ? roundWinner.tank.position.y - 30 : 60;
-    const c = roundWinner ? roundWinner.tank.color : undefined;
-    if (roundWinner) {
-      this.celebrationWinnerTankId = roundWinner.tank.id;
-      this.celebrationWinner = roundWinner;
-      this.celebrationAngle = 78.5;
-      this.celebrationAngleDir = 1;
-    }
-    this.startFireworks(cx, cy, c);
+    const color = roundWinner
+      ? roundWinner.tank.color
+      : (this.winner?.tank.color ?? "#FFFFFF");
+    this.audio.playVictoryFanfare();
+    this.celebrationFireworks.start(cx, cy, color, roundWinner ?? null);
     // Fanfare sting will play (reuses private audio logic)
   }
 
   /** Clear round celebration fireworks when entering SUMMARY (prevents ongoing spawns in SUMMARY/SHOP) */
   public clearRoundCelebration(): void {
-    this.fireworks = [];
-    this.impactExplosions = [];
-    this.terrainImpactParticles = [];
-    this.thermoFlashLife = 0;
-    this.celebrationCenterX = 0;
-    this.celebrationColor = "#FFFFFF";
-    this.celebrationWinnerTankId = null;
-    this.celebrationWinner = null;
-    this.celebrationAngle = 90;
-    this.celebrationAngleDir = 1;
+    this.celebrationFireworks.clear();
+    this.impactExplosions.clear();
+    this.terrainImpactParticles.clear();
     this.tankManager.clearRecoil(); // ensure no stale kick visible in non-combat phases
   }
 
@@ -997,11 +930,13 @@ export class GameEngine {
     if (this.gameOver) return;
     this.gameOver = true;
     this.winner = winner;
-    this.celebrationWinnerTankId = winner.tank.id;
-    this.celebrationWinner = winner;
-    this.celebrationAngle = 78.5;
-    this.celebrationAngleDir = 1;
-    this.startFireworks(winner.tank.position.x, winner.tank.position.y - 30);
+    this.audio.playVictoryFanfare();
+    this.celebrationFireworks.start(
+      winner.tank.position.x,
+      winner.tank.position.y - 30,
+      winner.tank.color,
+      winner,
+    );
     console.log(`[GAME OVER] WINNER: (redacted)`);
     this.onGameOver?.(winner);
   }
@@ -1031,14 +966,9 @@ export class GameEngine {
 
     this.audio.stopVictoryMusic();
     this.physicsEngine.clear(false);
-    this.fireworks = [];
-    this.impactExplosions = [];
-    this.terrainImpactParticles = [];
-    this.thermoFlashLife = 0;
-    this.celebrationWinnerTankId = null;
-    this.celebrationWinner = null;
-    this.celebrationAngle = 90;
-    this.celebrationAngleDir = 1;
+    this.celebrationFireworks.clear();
+    this.impactExplosions.clear();
+    this.terrainImpactParticles.clear();
     this.resetZeusForRound();
 
     this.applyPreparedRound(prepared);
@@ -1111,8 +1041,8 @@ export class GameEngine {
     this.diagnosticStep++;
     // SUMMARY / SHOP: freeze combat simulation (tanks were dying during boutique → false draws)
     if (this.turnManager.isInterRoundPaused()) {
-      this.updateFireworks(dt);
-      this.updateImpactExplosions();
+      this.celebrationFireworks.update(dt);
+      this.impactExplosions.update();
       this.tankManager.clearRecoil(); // ensure chassis is un-shifted for summary/shop renders
       return;
     }
@@ -1144,8 +1074,8 @@ export class GameEngine {
     this.turnManager.update(dt);
 
     // Mise à jour des feux d'artifice (si partie terminée)
-    this.updateFireworks(dt);
-    this.updateImpactExplosions();
+    this.celebrationFireworks.update(dt);
+    this.impactExplosions.update();
 
     // Notification pour le layer React (interpolation, debug, etc.)
     this.onPhysicsStep?.(this.physicsEngine.getProjectiles());
@@ -1230,18 +1160,19 @@ export class GameEngine {
 
     // Override the winning tank's cannon angle during celebration so it sweeps 78.5°-112.5°
     // and visually "shoots" the fireworks (we restore immediately after draw).
+    const cannonOverride = this.celebrationFireworks.getCannonOverride();
     let restoredAngle: number | undefined;
-    if (this.celebrationWinner != null && this.celebrationAngle != null) {
-      restoredAngle = this.celebrationWinner.tank.angle;
-      this.celebrationWinner.tank.angle = this.celebrationAngle;
+    if (cannonOverride !== null) {
+      restoredAngle = cannonOverride.player.tank.angle;
+      cannonOverride.player.tank.angle = cannonOverride.angle;
     }
-
-    this.tankManager.draw(ctx, showPlayerNames, this.terrain);
-    this.drawZeusEffects(ctx);
-
-    // restore
-    if (this.celebrationWinner != null && restoredAngle !== undefined) {
-      this.celebrationWinner.tank.angle = restoredAngle;
+    try {
+      this.tankManager.draw(ctx, showPlayerNames, this.terrain);
+      this.drawZeusEffects(ctx);
+    } finally {
+      if (cannonOverride !== null && restoredAngle !== undefined) {
+        cannonOverride.player.tank.angle = restoredAngle;
+      }
     }
 
     // === Active Player Indicator (Step 4 polish) ===
@@ -1277,17 +1208,8 @@ export class GameEngine {
     }
 
     // Feux d'artifice pour célébration (fin de manche avec gagnant de round, ou fin de match)
-    if (this.fireworks.length > 0) {
-      this.drawFireworks(ctx);
-    }
-
-    // Huge impact explosions (THERMONUCLEAR etc.) + brief flash overlay
-    if (this.thermoFlashLife > 0) {
-      ctx.globalAlpha = 0.24;
-      ctx.fillStyle = VGA_PALETTE.RED;
-      ctx.fillRect(0, 0, this.width, this.height);
-      ctx.globalAlpha = 1;
-      this.thermoFlashLife--;
+    if (this.celebrationFireworks.hasParticles) {
+      this.celebrationFireworks.draw(ctx);
     }
 
     if (this.zeusFlashLife > 0) {
@@ -1298,12 +1220,13 @@ export class GameEngine {
       this.zeusFlashLife--;
     }
 
-    if (this.impactExplosions.length > 0) {
-      this.drawImpactExplosions(ctx);
+    // Huge impact explosions (THERMONUCLEAR etc.) + brief flash overlay
+    if (this.impactExplosions.hasActiveVisuals) {
+      this.impactExplosions.draw(ctx);
     }
 
-    if (this.terrainImpactParticles.length > 0) {
-      this.drawTerrainImpactParticles(ctx);
+    if (this.terrainImpactParticles.hasParticles) {
+      this.terrainImpactParticles.drawAndAdvance(ctx);
     }
 
     // Petit message de victoire sur le canvas seulement pour fin de match
@@ -1400,506 +1323,8 @@ export class GameEngine {
     this.previousProjectileCount = 0;
   }
 
-  /** Starts a fireworks celebration above the winner (or round winner) */
-  private startFireworks(
-    centerX: number,
-    centerY: number,
-    color?: string,
-  ): void {
-    this.fireworks = [];
-    this.celebrationCenterX = centerX;
-    this.celebrationColor = color ?? this.winner?.tank.color ?? "#FFFFFF";
-    this.audio.playVictoryFanfare();
-
-    const festiveColors = [
-      VGA_PALETTE.ELECTRIC_CYAN,
-      VGA_PALETTE.FLASH_GREEN,
-      VGA_PALETTE.NEON_PINK,
-      VGA_PALETTE.CYBER_YELLOW,
-      VGA_PALETTE.FLUO_ORANGE,
-      VGA_PALETTE.VOLT_PURPLE,
-      VGA_PALETTE.CYAN,
-      VGA_PALETTE.MAGENTA,
-      VGA_PALETTE.YELLOW,
-    ];
-
-    // Create initial big rockets (multicolored!) launching from the bottom
-    for (let i = 0; i < 9; i++) {
-      const rocketColor =
-        secureRandom() < 0.4
-          ? this.celebrationColor
-          : festiveColors[i % festiveColors.length];
-      this.fireworks.push({
-        type: "rocket",
-        x: centerX + (secureRandom() - 0.5) * 180,
-        y: this.height - 20,
-        vx: (secureRandom() - 0.5) * 2.5,
-        vy: -5.8 - secureRandom() * 3.2,
-        life: 42 + secureRandom() * 26,
-        maxLife: 68,
-        color: rocketColor,
-        size: 3.5 + secureRandom() * 2.0,
-        trail: [],
-      });
-    }
-
-    // Add some initial floating confetti for instant festivity
-    for (let i = 0; i < 32; i++) {
-      this.fireworks.push({
-        type: "confetti",
-        x: secureRandom() * this.width,
-        y: secureRandom() * Math.max(80, centerY),
-        vx: (secureRandom() - 0.5) * 1.2,
-        vy: 0.2 + secureRandom() * 0.6,
-        life: 120 + secureRandom() * 100,
-        maxLife: 220,
-        color: festiveColors[i % festiveColors.length],
-        size: 4.0 + secureRandom() * 4.0,
-        swaySpeed: 0.03 + secureRandom() * 0.04,
-        swayOffset: secureRandom() * Math.PI * 2,
-        swayWidth: 1.2 + secureRandom() * 1.8,
-        rotation: secureRandom() * Math.PI * 2,
-        rotationSpeed: (secureRandom() - 0.5) * 0.12,
-      });
-    }
-  }
-
-  private queueFireworkSpawn(p: FireworkParticle): void {
-    if (
-      this.fireworks.length + this.fireworkSpawnBuffer.length <
-      MAX_FIREWORKS
-    ) {
-      this.fireworkSpawnBuffer.push(p);
-    }
-  }
-
-  private flushFireworkSpawns(): void {
-    for (const spawn of this.fireworkSpawnBuffer) {
-      if (this.fireworks.length >= MAX_FIREWORKS) break;
-      this.fireworks.push(spawn);
-    }
-    this.fireworkSpawnBuffer.length = 0;
-  }
-
-  private updateFireworks(dt: number): void {
-    this.fireworksUpdateAccum += dt;
-    if (this.fireworksUpdateAccum < FIREWORKS_TICK_DT) return;
-    this.fireworksUpdateAccum -= FIREWORKS_TICK_DT;
-
-    this.tickFireworks();
-  }
-
-  private tickFireworks(): void {
-    if (this.celebrationWinnerTankId) {
-      // Animate the winning tank's cannon sweeping back and forth during celebration
-      // and "shooting" fireworks from the barrel tip (so fireworks blow up from the tank).
-      const angleStep = 1.0; // deg per update tick (~120Hz) for visible cannon sweep + frequent shots
-      this.celebrationAngle += this.celebrationAngleDir * angleStep;
-      if (this.celebrationAngle > 112.5) {
-        this.celebrationAngle = 112.5;
-        this.celebrationAngleDir = -1;
-      } else if (this.celebrationAngle < 78.5) {
-        this.celebrationAngle = 78.5;
-        this.celebrationAngleDir = 1;
-      }
-
-      // Shoot a firework rocket from the cannon tip at the current angle (with some spread)
-      if (secureRandom() < 0.18) {
-        const winnerP = this.celebrationWinner;
-        if (winnerP) {
-          const tank = winnerP.tank;
-          const barrelLength = 20;
-          const rad = (this.celebrationAngle * Math.PI) / 180;
-          const barrelStartY = tank.position.y - 13;
-          const tipX = tank.position.x + Math.cos(rad) * barrelLength;
-          const tipY = barrelStartY + Math.sin(rad) * barrelLength * -1;
-          const speed = 4.2 + secureRandom() * 2.8;
-          const spread = (secureRandom() - 0.5) * 0.8;
-          this.queueFireworkSpawn({
-            type: "rocket",
-            x: tipX,
-            y: tipY,
-            vx: Math.cos(rad) * speed + spread,
-            vy: -Math.sin(rad) * speed - 0.8 + spread * 0.4,
-            life: 35 + secureRandom() * 20,
-            maxLife: 55,
-            color: this.celebrationColor,
-            size: 2.5 + secureRandom() * 1.5,
-            trail: [],
-          });
-        }
-      }
-    }
-
-    if (this.fireworks.length === 0 && this.fireworkSpawnBuffer.length === 0) {
-      return;
-    }
-
-    let write = 0;
-
-    for (let read = 0; read < this.fireworks.length; read++) {
-      const p = this.fireworks[read];
-      p.x += p.vx;
-      p.y += p.vy;
-
-      if (p.type === "rocket") {
-        p.vy += 0.045; // gravity for rockets (flatter arc)
-        p.life -= 1;
-
-        // Maintain trail
-        if (!p.trail) p.trail = [];
-        p.trail.push({ x: p.x, y: p.y, alpha: 1.0 });
-        if (p.trail.length > 7) p.trail.shift();
-        for (const pt of p.trail) {
-          pt.alpha -= 0.12;
-        }
-
-        // Rocket spark trails
-        if (secureRandom() < 0.22) {
-          this.queueFireworkSpawn({
-            type: "particle",
-            x: p.x - p.vx * 0.5,
-            y: p.y - p.vy * 0.5,
-            vx: (secureRandom() - 0.5) * 0.5,
-            vy: 0.2 + secureRandom() * 0.6,
-            life: 8 + secureRandom() * 8,
-            maxLife: 16,
-            color:
-              secureRandom() < 0.5
-                ? VGA_PALETTE.CYBER_YELLOW
-                : VGA_PALETTE.WHITE,
-            size: 1.2 + secureRandom() * 0.8,
-            trail: [],
-          });
-        }
-
-        // Explode when life ends
-        if (p.life <= 0) {
-          this.audio.playFireworkPop(p.x);
-
-          const explosionPattern = Math.floor(secureRandom() * 4);
-
-          if (explosionPattern === 0) {
-            // Ring Burst
-            const count = 22 + Math.floor(secureRandom() * 10);
-            const baseSpeed = 2.4 + secureRandom() * 1.6;
-            const burstColor =
-              secureRandom() < 0.4
-                ? FESTIVE_COLORS[
-                    Math.floor(secureRandom() * FESTIVE_COLORS.length)
-                  ]
-                : p.color;
-            for (let i = 0; i < count; i++) {
-              const angle = (i * 2 * Math.PI) / count;
-              this.queueFireworkSpawn({
-                type: "particle",
-                x: p.x,
-                y: p.y,
-                vx: Math.cos(angle) * baseSpeed + (secureRandom() - 0.5) * 0.3,
-                vy: Math.sin(angle) * baseSpeed + (secureRandom() - 0.5) * 0.3,
-                life: 25 + secureRandom() * 18,
-                maxLife: 43,
-                color: burstColor,
-                size: 2.0 + secureRandom() * 1.8,
-                trail: [],
-              });
-            }
-          } else if (explosionPattern === 1) {
-            // Rainbow Star Burst
-            const count = 28 + Math.floor(secureRandom() * 12);
-            for (let i = 0; i < count; i++) {
-              const angle = secureRandom() * Math.PI * 2;
-              const speed = 1.0 + secureRandom() * 3.8;
-              this.queueFireworkSpawn({
-                type: "particle",
-                x: p.x,
-                y: p.y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: 20 + secureRandom() * 22,
-                maxLife: 42,
-                color:
-                  FESTIVE_COLORS[
-                    Math.floor(secureRandom() * FESTIVE_COLORS.length)
-                  ],
-                size: 1.8 + secureRandom() * 2.2,
-                trail: [],
-              });
-            }
-          } else if (explosionPattern === 2) {
-            // Fountain Cascade
-            const count = 18 + Math.floor(secureRandom() * 10);
-            const burstColor =
-              secureRandom() < 0.3 ? VGA_PALETTE.CYBER_YELLOW : p.color;
-            for (let i = 0; i < count; i++) {
-              this.queueFireworkSpawn({
-                type: "particle",
-                x: p.x,
-                y: p.y,
-                vx: (secureRandom() - 0.5) * 2.2,
-                vy: -2.0 - secureRandom() * 3.5,
-                life: 30 + secureRandom() * 25,
-                maxLife: 55,
-                color: burstColor,
-                size: 1.5 + secureRandom() * 1.5,
-                trail: [],
-              });
-            }
-          } else {
-            // Crackling Willow
-            const count = 24 + Math.floor(secureRandom() * 8);
-            for (let i = 0; i < count; i++) {
-              const angle = secureRandom() * Math.PI * 2;
-              const speed = 1.8 + secureRandom() * 2.8;
-              this.queueFireworkSpawn({
-                type: "particle",
-                x: p.x,
-                y: p.y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 0.4,
-                life: 28 + secureRandom() * 22,
-                maxLife: 50,
-                color:
-                  secureRandom() < 0.5
-                    ? VGA_PALETTE.CYBER_YELLOW
-                    : VGA_PALETTE.WHITE,
-                size: 1.5 + secureRandom() * 1.0,
-                trail: [],
-              });
-            }
-          }
-
-          // Spawn a burst of falling confetti at each rocket explosion
-          const confettiCount = 6 + Math.floor(secureRandom() * 6);
-          for (let i = 0; i < confettiCount; i++) {
-            this.queueFireworkSpawn({
-              type: "confetti",
-              x: p.x,
-              y: p.y,
-              vx: (secureRandom() - 0.5) * 3.5,
-              vy: -1.0 - secureRandom() * 2.0,
-              life: 110 + secureRandom() * 80,
-              maxLife: 190,
-              color:
-                FESTIVE_COLORS[
-                  Math.floor(secureRandom() * FESTIVE_COLORS.length)
-                ],
-              size: 4 + secureRandom() * 4,
-              swaySpeed: 0.04 + secureRandom() * 0.05,
-              swayOffset: secureRandom() * Math.PI * 2,
-              swayWidth: 1.2 + secureRandom() * 1.8,
-              rotation: secureRandom() * Math.PI * 2,
-              rotationSpeed: (secureRandom() - 0.5) * 0.15,
-            });
-          }
-        } else {
-          this.fireworks[write++] = p;
-        }
-      } else if (p.type === "particle") {
-        p.vy += 0.075; // gravity for explosion particles
-        p.vx *= 0.95; // air resistance
-        p.vy *= 0.95;
-        p.life -= 1;
-
-        // Particle trail
-        if (!p.trail) p.trail = [];
-        p.trail.push({ x: p.x, y: p.y, alpha: 1.0 });
-        if (p.trail.length > 3) p.trail.shift();
-
-        // Shrink particle when near end of life
-        if (p.life < 8) {
-          p.size *= 0.82;
-        }
-
-        if (p.life > 0) {
-          this.fireworks[write++] = p;
-        }
-      } else if (p.type === "confetti") {
-        // Slow descent confetti physics
-        p.vy = Math.min(1.0, p.vy + 0.025); // cap vertical speed
-        p.vx = Math.sin(p.life * p.swaySpeed! + p.swayOffset!) * p.swayWidth!;
-        p.rotation! += p.rotationSpeed!;
-        p.life -= 1;
-
-        // Check ground height to avoid drawing confetti underground
-        const groundY = this.terrain.getHeightAt(
-          Math.max(0, Math.min(this.width - 1, Math.floor(p.x))),
-        );
-
-        if (p.life > 0 && p.y < groundY) {
-          this.fireworks[write++] = p;
-        }
-      }
-    }
-
-    this.fireworks.length = write;
-    this.flushFireworkSpawns();
-
-    let activeRockets = 0;
-    let activeConfetti = 0;
-    for (const f of this.fireworks) {
-      if (f.type === "rocket") activeRockets++;
-      else if (f.type === "confetti") activeConfetti++;
-    }
-
-    // Keep spawning lots of big rockets from the bottom of the screen while celebrating
-    if (activeRockets < 5 && secureRandom() < 0.07) {
-      const spawnX = Math.max(
-        40,
-        Math.min(
-          this.width - 40,
-          this.celebrationCenterX + (secureRandom() - 0.5) * 260,
-        ),
-      );
-      const spawnColor =
-        FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)];
-      this.queueFireworkSpawn({
-        type: "rocket",
-        x: spawnX,
-        y: this.height - 15,
-        vx: (secureRandom() - 0.5) * 1.8,
-        vy: -5.5 - secureRandom() * 3.0,
-        life: 45 + secureRandom() * 22,
-        maxLife: 67,
-        color: spawnColor,
-        size: 3.5 + secureRandom() * 2.0,
-        trail: [],
-      });
-    }
-
-    // Add extra random confetti rain during high celebration
-    if (activeConfetti < 40 && secureRandom() < 0.15) {
-      this.queueFireworkSpawn({
-        type: "confetti",
-        x: secureRandom() * this.width,
-        y: -10,
-        vx: (secureRandom() - 0.5) * 1.0,
-        vy: 0.3 + secureRandom() * 0.5,
-        life: 130 + secureRandom() * 90,
-        maxLife: 220,
-        color:
-          FESTIVE_COLORS[Math.floor(secureRandom() * FESTIVE_COLORS.length)],
-        size: 4 + secureRandom() * 3.5,
-        swaySpeed: 0.03 + secureRandom() * 0.04,
-        swayOffset: secureRandom() * Math.PI * 2,
-        swayWidth: 1.0 + secureRandom() * 1.8,
-        rotation: secureRandom() * Math.PI * 2,
-        rotationSpeed: (secureRandom() - 0.5) * 0.1,
-      });
-    }
-
-    this.flushFireworkSpawns();
-  }
-
-  /** Draws celebration fireworks (game over match win or pre-SUMMARY round winner celebration) */
-  private drawFireworks(ctx: CanvasRenderingContext2D): void {
-    for (const p of this.fireworks) {
-      const alpha = Math.max(0.1, p.life / p.maxLife);
-      ctx.globalAlpha = alpha;
-
-      // Draw trails if any (for rockets and explosion particles)
-      if (p.trail && p.trail.length > 0) {
-        for (const pt of p.trail) {
-          ctx.fillStyle = p.color;
-          ctx.globalAlpha = pt.alpha * alpha * 0.38;
-          ctx.fillRect(
-            pt.x - p.size / 3,
-            pt.y - p.size / 3,
-            p.size / 1.5,
-            p.size / 1.5,
-          );
-        }
-      }
-
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = p.color;
-
-      if (p.type === "confetti") {
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.rotation || 0);
-        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
-        ctx.restore();
-      } else {
-        const s = p.size;
-        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
-
-        // Extra glow halo for bigger particles or rockets
-        if (s > 3.0) {
-          ctx.globalAlpha = alpha * 0.28;
-          ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
-        }
-      }
-    }
-    ctx.globalAlpha = 1.0;
-  }
-
-  /**
-   * Spawn red-orange thermonuclear impact explosion VFX + flash.
-   * Called from onProjectileHit for THERMONUCLEAR only.
-   * Uses blocky rects + alpha (retro feel, same technique as fireworks).
-   */
-  private spawnThermonuclearExplosion(x: number, y: number): void {
-    this.thermoFlashLife = 13; // frames of full-ish red flash overlay
-    const colors = [
-      VGA_PALETTE.RED,
-      VGA_PALETTE.YELLOW,
-      VGA_PALETTE.DARK_RED,
-      VGA_PALETTE.BROWN,
-    ];
-    for (let i = 0; i < 42; i++) {
-      const spread = 38 + secureRandom() * 18;
-      this.impactExplosions.push({
-        x: x + (secureRandom() - 0.5) * spread,
-        y: y + (secureRandom() - 0.5) * (spread * 0.7),
-        life: 42 + secureRandom() * 28,
-        maxLife: 70,
-        size: 2.5 + secureRandom() * 8.5,
-        color: colors[i % colors.length],
-      });
-    }
-  }
-
-  private updateImpactExplosions(): void {
-    if (this.impactExplosions.length === 0) return;
-    let write = 0;
-    for (let read = 0; read < this.impactExplosions.length; read++) {
-      const p = this.impactExplosions[read];
-      p.life -= 1;
-      if (p.life > 0) {
-        // subtle expansion on the way out for "blast wave" feel (first half of life)
-        if (p.life > p.maxLife * 0.5) {
-          p.size = p.size * 1.012 + 0.04;
-        }
-        this.impactExplosions[write++] = p;
-      }
-    }
-    this.impactExplosions.length = write;
-  }
-
-  private drawImpactExplosions(ctx: CanvasRenderingContext2D): void {
-    for (const p of this.impactExplosions) {
-      const a = Math.max(0.08, p.life / p.maxLife);
-      ctx.globalAlpha = a;
-      ctx.fillStyle = p.color;
-      const s = p.size;
-      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
-
-      // glow / ring layers for "huge" red-orange explosion
-      if (s > 4) {
-        ctx.globalAlpha = a * 0.32;
-        ctx.fillRect(p.x - s * 0.9, p.y - s * 0.9, s * 1.8, s * 1.8);
-      }
-      if (s > 7) {
-        ctx.globalAlpha = a * 0.15;
-        ctx.fillRect(p.x - s * 1.35, p.y - s * 1.35, s * 2.7, s * 2.7);
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
-
   public getTerrainImpactParticles(): ReadonlyArray<TerrainImpactParticle> {
-    return this.terrainImpactParticles;
+    return this.terrainImpactParticles.getParticles();
   }
 
   /**
@@ -1907,146 +1332,8 @@ export class GameEngine {
    * La référence du tableau est mutée sur place (in-place compaction) lors des mises à jour
    * et n'est réinitialisée qu'aux transitions de manche.
    */
-  public getImpactExplosions(): ReadonlyArray<{
-    x: number;
-    y: number;
-    life: number;
-    maxLife: number;
-    size: number;
-    color: string;
-  }> {
-    return this.impactExplosions;
-  }
-
-  private nextTerrainVfxRandom(): number {
-    let t = (this.terrainVfxSeed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
-
-  /**
-   * Génère le nuage de particules VGA selon le matériau de la colonne d'impact lu avant mutation.
-   * N'appelle jamais secureRandom ni Math.random.
-   */
-  private spawnTerrainImpactParticles(
-    x: number,
-    y: number,
-    material: TerrainMaterial,
-  ): void {
-    if (material === TERRAIN_MATERIAL.DIRT) {
-      const palette = [VGA_PALETTE.BROWN, VGA_PALETTE.GREEN] as const;
-      for (let i = 0; i < 8; i++) {
-        const angle = -Math.PI * (0.15 + 0.7 * (i / 7));
-        const speed = 1.1 + this.nextTerrainVfxRandom() * 1.4;
-        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
-        this.terrainImpactParticles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          life: 16,
-          maxLife: 16,
-          size,
-          color: palette[i % palette.length],
-          kind: "dust",
-          material,
-        });
-      }
-      return;
-    }
-
-    if (material === TERRAIN_MATERIAL.SOFT) {
-      const palette = [VGA_PALETTE.YELLOW, VGA_PALETTE.BROWN] as const;
-      for (let i = 0; i < 12; i++) {
-        const angle = -Math.PI * (0.12 + 0.76 * (i / 11));
-        const speed = 1.2 + this.nextTerrainVfxRandom() * 1.6;
-        const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
-        this.terrainImpactParticles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          life: 24,
-          maxLife: 24,
-          size,
-          color: palette[i % palette.length],
-          kind: "dust",
-          material,
-        });
-      }
-      for (let i = 0; i < 6; i++) {
-        const angle = -Math.PI * (0.2 + 0.6 * (i / 5));
-        const speed = 1.5 + this.nextTerrainVfxRandom() * 1.3;
-        const size: 1 | 2 = i % 2 === 0 ? 1 : 2;
-        this.terrainImpactParticles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          life: 24,
-          maxLife: 24,
-          size,
-          color: palette[i % palette.length],
-          kind: "grain",
-          material,
-        });
-      }
-      return;
-    }
-
-    // ROCK : 6 éclats (life = maxLife = 12 frames rendues, palette DARK_GRAY, GRAY)
-    const palette = [VGA_PALETTE.DARK_GRAY, VGA_PALETTE.GRAY] as const;
-    for (let i = 0; i < 6; i++) {
-      const angle = -Math.PI * (0.18 + 0.64 * (i / 5));
-      const speed = 1.6 + this.nextTerrainVfxRandom() * 1.5;
-      const size: 1 | 2 = i % 2 === 0 ? 2 : 1;
-      this.terrainImpactParticles.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 12,
-        maxLife: 12,
-        size,
-        color: palette[i % palette.length],
-        kind: "shard",
-        material: TERRAIN_MATERIAL.ROCK,
-      });
-    }
-  }
-
-  /**
-   * Dessine, fait avancer et décrémente les particules d'impact par frame rendue dans render(ctx).
-   * Les grains de sable retombent visuellement sans aucune collision de jeu.
-   */
-  private drawTerrainImpactParticles(ctx: CanvasRenderingContext2D): void {
-    let write = 0;
-    for (let read = 0; read < this.terrainImpactParticles.length; read++) {
-      const p = this.terrainImpactParticles[read];
-      const alpha = Math.max(0.1, p.life / p.maxLife);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = p.color;
-      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
-
-      p.x += p.vx;
-      p.y += p.vy;
-      if (p.kind === "grain") {
-        p.vy += 0.24;
-      } else if (p.kind === "shard") {
-        p.vy += 0.14;
-      } else {
-        p.vx *= 0.94;
-        p.vy = p.vy * 0.94 + 0.05;
-      }
-      p.life -= 1;
-
-      if (p.life > 0) {
-        this.terrainImpactParticles[write++] = p;
-      }
-    }
-    this.terrainImpactParticles.length = write;
-    ctx.globalAlpha = 1;
+  public getImpactExplosions(): ReadonlyArray<ImpactExplosion> {
+    return this.impactExplosions.getExplosions();
   }
 
   public isGameOver(): boolean {
@@ -2142,14 +1429,9 @@ export class GameEngine {
     this.gameOver = false;
     this.winner = null;
     this.roundCombatActive = true;
-    this.fireworks = [];
-    this.impactExplosions = [];
-    this.terrainImpactParticles = [];
-    this.thermoFlashLife = 0;
-    this.celebrationWinnerTankId = null;
-    this.celebrationWinner = null;
-    this.celebrationAngle = 90;
-    this.celebrationAngleDir = 1;
+    this.celebrationFireworks.clear();
+    this.impactExplosions.clear();
+    this.terrainImpactParticles.clear();
     this.physicsEngine.clear(false);
     this.turnManager.reset();
 
