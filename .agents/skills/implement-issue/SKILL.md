@@ -77,13 +77,17 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 
 ### Étape 3 : Créer la branche et implémenter
 
-1. Synchroniser `origin/main` et vérifier qu'aucune branche de même nom n'existe déjà :
+1. Vérifier qu'aucune branche locale ou distante du même nom (`<type>/issue-<N>`) n'existe déjà, puis récupérer explicitement la pointe de `refs/heads/main` depuis `origin` (indépendamment du refspec configuré localement, y compris dans un clone qui suit une autre branche) :
    ```bash
-   git fetch origin
+   git show-ref --verify --quiet refs/heads/<type>/issue-<N>
+   git ls-remote --heads origin <type>/issue-<N>
+   git fetch origin refs/heads/main
    ```
-2. Créer une branche dédiée depuis `origin/main` avec un préfixe adapté au type de ticket (`feat`, `fix`, `perf`, `refactor`, `chore`, `docs`) :
+   - Si `git show-ref --verify --quiet` retourne `0` (branche locale déjà existante) ou si `git ls-remote --heads origin <type>/issue-<N>` produit une sortie non vide (branche distante déjà existante), **arrêter** et consulter l'utilisateur.
+   - Si `git fetch origin refs/heads/main` échoue, **arrêter** la création de la branche et indiquer la cause exacte.
+2. Créer immédiatement la branche dédiée à partir du commit exact récupéré (`FETCH_HEAD`, sans intercaler d'autre `git fetch`), avec un préfixe adapté au type de ticket (`feat`, `fix`, `perf`, `refactor`, `chore`, `docs`) :
    ```bash
-   git switch -c <type>/issue-<N> origin/main
+   git switch -c <type>/issue-<N> FETCH_HEAD
    ```
 3. Implémenter strictement ce que demande l'issue :
    - TypeScript strict (jamais de `any`; valider les données externes depuis `unknown`).
@@ -137,24 +141,28 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
    - Titre à l'impératif : `<type>(<scope>): <résumé à l'impératif> (#<N>)` (ou `— v<X.Y.Z> (#<N>)` si une version a été bumpée).
    - Corps concis expliquant le changement et son objectif.
    - Signature avec le nom de l'application, l'identité de l'agent et le modèle exact fourni par l'environnement.
-4. Vérifier le commit créé (`git log -1 --stat`) et confirmer **toutes** les destinations effectives du push avant de pousser :
-   ```bash
-   git remote get-url --push --all origin
-   ```
-   - Vérifier que chaque destination retournée correspond sans ambiguïté au dépôt GitHub `bestter/TankWars`. Si une destination est absente, inattendue ou impossible à confirmer, **interrompre la poussée** et expliquer le problème à l'utilisateur.
-   - Une fois toutes les destinations confirmées, pousser la branche (jamais de `git push --force`) :
+4. Vérifier le commit créé (`git log -1 --stat`), **revérifier l'état du ticket et l'absence de PR concurrente**, puis confirmer **toutes** les destinations effectives du push avant de pousser :
+   - Réexécuter les contrôles de l'**Étape 1 (points 3 et 4)** : confirmer que le ticket `#<N>` dans `bestter/TankWars` est toujours `OPEN` et qu'aucune PR ouverte concurrente n'est apparue (liens structurés `closedByPullRequestsReferences` filtrés sur `state == "OPEN"`, parcours paginé des noms de branches, et complément textuel vérifié). Si le ticket a été fermé ou qu'une PR concurrente existe, **arrêter la publication** (ne pas pousser) et indiquer précisément ce qui a été trouvé.
+   - Confirmer toutes les destinations du push :
+     ```bash
+     git remote get-url --push --all origin
+     ```
+     Vérifier que chaque destination retournée correspond sans ambiguïté au dépôt GitHub `bestter/TankWars`. Si une destination est absente, inattendue ou impossible à confirmer, **interrompre la poussée** et expliquer le problème à l'utilisateur.
+   - Une fois ces vérifications confirmées, pousser la branche (jamais de `git push --force`) :
      ```bash
      git push -u origin <type>/issue-<N>
      ```
-5. Créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
-   ```bash
-   gh pr create -R bestter/TankWars --base main --head <type>/issue-<N> --title "<titre>" --body-file <fichier_temp>
-   ```
-   La description de la PR doit contenir :
-   - `Closes #<N>`
-   - Résumé des changements et fichiers clés modifiés
-   - Commandes de validation réellement exécutées et leurs résultats (incluant statut/diagnostics `react-doctor` et état du contrôle manuel)
-   - Mention explicite si un contrat sensible ou un point d'entrée a changé et qu'une mise à jour de `AGENTS.md` pourrait être utile sur demande (sans l'avoir modifié sans autorisation explicite)
+5. Juste avant de créer la Pull Request, **confirmer de nouveau l'état du ticket et l'absence de PR concurrente** (réexécuter les contrôles de l'**Étape 1, points 3 et 4**) :
+   - Si le ticket a été fermé ou qu'une PR concurrente a été ouverte entre le push et cette étape, **arrêter la publication** (ne pas exécuter `gh pr create`), indiquer précisément ce qui a été trouvé et rappeler le nom de la branche déjà poussée afin que l'utilisateur décide de la suite.
+   - Sinon, créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
+     ```bash
+     gh pr create -R bestter/TankWars --base main --head <type>/issue-<N> --title "<titre>" --body-file <fichier_temp>
+     ```
+     La description de la PR doit contenir :
+     - `Closes #<N>`
+     - Résumé des changements et fichiers clés modifiés
+     - Commandes de validation réellement exécutées et leurs résultats (incluant statut/diagnostics `react-doctor` et état du contrôle manuel)
+     - Mention explicite si un contrat sensible ou un point d'entrée a changé et qu'une mise à jour de `AGENTS.md` pourrait être utile sur demande (sans l'avoir modifié sans autorisation explicite)
 6. **Ne jamais merger la PR ni lancer de déploiement.**
 
 ### Étape 7 : Vérification finale et compte rendu
