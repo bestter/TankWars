@@ -36,7 +36,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 2. Vérifier le shell, l'état local Git (arbre de travail, index et opérations en cours), toutes les URL du dépôt distant (lecture et push) et la version minimale de GitHub CLI (`gh >= 2.73.0`) avant la première requête GitHub :
    - **Prérequis shell (Windows / PowerShell) :** sous Windows, utiliser un shell POSIX ou PowerShell 7.3+ (`pwsh`) avec `$PSNativeCommandArgumentPassing` égal à `'Windows'` ou `'Standard'` (vérifiable via `$PSVersionTable.PSVersion; $PSNativeCommandArgumentPassing`), jamais `cmd.exe`, Windows PowerShell 5.1 (`powershell.exe`) ni le mode `'Legacy'` (qui suppriment ou altèrent les guillemets dans `'...'` passés aux binaires natifs comme `gh`, brisant les filtres `--jq` et `--title`). Si le shell actif ne satisfait pas ce prérequis, **arrêter immédiatement** et demander de basculer vers `pwsh >= 7.3` (mode `'Windows'` ou `'Standard'`) ou un shell POSIX.
    ```bash
-   git status --porcelain=v1 --branch
+   git status --porcelain=v1 --branch --untracked-files=all
    git diff
    git diff --cached
    git rev-parse --git-path MERGE_HEAD --git-path REBASE_HEAD --git-path CHERRY_PICK_HEAD --git-path REVERT_HEAD --git-path BISECT_LOG --git-path rebase-merge --git-path rebase-apply
@@ -48,7 +48,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
    - Vérifier à partir de `gh --version` que la version installée satisfait `gh >= 2.73.0` (requis notamment pour le champ `closedByPullRequestsReferences` de `gh issue view`, disponible à partir de `2.73.0`), en comparant **numériquement** le triplet `(major, minor, patch)` contre `(2, 73, 0)` (sans pré-release `-…` sur exactement `2.73.0`, et jamais par comparaison lexicographique). Si `gh` est absent, si sa version ne peut pas être confirmée ou si elle est inférieure à `2.73.0`, **arrêter immédiatement avant toute requête GitHub** et indiquer la version installée ainsi que le prérequis `gh >= 2.73.0`.
    - Vérifier qu'aucun des chemins d'opération Git en cours retournés par `git rev-parse --git-path` (`MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`, `rebase-merge`, `rebase-apply`) n'existe sur disque; si une opération Git est en cours, **arrêter** et informer l'utilisateur.
    - Préserver intégralement tous les changements préexistants de l'utilisateur (indexés, non indexés ou fichiers non suivis : ne jamais écraser, désindexer via `git reset` / `git restore --staged`, annuler ni `stash` silencieusement).
-   - Examiner `git status --porcelain=v1 --branch`, `git diff` et `git diff --cached` dès le démarrage : si l'arbre de travail ou l'index contient la moindre modification hors mandat — y compris une modification non indexée ou un fichier non suivi pouvant affecter `git switch` ou la batterie de validation (`lint`, `build`, `test`, `react-doctor`) — **arrêter avant tout changement de branche ou édition**, détailler précisément les fichiers concernés (indexés, non indexés, non suivis) et demander à l'utilisateur s'il souhaite nettoyer/commiter son travail, confirmer explicitement que ces changements appartiennent uniquement au ticket et peuvent être portés sur `issue-<N>`, ou isoler l'implémentation dans un `git worktree` dédié.
+   - Examiner `git status --porcelain=v1 --branch --untracked-files=all`, `git diff` et `git diff --cached` dès le démarrage : si l'arbre de travail ou l'index contient la moindre modification hors mandat — y compris une modification non indexée ou un fichier non suivi pouvant affecter `git switch` ou la batterie de validation (`lint`, `build`, `test`, `react-doctor`) — **arrêter avant tout changement de branche ou édition**, détailler précisément les fichiers concernés (indexés, non indexés, non suivis) et demander à l'utilisateur s'il souhaite nettoyer/commiter son travail, confirmer explicitement que ces changements appartiennent uniquement au ticket et peuvent être portés sur `issue-<N>`, ou isoler l'implémentation dans un `git worktree` dédié.
 3. Lire l'issue complète (incluant son auteur, son `author_association` et les références structurées de PR liées) en ciblant explicitement `github.com/bestter/TankWars` et en confirmant que `<N>` désigne bien une **issue** ouverte de ce dépôt (`gh issue view` pouvant retourner une Pull Request ouverte) :
    ```bash
    gh issue view <N> -R github.com/bestter/TankWars --json number,title,author,state,labels,body,comments,url,closedByPullRequestsReferences --jq 'if .state != "OPEN" or .number != <N> or ((.url // "") | ascii_downcase) != "https://github.com/bestter/tankwars/issues/<N>" then error("invalid issue target: number=\(.number) state=\(.state) url=\(.url)") else . end'
@@ -103,7 +103,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
    ```
    - Exiger que `git for-each-ref` retourne `0` avec une sortie vide (si la sortie est non vide, une branche locale existante correspond; si le code ≠ `0`, l'état local n'a pas pu être confirmé) et que `git ls-remote --heads origin` retourne `0` avec une sortie vide (si la sortie est non vide, une branche distante existante correspond; si le code ≠ `0`, l'état distant n'a pas pu être confirmé). Dans tout cas non nominal, **arrêter** et consulter l'utilisateur.
    - Si `git fetch` échoue, **arrêter** la création de la branche et indiquer la cause exacte.
-2. Avant de créer la branche et avant toute édition (maintenant que la portée du ticket est connue après l'Étape 2), revérifier via `git status --porcelain=v1 --branch`, `git diff`, `git diff --cached` et `git rev-parse --git-path` qu'aucune opération Git n'est en cours et qu'aucun changement local préexistant de l'utilisateur (indexé, non indexé ou fichier non suivi hors mandat) n'est présent; en cas de modification hors mandat ou d'opération Git en cours, **arrêter** avant tout changement de branche et appliquer les mêmes garde-fous qu'à l'Étape 1.2 (sans toucher au travail de l'utilisateur). Sinon, créer immédiatement la branche dédiée directement à partir de `refs/remotes/origin/main` (sans utiliser le fichier volatil `FETCH_HEAD` ni créer de suivi amont vers `origin/main`), en utilisant le nom canonique fixe `issue-<N>` (indépendant du type de commit, afin de sérialiser la publication par numéro de ticket sur `origin`) :
+2. Avant de créer la branche et avant toute édition (maintenant que la portée du ticket est connue après l'Étape 2), revérifier via `git status --porcelain=v1 --branch --untracked-files=all`, `git diff`, `git diff --cached` et `git rev-parse --git-path` qu'aucune opération Git n'est en cours et qu'aucun changement local préexistant de l'utilisateur (indexé, non indexé ou fichier non suivi hors mandat) n'est présent; en cas de modification hors mandat ou d'opération Git en cours, **arrêter** avant tout changement de branche et appliquer les mêmes garde-fous qu'à l'Étape 1.2 (sans toucher au travail de l'utilisateur). Sinon, créer immédiatement la branche dédiée directement à partir de `refs/remotes/origin/main` (sans utiliser le fichier volatil `FETCH_HEAD` ni créer de suivi amont vers `origin/main`), en utilisant le nom canonique fixe `issue-<N>` (indépendant du type de commit, afin de sérialiser la publication par numéro de ticket sur `origin`) :
    ```bash
    git switch --no-track -c issue-<N> refs/remotes/origin/main
    ```
@@ -149,7 +149,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 
 1. Contrôler en détail le diff de l'arbre de travail, l'index et l'état du dépôt avant d'indexer quoi que ce soit :
    ```bash
-   git status --porcelain=v1 --branch
+   git status --porcelain=v1 --branch --untracked-files=all
    git diff
    git diff --cached
    ```
@@ -205,7 +205,7 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
 
 1. Confirmer l'état final à partir du numéro ou de l'URL retourné par `gh pr create` :
    ```bash
-   git status --porcelain=v1 --branch
+   git status --porcelain=v1 --branch --untracked-files=all
    gh pr view -R github.com/bestter/TankWars <pr_number_ou_url_retourne> --json number,url,title,state
    ```
 2. Présenter un compte rendu concis en français québécois :
