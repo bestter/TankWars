@@ -47,22 +47,20 @@ Ce skill orchestre l'implémentation complète d'une issue GitHub dans TankWars,
    gh issue view <N> -R bestter/TankWars --json number,title,state,labels,body,comments,url,closedByPullRequestsReferences
    ```
    - Si l'issue n'est pas ouverte (`state != "OPEN"`), **arrêter** et informer l'utilisateur.
-4. Vérifier qu'aucune PR ouverte ne traite déjà cette issue (sources structurées, noms de branches paginés, puis complément textuel) :
+4. Vérifier qu'aucune PR ouverte ne traite déjà cette issue (liens structurés et parcours paginé des branches, titres et descriptions) :
    - **Liens structurés (panneau *Development* et mots-clés de fermeture)** : pour chaque PR retournée dans `closedByPullRequestsReferences` (qui inclut les PR liées manuellement dans le panneau *Development* même sans `#<N>` dans le titre ni la description, mais aussi des PR déjà `MERGED`), vérifier son état réel et ses métadonnées :
      ```bash
      gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits
      ```
      Retenir toute PR dont `state == "OPEN"`.
-   - **Recherche par nom de branche sur toutes les PR ouvertes (paginée)** (pour repérer une PR dont le numéro du ticket figure uniquement dans la branche, ex. `fix/issue-<N>`, sans lien *Development* ni mention dans le titre ou la description) :
+   - **Parcours de toutes les PR ouvertes (paginé)** :
      ```bash
-     gh api --paginate "repos/bestter/TankWars/pulls?state=open&per_page=100" --jq ".[] | {number, state, headRefName: .head.ref, title, url: .html_url, author: .user.login}"
+     gh api --paginate "repos/bestter/TankWars/pulls?state=open&per_page=100" --jq ".[] | {number, state, headRefName: .head.ref, title, body, url: .html_url, author: .user.login}"
      ```
-     Repérer toute PR dont `headRefName` contient le **numéro exact `<N>`** dans un segment dédié au ticket (ex. `<type>/issue-<N>`, `issue-<N>`, `.../issue-<N>-...`, en vérifiant que `<N>` n'est ni précédé ni suivi d'un autre chiffre afin d'exclure `issue-<N>0` ou `issue-1<N>`). Pour chaque candidate, inspecter `gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits` afin de confirmer qu'elle correspond bien à `bestter/TankWars#<N>`.
-   - **Complément par recherche textuelle** (pour repérer une PR ouverte qui mentionne `#<N>` sans lien *Development*, mot-clé de fermeture ni branche dédiée) :
-     ```bash
-     gh pr list -R bestter/TankWars --state open --search "<N>" --json number,title,headRefName,url,author,body,closingIssuesReferences
-     ```
-     Pour chaque résultat retourné, **confirmer qu'il correspond réellement à `bestter/TankWars#<N>`** (via `closingIssuesReferences` pointant sur `bestter/TankWars` et `#<N>`, une référence explicite `#<N>` / `bestter/TankWars#<N>` / URL TankWars dans le titre ou la description, ou une branche dédiée au numéro exact `<N>`; si le lien n'apparaît pas dans ces champs, inspecter `gh pr view <pr_url> --json comments,commits` pour trancher) et écarter les faux positifs (nombre sans rapport ou ticket `#<N>` d'un autre dépôt).
+     - Examiner sur chaque page le nom de branche et les références dans le titre et la description, y compris si la branche porte un nom générique. Repérer le **numéro exact `<N>`** dans un segment dédié au ticket (ex. `fix/issue-<N>`) ou dans une référence `#<N>`, `bestter/TankWars#<N>` ou une URL d'issue TankWars. Écarter les numéros plus longs, les nombres sans rapport et les références à d'autres dépôts.
+     - Pour chaque candidate, lire `gh pr view <pr_url> --json number,title,state,headRefName,url,author,body,commits,closingIssuesReferences` pour confirmer qu'elle est toujours ouverte et qu'elle traite bien `bestter/TankWars#<N>`. Consulter ses commentaires et ses commits s'il faut clarifier une correspondance.
+     - Si le parcours paginé échoue, arrêter et signaler que l'absence de PR concurrente n'a pas pu être confirmée.
+   - Pour les mentions dans les commentaires, compléter le parcours paginé avec `gh pr list -R bestter/TankWars --state open --search "<N> in:comments"`. Confirmer les candidates avec `gh pr view <pr_url> --json number,state,url,author,body,comments,commits` et vérifier que la mention vise bien le ticket TankWars.
    - Si au moins une PR ouverte correspondante est confirmée, **arrêter** et consulter l'utilisateur avant d'agir (après inspection des métadonnées `author,body,commits` pour respecter les consignes de `AGENTS.md` sur les PR Google Labs Jules).
 5. Consulter `AGENTS.md` pour les contrats sensibles et les points d'entrée concernés.
 6. Si l'issue touche l'HTML, le CSS, le DOM, l'accessibilité, les formulaires, les modales, les animations, la performance Web ou les API navigateur côté client (y compris dans React) : lire et appliquer **impérativement en premier** le skill [modern-web-guidance](../modern-web-guidance/SKILL.md).
@@ -142,16 +140,18 @@ Exécuter intégralement et dans cet ordre la batterie de validation définie da
    - Corps concis expliquant le changement et son objectif.
    - Signature avec le nom de l'application, l'identité de l'agent et le modèle exact fourni par l'environnement.
 4. Vérifier le commit créé (`git log -1 --stat`), **revérifier l'état du ticket et l'absence de PR concurrente**, puis confirmer **toutes** les destinations effectives du push avant de pousser :
-   - Réexécuter les contrôles de l'**Étape 1 (points 3 et 4)** : confirmer que le ticket `#<N>` dans `bestter/TankWars` est toujours `OPEN` et qu'aucune PR ouverte concurrente n'est apparue (liens structurés `closedByPullRequestsReferences` filtrés sur `state == "OPEN"`, parcours paginé des noms de branches, et complément textuel vérifié). Si le ticket a été fermé ou qu'une PR concurrente existe, **arrêter la publication** (ne pas pousser) et indiquer précisément ce qui a été trouvé.
+   - Réexécuter les contrôles de l'**Étape 1 (points 3 et 4)** : confirmer que le ticket `#<N>` dans `bestter/TankWars` est toujours `OPEN` et qu'aucune PR ouverte concurrente n'est apparue (liens structurés et parcours paginé des branches, titres et descriptions). Si le ticket a été fermé ou qu'une PR concurrente existe, **arrêter la publication** (ne pas pousser) et indiquer précisément ce qui a été trouvé.
    - Confirmer toutes les destinations du push :
      ```bash
      git remote get-url --push --all origin
      ```
      Vérifier que chaque destination retournée correspond sans ambiguïté au dépôt GitHub `bestter/TankWars`. Si une destination est absente, inattendue ou impossible à confirmer, **interrompre la poussée** et expliquer le problème à l'utilisateur.
-   - Une fois ces vérifications confirmées, pousser la branche (jamais de `git push --force`) :
+   - Une fois ces vérifications confirmées, publier uniquement la nouvelle branche :
      ```bash
-     git push -u origin <type>/issue-<N>
+     git push --porcelain --no-follow-tags --force-with-lease=refs/heads/<type>/issue-<N>: -u origin refs/heads/<type>/issue-<N>:refs/heads/<type>/issue-<N>
      ```
+     - `--no-follow-tags` empêche la publication de tags héritée de `push.followTags`. La valeur attendue vide après le `:` dans `--force-with-lease` exige que la référence distante soit absente pour toute mise à jour.
+     - Poursuivre seulement si la commande réussit et que la sortie `--porcelain` confirme la création de la référence visée (statut `*`). Si elle échoue ou indique seulement une branche déjà à jour (statut `=`), arrêter avant `gh pr create` et expliquer le résultat. Ne pas relancer avec `--force`.
 5. Juste avant de créer la Pull Request, **confirmer de nouveau l'état du ticket et l'absence de PR concurrente** (réexécuter les contrôles de l'**Étape 1, points 3 et 4**) :
    - Si le ticket a été fermé ou qu'une PR concurrente a été ouverte entre le push et cette étape, **arrêter la publication** (ne pas exécuter `gh pr create`), indiquer précisément ce qui a été trouvé et rappeler le nom de la branche déjà poussée afin que l'utilisateur décide de la suite.
    - Sinon, créer la Pull Request vers `main` dans `bestter/TankWars` via un fichier temporaire (pour éviter les problèmes d'échappement sous PowerShell), puis supprimer le fichier temporaire :
