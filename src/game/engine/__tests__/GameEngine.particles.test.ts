@@ -357,47 +357,54 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
 
   it('updates impact explosions in-place without allocating a new array per frame', () => {
     const engine = new GameEngine(200, 200);
+    const { live1 } = setupTwoPlayers(engine, TERRAIN_MATERIAL.SOFT);
     const initialArr = engine.getImpactExplosions();
+    const step = Reflect.get(engine, 'update') as (dt: number) => void;
 
     // 1. When empty, update should short-circuit and preserve the identical array reference
-    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+    step.call(engine, 1 / 120);
     expect(engine.getImpactExplosions()).toBe(initialArr);
     expect(engine.getImpactExplosions()).toHaveLength(0);
 
-    // 2. 3+ particles where one in the middle dies -> order preserved, length updated, same reference
-    const internalList = Reflect.get(engine, 'impactExplosions') as Array<{
-      x: number;
-      y: number;
-      life: number;
-      maxLife: number;
-      size: number;
-      color: string;
-    }>;
-
-    internalList.push(
-      { x: 10, y: 10, life: 8, maxLife: 10, size: 2.0, color: '#fff' }, // survives (first), expands (life 7 > 5)
-      { x: 20, y: 20, life: 1, maxLife: 10, size: 2.0, color: '#f00' }, // expires in the middle
-      { x: 30, y: 30, life: 2, maxLife: 10, size: 3.0, color: '#ff0' }, // survives (last), no expansion (life 1 <= 5)
+    // 2. Trigger THERMONUCLEAR impact via public API -> 42 particles sharing the same array reference
+    live1.inventory.THERMONUCLEAR = 1;
+    engine.fireProjectile(
+      live1.tank.position,
+      { angle: 0, power: 50, weaponId: 'THERMONUCLEAR' },
+      live1.id,
+      { shotId: 1, isFirstShotOfRound: true },
     );
-
-    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
-
-    expect(engine.getImpactExplosions()).toBe(initialArr);
-    expect(internalList).toHaveLength(2);
-    expect(internalList[0].x).toBe(10);
-    expect(internalList[0].life).toBe(7);
-    expect(internalList[0].size).toBeGreaterThan(2.0);
-    expect(internalList[1].x).toBe(30);
-    expect(internalList[1].life).toBe(1);
-    expect(internalList[1].size).toBe(3.0);
-
-    // 3. All remaining particles die -> length 0, same array reference preserved
-    internalList[0].life = 1;
-    internalList[1].life = 1;
-
-    (Reflect.get(engine, 'updateImpactExplosions') as () => void).call(engine);
+    const thermoProj = engine.getActiveProjectiles()[0];
+    thermoProj.x = 100;
+    thermoProj.y = 120;
+    step.call(engine, 1 / 120);
 
     expect(engine.getImpactExplosions()).toBe(initialArr);
-    expect(internalList).toHaveLength(0);
+    expect(engine.getImpactExplosions()).toHaveLength(42);
+
+    const firstParticle = engine.getImpactExplosions()[0];
+    const initialLife = firstParticle.life;
+    const initialSize = firstParticle.size;
+
+    // 3. Advance one step -> particle expands in first half of life and array reference stays identical
+    step.call(engine, 1 / 120);
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(firstParticle.life).toBe(initialLife - 1);
+    expect(firstParticle.size).toBeGreaterThan(initialSize);
+
+    // 4. Advance until intermediate particles expire and finally all particles clear in-place
+    let sawPartialCompaction = false;
+    for (let i = 0; i < 75 && engine.getImpactExplosions().length > 0; i++) {
+      step.call(engine, 1 / 120);
+      expect(engine.getImpactExplosions()).toBe(initialArr);
+      const len = engine.getImpactExplosions().length;
+      if (len > 0 && len < 42) {
+        sawPartialCompaction = true;
+      }
+    }
+
+    expect(sawPartialCompaction).toBe(true);
+    expect(engine.getImpactExplosions()).toBe(initialArr);
+    expect(engine.getImpactExplosions()).toHaveLength(0);
   });
 });
