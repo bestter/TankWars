@@ -17,7 +17,7 @@ export interface ImpactExplosion {
   color: string;
 }
 
-export interface ImpactExplosionsOptions {
+interface ImpactExplosionsOptions {
   width: number;
   height: number;
 }

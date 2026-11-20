@@ -203,60 +203,58 @@ describe("GameEngine VFX characterization", () => {
     TERRAIN_MATERIAL.SOFT,
     TERRAIN_MATERIAL.ROCK,
   ])("terrain impact particles for %s", (material) => {
-    it.each(SEEDS)(
-      "captures deterministic fillRect sequence without secureRandom or Math.random (seed %i)",
-      async (seed) => {
-        const rng = random.createSeededRNG(seed);
-        let randomDraws = 0;
-        const secureRandomSpy = vi.spyOn(random, "secureRandom").mockImplementation(() => {
-          randomDraws += 1;
-          return rng.next();
-        });
-        const mathRandomSpy = vi.spyOn(Math, "random");
+    it("captures deterministic fillRect sequence without secureRandom or Math.random", async () => {
+      const rng = random.createSeededRNG(1);
+      let randomDraws = 0;
+      const secureRandomSpy = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+        randomDraws += 1;
+        return rng.next();
+      });
+      const mathRandomSpy = vi.spyOn(Math, "random");
 
-        const engine = new GameEngine(200, 200);
-        const { live1 } = setupFlatMatch(engine, 200, 120, material, 40, 160);
+      const engine = new GameEngine(200, 200);
+      const { live1 } = setupFlatMatch(engine, 200, 120, material, 40, 160);
 
-        vi.spyOn(engine.getTerrain(), "draw").mockImplementation(() => {});
-        vi.spyOn(engine.getPhysicsEngine(), "draw").mockImplementation(() => {});
-        vi.spyOn(engine.getTankManager(), "draw").mockImplementation(() => {});
+      vi.spyOn(engine.getTerrain(), "draw").mockImplementation(() => {});
+      vi.spyOn(engine.getPhysicsEngine(), "draw").mockImplementation(() => {});
+      vi.spyOn(engine.getTankManager(), "draw").mockImplementation(() => {});
 
-        engine.fireProjectile(
-          live1.tank.position,
-          { angle: 0, power: 50, weaponId: "MISSILE" },
-          live1.id,
-          { shotId: 1, isFirstShotOfRound: true },
-        );
-        const proj = engine.getActiveProjectiles()[0];
-        proj.x = 100;
-        proj.y = 120;
+      engine.fireProjectile(
+        live1.tank.position,
+        { angle: 0, power: 50, weaponId: "MISSILE" },
+        live1.id,
+        { shotId: 1, isFirstShotOfRound: true },
+      );
+      const proj = engine.getActiveProjectiles()[0];
+      proj.x = 100;
+      proj.y = 120;
 
-        randomDraws = 0;
-        mathRandomSpy.mockClear();
+      randomDraws = 0;
+      secureRandomSpy.mockClear();
+      mathRandomSpy.mockClear();
 
-        const stepUpdate = getUpdateFn(engine);
-        stepUpdate.call(engine, DT);
+      const stepUpdate = getUpdateFn(engine);
+      stepUpdate.call(engine, DT);
 
-        const recorder = createRecordingCanvasContext();
-        const capturedFrames = new Set([0, 1, 11, 12, 15, 16, 23, 24]);
-        const frameOutputs: string[] = [];
+      const recorder = createRecordingCanvasContext();
+      const capturedFrames = new Set([0, 1, 11, 12, 15, 16, 23, 24]);
+      const frameOutputs: string[] = [];
 
-        for (let frame = 0; frame < 25; frame++) {
-          recorder.clearLines();
-          engine.render(recorder.ctx);
-          expect(recorder.getGlobalAlpha()).toBe(1);
-          if (capturedFrames.has(frame)) {
-            frameOutputs.push([`=== frame ${frame} ===`, ...recorder.getLines()].join("\n"));
-          }
+      for (let frame = 0; frame < 25; frame++) {
+        recorder.clearLines();
+        engine.render(recorder.ctx);
+        expect(recorder.getGlobalAlpha()).toBe(1);
+        if (capturedFrames.has(frame)) {
+          frameOutputs.push([`=== frame ${frame} ===`, ...recorder.getLines()].join("\n"));
         }
+      }
 
-        expect(randomDraws).toBe(0);
-        expect(secureRandomSpy).toBeDefined();
-        expect(mathRandomSpy).not.toHaveBeenCalled();
+      expect(randomDraws).toBe(0);
+      expect(secureRandomSpy).not.toHaveBeenCalled();
+      expect(mathRandomSpy).not.toHaveBeenCalled();
 
-        const snapshot = `${frameOutputs.join("\n")}\n`;
-        await expect(snapshot).toMatchFileSnapshot(`./__snapshots__/vfx-terrain-${material}.txt`);
-      },
-    );
+      const snapshot = `${frameOutputs.join("\n")}\n`;
+      await expect(snapshot).toMatchFileSnapshot(`./__snapshots__/vfx-terrain-${material}.txt`);
+    });
   });
 });

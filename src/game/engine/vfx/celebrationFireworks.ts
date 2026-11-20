@@ -7,6 +7,8 @@ export const MAX_FIREWORKS = 250;
 
 const ROCKET_TRAIL_CAPACITY = 7;
 const PARTICLE_TRAIL_CAPACITY = 3;
+const ROCKET_TRAIL_STRIDE = 3;
+const PARTICLE_TRAIL_STRIDE = 2;
 
 const INITIAL_FESTIVE_COLORS: readonly string[] = [
   VGA_PALETTE.ELECTRIC_CYAN,
@@ -35,24 +37,23 @@ const FESTIVE_COLORS: readonly string[] = [
   VGA_PALETTE.WHITE,
 ];
 
-export interface RocketTrailRing {
+interface RocketTrailRing {
   readonly capacity: typeof ROCKET_TRAIL_CAPACITY;
-  readonly xs: Float64Array;
-  readonly ys: Float64Array;
-  readonly alphas: Float64Array;
+  /** Tampon unique entrelacé `[x, y, alpha]` par emplacement (stride 3). */
+  readonly data: Float64Array;
   head: number;
   count: number;
 }
 
-export interface ParticleTrailRing {
+interface ParticleTrailRing {
   readonly capacity: typeof PARTICLE_TRAIL_CAPACITY;
-  readonly xs: Float64Array;
-  readonly ys: Float64Array;
+  /** Tampon unique entrelacé `[x, y]` par emplacement (stride 2). */
+  readonly data: Float64Array;
   head: number;
   count: number;
 }
 
-export interface RocketFireworkParticle {
+interface RocketFireworkParticle {
   type: "rocket";
   x: number;
   y: number;
@@ -65,7 +66,7 @@ export interface RocketFireworkParticle {
   trail: RocketTrailRing;
 }
 
-export interface BurstFireworkParticle {
+interface BurstFireworkParticle {
   type: "particle";
   x: number;
   y: number;
@@ -78,7 +79,7 @@ export interface BurstFireworkParticle {
   trail: ParticleTrailRing;
 }
 
-export interface ConfettiFireworkParticle {
+interface ConfettiFireworkParticle {
   type: "confetti";
   x: number;
   y: number;
@@ -95,24 +96,19 @@ export interface ConfettiFireworkParticle {
   rotationSpeed: number;
 }
 
-export type FireworkParticle =
+type FireworkParticle =
   | RocketFireworkParticle
   | BurstFireworkParticle
   | ConfettiFireworkParticle;
 
-export interface CelebrationFireworksOptions {
+interface CelebrationFireworksOptions {
   width: number;
   height: number;
   getGroundHeight: (x: number) => number;
   onBurst: (x: number) => void;
 }
 
-export interface CannonOverride {
-  player: Player;
-  angle: number;
-}
-
-export interface CelebrationFireworksState {
+interface CelebrationFireworksState {
   centerX: number;
   color: string;
   winner: Player | null;
@@ -121,12 +117,14 @@ export interface CelebrationFireworksState {
   updateAccum: number;
 }
 
+/**
+ * Une seule allocation par traînée (taille fixe, réutilisée pendant toute la vie de la particule),
+ * au lieu d'un objet par tick comme l'ancien `push`/`shift`.
+ */
 function createRocketTrailRing(): RocketTrailRing {
   return {
     capacity: ROCKET_TRAIL_CAPACITY,
-    xs: new Float64Array(ROCKET_TRAIL_CAPACITY),
-    ys: new Float64Array(ROCKET_TRAIL_CAPACITY),
-    alphas: new Float64Array(ROCKET_TRAIL_CAPACITY),
+    data: new Float64Array(ROCKET_TRAIL_CAPACITY * ROCKET_TRAIL_STRIDE),
     head: 0,
     count: 0,
   };
@@ -135,43 +133,59 @@ function createRocketTrailRing(): RocketTrailRing {
 function createParticleTrailRing(): ParticleTrailRing {
   return {
     capacity: PARTICLE_TRAIL_CAPACITY,
-    xs: new Float64Array(PARTICLE_TRAIL_CAPACITY),
-    ys: new Float64Array(PARTICLE_TRAIL_CAPACITY),
+    data: new Float64Array(PARTICLE_TRAIL_CAPACITY * PARTICLE_TRAIL_STRIDE),
     head: 0,
     count: 0,
   };
 }
 
 function pushRocketTrail(ring: RocketTrailRing, x: number, y: number): void {
+  let slot: number;
   if (ring.count < ROCKET_TRAIL_CAPACITY) {
-    const slot = (ring.head + ring.count) % ROCKET_TRAIL_CAPACITY;
-    ring.xs[slot] = x;
-    ring.ys[slot] = y;
-    ring.alphas[slot] = 1.0;
+    slot = (ring.head + ring.count) % ROCKET_TRAIL_CAPACITY;
     ring.count += 1;
   } else {
-    ring.xs[ring.head] = x;
-    ring.ys[ring.head] = y;
-    ring.alphas[ring.head] = 1.0;
+    slot = ring.head;
     ring.head = (ring.head + 1) % ROCKET_TRAIL_CAPACITY;
   }
+  const base = slot * ROCKET_TRAIL_STRIDE;
+  ring.data[base] = x;
+  ring.data[base + 1] = y;
+  ring.data[base + 2] = 1.0;
 
   for (let i = 0; i < ring.count; i++) {
-    const slot = (ring.head + i) % ROCKET_TRAIL_CAPACITY;
-    ring.alphas[slot] -= 0.12;
+    const alphaIndex =
+      ((ring.head + i) % ROCKET_TRAIL_CAPACITY) * ROCKET_TRAIL_STRIDE + 2;
+    ring.data[alphaIndex] -= 0.12;
   }
 }
 
 function pushParticleTrail(ring: ParticleTrailRing, x: number, y: number): void {
+  let slot: number;
   if (ring.count < PARTICLE_TRAIL_CAPACITY) {
-    const slot = (ring.head + ring.count) % PARTICLE_TRAIL_CAPACITY;
-    ring.xs[slot] = x;
-    ring.ys[slot] = y;
+    slot = (ring.head + ring.count) % PARTICLE_TRAIL_CAPACITY;
     ring.count += 1;
   } else {
-    ring.xs[ring.head] = x;
-    ring.ys[ring.head] = y;
+    slot = ring.head;
     ring.head = (ring.head + 1) % PARTICLE_TRAIL_CAPACITY;
+  }
+  const base = slot * PARTICLE_TRAIL_STRIDE;
+  ring.data[base] = x;
+  ring.data[base + 1] = y;
+}
+
+/** Corps carré et halo communs aux fusées et aux éclats. */
+function drawBodyWithGlow(
+  ctx: CanvasRenderingContext2D,
+  p: RocketFireworkParticle | BurstFireworkParticle,
+  alpha: number,
+): void {
+  ctx.globalAlpha = alpha;
+  const s = p.size;
+  ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+  if (s > 3.0) {
+    ctx.globalAlpha = alpha * 0.28;
+    ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
   }
 }
 
@@ -184,6 +198,8 @@ export class CelebrationFireworks {
   private readonly fireworks: FireworkParticle[] = [];
   private readonly spawnBuffer: FireworkParticle[] = [];
   private fireworksUpdateAccum = 0;
+  private flushedRockets = 0;
+  private flushedConfetti = 0;
 
   private celebrationCenterX = 0;
   private celebrationColor = "#FFFFFF";
@@ -206,11 +222,20 @@ export class CelebrationFireworks {
     return this.fireworks;
   }
 
-  public getCannonOverride(): CannonOverride | null {
-    if (this.winner === null) return null;
-    return { player: this.winner, angle: this.angle };
+  /** Tank vainqueur dont le canon balaie pendant la célébration, sinon `null`. */
+  public get cannonWinner(): Player | null {
+    return this.winner;
   }
 
+  /** Angle de balayage courant du canon vainqueur (degrés). */
+  public get cannonAngle(): number {
+    return this.angle;
+  }
+
+  /**
+   * @internal Diagnostic réservé aux tests : alloue un instantané, ne pas appeler
+   * depuis la boucle de rendu ou de simulation.
+   */
   public getCelebrationState(): Readonly<CelebrationFireworksState> {
     return {
       centerX: this.celebrationCenterX,
@@ -304,23 +329,18 @@ export class CelebrationFireworks {
           const halfStep = p.size / 3;
           const trailSize = p.size / 1.5;
           for (let j = 0; j < trail.count; j++) {
-            const slot = (trail.head + j) % ROCKET_TRAIL_CAPACITY;
-            ctx.globalAlpha = trail.alphas[slot] * alpha * 0.38;
+            const base =
+              ((trail.head + j) % ROCKET_TRAIL_CAPACITY) * ROCKET_TRAIL_STRIDE;
+            ctx.globalAlpha = trail.data[base + 2] * alpha * 0.38;
             ctx.fillRect(
-              trail.xs[slot] - halfStep,
-              trail.ys[slot] - halfStep,
+              trail.data[base] - halfStep,
+              trail.data[base + 1] - halfStep,
               trailSize,
               trailSize,
             );
           }
         }
-        ctx.globalAlpha = alpha;
-        const s = p.size;
-        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
-        if (s > 3.0) {
-          ctx.globalAlpha = alpha * 0.28;
-          ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
-        }
+        drawBodyWithGlow(ctx, p, alpha);
       } else if (p.type === "particle") {
         const trail = p.trail;
         if (trail.count > 0) {
@@ -328,22 +348,18 @@ export class CelebrationFireworks {
           const trailSize = p.size / 1.5;
           ctx.globalAlpha = alpha * 0.38;
           for (let j = 0; j < trail.count; j++) {
-            const slot = (trail.head + j) % PARTICLE_TRAIL_CAPACITY;
+            const base =
+              ((trail.head + j) % PARTICLE_TRAIL_CAPACITY) *
+              PARTICLE_TRAIL_STRIDE;
             ctx.fillRect(
-              trail.xs[slot] - halfStep,
-              trail.ys[slot] - halfStep,
+              trail.data[base] - halfStep,
+              trail.data[base + 1] - halfStep,
               trailSize,
               trailSize,
             );
           }
         }
-        ctx.globalAlpha = alpha;
-        const s = p.size;
-        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
-        if (s > 3.0) {
-          ctx.globalAlpha = alpha * 0.28;
-          ctx.fillRect(p.x - s, p.y - s, s * 2, s * 2);
-        }
+        drawBodyWithGlow(ctx, p, alpha);
       } else {
         ctx.globalAlpha = alpha;
         ctx.save();
@@ -373,18 +389,18 @@ export class CelebrationFireworks {
     }
   }
 
-  private flushSpawns(): { rockets: number; confetti: number } {
-    let rockets = 0;
-    let confetti = 0;
+  /** Ajoute les apparitions en file et compte celles réellement ajoutées, sans allocation. */
+  private flushSpawns(): void {
+    this.flushedRockets = 0;
+    this.flushedConfetti = 0;
     for (let i = 0; i < this.spawnBuffer.length; i++) {
       if (this.fireworks.length >= MAX_FIREWORKS) break;
       const spawn = this.spawnBuffer[i];
       this.fireworks.push(spawn);
-      if (spawn.type === "rocket") rockets += 1;
-      else if (spawn.type === "confetti") confetti += 1;
+      if (spawn.type === "rocket") this.flushedRockets += 1;
+      else if (spawn.type === "confetti") this.flushedConfetti += 1;
     }
     this.spawnBuffer.length = 0;
-    return { rockets, confetti };
   }
 
   private tick(): void {
@@ -611,9 +627,9 @@ export class CelebrationFireworks {
     }
 
     this.fireworks.length = write;
-    const flushed = this.flushSpawns();
-    activeRockets += flushed.rockets;
-    activeConfetti += flushed.confetti;
+    this.flushSpawns();
+    activeRockets += this.flushedRockets;
+    activeConfetti += this.flushedConfetti;
 
     if (activeRockets < 5 && secureRandom() < 0.07) {
       const spawnX = Math.max(

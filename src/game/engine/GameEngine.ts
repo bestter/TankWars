@@ -9,7 +9,6 @@ import {
   type TerrainImpactParticle,
 } from "./vfx/terrainImpactParticles";
 
-export type { TerrainImpactParticle };
 /**
  * TankWars - Core Game Engine (src/game/engine/GameEngine.ts)
  *
@@ -57,6 +56,8 @@ import {
   type ZeusStrikeResult,
 } from "../zeus/zeusDomain";
 import { calculateZeusStrikeReward } from "../zeus/zeusRewards";
+
+export type { TerrainImpactParticle };
 
 export interface GameConfig {
   /** Vertical acceleration (pixels per second²). Higher = stronger gravity. */
@@ -909,9 +910,8 @@ export class GameEngine {
       : (this.tankManager.getAlivePlayers()[0]?.tank.position.x ??
         this.width / 2);
     const cy = roundWinner ? roundWinner.tank.position.y - 30 : 60;
-    const color = roundWinner
-      ? roundWinner.tank.color
-      : (this.winner?.tank.color ?? "#FFFFFF");
+    // this.winner reste null ici : il n'est assigné qu'avec gameOver, déjà exclu ci-dessus.
+    const color = roundWinner?.tank.color ?? "#FFFFFF";
     this.audio.playVictoryFanfare();
     this.celebrationFireworks.start(cx, cy, color, roundWinner ?? null);
     // Fanfare sting will play (reuses private audio logic)
@@ -1160,18 +1160,18 @@ export class GameEngine {
 
     // Override the winning tank's cannon angle during celebration so it sweeps 78.5°-112.5°
     // and visually "shoots" the fireworks (we restore immediately after draw).
-    const cannonOverride = this.celebrationFireworks.getCannonOverride();
-    let restoredAngle: number | undefined;
-    if (cannonOverride !== null) {
-      restoredAngle = cannonOverride.player.tank.angle;
-      cannonOverride.player.tank.angle = cannonOverride.angle;
+    // Lecture par accesseurs pour éviter une allocation par image rendue.
+    const cannonWinner = this.celebrationFireworks.cannonWinner;
+    const restoredAngle = cannonWinner?.tank.angle;
+    if (cannonWinner !== null) {
+      cannonWinner.tank.angle = this.celebrationFireworks.cannonAngle;
     }
     try {
       this.tankManager.draw(ctx, showPlayerNames, this.terrain);
       this.drawZeusEffects(ctx);
     } finally {
-      if (cannonOverride !== null && restoredAngle !== undefined) {
-        cannonOverride.player.tank.angle = restoredAngle;
+      if (cannonWinner !== null && restoredAngle !== undefined) {
+        cannonWinner.tank.angle = restoredAngle;
       }
     }
 

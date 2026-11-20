@@ -112,12 +112,13 @@ describe("CelebrationFireworks", () => {
     if (!rocket || rocket.type !== "rocket") throw new Error("expected rocket");
     expect(rocket.trail.capacity).toBe(7);
     expect(rocket.trail.count).toBe(7);
+    expect(rocket.trail.data).toHaveLength(7 * 3);
 
     // Check FIFO order and -0.12 per-tick alpha decay (oldest slot decayed 7 times -> 0.16, newest decayed 1 time -> 0.88)
     const rocketAlphas: number[] = [];
     for (let i = 0; i < rocket.trail.count; i++) {
       const slot = (rocket.trail.head + i) % rocket.trail.capacity;
-      rocketAlphas.push(rocket.trail.alphas[slot]);
+      rocketAlphas.push(rocket.trail.data[slot * 3 + 2]);
     }
     expect(rocketAlphas[0]).toBeCloseTo(1 - 7 * 0.12, 6);
     expect(rocketAlphas[6]).toBeCloseTo(1 - 0.12, 6);
@@ -128,7 +129,7 @@ describe("CelebrationFireworks", () => {
     expect(recorder.getGlobalAlpha()).toBe(1);
     const firstRocketAlpha = Math.max(0.1, rocket.life / rocket.maxLife);
     const lines = recorder.getLines();
-    const firstSlotX = rocket.trail.xs[rocket.trail.head];
+    const firstSlotX = rocket.trail.data[rocket.trail.head * 3];
     const expectedOldestX = (firstSlotX - rocket.size / 3).toFixed(6);
     expect(lines[0]).toContain(`x=${expectedOldestX}`);
     expect(lines[0]).toContain(
@@ -144,6 +145,7 @@ describe("CelebrationFireworks", () => {
     if (!burst || burst.type !== "particle") throw new Error("expected burst particle");
     expect(burst.trail.capacity).toBe(3);
     expect(burst.trail.count).toBe(3);
+    expect(burst.trail.data).toHaveLength(3 * 2);
 
     const recorderAfter = createRecordingCanvasContext();
     fireworks.draw(recorderAfter.ctx);
@@ -176,6 +178,10 @@ describe("CelebrationFireworks", () => {
     fireworks.start(400, 300, "#55FFFF", null);
     // Avoid extra spark/ambient spawns during flight so only the 9 initial rockets burst on tick 55
     burstDrawTarget = 0.99;
+    const expectedBurstXs = fireworks
+      .getParticles()
+      .filter((p) => p.type === "rocket")
+      .map((r) => r.x + r.vx * 55);
 
     for (let i = 0; i < 54; i++) {
       fireworks.update(FIREWORKS_TICK_DT);
@@ -185,38 +191,15 @@ describe("CelebrationFireworks", () => {
     // On tick 55, set draws = 0; each of the 9 rockets draws once for spark check (< 0.22)
     // and only AFTER onBurst(p.x) draws for explosionPattern, burst particles, and confetti.
     draws = 0;
-    const drawsAfterEachBurst: number[] = [];
-    const originalOnBurst = bursts;
-    const trackingFireworks = new CelebrationFireworks({
-      width: 800,
-      height: 480,
-      getGroundHeight: () => 470,
-      onBurst: (x) => {
-        originalOnBurst.push({ x, drawsAtBurst: draws });
-      },
-    });
-    burstDrawTarget = 0.5;
-    trackingFireworks.start(400, 300, "#55FFFF", null);
-    burstDrawTarget = 0.99;
-    const expectedBurstXs = trackingFireworks
-      .getParticles()
-      .filter((p) => p.type === "rocket")
-      .map((r) => r.x + r.vx * 55);
+    fireworks.update(FIREWORKS_TICK_DT);
 
-    for (let i = 0; i < 54; i++) {
-      trackingFireworks.update(FIREWORKS_TICK_DT);
-    }
-    draws = 0;
-    trackingFireworks.update(FIREWORKS_TICK_DT);
-    drawsAfterEachBurst.push(draws);
-
-    expect(originalOnBurst).toHaveLength(9);
+    expect(bursts).toHaveLength(9);
     for (let i = 0; i < 9; i++) {
-      expect(originalOnBurst[i].x).toBeCloseTo(expectedBurstXs[i], 9);
+      expect(bursts[i].x).toBeCloseTo(expectedBurstXs[i], 9);
     }
     // First rocket drew only once (spark check) before onBurst was invoked; pattern + confetti draws happened after
-    expect(originalOnBurst[0].drawsAtBurst).toBe(1);
-    expect(drawsAfterEachBurst[0]).toBeGreaterThan(originalOnBurst[8].drawsAtBurst);
+    expect(bursts[0].drawsAtBurst).toBe(1);
+    expect(draws).toBeGreaterThan(bursts[8].drawsAtBurst);
   });
 
   it("sweeps winner cannon between 78.5 and 112.5 degrees and returns null without winner", () => {
@@ -229,39 +212,64 @@ describe("CelebrationFireworks", () => {
     });
 
     fireworks.start(400, 300, "#55FFFF", null);
-    expect(fireworks.getCannonOverride()).toBeNull();
+    expect(fireworks.cannonWinner).toBeNull();
+    expect(fireworks.cannonAngle).toBe(90);
 
     const winner = makePlayer({ id: "w", tank: makeTank("tw", 400, 360) });
     fireworks.start(400, 300, winner.tank.color, winner);
-    expect(fireworks.getCannonOverride()).toEqual({ player: winner, angle: 78.5 });
+    expect(fireworks.cannonWinner).toBe(winner);
+    expect(fireworks.cannonAngle).toBe(78.5);
 
     // 34 ticks -> reaches 112.5 (still heading up)
     for (let i = 0; i < 34; i++) {
       fireworks.update(FIREWORKS_TICK_DT);
     }
-    expect(fireworks.getCannonOverride()?.angle).toBe(112.5);
+    expect(fireworks.cannonAngle).toBe(112.5);
 
     // Next tick clamps at 112.5 and reverses direction to -1; following tick moves to 111.5
     fireworks.update(FIREWORKS_TICK_DT);
-    expect(fireworks.getCannonOverride()?.angle).toBe(112.5);
+    expect(fireworks.cannonAngle).toBe(112.5);
     expect(fireworks.getCelebrationState().angleDir).toBe(-1);
     fireworks.update(FIREWORKS_TICK_DT);
-    expect(fireworks.getCannonOverride()?.angle).toBe(111.5);
+    expect(fireworks.cannonAngle).toBe(111.5);
 
     // Sweep back down to 78.5 (33 more ticks), clamp + reverse to +1, then move to 79.5
     for (let i = 0; i < 33; i++) {
       fireworks.update(FIREWORKS_TICK_DT);
     }
-    expect(fireworks.getCannonOverride()?.angle).toBe(78.5);
+    expect(fireworks.cannonAngle).toBe(78.5);
     fireworks.update(FIREWORKS_TICK_DT);
-    expect(fireworks.getCannonOverride()?.angle).toBe(78.5);
+    expect(fireworks.cannonAngle).toBe(78.5);
     expect(fireworks.getCelebrationState().angleDir).toBe(1);
     fireworks.update(FIREWORKS_TICK_DT);
-    expect(fireworks.getCannonOverride()?.angle).toBe(79.5);
+    expect(fireworks.cannonAngle).toBe(79.5);
+  });
+
+  it("resets winner, angle, and direction when starting without a winner after a winner celebration", () => {
+    vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
+    const winner = makePlayer({ id: "w", tank: makeTank("tw", 400, 360) });
+    const fireworks = new CelebrationFireworks({
+      width: 800,
+      height: 480,
+      getGroundHeight: () => 470,
+      onBurst: () => {},
+    });
+
+    fireworks.start(400, 300, winner.tank.color, winner);
+    for (let i = 0; i < 35; i++) {
+      fireworks.update(FIREWORKS_TICK_DT);
+    }
+    expect(fireworks.cannonAngle).toBe(112.5);
+    expect(fireworks.getCelebrationState().angleDir).toBe(-1);
+
+    fireworks.start(400, 300, "#FFFFFF", null);
+    expect(fireworks.cannonWinner).toBeNull();
+    expect(fireworks.cannonAngle).toBe(90);
+    expect(fireworks.getCelebrationState().angleDir).toBe(1);
   });
 
   it("clips confetti at injected ground height", () => {
-    // 0.01 spawns confetti near y = 0.01 * 300 = 3; ground at y = 200 clips it once y >= 200
+    // 0.5 spawns confetti at y = 0.5 * 300 = 150; lowering ground to y = 10 clips it
     vi.spyOn(random, "secureRandom").mockReturnValue(0.5);
     let groundHeight = 400;
     const fireworks = new CelebrationFireworks({
@@ -299,7 +307,8 @@ describe("CelebrationFireworks", () => {
     expect(fireworks.getParticles()).toBe(initialRef);
     expect(fireworks.getParticles()).toHaveLength(0);
     expect(fireworks.hasParticles).toBe(false);
-    expect(fireworks.getCannonOverride()).toBeNull();
+    expect(fireworks.cannonWinner).toBeNull();
+    expect(fireworks.cannonAngle).toBe(90);
     expect(fireworks.getCelebrationState()).toEqual({
       centerX: 0,
       color: "#FFFFFF",
@@ -314,7 +323,7 @@ describe("CelebrationFireworks", () => {
     draws.mockClear();
     fireworks.update(PHYSICS_DT);
     expect(fireworks.getParticles()[0].life).toBe(lifeAfterRestart - 1);
-    expect(fireworks.getCannonOverride()?.angle).toBe(79.5);
+    expect(fireworks.cannonAngle).toBe(79.5);
     expect(draws).toHaveBeenCalledTimes(11);
   });
 });
