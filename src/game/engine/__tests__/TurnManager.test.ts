@@ -866,6 +866,48 @@ describe('TurnManager', () => {
       turnManager.update(0.016);
       expect(turnManager.getCurrentTurnInfo()?.isResolving).toBe(false);
     });
+
+    it('tracks isAwaitingServerTurn across remote settlement and syncTurn, and isCatchUp during CATCH_UP replay', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      // Remote player 2 fires and settles before server STATE_UPDATE
+      turnManager.syncTurn(1);
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        { fromSlot: 1 },
+      );
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isResolving).toBe(false);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(true);
+
+      // Server advances back to player 1
+      turnManager.syncTurn(0);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
+
+      // CATCH_UP shot reports isCatchUp: true even while settling
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        { fromSlot: 1, mode: 'CATCH_UP', identity: { shotId: 2, isFirstShotOfRound: false } },
+      );
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(true);
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(false);
+    });
+
+    it('exposes isSpecialTurn while special turn lock is held', () => {
+      turnManager.startFirstTurn();
+      expect(turnManager.getCurrentTurnInfo()?.isSpecialTurn).toBe(false);
+
+      turnManager.lockSpecialTurn();
+      expect(turnManager.getCurrentTurnInfo()?.isSpecialTurn).toBe(true);
+
+      turnManager.completeSpecialTurn(false);
+      expect(turnManager.getCurrentTurnInfo()?.isSpecialTurn).toBe(false);
+    });
   });
 
   describe('AI grenade settlement vs safety net', () => {

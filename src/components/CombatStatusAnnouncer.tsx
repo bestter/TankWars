@@ -31,6 +31,7 @@ function areAnnouncerPropsEqual(
     a.turn === b.turn &&
     a.playerId === b.playerId &&
     a.playerName === b.playerName &&
+    a.isHuman === b.isHuman &&
     a.isInputLocked === b.isInputLocked &&
     a.isResolving === b.isResolving &&
     a.tanksAreFalling === b.tanksAreFalling &&
@@ -51,6 +52,7 @@ export const CombatStatusAnnouncer = memo(function CombatStatusAnnouncer({
   const turn = turnInfo?.turn ?? 0;
   const playerId = turnInfo?.playerId ?? "";
   const playerName = turnInfo?.playerName ?? "";
+  const isHuman = turnInfo?.isHuman ?? true;
   const isInputLocked = turnInfo?.isInputLocked ?? false;
   const isResolvingProp = turnInfo?.isResolving;
   const tanksAreFalling = turnInfo?.tanksAreFalling ?? false;
@@ -108,7 +110,7 @@ export const CombatStatusAnnouncer = memo(function CombatStatusAnnouncer({
     }
 
     // Même tour : gestion des transitions de tir et de chute
-    const isResolving = isResolvingProp ?? isInputLocked;
+    const isResolving = isResolvingProp ?? (isHuman && isInputLocked);
     if (tanksAreFalling) {
       if (!currentTracking.hasAnnouncedFalling) {
         currentTracking.hasAnnouncedFalling = true;
@@ -127,6 +129,7 @@ export const CombatStatusAnnouncer = memo(function CombatStatusAnnouncer({
     turn,
     playerId,
     playerName,
+    isHuman,
     isInputLocked,
     isResolvingProp,
     tanksAreFalling,

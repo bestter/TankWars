@@ -67,4 +67,19 @@ describe("advisor accessible production UI", () => {
     await show({ objective: "SURVIE", status: "idle" });
     expect(screen.queryByRole("button", { name: fr.advisor_title })).toBeNull();
   });
+
+  it.each(["fr", "en"] as const)("renders a single spinner with the calculating cause in %s and omits it in other states", async (language) => {
+    const resources = language === "fr" ? fr : en;
+    await show({ playerId: "self", objective: "SURVIE", status: "calculating" }, language);
+    const spinners = screen.getAllByRole("progressbar", { name: resources.advisor_calculating });
+    expect(spinners).toHaveLength(1);
+    expect(spinners[0].getAttribute("value")).toBeNull();
+    expect(screen.getByText(resources.advisor_calculating)).toBeDefined();
+
+    for (const status of ["idle", "empty", "error", "expired"] as const) {
+      cleanup();
+      await show({ playerId: "self", objective: "SURVIE", status }, language);
+      expect(screen.queryByRole("progressbar")).toBeNull();
+    }
+  });
 });

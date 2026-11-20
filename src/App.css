@@ -45,10 +45,172 @@ dialog.retro-modal::backdrop {
   color: #ffffff;
   padding: 3px 8px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  row-gap: 4px;
   pointer-events: none;
   box-shadow: 0 0 0 1px #000 inset;
+}
+
+.retro-hud-weapons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  max-width: 100%;
+  pointer-events: none;
+}
+
+.retro-wait-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  font-size: 12px;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+
+.retro-wait-falling {
+  color: #ffff55;
+  font-weight: bold;
+}
+
+.retro-wait-resolving {
+  color: #ff5555;
+}
+
+.retro-wait-ai {
+  color: #55ffff;
+}
+
+@property --arc-start {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --arc-end {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --progress-dash-animation {
+  syntax: "*";
+  inherits: false;
+  initial-value: , retro-progress-dash 3s ease-in-out infinite;
+}
+
+progress.retro-spinner:indeterminate {
+  --_from: calc(90deg + var(--arc-start, 0deg));
+  --_to: calc(90deg + var(--arc-end, 158deg));
+  --size: 12px;
+  --thickness: 2px;
+  --spinner-color: currentColor;
+  --track-color: #333333;
+  --spinner-duration: 1.2s;
+  --_used-spinner-duration: var(--spinner-duration);
+
+  position: relative;
+  box-sizing: border-box;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: var(--size);
+  height: var(--size);
+  border: 0;
+  border-radius: 50%;
+  appearance: none;
+  vertical-align: middle;
+  pointer-events: none;
+  background: conic-gradient(
+      from var(--_from),
+      var(--spinner-color) calc(var(--_to) - var(--_from)),
+      transparent 0
+    )
+    var(--track-color);
+  animation:
+    retro-progress-spin var(--_used-spinner-duration) linear infinite
+    var(--progress-dash-animation, );
+}
+
+progress.retro-spinner:indeterminate::-webkit-progress-bar {
+  display: none;
+  background: none;
+}
+
+progress.retro-spinner:indeterminate::-webkit-progress-value {
+  display: none;
+  background: none;
+}
+
+progress.retro-spinner:indeterminate::-moz-progress-bar {
+  display: none;
+  background: none;
+}
+
+progress.retro-spinner:indeterminate::slider-fill {
+  display: none;
+  background: none;
+}
+
+@supports (background-clip: border-area) {
+  progress.retro-spinner:indeterminate {
+    background-clip: border-area;
+    border: var(--thickness) solid transparent;
+    background-origin: border-box;
+  }
+}
+
+@supports not (background-clip: border-area) {
+  progress.retro-spinner:indeterminate {
+    --clip-boundary: calc(100% - var(--thickness));
+    mask-image: radial-gradient(
+      farthest-side,
+      transparent var(--clip-boundary),
+      black var(--clip-boundary)
+    );
+    border: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  progress.retro-spinner:indeterminate {
+    forced-color-adjust: none;
+    --spinner-color: CanvasText;
+    --track-color: Canvas;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  progress.retro-spinner:indeterminate {
+    --_used-spinner-duration: 6s;
+    --progress-dash-animation: ;
+    --arc-end: 158deg;
+  }
+}
+
+@keyframes retro-progress-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+
+@keyframes retro-progress-dash {
+  from {
+    --arc-start: 0deg;
+    --arc-end: 3deg;
+  }
+  50% {
+    --arc-start: 100deg;
+    --arc-end: 358deg;
+  }
+  to {
+    --arc-start: 360deg;
+    --arc-end: 363deg;
+  }
 }
 
 .retro-btn {
@@ -81,6 +243,7 @@ dialog.retro-modal::backdrop {
   min-width: 42px;
   border: 2px solid;
   outline: none;
+  pointer-events: auto;
 }
 
 .retro-badge {
@@ -922,6 +1085,11 @@ canvas {
 .shot-advisor-danger {
   color: #ff5555;
   font-weight: bold;
+}
+
+.shot-advisor .retro-wait-status {
+  margin-left: 0;
+  color: #55ffff;
 }
 
 .endurance-screen {
