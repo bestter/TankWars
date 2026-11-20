@@ -22,6 +22,7 @@ import { GameShopOverlay } from "./GameShopOverlay";
 import type { GameCanvasState } from "./gameCanvasReducer";
 import type { WeaponId } from "../types/weapon";
 import { CombatStatusAnnouncer } from "./CombatStatusAnnouncer";
+import { getTerrainCursor, isAdvisorOpenForTurn } from "./combatWaitStatus";
 import { ProtocolMismatchDialog, SessionErrorDialog } from "./RecoveryDialogs";
 
 const FIRE_REJECTION_KEYS = {
@@ -114,15 +115,22 @@ function CombatAdvisor({
   readonly turnInfo: GameCanvasState["turnInfo"];
   readonly advisor: ShotAdvisorPanelProps;
 }) {
-  const open =
-    gameMode !== "online" &&
-    gamePhase === "COMBAT" &&
-    (!turnInfo || (turnInfo.isHuman && !turnInfo.isInputLocked && !turnInfo.tanksAreFalling));
+  const open = isAdvisorOpenForTurn({
+    gameMode,
+    gamePhase,
+    turnInfo,
+    advisorPlayerId: advisor.view.playerId,
+  });
   if (!open) return null;
-  return <ShotAdvisorPanel {...advisor} />;
+  const view =
+    advisor.view.status === "calculating" && !advisor.view.playerId && turnInfo?.playerId
+      ? { ...advisor.view, playerId: turnInfo.playerId }
+      : advisor.view;
+  return <ShotAdvisorPanel {...advisor} view={view} />;
 }
 
 function CombatControls({
+  gameMode,
   round,
   gamePhase,
   wind,
@@ -133,6 +141,7 @@ function CombatControls({
   onCycleWeapon,
   onFire,
 }: {
+  readonly gameMode: GameCanvasProps["gameMode"];
   readonly round: number;
   readonly gamePhase: GameCanvasState["gamePhase"];
   readonly wind: number;
@@ -149,7 +158,7 @@ function CombatControls({
     <>
       <CombatStatusAnnouncer round={round} turnInfo={turnInfo} wind={wind} />
       <WindBanner windForce={wind} />
-      <GameHUD turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />
+      <GameHUD turnInfo={turnInfo} gameMode={gameMode} onWeaponSelect={onWeaponSelect} />
       <MobileControls
         turnInfo={turnInfo}
         onAdjustAngle={onAdjustAngle}
@@ -396,6 +405,14 @@ export function GameCanvas({
   } = state;
 
   const hasBlockingModalError = isBlockingModalErrorActive(state);
+  const terrainCursor = getTerrainCursor({
+    gameMode,
+    gamePhase,
+    turnInfo,
+    advisorView: advisor.view,
+    winner: state.winner,
+    hasBlockingError: hasBlockingModalError,
+  });
 
   return (
     <div
@@ -441,12 +458,13 @@ export function GameCanvas({
           style={{
             border: `3px solid ${VGA_PALETTE.GRAY}`,
             imageRendering: "pixelated",
-            cursor: state.winner ? "default" : "crosshair",
+            cursor: terrainCursor,
             background: "#000000",
           }}
         />
 
         <CombatControls
+          gameMode={gameMode}
           round={state.currentManche}
           gamePhase={gamePhase}
           wind={wind}

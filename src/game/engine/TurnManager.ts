@@ -48,6 +48,10 @@ export interface CurrentTurnInfo {
   isResolving?: boolean;
   /** True while replaying authoritative catch-up history before live play resumes. */
   isCatchUp?: boolean;
+  /** True during a non-projectile special turn (such as Zeus Lightning). */
+  isSpecialTurn?: boolean;
+  /** True online while waiting for the authoritative server to advance after a settled shot. */
+  isAwaitingServerTurn?: boolean;
 }
 
 export interface ShotResolutionGate {
@@ -174,6 +178,8 @@ export class TurnManager {
   private lastHudFalling = false;
   private lastHudResolving = false;
   private lastHudCatchUp = false;
+  private lastHudSpecialTurn = false;
+  private lastHudAwaitingServerTurn = false;
   private lastHudTurn = 0;
 
   // Callbacks pour le HUD React
@@ -216,6 +222,10 @@ export class TurnManager {
    * the same turn (double fire on player 1).
    */
   private awaitingServerTurnAfterLocalShot = false;
+  private awaitingServerTurnAfterShot = false;
+  private settledShotPlayerIndex: number | null = null;
+  private firingShotPlayerIndex: number | null = null;
+  private shotTurnAdvancedBySync = false;
 
   /** Last command actually launched by tryFire/fire (captured before ammo consume). */
   private lastLocalFireCommand: FireCommand | null = null;
@@ -498,6 +508,10 @@ export class TurnManager {
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
     this.clearPhysicsSettlementTimeout();
@@ -678,6 +692,10 @@ export class TurnManager {
 
     // A new authoritative shot supersedes any stale local settlement wait.
     this.isAwaitingFireAuthority = false;
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.clearAwaitingStabilization();
     this.clearPhysicsSettlementTimeout();
     this.clearResolutionTimeout();
@@ -725,6 +743,7 @@ export class TurnManager {
       ? { shotId: identity.shotId, mode }
       : null;
     this.hasUnresolvedShot = true;
+    this.firingShotPlayerIndex = this.currentPlayerIndex;
     if (mode === "LIVE_LOCAL" || mode === "LIVE_REMOTE") {
       this.consumeAmmo(player, command.weaponId);
     }
@@ -737,6 +756,10 @@ export class TurnManager {
     if (this.hasUnresolvedShot || this.interRoundPaused) return;
     this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.isInputLocked = (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
     this.notifyHudUpdate();
   }
@@ -751,6 +774,13 @@ export class TurnManager {
   /** Réévalue le verrou lorsque le rattrapage ne contient plus de tir actif. */
   public unlockAfterCatchUp(): void {
     this.catchUpLocked = false;
+    if (
+      this.settledShotPlayerIndex !== null &&
+      this.currentPlayerIndex !== this.settledShotPlayerIndex
+    ) {
+      this.awaitingServerTurnAfterShot = false;
+      this.settledShotPlayerIndex = null;
+    }
     if (this.hasUnresolvedShot || this.interRoundPaused) return;
     this.isInputLocked = this.awaitingServerTurnAfterLocalShot
       ? true
@@ -796,6 +826,7 @@ export class TurnManager {
 
     this.settlingShotWasLocal = true;
     this.hasUnresolvedShot = true;
+    this.firingShotPlayerIndex = this.currentPlayerIndex;
 
     // Consume 1 from inventory for limited weapons (MISSILE is unlimited).
     // Do this before locking so the HUD snapshot for the resolving turn reflects the spent round.
@@ -917,6 +948,10 @@ export class TurnManager {
     if (this.isAwaitingEarningsRelease) return;
 
     this.clearAwaitingStabilization();
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
 
     const players = this.tankManager.getPlayers();
     if (players.length === 0) return;
@@ -968,6 +1003,10 @@ export class TurnManager {
     if (index < 0) return false;
 
     this.invalidatePendingAITurn();
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.currentPlayerIndex = index;
     this.turnNumber++;
     this.isInputLocked = true;
@@ -1003,10 +1042,24 @@ export class TurnManager {
   public syncTurn(currentPlayerIndex: number): void {
     if (this.specialTurnLocked) return;
     this.invalidatePendingAITurn();
+    if (
+      this.settledShotPlayerIndex === null ||
+      currentPlayerIndex !== this.settledShotPlayerIndex
+    ) {
+      this.awaitingServerTurnAfterShot = false;
+      this.settledShotPlayerIndex = null;
+    }
+    if (
+      this.hasUnresolvedShot &&
+      this.firingShotPlayerIndex !== null &&
+      currentPlayerIndex !== this.firingShotPlayerIndex
+    ) {
+      this.shotTurnAdvancedBySync = true;
+    }
     this.currentPlayerIndex = currentPlayerIndex;
 
     if (this.awaitingServerTurnAfterLocalShot) {
-      if ((this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn())) {
+      if (this.specialTurnLocked || !this.isLocalHumanTurn()) {
         // Server advanced to someone else — local shot fully acknowledged.
         this.awaitingServerTurnAfterLocalShot = false;
         this.isInputLocked = true;
@@ -1053,6 +1106,8 @@ export class TurnManager {
     );
     if (this.localPlayerId) {
       if (authoritativeShot?.mode === "CATCH_UP") {
+        this.firingShotPlayerIndex = null;
+        this.shotTurnAdvancedBySync = false;
         this.isInputLocked = true;
         this.notifyHudUpdate();
         this.onAuthoritativeShotSettled?.(
@@ -1074,6 +1129,13 @@ export class TurnManager {
           ? true
           : (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
       }
+      if (!this.shotTurnAdvancedBySync) {
+        this.awaitingServerTurnAfterShot = true;
+        this.settledShotPlayerIndex =
+          this.firingShotPlayerIndex ?? this.currentPlayerIndex;
+      }
+      this.firingShotPlayerIndex = null;
+      this.shotTurnAdvancedBySync = false;
       this.notifyHudUpdate();
       if (authoritativeShot) {
         this.onAuthoritativeShotSettled?.(
@@ -1121,6 +1183,9 @@ export class TurnManager {
     const player = this.getCurrentPlayer();
     if (!player) return null;
 
+    const isCatchUp =
+      this.catchUpLocked || this.settlingAuthoritativeShot?.mode === "CATCH_UP";
+
     return {
       playerName: player.name,
       playerId: player.id,
@@ -1135,7 +1200,10 @@ export class TurnManager {
       tanksAreFalling:
         this.tankManager.anyTankIsFalling() || this.awaitingTankStabilization,
       isResolving: this.hasUnresolvedShot,
-      isCatchUp: this.catchUpLocked,
+      isCatchUp,
+      isSpecialTurn: this.specialTurnLocked,
+      isAwaitingServerTurn:
+        this.awaitingServerTurnAfterLocalShot || this.awaitingServerTurnAfterShot,
     };
   }
 
@@ -1147,6 +1215,8 @@ export class TurnManager {
       this.lastHudFalling !== info.tanksAreFalling ||
       this.lastHudResolving !== (info.isResolving ?? false) ||
       this.lastHudCatchUp !== (info.isCatchUp ?? false) ||
+      this.lastHudSpecialTurn !== (info.isSpecialTurn ?? false) ||
+      this.lastHudAwaitingServerTurn !== (info.isAwaitingServerTurn ?? false) ||
       this.lastHudTurn !== info.turn
     );
   }
@@ -1158,6 +1228,8 @@ export class TurnManager {
     this.lastHudFalling = info.tanksAreFalling;
     this.lastHudResolving = info.isResolving ?? false;
     this.lastHudCatchUp = info.isCatchUp ?? false;
+    this.lastHudSpecialTurn = info.isSpecialTurn ?? false;
+    this.lastHudAwaitingServerTurn = info.isAwaitingServerTurn ?? false;
     this.lastHudTurn = info.turn;
     this.lastHudNotifyMs = performance.now();
     this.onHudUpdate?.(info);
@@ -1211,6 +1283,10 @@ export class TurnManager {
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
     this.isInputLocked = (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
@@ -1264,6 +1340,10 @@ export class TurnManager {
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
     this.awaitingServerTurnAfterLocalShot = false;
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.firingShotPlayerIndex = null;
+    this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;
     this.clearEarningsRelease();
     this.isInputLocked = (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
