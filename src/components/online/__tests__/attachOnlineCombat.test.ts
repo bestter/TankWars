@@ -580,4 +580,86 @@ describe("online authoritative economy updates", () => {
       }),
     ).toBe("crosshair");
   });
+
+  it("displays AI wait status for the next AI when SHOT_EARNINGS_APPLIED and STATE_UPDATE arrive during active recovery replay", () => {
+    const { engine, receive } = setup();
+    const tm = engine.getTurnManager();
+    tm.setLocalPlayerId("a");
+    const reconnectPlayers = [
+      makePlayer({ id: "a", isHuman: true, money: 1000 }),
+      makePlayer({ id: "b", isHuman: false, money: 800, tank: makeTank("tank-2", 420, 300) }),
+      makePlayer({ id: "c", isHuman: false, money: 800, tank: makeTank("tank-3", 620, 300) }),
+    ];
+    const ai1ActiveShot: ShotMessage = {
+      type: "SHOT",
+      shotId: 1,
+      roundNumber: 1,
+      shotNumberInRound: 1,
+      eventSequence: 1,
+      physicsSeed: 1,
+      isFirstShotOfRound: true,
+      ownerId: "b",
+      slot: 1,
+      actionId: "ai-shot-1",
+      command: { angle: 135, power: 50, weaponId: "MISSILE" },
+    };
+    const snapshot: CombatSnapshot = {
+      ...relaySnapshot(reconnectPlayers, [ai1ActiveShot]),
+      currentPlayerIndex: 1,
+      roundEarningsByPlayer: { a: 0, b: 0, c: 0 },
+      zeus: {
+        type: "ZEUS_STATE",
+        activeZeusId: null,
+        currentPlayerIndex: 1,
+        rotationSlots: [],
+        deadSlots: [false, false, false],
+        activeStrike: null,
+        lastAppliedStrikeId: 0,
+      },
+    };
+
+    for (const part of fragmentCombat(snapshot, "reconnect-ai-to-ai")) {
+      receive(part);
+    }
+
+    // Both SHOT_EARNINGS_APPLIED and STATE_UPDATE (advancing to AI-2 at slot 2) arrive while AI-1's recovered shot is still replaying.
+    receive({
+      ...result([
+        { playerId: "a", money: 1000 },
+        { playerId: "b", money: 1000 },
+        { playerId: "c", money: 800 },
+      ]),
+      roundEarningsByPlayer: { a: 0, b: 200, c: 0 },
+    });
+    receive({
+      type: "STATE_UPDATE",
+      roundNumber: 1,
+      eventSequence: 1,
+      economicRevision: 2,
+      currentPlayerIndex: 2,
+      roundEnded: false,
+      players: reconnectPlayers,
+    });
+
+    // Now finish the local replay of the recovered shot.
+    engine.getPhysicsEngine().clear(false);
+    Reflect.set(tm, "awaitingTankStabilization", true);
+    tm.update(0.016);
+
+    const infoAfterUnlock = tm.getCurrentTurnInfo();
+    expect(infoAfterUnlock?.playerId).toBe("c");
+    expect(infoAfterUnlock?.isHuman).toBe(false);
+    expect(infoAfterUnlock?.isCatchUp).toBe(false);
+    expect(infoAfterUnlock?.isAwaitingServerTurn).toBe(false);
+    expect(getHudWaitCauseKey(infoAfterUnlock, "online")).toBe("status_ai_waiting");
+    expect(
+      getTerrainCursor({
+        gameMode: "online",
+        gamePhase: "COMBAT",
+        turnInfo: infoAfterUnlock,
+        advisorView: { status: "idle" },
+        winner: null,
+      }),
+    ).toBe("wait");
+  });
 });

@@ -926,6 +926,39 @@ describe('TurnManager', () => {
       expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
     });
 
+    it('clears isAwaitingServerTurn when deferred STATE_UPDATE advances the turn while catch-up is still locked', () => {
+      const player3 = makePlayer({
+        id: 'player-3',
+        name: 'CPU-2',
+        isHuman: false,
+        tank: { ...makePlayer().tank, id: 'tank-3' },
+      });
+      mockTankManager.getPlayers = vi.fn().mockReturnValue([player1, player2, player3]);
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      turnManager.lockForCatchUp();
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        { fromSlot: 1, mode: 'ACTIVE_RECOVERY', identity: { shotId: 1, isFirstShotOfRound: true } },
+      );
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(true);
+
+      // onIdle first applies snapshot.currentPlayerIndex (slot 1), then flushes deferred STATE_UPDATE (slot 2) while catchUpLocked is still true.
+      turnManager.syncTurn(1);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(true);
+      turnManager.syncTurn(2);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
+
+      turnManager.unlockAfterCatchUp();
+      expect(turnManager.getCurrentTurnInfo()?.playerId).toBe('player-3');
+      expect(turnManager.getCurrentTurnInfo()?.isCatchUp).toBe(false);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
+    });
+
     it('exposes isSpecialTurn while special turn lock is held', () => {
       turnManager.startFirstTurn();
       expect(turnManager.getCurrentTurnInfo()?.isSpecialTurn).toBe(false);

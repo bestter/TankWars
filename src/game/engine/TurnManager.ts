@@ -774,6 +774,13 @@ export class TurnManager {
   /** Réévalue le verrou lorsque le rattrapage ne contient plus de tir actif. */
   public unlockAfterCatchUp(): void {
     this.catchUpLocked = false;
+    if (
+      this.settledShotPlayerIndex !== null &&
+      this.currentPlayerIndex !== this.settledShotPlayerIndex
+    ) {
+      this.awaitingServerTurnAfterShot = false;
+      this.settledShotPlayerIndex = null;
+    }
     if (this.hasUnresolvedShot || this.interRoundPaused) return;
     this.isInputLocked = this.awaitingServerTurnAfterLocalShot
       ? true
@@ -1036,16 +1043,14 @@ export class TurnManager {
     if (this.specialTurnLocked) return;
     this.invalidatePendingAITurn();
     if (
-      !this.catchUpLocked &&
-      (this.settledShotPlayerIndex === null ||
-        currentPlayerIndex !== this.settledShotPlayerIndex)
+      this.settledShotPlayerIndex === null ||
+      currentPlayerIndex !== this.settledShotPlayerIndex
     ) {
       this.awaitingServerTurnAfterShot = false;
       this.settledShotPlayerIndex = null;
     }
     if (
       this.hasUnresolvedShot &&
-      !this.catchUpLocked &&
       this.firingShotPlayerIndex !== null &&
       currentPlayerIndex !== this.firingShotPlayerIndex
     ) {
@@ -1054,7 +1059,7 @@ export class TurnManager {
     this.currentPlayerIndex = currentPlayerIndex;
 
     if (this.awaitingServerTurnAfterLocalShot) {
-      if ((this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn())) {
+      if (this.specialTurnLocked || !this.isLocalHumanTurn()) {
         // Server advanced to someone else — local shot fully acknowledged.
         this.awaitingServerTurnAfterLocalShot = false;
         this.isInputLocked = true;
