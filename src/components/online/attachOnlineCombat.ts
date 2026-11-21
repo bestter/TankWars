@@ -535,7 +535,7 @@ export function attachOnlineCombat(
         const roster = engine.getTankManager().getPlayers();
         engine.applyRemoteZeusAppointment({ appointmentId: message.appointmentId, zeusId: message.zeusId,
           rotationPlayerIds: message.rotationSlots.map((slot) => roster[slot]?.id).filter((id): id is string => !!id) });
-        tm.releaseSpecialTurn(); tm.syncTurn(message.zeusSlot); tm.lockSpecialTurn();
+        tm.releaseSpecialTurn(); tm.syncTurn(message.zeusSlot, { eventSequence: message.eventSequence }); tm.lockSpecialTurn();
         done();
       } else if (message.type === "ZEUS_STRIKE") {
         engine.startRemoteZeusStrike(message, mode === "CATCH_UP" ? Date.now() + 700 : message.resolveAt);
@@ -546,7 +546,7 @@ export function attachOnlineCombat(
         setTimeout(() => {
           if (!isMounted || generation !== reconstructionGeneration) return;
           engine.applyRemoteZeusStrikeResult(message);
-          if (message.nextPlayerIndex !== null) tm.syncTurn(message.nextPlayerIndex);
+          if (message.nextPlayerIndex !== null) tm.syncTurn(message.nextPlayerIndex, { eventSequence: message.eventSequence });
           done();
         }, delay);
       }
@@ -559,6 +559,7 @@ export function attachOnlineCombat(
           shotId: message.shotId,
           isFirstShotOfRound: message.isFirstShotOfRound,
           physicsSeed: message.physicsSeed,
+          eventSequence: message.eventSequence,
         },
         mode,
       });
@@ -575,7 +576,10 @@ export function attachOnlineCombat(
         snapshotPending = null;
         if (shotQueue.processedEventSequence === snapshot.events.length) {
           engine.syncRemoteZeusState(snapshot.zeus.activeZeusId);
-          tm.releaseSpecialTurn(); tm.syncTurn(snapshot.currentPlayerIndex);
+          tm.releaseSpecialTurn();
+          tm.syncTurn(snapshot.currentPlayerIndex, {
+            eventSequence: snapshot.events.at(-1)?.eventSequence ?? 0,
+          });
           if (snapshot.zeus.activeStrike || snapshot.players[snapshot.currentPlayerIndex]?.id === snapshot.zeus.activeZeusId) tm.lockSpecialTurn();
         }
       }

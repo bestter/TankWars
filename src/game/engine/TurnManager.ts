@@ -28,6 +28,12 @@ export interface AuthoritativeShotIdentity {
   isFirstShotOfRound: boolean;
   suppressEconomyReport?: boolean;
   physicsSeed?: number;
+  eventSequence?: number;
+}
+
+export interface SyncTurnAuthority {
+  /** Authoritative combat event sequence associated with this turn update, when known. */
+  eventSequence?: number;
 }
 
 export interface CurrentTurnInfo {
@@ -210,6 +216,7 @@ export class TurnManager {
   private settlingAuthoritativeShot: {
     shotId: number;
     mode: AuthoritativeReplayMode;
+    eventSequence?: number;
   } | null = null;
 
   /** Online: validates and locks a local fire without launching it before the server echo. */
@@ -222,10 +229,25 @@ export class TurnManager {
    * the same turn (double fire on player 1).
    */
   private awaitingServerTurnAfterLocalShot = false;
+  private settledLocalShotId: number | null = null;
+  private settledLocalShotEventSequence: number | null = null;
   private awaitingServerTurnAfterShot = false;
   private settledShotPlayerIndex: number | null = null;
+  private settledShotEventSequence: number | null = null;
   private firingShotPlayerIndex: number | null = null;
   private shotTurnAdvancedBySync = false;
+
+  private clearAwaitingServerTurnAfterLocalShot(): void {
+    this.awaitingServerTurnAfterLocalShot = false;
+    this.settledLocalShotId = null;
+    this.settledLocalShotEventSequence = null;
+  }
+
+  private clearAwaitingServerTurnAfterShot(): void {
+    this.awaitingServerTurnAfterShot = false;
+    this.settledShotPlayerIndex = null;
+    this.settledShotEventSequence = null;
+  }
 
   /** Last command actually launched by tryFire/fire (captured before ammo consume). */
   private lastLocalFireCommand: FireCommand | null = null;
@@ -507,9 +529,8 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
-    this.awaitingServerTurnAfterLocalShot = false;
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterLocalShot();
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;
@@ -692,8 +713,7 @@ export class TurnManager {
 
     // A new authoritative shot supersedes any stale local settlement wait.
     this.isAwaitingFireAuthority = false;
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.clearAwaitingStabilization();
@@ -736,11 +756,30 @@ export class TurnManager {
         : undefined,
     );
     if (!accepted) return;
+    const supersedesLocalShot =
+      player.id !== this.localPlayerId ||
+      mode === "LIVE_LOCAL" ||
+      (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId) ||
+      (identity !== undefined &&
+        this.settledLocalShotId !== null &&
+        identity.shotId !== this.settledLocalShotId) ||
+      (identity?.eventSequence !== undefined &&
+        this.settledLocalShotEventSequence !== null &&
+        identity.eventSequence > this.settledLocalShotEventSequence);
+    if (this.awaitingServerTurnAfterLocalShot && supersedesLocalShot) {
+      this.clearAwaitingServerTurnAfterLocalShot();
+    }
     this.settlingShotWasLocal =
       mode === "LIVE_LOCAL" ||
       (mode === "ACTIVE_RECOVERY" && player.id === this.localPlayerId);
     this.settlingAuthoritativeShot = identity
-      ? { shotId: identity.shotId, mode }
+      ? {
+          shotId: identity.shotId,
+          mode,
+          ...(identity.eventSequence !== undefined
+            ? { eventSequence: identity.eventSequence }
+            : {}),
+        }
       : null;
     this.hasUnresolvedShot = true;
     this.firingShotPlayerIndex = this.currentPlayerIndex;
@@ -755,9 +794,8 @@ export class TurnManager {
   public rejectPendingFireIntent(): void {
     if (this.hasUnresolvedShot || this.interRoundPaused) return;
     this.isAwaitingFireAuthority = false;
-    this.awaitingServerTurnAfterLocalShot = false;
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterLocalShot();
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.isInputLocked = (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
@@ -778,8 +816,7 @@ export class TurnManager {
       this.settledShotPlayerIndex !== null &&
       this.currentPlayerIndex !== this.settledShotPlayerIndex
     ) {
-      this.awaitingServerTurnAfterShot = false;
-      this.settledShotPlayerIndex = null;
+      this.clearAwaitingServerTurnAfterShot();
     }
     if (this.hasUnresolvedShot || this.interRoundPaused) return;
     this.isInputLocked = this.awaitingServerTurnAfterLocalShot
@@ -948,8 +985,7 @@ export class TurnManager {
     if (this.isAwaitingEarningsRelease) return;
 
     this.clearAwaitingStabilization();
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
 
@@ -1003,8 +1039,7 @@ export class TurnManager {
     if (index < 0) return false;
 
     this.invalidatePendingAITurn();
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.currentPlayerIndex = index;
@@ -1039,37 +1074,68 @@ export class TurnManager {
   }
 
   /** Sync the current turn index from server authoritative state. */
-  public syncTurn(currentPlayerIndex: number): void {
+  public syncTurn(
+    currentPlayerIndex: number,
+    authority?: SyncTurnAuthority,
+  ): void {
     if (this.specialTurnLocked) return;
     this.invalidatePendingAITurn();
+    const eventSequence =
+      typeof authority?.eventSequence === "number" &&
+      Number.isSafeInteger(authority.eventSequence) &&
+      authority.eventSequence >= 0
+        ? authority.eventSequence
+        : null;
+
+    const shotAdvancedBySequence =
+      eventSequence !== null &&
+      this.settledShotEventSequence !== null &&
+      eventSequence > this.settledShotEventSequence;
     if (
       this.settledShotPlayerIndex === null ||
-      currentPlayerIndex !== this.settledShotPlayerIndex
+      currentPlayerIndex !== this.settledShotPlayerIndex ||
+      shotAdvancedBySequence
     ) {
-      this.awaitingServerTurnAfterShot = false;
-      this.settledShotPlayerIndex = null;
+      this.clearAwaitingServerTurnAfterShot();
     }
+    const firingAdvancedBySequence =
+      eventSequence !== null &&
+      this.settlingAuthoritativeShot?.eventSequence !== undefined &&
+      eventSequence > this.settlingAuthoritativeShot.eventSequence;
     if (
       this.hasUnresolvedShot &&
-      this.firingShotPlayerIndex !== null &&
-      currentPlayerIndex !== this.firingShotPlayerIndex
+      ((this.firingShotPlayerIndex !== null &&
+        currentPlayerIndex !== this.firingShotPlayerIndex) ||
+        firingAdvancedBySequence)
     ) {
       this.shotTurnAdvancedBySync = true;
     }
     this.currentPlayerIndex = currentPlayerIndex;
 
     if (this.awaitingServerTurnAfterLocalShot) {
-      if (this.specialTurnLocked || !this.isLocalHumanTurn()) {
-        // Server advanced to someone else — local shot fully acknowledged.
-        this.awaitingServerTurnAfterLocalShot = false;
-        this.isInputLocked = true;
+      const localShotAdvancedBySequence =
+        eventSequence !== null &&
+        this.settledLocalShotEventSequence !== null &&
+        eventSequence > this.settledLocalShotEventSequence;
+      if (
+        this.specialTurnLocked ||
+        !this.isLocalHumanTurn() ||
+        localShotAdvancedBySequence
+      ) {
+        // Server confirmed advancement past the settled local shot (different slot or newer event sequence).
+        this.clearAwaitingServerTurnAfterLocalShot();
+        this.isInputLocked =
+          this.specialTurnLocked ||
+          this.catchUpLocked ||
+          !this.isLocalHumanTurn();
       } else {
-        // Still our index after we already fired (stale GAME_START / no advance yet).
+        // Still our index without confirmed server advancement (stale GAME_START / reconnect snapshot).
         // Stay locked so we cannot FIRE twice on the same server turn.
         this.isInputLocked = true;
       }
     } else {
-      this.isInputLocked = (this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn());
+      this.isInputLocked =
+        this.specialTurnLocked || this.catchUpLocked || !this.isLocalHumanTurn();
     }
 
     this.clearAwaitingStabilization();
@@ -1117,9 +1183,19 @@ export class TurnManager {
         return;
       }
       if (wasLocalShot) {
-        // Firer's client: stay locked until the server broadcasts the next turn.
-        this.awaitingServerTurnAfterLocalShot = true;
-        this.isInputLocked = true;
+        if (this.shotTurnAdvancedBySync) {
+          this.isInputLocked =
+            this.specialTurnLocked ||
+            this.catchUpLocked ||
+            !this.isLocalHumanTurn();
+        } else {
+          // Firer's client: stay locked until the server broadcasts the next turn.
+          this.awaitingServerTurnAfterLocalShot = true;
+          this.settledLocalShotId = authoritativeShot?.shotId ?? null;
+          this.settledLocalShotEventSequence =
+            authoritativeShot?.eventSequence ?? null;
+          this.isInputLocked = true;
+        }
         console.log(`[TurnManager] finishShotResolution: calling onShotSettled callback...`);
         this.onShotSettled?.();
       } else {
@@ -1133,6 +1209,8 @@ export class TurnManager {
         this.awaitingServerTurnAfterShot = true;
         this.settledShotPlayerIndex =
           this.firingShotPlayerIndex ?? this.currentPlayerIndex;
+        this.settledShotEventSequence =
+          authoritativeShot?.eventSequence ?? null;
       }
       this.firingShotPlayerIndex = null;
       this.shotTurnAdvancedBySync = false;
@@ -1282,9 +1360,8 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
-    this.awaitingServerTurnAfterLocalShot = false;
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterLocalShot();
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;
@@ -1339,9 +1416,8 @@ export class TurnManager {
     this.settlingShotWasLocal = false;
     this.settlingAuthoritativeShot = null;
     this.isAwaitingFireAuthority = false;
-    this.awaitingServerTurnAfterLocalShot = false;
-    this.awaitingServerTurnAfterShot = false;
-    this.settledShotPlayerIndex = null;
+    this.clearAwaitingServerTurnAfterLocalShot();
+    this.clearAwaitingServerTurnAfterShot();
     this.firingShotPlayerIndex = null;
     this.shotTurnAdvancedBySync = false;
     this.hasUnresolvedShot = false;

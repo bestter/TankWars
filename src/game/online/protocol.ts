@@ -187,6 +187,9 @@ export interface ShotEarningsAppliedMessage {
 
 export interface StateUpdateMessage {
   type: "STATE_UPDATE";
+  roundNumber?: number;
+  eventSequence?: number;
+  economicRevision?: number;
   currentPlayerIndex: number;
   roundEnded: boolean;
   players?: Player[];
@@ -624,6 +627,9 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       );
     case "STATE_UPDATE":
       return (
+        (value.roundNumber === undefined || isSafeNonNegativeInteger(value.roundNumber)) &&
+        (value.eventSequence === undefined || isSafeNonNegativeInteger(value.eventSequence)) &&
+        (value.economicRevision === undefined || isSafeNonNegativeInteger(value.economicRevision)) &&
         isSafeNonNegativeInteger(value.currentPlayerIndex) &&
         typeof value.roundEnded === "boolean" &&
         (value.players === undefined || isPlayers(value.players))
@@ -705,6 +711,8 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       );
     case "ZEUS_STATE":
       return (
+        (value.roundNumber === undefined || isSafeNonNegativeInteger(value.roundNumber)) &&
+        (value.eventSequence === undefined || isSafeNonNegativeInteger(value.eventSequence)) &&
         (value.activeZeusId === null || typeof value.activeZeusId === "string") &&
         isSafeNonNegativeInteger(value.currentPlayerIndex) &&
         isSlotArray(value.rotationSlots) &&

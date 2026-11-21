@@ -181,7 +181,12 @@ export function dispatchCombatMessage(
     }
     if (ctx.gamePhaseRef.current === "COMBAT" && !isReplayingShots) {
       tm.releaseSpecialTurn();
-      tm.syncTurn(strictMessage.currentPlayerIndex);
+      tm.syncTurn(
+        strictMessage.currentPlayerIndex,
+        strictMessage.eventSequence !== undefined
+          ? { eventSequence: strictMessage.eventSequence }
+          : undefined,
+      );
       if (strictMessage.activeStrike || roster[strictMessage.currentPlayerIndex]?.id === strictMessage.activeZeusId) tm.lockSpecialTurn();
     }
     ctx.dispatch({ type: "SET_UI_PLAYERS", players: [...roster] });
@@ -196,7 +201,12 @@ export function dispatchCombatMessage(
       !tm.isInterRoundPaused()
     ) {
       if (strictMessage.players) ctx.syncWireEconomy(strictMessage.players);
-      tm.syncTurn(strictMessage.currentPlayerIndex);
+      tm.syncTurn(
+        strictMessage.currentPlayerIndex,
+        strictMessage.eventSequence !== undefined
+          ? { eventSequence: strictMessage.eventSequence }
+          : undefined,
+      );
       if (engine.getTankManager().getPlayers()[strictMessage.currentPlayerIndex]?.id === engine.getActiveZeusId()) tm.lockSpecialTurn();
       if (typeof msg.wind === "number" && Number.isFinite(msg.wind)) {
         engine.setWindForce(msg.wind);

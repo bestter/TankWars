@@ -959,6 +959,90 @@ describe('TurnManager', () => {
       expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
     });
 
+    it('keeps local controls locked on same-sequence syncTurn after ACTIVE_RECOVERY and unlocks when a higher eventSequence confirms advancement', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      turnManager.lockForCatchUp();
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        {
+          fromSlot: 0,
+          mode: 'ACTIVE_RECOVERY',
+          identity: { shotId: 1, isFirstShotOfRound: true, eventSequence: 1 },
+        },
+      );
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(true);
+
+      // Snapshot/state repeating slot 0 at eventSequence 1 or without sequence keeps lock.
+      turnManager.syncTurn(0, { eventSequence: 1 });
+      turnManager.syncTurn(0);
+      turnManager.unlockAfterCatchUp();
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(true);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(true);
+      expect(turnManager.tryFire()).toBe(false);
+
+      // Authoritative update at eventSequence 2 returning to slot 0 unlocks controls.
+      turnManager.syncTurn(0, { eventSequence: 2 });
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(false);
+      expect(turnManager.getCurrentTurnInfo()?.isAwaitingServerTurn).toBe(false);
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
+    it('supersedes local shot wait only when an accepted remote shot follows, never on a refused fire', () => {
+      turnManager.setLocalPlayerId('player-1');
+      turnManager.startFirstTurn();
+
+      turnManager.lockForCatchUp();
+      turnManager.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: 'MISSILE' },
+        {
+          fromSlot: 0,
+          mode: 'ACTIVE_RECOVERY',
+          identity: { shotId: 1, isFirstShotOfRound: true, eventSequence: 1 },
+        },
+      );
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(true);
+
+      // A refused remote fire must not clear the local shot wait.
+      mockFireCallback.mockReturnValueOnce(false);
+      turnManager.executeRemoteFire(
+        { angle: 135, power: 50, weaponId: 'MISSILE' },
+        {
+          fromSlot: 1,
+          mode: 'LIVE_REMOTE',
+          identity: { shotId: 2, isFirstShotOfRound: false, eventSequence: 2 },
+        },
+      );
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(true);
+
+      // An accepted subsequent remote shot supersedes the earlier local wait.
+      turnManager.executeRemoteFire(
+        { angle: 135, power: 50, weaponId: 'MISSILE' },
+        {
+          fromSlot: 1,
+          mode: 'LIVE_REMOTE',
+          identity: { shotId: 2, isFirstShotOfRound: false, eventSequence: 2 },
+        },
+      );
+      expect(turnManager.isAwaitingServerTurnAfterLocalShot()).toBe(false);
+
+      Reflect.set(turnManager, 'awaitingTankStabilization', true);
+      turnManager.update(0.016);
+      turnManager.syncTurn(0, { eventSequence: 2 });
+      turnManager.unlockAfterCatchUp();
+
+      expect(turnManager.getCurrentTurnInfo()?.isInputLocked).toBe(false);
+      expect(turnManager.tryFire()).toBe(true);
+    });
+
     it('exposes isSpecialTurn while special turn lock is held', () => {
       turnManager.startFirstTurn();
       expect(turnManager.getCurrentTurnInfo()?.isSpecialTurn).toBe(false);
