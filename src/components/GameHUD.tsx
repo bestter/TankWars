@@ -74,7 +74,7 @@ function TurnStatus({ turnInfo, gameMode }: Pick<GameHUDProps, "turnInfo" | "gam
   return <CombatWaitSpinner label={t(causeKey)} className={WAIT_CAUSE_CLASS[causeKey]} />;
 }
 
-function WeaponSelector({ turnInfo, gameMode, onWeaponSelect }: GameHUDProps) {
+function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnInfo" | "onWeaponSelect">) {
   const { t } = useTranslation();
   const currentWeapon = turnInfo?.currentWeapon;
   const inventory = turnInfo?.inventory ?? {};
@@ -121,7 +121,6 @@ function WeaponSelector({ turnInfo, gameMode, onWeaponSelect }: GameHUDProps) {
           </button>
         );
       })}
-      <TurnStatus turnInfo={turnInfo} gameMode={gameMode} />
     </div>
   );
 }
@@ -166,7 +165,8 @@ export const GameHUD = memo(function GameHUD({ turnInfo, gameMode, onWeaponSelec
       </div>
 
       {/* === WEAPON + SELECTOR (clickable) === */}
-      <WeaponSelector turnInfo={turnInfo} gameMode={gameMode} onWeaponSelect={onWeaponSelect} />
+      <WeaponSelector turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />
+      <TurnStatus turnInfo={turnInfo} gameMode={gameMode} />
 
       {/* Current weapon name (small) */}
       {turnInfo && (

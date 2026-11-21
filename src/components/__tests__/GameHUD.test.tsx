@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { GameHUD } from '../GameHUD';
 import type { CurrentTurnInfo } from '../../game/engine/TurnManager';
 import { VGA_PALETTE } from '../../types/game';
@@ -221,5 +222,42 @@ describe('GameHUD', () => {
 
     render(<GameHUD turnInfo={turnInfo} />);
     expect(screen.getByTitle('weapons.GRENADE').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('renders the wait spinner inside .retro-hud outside .retro-hud-weapons without capturing keyboard focus', async () => {
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99, GRENADE: 2 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: true,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} />);
+
+    const weaponLabel = screen.getByText('hud_weapon');
+    const weaponsContainer = weaponLabel.closest('.retro-hud-weapons');
+    expect(weaponsContainer).not.toBeNull();
+    expect(screen.getByTitle('weapons.MISSILE').closest('.retro-hud-weapons')).toBe(weaponsContainer);
+
+    const spinner = screen.getByRole('progressbar', { name: 'status_tanks_falling' });
+    const waitStatus = spinner.closest('.retro-wait-status');
+    expect(waitStatus).not.toBeNull();
+    expect(waitStatus?.closest('.retro-hud')).not.toBeNull();
+    expect(waitStatus?.closest('.retro-hud-weapons')).toBeNull();
+    expect(spinner.getAttribute('tabindex')).toBeNull();
+
+    const user = userEvent.setup();
+    for (let step = 0; step < 4; step++) {
+      await user.tab();
+      expect(document.activeElement).not.toBe(spinner);
+      expect(waitStatus?.contains(document.activeElement)).toBe(false);
+    }
   });
 });

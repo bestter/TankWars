@@ -1160,4 +1160,38 @@ describe("GameCanvas component", () => {
     rerender(<GameCanvas gameMode="online" />);
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
+
+  it("keeps clicks on the weapon label and selector gaps isolated from canvas fire while preserving weapon buttons and canvas clicks", () => {
+    const session = vi.mocked(useGameSession)({});
+    session.state = {
+      ...defaultSessionState,
+      turnInfo: {
+        ...defaultTurnInfo,
+        inventory: { MISSILE: 99, GRENADE: 2 },
+      },
+    };
+    vi.mocked(useGameSession).mockReturnValue(session);
+
+    render(<GameCanvas gameMode="online" />);
+
+    const weaponLabel = screen.getByText("hud_weapon");
+    const weaponsContainer = weaponLabel.closest(".retro-hud-weapons");
+    expect(weaponsContainer).not.toBeNull();
+
+    // Clicking the weapon label or the container gap between buttons does not fire or switch weapons
+    fireEvent.click(weaponLabel);
+    fireEvent.click(weaponsContainer!);
+    expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
+    expect(mockHandlers.handleWeaponSelect).not.toHaveBeenCalled();
+
+    // Clicking an available weapon button selects it without firing
+    fireEvent.click(screen.getByTitle("weapons.GRENADE"));
+    expect(mockHandlers.handleWeaponSelect).toHaveBeenCalledTimes(1);
+    expect(mockHandlers.handleWeaponSelect).toHaveBeenCalledWith("GRENADE");
+    expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
+
+    // Clicking the canvas outside the HUD fires normally
+    fireEvent.click(screen.getByRole("img"));
+    expect(mockHandlers.handleCanvasClick).toHaveBeenCalledTimes(1);
+  });
 });

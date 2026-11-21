@@ -60,14 +60,14 @@ dialog.retro-modal::backdrop {
   gap: 3px;
   margin-left: auto;
   max-width: 100%;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: default;
 }
 
 .retro-wait-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 6px;
   font-size: 12px;
   pointer-events: none;
   overflow-wrap: anywhere;
@@ -1083,7 +1083,6 @@ canvas {
 }
 
 .shot-advisor .retro-wait-status {
-  margin-left: 0;
   color: #55ffff;
 }
 
