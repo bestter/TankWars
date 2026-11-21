@@ -47,6 +47,15 @@ describe('styles CSS cleanup (#405)', () => {
     );
   });
 
+  it('hides native <progress> parts on .retro-spinner without unrecognized ::slider-fill', () => {
+    expect(appCss).toContain('progress.retro-spinner:indeterminate');
+    expect(appCss).toContain('appearance: none;');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-webkit-progress-bar');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-webkit-progress-value');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-moz-progress-bar');
+    expect(appCss).not.toContain('::slider-fill');
+  });
+
   it('removes orphaned CSS variables and demo selectors from index.css', () => {
     const orphanedVariables = [
       '--accent:',

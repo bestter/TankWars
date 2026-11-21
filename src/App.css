@@ -151,11 +151,6 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   background: none;
 }
 
-progress.retro-spinner:indeterminate::slider-fill {
-  display: none;
-  background: none;
-}
-
 @supports (background-clip: border-area) {
   progress.retro-spinner:indeterminate {
     background-clip: border-area;
