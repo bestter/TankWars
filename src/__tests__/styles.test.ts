@@ -47,6 +47,23 @@ describe('styles CSS cleanup (#405)', () => {
     );
   });
 
+  it('hides native <progress> parts on .retro-spinner without unrecognized ::slider-fill', () => {
+    expect(appCss).toContain('progress.retro-spinner:indeterminate');
+    expect(appCss).toContain('appearance: none;');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-webkit-progress-bar');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-webkit-progress-value');
+    expect(appCss).toContain('progress.retro-spinner:indeterminate::-moz-progress-bar');
+    expect(appCss).not.toContain('::slider-fill');
+  });
+
+  it('captures pointer events on .retro-hud-weapons while letting clicks pass through .retro-hud, .retro-wait-status, and .retro-spinner', () => {
+    expect(appCss).toMatch(/\.retro-hud\s*\{[^}]*pointer-events:\s*none;/);
+    expect(appCss).toMatch(/\.retro-hud-weapons\s*\{[^}]*pointer-events:\s*auto;/);
+    expect(appCss).not.toMatch(/\.retro-hud-weapons\s*\{[^}]*pointer-events:\s*none;/);
+    expect(appCss).toMatch(/\.retro-wait-status\s*\{[^}]*pointer-events:\s*none;/);
+    expect(appCss).toMatch(/progress\.retro-spinner:indeterminate\s*\{[^}]*pointer-events:\s*none;/);
+  });
+
   it('removes orphaned CSS variables and demo selectors from index.css', () => {
     const orphanedVariables = [
       '--accent:',

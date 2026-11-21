@@ -3,13 +3,23 @@ import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+import { CombatWaitSpinner } from "./CombatWaitSpinner";
+import { getHudWaitCauseKey, type HudWaitCauseKey } from "./combatWaitStatus";
 import { WEAPON_I18N_KEYS, weaponShortLabel } from "./weaponShortLabel";
 
 export interface GameHUDProps {
   turnInfo: CurrentTurnInfo | null;
+  gameMode?: "local" | "online";
   /** Called when human clicks a weapon button. Parent wires to TurnManager.selectWeapon */
   onWeaponSelect?: (weaponId: WeaponId) => void;
 }
+
+const WAIT_CAUSE_CLASS: Record<HudWaitCauseKey, string> = {
+  status_tanks_falling: "retro-wait-falling",
+  status_resolving: "retro-wait-resolving",
+  status_ai_turn: "retro-wait-ai",
+  status_ai_waiting: "retro-wait-ai",
+};
 
 function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
   if (!turnInfo) {
@@ -57,50 +67,21 @@ function AimReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
   );
 }
 
-function TurnStatus({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
+function TurnStatus({ turnInfo, gameMode }: Pick<GameHUDProps, "turnInfo" | "gameMode">) {
   const { t } = useTranslation();
-  if (!turnInfo) return null;
-
-  if (turnInfo.tanksAreFalling) {
-    return (
-      <span style={{ marginLeft: 6, color: VGA_PALETTE.YELLOW, fontSize: "12px", pointerEvents: "none", fontWeight: "bold" }}>
-        {t("status_tanks_falling")}
-      </span>
-    );
-  }
-  if (turnInfo.isInputLocked) {
-    return (
-      <span style={{ marginLeft: 6, color: VGA_PALETTE.RED, fontSize: "12px", pointerEvents: "none" }}>
-        {t("status_resolving")}
-      </span>
-    );
-  }
-  if (!turnInfo.isHuman) {
-    return (
-      <span style={{ marginLeft: 6, color: VGA_PALETTE.CYAN, fontSize: "12px", pointerEvents: "none" }}>
-        {t("status_ai_turn")}
-      </span>
-    );
-  }
-  return null;
+  const causeKey = getHudWaitCauseKey(turnInfo, gameMode);
+  if (!causeKey) return null;
+  return <CombatWaitSpinner label={t(causeKey)} className={WAIT_CAUSE_CLASS[causeKey]} />;
 }
 
-function WeaponSelector({ turnInfo, onWeaponSelect }: GameHUDProps) {
+function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnInfo" | "onWeaponSelect">) {
   const { t } = useTranslation();
   const currentWeapon = turnInfo?.currentWeapon;
   const inventory = turnInfo?.inventory ?? {};
   const canInteract = !!turnInfo?.isHuman && !turnInfo.isInputLocked;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 3,
-        marginLeft: "auto",
-        pointerEvents: "auto",
-      }}
-    >
+    <div className="retro-hud-weapons">
       <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
       {ALL_WEAPON_IDS.map((weaponId) => {
         const definition = WEAPON_REGISTRY[weaponId];
@@ -140,12 +121,11 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: GameHUDProps) {
           </button>
         );
       })}
-      <TurnStatus turnInfo={turnInfo} />
     </div>
   );
 }
 
-export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameHUDProps) {
+export const GameHUD = memo(function GameHUD({ turnInfo, gameMode, onWeaponSelect }: GameHUDProps) {
   const { t } = useTranslation();
   const currentWeapon = turnInfo?.currentWeapon;
 
@@ -186,6 +166,7 @@ export const GameHUD = memo(function GameHUD({ turnInfo, onWeaponSelect }: GameH
 
       {/* === WEAPON + SELECTOR (clickable) === */}
       <WeaponSelector turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />
+      <TurnStatus turnInfo={turnInfo} gameMode={gameMode} />
 
       {/* Current weapon name (small) */}
       {turnInfo && (

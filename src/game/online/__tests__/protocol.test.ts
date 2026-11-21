@@ -437,4 +437,41 @@ describe("strict online protocol", () => {
       { type: "SHOP_READY" },
     ]) expect(isStrictOnlineMessage(payload)).toBe(false);
   });
+
+  it("valide les métadonnées optionnelles de séquence sur STATE_UPDATE et ZEUS_STATE", () => {
+    const baseStateUpdate = {
+      type: "STATE_UPDATE",
+      currentPlayerIndex: 0,
+      roundEnded: false,
+    };
+    const baseZeusState = {
+      type: "ZEUS_STATE",
+      activeZeusId: null,
+      currentPlayerIndex: 0,
+      rotationSlots: [],
+      deadSlots: [false, false],
+      activeStrike: null,
+      lastAppliedStrikeId: 0,
+    };
+
+    expect(isStrictOnlineMessage(baseStateUpdate)).toBe(true);
+    expect(isStrictOnlineMessage({
+      ...baseStateUpdate,
+      roundNumber: 1,
+      eventSequence: 2,
+      economicRevision: 3,
+    })).toBe(true);
+    expect(isStrictOnlineMessage({ ...baseStateUpdate, eventSequence: -1 })).toBe(false);
+    expect(isStrictOnlineMessage({ ...baseStateUpdate, roundNumber: 1.5 })).toBe(false);
+    expect(isStrictOnlineMessage({ ...baseStateUpdate, economicRevision: NaN })).toBe(false);
+
+    expect(isStrictOnlineMessage(baseZeusState)).toBe(true);
+    expect(isStrictOnlineMessage({
+      ...baseZeusState,
+      roundNumber: 1,
+      eventSequence: 2,
+    })).toBe(true);
+    expect(isStrictOnlineMessage({ ...baseZeusState, eventSequence: -1 })).toBe(false);
+    expect(isStrictOnlineMessage({ ...baseZeusState, roundNumber: 1.5 })).toBe(false);
+  });
 });

@@ -464,4 +464,91 @@ describe("CombatStatusAnnouncer", () => {
     observer.disconnect();
     expect(region.textContent).toBe("Tour 1, Player 1, vent calme");
   });
+
+  it("handles consecutive AI turns without announcing resolution during AI aim preparation or FIRE rejection", async () => {
+    const ai1: CurrentTurnInfo = {
+      ...baseTurnInfo,
+      playerId: "ai-1",
+      playerName: "Simple",
+      isHuman: false,
+      turn: 2,
+      isInputLocked: true,
+      isResolving: false,
+      tanksAreFalling: false,
+    };
+    const { rerender } = render(<CombatStatusAnnouncer round={1} turnInfo={ai1} wind={0} />);
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("Tour 2, Simple, vent calme");
+
+    const mutations: string[] = [];
+    const observer = new MutationObserver(() => {
+      mutations.push(region.textContent ?? "");
+    });
+    observer.observe(region, { characterData: true, childList: true, subtree: true });
+
+    // AI aim adjustment and even omitted isResolving on AI turn must not announce resolution
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...ai1, angle: 62, power: 71 }} wind={0} />);
+    });
+    await Promise.resolve();
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...ai1, isResolving: undefined }} wind={0} />);
+    });
+    await Promise.resolve();
+    expect(mutations).toHaveLength(0);
+
+    // AI fires -> resolves -> falls
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...ai1, isResolving: true }} wind={0} />);
+    });
+    await Promise.resolve();
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...ai1, isResolving: true, tanksAreFalling: true }} wind={0} />);
+    });
+    await Promise.resolve();
+
+    // Next AI turn -> announces new turn once
+    act(() => {
+      rerender(
+        <CombatStatusAnnouncer
+          round={1}
+          turnInfo={{ ...ai1, playerId: "ai-2", playerName: "Expert", turn: 3, isResolving: false, tanksAreFalling: false }}
+          wind={0}
+        />,
+      );
+    });
+    await Promise.resolve();
+
+    // Online human FIRE intent lock then FIRE_REJECTED unlock before SHOT
+    const humanOnline: CurrentTurnInfo = {
+      ...baseTurnInfo,
+      playerId: "h-1",
+      playerName: "Host",
+      turn: 4,
+      isInputLocked: false,
+      isResolving: false,
+    };
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={humanOnline} wind={0} />);
+    });
+    await Promise.resolve();
+    const countBeforeIntent = mutations.length;
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...humanOnline, isInputLocked: true, isResolving: false }} wind={0} />);
+    });
+    await Promise.resolve();
+    act(() => {
+      rerender(<CombatStatusAnnouncer round={1} turnInfo={{ ...humanOnline, isInputLocked: false, isResolving: false }} wind={0} />);
+    });
+    await Promise.resolve();
+    expect(mutations.slice(countBeforeIntent)).toHaveLength(0);
+
+    expect(mutations).toEqual([
+      "Résolution du tir",
+      "Chute des tanks",
+      "Tour 3, Expert, vent calme",
+      "Tour 4, Host, vent calme",
+    ]);
+    observer.disconnect();
+  });
 });

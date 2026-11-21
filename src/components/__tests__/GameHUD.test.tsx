@@ -1,14 +1,24 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { GameHUD } from '../GameHUD';
 import type { CurrentTurnInfo } from '../../game/engine/TurnManager';
 import { VGA_PALETTE } from '../../types/game';
+import fr from '../../locales/fr.json';
+import en from '../../locales/en.json';
+
+const localeMode = vi.hoisted(() => ({ current: 'key' as 'key' | 'fr' | 'en' }));
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
+      if (localeMode.current !== 'key') {
+        const dict = (localeMode.current === 'fr' ? fr : en) as Record<string, unknown>;
+        const raw = dict[key];
+        if (typeof raw === 'string') return raw;
+      }
       if (options && options.weapon !== undefined) {
         return `${key} ${options.weapon}`;
       }
@@ -19,6 +29,7 @@ vi.mock('react-i18next', () => ({
 
 describe('GameHUD', () => {
   beforeEach(() => {
+    localeMode.current = 'key';
     vi.clearAllMocks();
     cleanup();
   });
@@ -103,10 +114,13 @@ describe('GameHUD', () => {
   });
 
   it.each([
-    [{ tanksAreFalling: true }, 'status_tanks_falling'],
-    [{ isInputLocked: true }, 'status_resolving'],
-    [{ isHuman: false }, 'status_ai_turn'],
-  ])('renders the applicable turn status %#', (overrides, expected) => {
+    [{ tanksAreFalling: true }, 'local' as const, 'status_tanks_falling'],
+    [{ isResolving: true, isInputLocked: true }, 'local' as const, 'status_resolving'],
+    [{ isHuman: false, isInputLocked: true, isResolving: false }, 'local' as const, 'status_ai_turn'],
+    [{ isHuman: false, isInputLocked: true, isResolving: false }, 'online' as const, 'status_ai_waiting'],
+    [{ tanksAreFalling: true, isResolving: true, isHuman: false }, 'local' as const, 'status_tanks_falling'],
+    [{ isResolving: true, isHuman: false, isInputLocked: true }, 'local' as const, 'status_resolving'],
+  ])('renders the applicable turn status %# with a single accessible spinner', (overrides, gameMode, expected) => {
     const turnInfo: CurrentTurnInfo = {
       playerId: 'p-1',
       playerName: 'Commander Shepard',
@@ -119,11 +133,76 @@ describe('GameHUD', () => {
       turn: 1,
       isInputLocked: false,
       tanksAreFalling: false,
+      isResolving: false,
       ...overrides,
     };
 
-    render(<GameHUD turnInfo={turnInfo} />);
+    render(<GameHUD turnInfo={turnInfo} gameMode={gameMode} />);
     expect(screen.getByText(expected)).toBeDefined();
+    const spinners = screen.getAllByRole('progressbar', { name: expected });
+    expect(spinners).toHaveLength(1);
+    expect(spinners[0].getAttribute('value')).toBeNull();
+    expect(spinners[0].getAttribute('tabindex')).toBeNull();
+    expect(spinners[0].closest('.retro-wait-status')).not.toBeNull();
+  });
+
+  it.each<[Partial<CurrentTurnInfo>, 'local' | 'online']>([
+    [{ isHuman: true, isInputLocked: false, isResolving: false }, 'local'],
+    [{ isHuman: true, isInputLocked: true, isResolving: false }, 'online'],
+    [{ isCatchUp: true, tanksAreFalling: true, isResolving: true, isHuman: false }, 'online'],
+    [{ isHuman: false, isInputLocked: true, isResolving: false, isSpecialTurn: true }, 'local'],
+    [{ isHuman: false, isInputLocked: true, isResolving: false, isAwaitingServerTurn: true }, 'online'],
+  ])('does not render any wait cause or spinner for non-wait state %#', (overrides, gameMode) => {
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: false,
+      isResolving: false,
+      ...overrides,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} gameMode={gameMode} />);
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(document.querySelector('.retro-wait-status')).toBeNull();
+  });
+
+  it.each(['fr', 'en'] as const)('renders localized wait causes in %s', (locale) => {
+    localeMode.current = locale;
+    const dict = locale === 'fr' ? fr : en;
+    const base: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'CPU',
+      isHuman: false,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99 },
+      turn: 1,
+      isInputLocked: true,
+      tanksAreFalling: false,
+      isResolving: false,
+    };
+
+    const { rerender } = render(<GameHUD turnInfo={base} gameMode="local" />);
+    expect(screen.getByRole('progressbar', { name: dict.status_ai_turn })).toBeDefined();
+
+    rerender(<GameHUD turnInfo={base} gameMode="online" />);
+    expect(screen.getByRole('progressbar', { name: dict.status_ai_waiting })).toBeDefined();
+
+    rerender(<GameHUD turnInfo={{ ...base, isResolving: true }} gameMode="online" />);
+    expect(screen.getByRole('progressbar', { name: dict.status_resolving })).toBeDefined();
+
+    rerender(<GameHUD turnInfo={{ ...base, isResolving: true, tanksAreFalling: true }} gameMode="local" />);
+    expect(screen.getByRole('progressbar', { name: dict.status_tanks_falling })).toBeDefined();
   });
 
   it('disables a weapon button when the player has no ammunition', () => {
@@ -143,5 +222,42 @@ describe('GameHUD', () => {
 
     render(<GameHUD turnInfo={turnInfo} />);
     expect(screen.getByTitle('weapons.GRENADE').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('renders the wait spinner inside .retro-hud outside .retro-hud-weapons without capturing keyboard focus', async () => {
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99, GRENADE: 2 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: true,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} />);
+
+    const weaponLabel = screen.getByText('hud_weapon');
+    const weaponsContainer = weaponLabel.closest('.retro-hud-weapons');
+    expect(weaponsContainer).not.toBeNull();
+    expect(screen.getByTitle('weapons.MISSILE').closest('.retro-hud-weapons')).toBe(weaponsContainer);
+
+    const spinner = screen.getByRole('progressbar', { name: 'status_tanks_falling' });
+    const waitStatus = spinner.closest('.retro-wait-status');
+    expect(waitStatus).not.toBeNull();
+    expect(waitStatus?.closest('.retro-hud')).not.toBeNull();
+    expect(waitStatus?.closest('.retro-hud-weapons')).toBeNull();
+    expect(spinner.getAttribute('tabindex')).toBeNull();
+
+    const user = userEvent.setup();
+    for (let step = 0; step < 4; step++) {
+      await user.tab();
+      expect(document.activeElement).not.toBe(spinner);
+      expect(waitStatus?.contains(document.activeElement)).toBe(false);
+    }
   });
 });

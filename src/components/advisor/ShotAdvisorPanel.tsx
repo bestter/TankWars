@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { CombatWaitSpinner } from "../CombatWaitSpinner";
 import type { AdvisorView } from "./AdvisorController";
 import type { AdvisorObjective } from "../../game/entities/ai/expertPolicy";
 
@@ -28,7 +29,7 @@ export function ShotAdvisorPanel({ view, request, apply, setObjective }: ShotAdv
         <button type="button" onClick={apply} disabled={!result}>{t("advisor_apply")}</button>
       </div>
       <div role="status" aria-live="polite">
-        {view.status === "calculating" && t("advisor_calculating")}
+        {view.status === "calculating" && <CombatWaitSpinner label={t("advisor_calculating")} />}
         {view.status === "empty" && t("advisor_empty")}
         {view.status === "expired" && t("advisor_expired")}
         {result && <>

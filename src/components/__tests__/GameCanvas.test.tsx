@@ -25,7 +25,16 @@ vi.mock("react-i18next", async () => {
   return {
     useTranslation: () => ({
       t: (key: string, options?: Record<string, unknown>) => {
-        if (key === "round_new_game_required") return (language.current === "fr" ? fr : en).round_new_game_required;
+        if (
+          key === "round_new_game_required" ||
+          key === "status_ai_turn" ||
+          key === "status_ai_waiting" ||
+          key === "status_resolving" ||
+          key === "status_tanks_falling" ||
+          key === "advisor_calculating"
+        ) {
+          return (language.current === "fr" ? fr : en)[key];
+        }
         if (options && options.name !== undefined) {
           return `${key}_${options.name}`;
         }
@@ -965,5 +974,224 @@ describe("GameCanvas component", () => {
     const summaryStatus = screen.queryAllByRole("status");
     const announcerInSummary = summaryStatus.find((el) => el.classList.contains("visually-hidden"));
     expect(announcerInSummary).toBeUndefined();
+  });
+
+  it.each(["fr", "en"] as const)(
+    "tracks local AI preparation, shot resolution, falling, consecutive AI turns, and human aim return in %s",
+    (locale) => {
+      language.current = locale;
+      const dict = locale === "fr" ? fr : en;
+      const session = vi.mocked(useGameSession)({});
+      const ai1Turn: CurrentTurnInfo = {
+        ...defaultTurnInfo,
+        playerId: "p2",
+        playerName: "CPU 2",
+        isHuman: false,
+        isInputLocked: true,
+        isResolving: false,
+        tanksAreFalling: false,
+      };
+
+      session.state = { ...defaultSessionState, turnInfo: ai1Turn };
+      vi.mocked(useGameSession).mockReturnValue(session);
+      const { rerender } = render(<GameCanvas />);
+
+      const canvas = screen.getByRole("img") as HTMLCanvasElement;
+      expect(screen.getAllByRole("progressbar", { name: dict.status_ai_turn })).toHaveLength(1);
+      expect(canvas.style.cursor).toBe("wait");
+
+      // AI shot launched
+      session.state = { ...defaultSessionState, turnInfo: { ...ai1Turn, isResolving: true } };
+      rerender(<GameCanvas />);
+      expect(screen.getAllByRole("progressbar", { name: dict.status_resolving })).toHaveLength(1);
+      expect(canvas.style.cursor).toBe("wait");
+
+      // Tanks falling
+      session.state = { ...defaultSessionState, turnInfo: { ...ai1Turn, isResolving: true, tanksAreFalling: true } };
+      rerender(<GameCanvas />);
+      expect(screen.getAllByRole("progressbar", { name: dict.status_tanks_falling })).toHaveLength(1);
+      expect(canvas.style.cursor).toBe("wait");
+
+      // Second consecutive AI turn
+      session.state = {
+        ...defaultSessionState,
+        turnInfo: { ...ai1Turn, playerId: "p3", playerName: "CPU 3", turn: 2 },
+      };
+      rerender(<GameCanvas />);
+      expect(screen.getAllByRole("progressbar", { name: dict.status_ai_turn })).toHaveLength(1);
+      expect(canvas.style.cursor).toBe("wait");
+
+      // Return to human turn
+      session.state = { ...defaultSessionState, turnInfo: { ...defaultTurnInfo, turn: 3 } };
+      rerender(<GameCanvas />);
+      expect(screen.queryByRole("progressbar")).toBeNull();
+      expect(canvas.style.cursor).toBe("crosshair");
+    },
+  );
+
+  it("shows progress cursor and keeps controls usable while advisor calculates, then clears on completion or fire", () => {
+    const session = vi.mocked(useGameSession)({});
+    session.advisor = {
+      ...session.advisor,
+      view: { playerId: "p1", objective: "SURVIE", status: "calculating" },
+    };
+    session.state = { ...defaultSessionState, turnInfo: defaultTurnInfo };
+    vi.mocked(useGameSession).mockReturnValue(session);
+
+    const { rerender } = render(<GameCanvas />);
+    const canvas = screen.getByRole("img") as HTMLCanvasElement;
+    expect(screen.getAllByRole("progressbar", { name: fr.advisor_calculating })).toHaveLength(1);
+    expect(canvas.style.cursor).toBe("progress");
+
+    // Controls and canvas fire remain active during advisor calculation
+    fireEvent.click(canvas);
+    expect(mockHandlers.handleCanvasClick).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false);
+
+    // Result or error clears calculation wait and restores crosshair
+    session.advisor = {
+      ...session.advisor,
+      view: { playerId: "p1", objective: "SURVIE", status: "error" },
+    };
+    rerender(<GameCanvas />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(canvas.style.cursor).toBe("crosshair");
+
+    // Firing before advisor responds switches immediately to shot resolution
+    session.advisor = {
+      ...session.advisor,
+      view: { playerId: "p1", objective: "SURVIE", status: "calculating" },
+    };
+    session.state = {
+      ...defaultSessionState,
+      turnInfo: { ...defaultTurnInfo, isInputLocked: true, isResolving: true },
+    };
+    rerender(<GameCanvas />);
+    expect(screen.getAllByRole("progressbar", { name: fr.status_resolving })).toHaveLength(1);
+    expect(canvas.style.cursor).toBe("wait");
+
+    // Stale calculating state for another player does not leak onto the next human turn
+    session.state = {
+      ...defaultSessionState,
+      turnInfo: { ...defaultTurnInfo, playerId: "p2", playerName: "Player 2", turn: 2 },
+    };
+    rerender(<GameCanvas />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(canvas.style.cursor).toBe("crosshair");
+  });
+
+  it("handles online AI wait, confirmed shot, rejection/remote aim/catch-up/Zeus without false waits, and victory/exit reset", () => {
+    const session = vi.mocked(useGameSession)({});
+    const onlineAiTurn: CurrentTurnInfo = {
+      ...defaultTurnInfo,
+      playerId: "p2",
+      playerName: "CPU 2",
+      isHuman: false,
+      isInputLocked: true,
+      isResolving: false,
+      tanksAreFalling: false,
+    };
+
+    // Online AI turn
+    session.state = { ...defaultSessionState, turnInfo: onlineAiTurn };
+    vi.mocked(useGameSession).mockReturnValue(session);
+    const { rerender } = render(<GameCanvas gameMode="online" />);
+    const canvas = screen.getByRole("img") as HTMLCanvasElement;
+    expect(screen.getAllByRole("progressbar", { name: fr.status_ai_waiting })).toHaveLength(1);
+    expect(canvas.style.cursor).toBe("wait");
+
+    // Confirmed SHOT replay
+    session.state = { ...defaultSessionState, turnInfo: { ...onlineAiTurn, isResolving: true } };
+    rerender(<GameCanvas gameMode="online" />);
+    expect(screen.getAllByRole("progressbar", { name: fr.status_resolving })).toHaveLength(1);
+    expect(canvas.style.cursor).toBe("wait");
+
+    // Waiting for server next turn after shot settled
+    session.state = {
+      ...defaultSessionState,
+      turnInfo: { ...onlineAiTurn, isResolving: false, isAwaitingServerTurn: true },
+    };
+    rerender(<GameCanvas gameMode="online" />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(canvas.style.cursor).toBe("crosshair");
+
+    // Remote human aiming, FIRE intent/rejection, catch-up, Zeus special turn + overlays must NOT show spinner
+    for (const turnInfo of [
+      { ...defaultTurnInfo, playerId: "p2", isHuman: true, isInputLocked: true, isResolving: false },
+      { ...defaultTurnInfo, isHuman: true, isInputLocked: true, isResolving: false },
+      { ...onlineAiTurn, isCatchUp: true, isResolving: true },
+      { ...onlineAiTurn, isSpecialTurn: true },
+    ]) {
+      session.state = {
+        ...defaultSessionState,
+        fireRejection: "NOT_YOUR_TURN",
+        zeusAnnouncement: { appointmentId: 1, playerName: "CPU 2", displayedAt: 1 },
+        earningsOverlay: { shotId: 1, awards: [], displayedAt: 1 },
+        turnInfo,
+      };
+      rerender(<GameCanvas gameMode="online" />);
+      expect(screen.queryByRole("progressbar")).toBeNull();
+      expect(canvas.style.cursor).toBe("crosshair");
+    }
+
+    // Winner restores default cursor and clears wait status
+    session.state = {
+      ...defaultSessionState,
+      gamePhase: "CELEBRATION",
+      winner: p1,
+      turnInfo: { ...onlineAiTurn, isResolving: true },
+    };
+    rerender(<GameCanvas gameMode="online" />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(canvas.style.cursor).toBe("default");
+
+    // Exit to SUMMARY / SHOP clears wait indicators
+    session.state = {
+      ...defaultSessionState,
+      gamePhase: "SUMMARY",
+      roundResult: {
+        damageDealt: { p1: 50, p2: 0 },
+        earningsByPlayer: { p1: 150, p2: 0 },
+        terrainDestroyed: 10,
+        survivors: ["p1"],
+      },
+      turnInfo: { ...onlineAiTurn, isResolving: true },
+    };
+    rerender(<GameCanvas gameMode="online" />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("keeps clicks on the weapon label and selector gaps isolated from canvas fire while preserving weapon buttons and canvas clicks", () => {
+    const session = vi.mocked(useGameSession)({});
+    session.state = {
+      ...defaultSessionState,
+      turnInfo: {
+        ...defaultTurnInfo,
+        inventory: { MISSILE: 99, GRENADE: 2 },
+      },
+    };
+    vi.mocked(useGameSession).mockReturnValue(session);
+
+    render(<GameCanvas gameMode="online" />);
+
+    const weaponLabel = screen.getByText("hud_weapon");
+    const weaponsContainer = weaponLabel.closest(".retro-hud-weapons");
+    expect(weaponsContainer).not.toBeNull();
+
+    // Clicking the weapon label or the container gap between buttons does not fire or switch weapons
+    fireEvent.click(weaponLabel);
+    fireEvent.click(weaponsContainer!);
+    expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
+    expect(mockHandlers.handleWeaponSelect).not.toHaveBeenCalled();
+
+    // Clicking an available weapon button selects it without firing
+    fireEvent.click(screen.getByTitle("weapons.GRENADE"));
+    expect(mockHandlers.handleWeaponSelect).toHaveBeenCalledTimes(1);
+    expect(mockHandlers.handleWeaponSelect).toHaveBeenCalledWith("GRENADE");
+    expect(mockHandlers.handleCanvasClick).not.toHaveBeenCalled();
+
+    // Clicking the canvas outside the HUD fires normally
+    fireEvent.click(screen.getByRole("img"));
+    expect(mockHandlers.handleCanvasClick).toHaveBeenCalledTimes(1);
   });
 });
