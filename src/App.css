@@ -580,31 +580,49 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .game-over-overlay {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: calc(100% - 16px);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  justify-content: safe center;
+  gap: clamp(4px, 2%, 10px);
   text-align: center;
   pointer-events: none;
   z-index: 10;
+  container: game-over / size;
 }
 
 .game-over-winner {
-  font-size: clamp(1.75rem, 0.5rem + 6vw, 4rem);
-  font-size: clamp(1.75rem, 0.5rem + 6.5cqi, 4rem);
+  max-width: 100%;
+  font-size: clamp(1.25rem, 0.25rem + 6.5vmin, 3.125rem);
   font-weight: bold;
   text-shadow: 0 0 20px #000, 0 0 40px #000;
   font-family: monospace;
   line-height: 1.1;
-  margin-bottom: 10px;
   overflow-wrap: anywhere;
   text-wrap: balance;
 }
 
 .game-over-subtitle {
-  font-size: clamp(0.95rem, 0.7rem + 1.5cqi, 1.5rem);
+  max-width: 100%;
+  font-size: clamp(0.75rem, 0.35rem + 2vmin, 1.5rem);
   color: #aaaaaa;
+  text-shadow: 0 0 10px #000, 1px 1px 0 #000;
+}
+
+@supports (font-size: 1cqi) and (font-size: 1cqb) {
+  .game-over-winner {
+    font-size: clamp(1.25rem, 0.25rem + min(6.5cqi, 10.5cqb), 3.125rem);
+  }
+
+  .game-over-subtitle {
+    font-size: clamp(0.75rem, 0.35rem + min(2cqi, 3.4cqb), 1.5rem);
+  }
 }
 
 .game-controls-explanation {
@@ -1011,10 +1029,13 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 .shot-earnings-overlay {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: 40;
   overflow: clip;
+  container: shot-earnings / size;
   font-family: monospace;
-  font-size: clamp(0.75rem, 0.5rem + 1.5cqi, 1rem);
+  font-size: clamp(0.75rem, 0.5rem + 1.5vmin, 1rem);
   font-weight: bold;
   pointer-events: none;
   text-shadow:
@@ -1024,25 +1045,47 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .shot-earnings-line {
   position: absolute;
-  transform: translate(-50%, -100%);
+  left: clamp(16%, calc(var(--award-x, 0.5) * 100%), 84%);
+  top: clamp(22%, calc(var(--award-y, 0.5) * 100%), 95%);
+  translate: -50% 0;
+  transform: translateY(-100%) scale(1);
   white-space: nowrap;
   animation: shot-earnings-float 3s ease-out forwards;
 }
 
+@supports (translate: 1cqi 1cqb) and (font-size: 1cqi) {
+  .shot-earnings-line {
+    left: 0;
+    top: 0;
+    font-size: clamp(0.75rem, 0.5rem + 1.5cqi, 1rem);
+    translate:
+      clamp(
+        8px,
+        calc(var(--award-x, 0.5) * 100cqi - 50%),
+        calc(100cqi - 100% - 8px)
+      )
+      clamp(
+        calc(190% + 6px),
+        calc(var(--award-y, 0.5) * 100cqb),
+        calc(100cqb - 8px)
+      );
+  }
+}
+
 @keyframes shot-earnings-float {
   0% {
-    transform: translate(-50%, -100%) scale(0.85);
+    transform: translateY(-100%) scale(0.85);
     opacity: 0;
   }
   15% {
-    transform: translate(-50%, -115%) scale(1);
+    transform: translateY(-115%) scale(1);
     opacity: 1;
   }
   70% {
     opacity: 1;
   }
   100% {
-    transform: translate(-50%, -190%) scale(1);
+    transform: translateY(-190%) scale(1);
     opacity: 0;
   }
 }

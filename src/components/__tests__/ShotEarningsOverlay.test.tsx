@@ -37,38 +37,53 @@ describe("ShotEarningsOverlay", () => {
     );
     const aliceReward = screen.getByText("+100$");
     expect(aliceReward.style.color).toBe("rgb(85, 255, 255)");
-    expect(aliceReward.style.left).toBe("22.5%");
-    expect(aliceReward.style.top).toBe("58.75%");
+    expect(aliceReward.style.left).toBe("");
+    expect(aliceReward.style.top).toBe("");
+    expect(aliceReward.style.getPropertyValue("--award-x")).toBe("0.225");
+    expect(aliceReward.style.getPropertyValue("--award-y")).toBe("0.5875");
     const bobReward = screen.getByText("+25$");
     expect(bobReward.style.color).toBe("rgb(255, 255, 85)");
-    expect(bobReward.style.left).toBe("77.5%");
-    expect(bobReward.style.top).toBe("53.5417%");
+    expect(bobReward.style.getPropertyValue("--award-x")).toBe("0.775");
+    expect(bobReward.style.getPropertyValue("--award-y")).toBe("0.535417");
   });
 
-  it("projette et borne les coordonnées extrêmes en pourcentages sur la scène 800×480", () => {
+  it("normalise les coordonnées dans [0, 1] sans borner prématurément les bords à 8 %", () => {
     render(
       <ShotEarningsOverlay
         overlay={{
           shotId: 9,
           displayedAt: 1_000,
           awards: [
+            { playerId: "near-left", playerName: "L", color: "#55FFFF", amount: 100, x: 60, y: 320 },
+            { playerId: "near-right", playerName: "R", color: "#FFFF55", amount: 100, x: 740, y: 320 },
             { playerId: "left", playerName: "LEFT", color: "#55FFFF", amount: 10, x: 0, y: 10 },
             { playerId: "right", playerName: "RIGHT", color: "#FFFF55", amount: 20, x: 800, y: 480 },
             { playerId: "out", playerName: "OUT", color: "#FF5555", amount: 30, x: 950, y: 600 },
+            { playerId: "nan", playerName: "NAN", color: "#FFFFFF", amount: 40, x: Number.NaN, y: Number.POSITIVE_INFINITY },
           ],
         }}
         onDismiss={onDismiss}
       />,
     );
+    const nearLeft = screen.getAllByText("+100$")[0];
+    expect(nearLeft.style.left).toBe("");
+    expect(nearLeft.style.getPropertyValue("--award-x")).toBe("0.075");
+    expect(nearLeft.style.getPropertyValue("--award-y")).toBe("0.5875");
+    const nearRight = screen.getAllByText("+100$")[1];
+    expect(nearRight.style.getPropertyValue("--award-x")).toBe("0.925");
+    expect(nearRight.style.getPropertyValue("--award-y")).toBe("0.5875");
     const leftReward = screen.getByText("+10$");
-    expect(leftReward.style.left).toBe("8%");
-    expect(leftReward.style.top).toBe("10%");
+    expect(leftReward.style.getPropertyValue("--award-x")).toBe("0");
+    expect(leftReward.style.getPropertyValue("--award-y")).toBe("0");
     const rightReward = screen.getByText("+20$");
-    expect(rightReward.style.left).toBe("92%");
-    expect(rightReward.style.top).toBe("92.0833%");
+    expect(rightReward.style.getPropertyValue("--award-x")).toBe("1");
+    expect(rightReward.style.getPropertyValue("--award-y")).toBe("0.920833");
     const outReward = screen.getByText("+30$");
-    expect(outReward.style.left).toBe("92%");
-    expect(outReward.style.top).toBe("95%");
+    expect(outReward.style.getPropertyValue("--award-x")).toBe("1");
+    expect(outReward.style.getPropertyValue("--award-y")).toBe("1");
+    const nanReward = screen.getByText("+40$");
+    expect(nanReward.style.getPropertyValue("--award-x")).toBe("0.5");
+    expect(nanReward.style.getPropertyValue("--award-y")).toBe("0.5");
   });
 
   it("ferme automatiquement après trois secondes", () => {

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
 import type { EarningsOverlayState } from "./gameCanvasReducer";
 
 export const EARNINGS_DISPLAY_MS = 3_000;
@@ -6,9 +6,15 @@ const DEFAULT_CANVAS_WIDTH = 800;
 const DEFAULT_CANVAS_HEIGHT = 480;
 const EARNINGS_Y_OFFSET = 38;
 
-function clampPercent(value: number, min: number, max: number): string {
-  const clamped = Math.min(max, Math.max(min, value));
-  return `${Number(clamped.toFixed(4))}%`;
+type EarningsLineStyle = CSSProperties & {
+  "--award-x": string;
+  "--award-y": string;
+};
+
+function clampUnitRatio(value: number): string {
+  const safeValue = Number.isFinite(value) ? value : 0.5;
+  const clamped = Math.min(1, Math.max(0, safeValue));
+  return String(Number(clamped.toFixed(6)));
 }
 
 interface ShotEarningsOverlayProps {
@@ -44,19 +50,22 @@ export function ShotEarningsOverlay({
       role="status"
       aria-live="polite"
     >
-      {overlay.awards.map((award) => (
-        <div
-          key={award.playerId}
-          className="shot-earnings-line"
-          style={{
-            color: award.color,
-            left: clampPercent((award.x / safeWidth) * 100, 8, 92),
-            top: clampPercent(((award.y - EARNINGS_Y_OFFSET) / safeHeight) * 100, 10, 95),
-          }}
-        >
-          +{award.amount}$
-        </div>
-      ))}
+      {overlay.awards.map((award) => {
+        const lineStyle: EarningsLineStyle = {
+          color: award.color,
+          "--award-x": clampUnitRatio(award.x / safeWidth),
+          "--award-y": clampUnitRatio((award.y - EARNINGS_Y_OFFSET) / safeHeight),
+        };
+        return (
+          <div
+            key={award.playerId}
+            className="shot-earnings-line"
+            style={lineStyle}
+          >
+            +{award.amount}$
+          </div>
+        );
+      })}
     </div>
   );
 }

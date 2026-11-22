@@ -106,4 +106,24 @@ describe('styles CSS cleanup (#405)', () => {
     expect(appCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
     expect(indexCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
   });
+
+  it('sizes GameOverOverlay and clamps ShotEarningsOverlay against their own 2D stage containers (#446)', () => {
+    expect(appCss).not.toMatch(/\.combat-canvas-stage\s*\{[^}]*container(?:-type)?\s*:/);
+    expect(appCss).toMatch(
+      /\.game-over-overlay\s*\{[^}]*inset:\s*0;[^}]*justify-content:\s*safe center;[^}]*container:\s*game-over \/ size;/,
+    );
+    expect(appCss).toMatch(
+      /\.game-over-winner\s*\{[^}]*font-size:\s*clamp\(1\.25rem,\s*0\.25rem \+ min\(6\.5cqi,\s*10\.5cqb\),\s*3\.125rem\);/,
+    );
+    expect(appCss).toMatch(
+      /\.game-over-subtitle\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.35rem \+ min\(2cqi,\s*3\.4cqb\),\s*1\.5rem\);/,
+    );
+    expect(appCss).toMatch(/\.shot-earnings-overlay\s*\{[^}]*overflow:\s*clip;[^}]*container:\s*shot-earnings \/ size;/);
+    expect(appCss).toMatch(
+      /@supports\s*\(translate:\s*1cqi 1cqb\)\s*and\s*\(font-size:\s*1cqi\)\s*\{\s*\.shot-earnings-line\s*\{[^}]*translate:[^}]*50%[^}]*100cqi - 100%/,
+    );
+    const keyframesBlock = appCss.match(/@keyframes shot-earnings-float\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(keyframesBlock).toContain('translateY(-100%)');
+    expect(keyframesBlock).not.toContain('translate(-50%');
+  });
 });
