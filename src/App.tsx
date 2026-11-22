@@ -1,7 +1,7 @@
 import { captureOnlineEntry, cleanParticipationUrl, clearParticipation, readOnlineEntry, type OnlineParticipation, type OnlineEntryMessage } from './utils/onlineParticipation';
 import { onlineEntryMessagesReducer } from './utils/onlineEntryMessages';
 import { OnlinePersistenceAlerts } from './components/OnlinePersistenceAlerts';
-import { lazy, Suspense, useEffect, useReducer, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
@@ -198,6 +198,22 @@ function App() {
 
   const showMenu = state.phase === "MENU" && state.players === null;
   const { players, onlineMeta, resumeCanvas } = state;
+
+  const activeScreen =
+    showEndurance && EnduranceScreen
+      ? "endurance"
+      : !showMenu
+        ? "combat"
+        : showOnlineLobby
+          ? "online-lobby"
+          : "menu";
+  const previousScreenRef = useRef(activeScreen);
+
+  useLayoutEffect(() => {
+    if (previousScreenRef.current === activeScreen) return;
+    previousScreenRef.current = activeScreen;
+    window.scrollTo(0, 0);
+  }, [activeScreen]);
 
   const handleOnlineMenuToggle = (): void => {
     if (showOnlineLobby) {

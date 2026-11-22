@@ -65,6 +65,7 @@ vi.mock('../utils/deploymentMode', () => ({
 describe('App component (State and Lifecycle integration)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
     deploymentMode.hotseatOnly = false;
     cleanup();
     Object.defineProperty(window, 'sessionStorage', {
@@ -347,5 +348,32 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByRole('banner')).toBe(banner);
     expect(screen.getByRole('main')).toBe(main);
     expect(main.contains(screen.getByText('main_title'))).toBe(true);
+  });
+
+  it('resets scroll to top only when transitioning between top-level screens', () => {
+    const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+    expect(scrollToSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+    expect(scrollToSpy).toHaveBeenLastCalledWith(0, 0);
+
+    // Un re-rendu interne pendant le combat ne doit pas forcer le défilement vers le haut
+    fireEvent(window, new CustomEvent('online-persistence-warning', { detail: 'online_restore_unavailable' }));
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mock Return To Menu' }));
+    expect(scrollToSpy).toHaveBeenCalledTimes(2);
+    expect(scrollToSpy).toHaveBeenLastCalledWith(0, 0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'online_multiplayer_button' }));
+    expect(scrollToSpy).toHaveBeenCalledTimes(3);
+    expect(scrollToSpy).toHaveBeenLastCalledWith(0, 0);
   });
 });

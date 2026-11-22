@@ -117,7 +117,12 @@
 }
 
 .retro-modal {
+  --modal-safe-top: max(10px, env(safe-area-inset-top, 0px));
+  --modal-safe-right: max(8px, env(safe-area-inset-right, 0px));
+  --modal-safe-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  --modal-safe-left: max(8px, env(safe-area-inset-left, 0px));
   inset: 0;
+  inset: var(--modal-safe-top) var(--modal-safe-right) var(--modal-safe-bottom) var(--modal-safe-left);
   margin: auto;
   pointer-events: auto;
   background-color: rgba(0, 0, 0, 0.93);
@@ -130,8 +135,10 @@
   text-align: center;
   box-sizing: border-box;
   max-width: calc(100% - 16px);
+  max-width: calc(100% - var(--modal-safe-left) - var(--modal-safe-right));
   max-height: 96%;
-  max-height: calc(100dvh - max(20px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px)));
+  max-height: calc(100vh - var(--modal-safe-top) - var(--modal-safe-bottom));
+  max-height: calc(100dvh - var(--modal-safe-top) - var(--modal-safe-bottom));
 }
 
 .retro-modal-summary {
@@ -145,7 +152,8 @@
 .retro-modal-shop {
   width: min(520px, 94%);
   max-height: min(540px, 92vh);
-  max-height: min(540px, calc(100dvh - max(20px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))));
+  max-height: min(540px, calc(100vh - var(--modal-safe-top) - var(--modal-safe-bottom)));
+  max-height: min(540px, calc(100dvh - var(--modal-safe-top) - var(--modal-safe-bottom)));
   padding: 12px;
   background-color: rgba(0, 0, 0, 0.94);
 }

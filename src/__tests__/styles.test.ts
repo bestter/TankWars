@@ -142,4 +142,13 @@ describe('styles CSS cleanup (#405)', () => {
       /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-height:\s*541px\s*\)\s*\{\s*@container combat \(inline-size >= 720px\)/,
     );
   });
+
+  it('constrains native <dialog> modals on every side using safe-area insets (#446)', () => {
+    expect(appCss).toMatch(
+      /\.retro-modal\s*\{[^}]*--modal-safe-top:\s*max\(10px,\s*env\(safe-area-inset-top,\s*0px\)\);[^}]*--modal-safe-right:\s*max\(8px,\s*env\(safe-area-inset-right,\s*0px\)\);[^}]*--modal-safe-bottom:\s*max\(10px,\s*env\(safe-area-inset-bottom,\s*0px\)\);[^}]*--modal-safe-left:\s*max\(8px,\s*env\(safe-area-inset-left,\s*0px\)\);[^}]*inset:\s*0;[^}]*inset:\s*var\(--modal-safe-top\)\s+var\(--modal-safe-right\)\s+var\(--modal-safe-bottom\)\s+var\(--modal-safe-left\);[^}]*max-width:\s*calc\(100%\s*-\s*var\(--modal-safe-left\)\s*-\s*var\(--modal-safe-right\)\);[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\);/s,
+    );
+    expect(appCss).toMatch(
+      /\.retro-modal-shop\s*\{[^}]*max-height:\s*min\(540px,\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\)\);/s,
+    );
+  });
 });
