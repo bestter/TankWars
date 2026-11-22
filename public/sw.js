@@ -1,4 +1,4 @@
-const CACHE_NAME = "tankwars-v3";
+const CACHE_NAME = "tankwars-v4";
 const ASSETS = [
   "/",
   "/index.html",
@@ -43,9 +43,14 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Stratégie Network-First pour les requêtes de navigation (index.html)
-  // afin de toujours charger la version la plus récente contenant les bons bundles JS
-  if (e.request.mode === "navigate") {
+  const requestUrl = new URL(e.request.url);
+  const isManifestRequest =
+    requestUrl.pathname === "/manifest.json" ||
+    e.request.destination === "manifest";
+
+  // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
+  // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
+  if (e.request.mode === "navigate" || isManifestRequest) {
     e.respondWith(
       fetch(e.request)
         .then((response) => {
@@ -56,12 +61,17 @@ self.addEventListener("fetch", (e) => {
           return response;
         })
         .catch(() => {
-          return caches.match(e.request).then((cachedResponse) => {
-            if (cachedResponse) {
-              return cachedResponse;
-            }
-            return caches.match("/index.html");
-          });
+          return caches
+            .match(e.request, { cacheName: CACHE_NAME })
+            .then((cachedResponse) => {
+              if (cachedResponse) {
+                return cachedResponse;
+              }
+              if (e.request.mode === "navigate") {
+                return caches.match("/index.html", { cacheName: CACHE_NAME });
+              }
+              return caches.match("/manifest.json", { cacheName: CACHE_NAME });
+            });
         })
     );
     return;
@@ -69,15 +79,17 @@ self.addEventListener("fetch", (e) => {
 
   // Stratégie Cache-First pour les autres ressources locales
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(e.request).catch((err) => {
-        // Propager l'erreur réseau au lieu de renvoyer undefined
-        throw err;
-      });
-    })
+    caches
+      .match(e.request, { cacheName: CACHE_NAME })
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        return fetch(e.request).catch((err) => {
+          // Propager l'erreur réseau au lieu de renvoyer undefined
+          throw err;
+        });
+      })
   );
 });
 

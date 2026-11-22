@@ -131,8 +131,18 @@ describe('styles CSS cleanup (#405)', () => {
     expect(appCss).toContain('@media (max-width: 1024px) and (max-height: 540px)');
     expect(appCss).not.toMatch(/@media\s*\(\s*max-height:\s*540px\s*\)/);
     expect(appCss).not.toMatch(/@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*min-height:\s*520px\s*\)/);
+    expect(appCss).toMatch(/\.app-shell\s*\{[^}]*container:\s*app-shell\s*\/\s*inline-size;/);
     expect(appCss).toMatch(
       /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*,\s*\(\s*min-width:\s*1080px\s*\)\s*\{[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    expect(appCss).toMatch(
+      /@supports\s*\(container-type:\s*inline-size\)\s*\{[\s\S]*?@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*,\s*\(\s*min-width:\s*1080px\s*\)\s*\{[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*static;/,
+    );
+    expect(appCss).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*\{\s*@container app-shell \(inline-size >= 960px\)[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    expect(appCss).toMatch(
+      /@media\s*\(\s*min-width:\s*1080px\s*\)\s*\{\s*@container app-shell \(inline-size >= 1024px\)[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
     );
     const fallbackAndResetMatches = appCss.match(
       /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-width:\s*760px\s*\)\s*and\s*\(\s*min-height:\s*541px\s*\)/g,

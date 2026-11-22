@@ -12,6 +12,7 @@
   font-family: monospace;
   position: relative;
   box-sizing: border-box;
+  container: app-shell / inline-size;
   padding-block-start: max(8px, env(safe-area-inset-top, 0px));
   padding-block-end: max(12px, env(safe-area-inset-bottom, 0px));
   padding-inline-start: max(8px, env(safe-area-inset-left, 0px));
@@ -1876,6 +1877,63 @@ canvas {
       .zeus-announcement {
         top: 46px;
         padding: 10px 14px;
+      }
+    }
+  }
+
+  @media (min-width: 1025px) and (pointer: fine), (min-width: 1080px) {
+    .app-header {
+      display: flex;
+      padding: 0 0 6px;
+    }
+
+    .app-shell--menu .app-header {
+      padding: 6px 8px 0;
+    }
+
+    .app-header-lang {
+      position: static;
+      top: auto;
+      right: auto;
+    }
+  }
+
+  @media (min-width: 1025px) and (pointer: fine) {
+    @container app-shell (inline-size >= 960px) {
+      .app-header {
+        display: block;
+        padding: 0;
+      }
+
+      .app-shell--menu .app-header {
+        padding: 0;
+      }
+
+      .app-header-lang {
+        position: absolute;
+        top: max(12px, env(safe-area-inset-top, 0px));
+        right: max(12px, env(safe-area-inset-right, 0px));
+        z-index: 100;
+      }
+    }
+  }
+
+  @media (min-width: 1080px) {
+    @container app-shell (inline-size >= 1024px) {
+      .app-header {
+        display: block;
+        padding: 0;
+      }
+
+      .app-shell--menu .app-header {
+        padding: 0;
+      }
+
+      .app-header-lang {
+        position: absolute;
+        top: max(12px, env(safe-area-inset-top, 0px));
+        right: max(12px, env(safe-area-inset-right, 0px));
+        z-index: 100;
       }
     }
   }

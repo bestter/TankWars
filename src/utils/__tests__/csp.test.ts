@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vm from 'node:vm';
 
 describe('Content Security Policy (CSP) Safety Checks', () => {
   it('should require style-src to allow unsafe-inline in index.html to prevent Vite and React UI breakage', () => {
@@ -72,11 +73,203 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
 });
 
 describe('Service worker cache strategy', () => {
-  it('uses network-first for navigations and ignores cross-origin fetches', () => {
+  it('uses network-first for navigations and manifest.json while ignoring cross-origin fetches', () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const content = fs.readFileSync(swPath, 'utf-8');
+    expect(content).toContain('const CACHE_NAME = "tankwars-v4"');
     expect(content).toContain('e.request.mode === "navigate"');
+    expect(content).toContain('requestUrl.pathname === "/manifest.json"');
+    expect(content).toContain('e.request.destination === "manifest"');
     expect(content).toContain('self.location.origin');
     expect(content).toContain('throw err');
+  });
+
+  it('invalidates tankwars-v3 on upgrade, revalidates /manifest.json over network, and keeps offline fallback', async () => {
+    interface MockResponse {
+      ok: boolean;
+      body: string;
+      clone: () => MockResponse;
+    }
+
+    interface MockRequest {
+      url: string;
+      mode?: string;
+      destination?: string;
+    }
+
+    type SwEventHandler = (event: {
+      request?: MockRequest;
+      waitUntil?: (promise: Promise<unknown>) => void;
+      respondWith?: (promise: Promise<MockResponse | undefined>) => void;
+    }) => void;
+
+    const makeResponse = (body: string, ok = true): MockResponse => ({
+      ok,
+      body,
+      clone() {
+        return makeResponse(body, ok);
+      },
+    });
+
+    const swPath = path.resolve(process.cwd(), 'public/sw.js');
+    const content = fs.readFileSync(swPath, 'utf-8');
+    const origin = 'https://tankwars.example';
+
+    const cacheStorage = new Map<string, Map<string, MockResponse>>([
+      ['tankwars-v3', new Map([['/manifest.json', makeResponse('{"orientation":"landscape"}')]])],
+    ]);
+
+    let networkAvailable = true;
+    let networkManifestBody = '{"orientation":"any"}';
+    const networkCalls: string[] = [];
+    let skipWaitingCalled = false;
+    let clientsClaimCalled = false;
+
+    const resolveKey = (input: string | MockRequest): string => {
+      const rawUrl = typeof input === 'string' ? input : input.url;
+      return rawUrl.startsWith(origin) ? rawUrl.slice(origin.length) || '/' : rawUrl;
+    };
+
+    const mockFetch = async (input: string | MockRequest): Promise<MockResponse> => {
+      const key = resolveKey(input);
+      networkCalls.push(key);
+      if (!networkAvailable) {
+        throw new Error('Offline');
+      }
+      if (key === '/manifest.json') {
+        return makeResponse(networkManifestBody);
+      }
+      return makeResponse(`asset:${key}`);
+    };
+
+    const mockCaches = {
+      async open(cacheName: string) {
+        let store = cacheStorage.get(cacheName);
+        if (!store) {
+          store = new Map();
+          cacheStorage.set(cacheName, store);
+        }
+        return {
+          async addAll(urls: string[]) {
+            for (const url of urls) {
+              const res = await mockFetch(url);
+              store!.set(url, res);
+            }
+          },
+          async put(request: string | MockRequest, response: MockResponse) {
+            store!.set(resolveKey(request), response);
+          },
+        };
+      },
+      async keys() {
+        return Array.from(cacheStorage.keys());
+      },
+      async delete(cacheName: string) {
+        return cacheStorage.delete(cacheName);
+      },
+      async match(request: string | MockRequest, options?: { cacheName?: string }) {
+        const key = resolveKey(request);
+        if (options?.cacheName) {
+          return cacheStorage.get(options.cacheName)?.get(key);
+        }
+        for (const store of cacheStorage.values()) {
+          const hit = store.get(key);
+          if (hit) {
+            return hit;
+          }
+        }
+        return undefined;
+      },
+    };
+
+    const listeners = new Map<string, SwEventHandler>();
+    const swSelf = {
+      location: { origin },
+      addEventListener(type: string, handler: SwEventHandler) {
+        listeners.set(type, handler);
+      },
+      async skipWaiting() {
+        skipWaitingCalled = true;
+      },
+      clients: {
+        async claim() {
+          clientsClaimCalled = true;
+        },
+      },
+    };
+
+    vm.runInNewContext(content, {
+      self: swSelf,
+      caches: mockCaches,
+      fetch: mockFetch,
+      URL,
+      Promise,
+      Error,
+    });
+
+    const installPromises: Promise<unknown>[] = [];
+    listeners.get('install')?.({
+      waitUntil(promise) {
+        installPromises.push(promise);
+      },
+    });
+    await Promise.all(installPromises);
+
+    const activatePromises: Promise<unknown>[] = [];
+    listeners.get('activate')?.({
+      waitUntil(promise) {
+        activatePromises.push(promise);
+      },
+    });
+    await Promise.all(activatePromises);
+
+    expect(skipWaitingCalled).toBe(true);
+    expect(clientsClaimCalled).toBe(true);
+    expect(cacheStorage.has('tankwars-v3')).toBe(false);
+    expect(cacheStorage.has('tankwars-v4')).toBe(true);
+
+    const respondWithFetch = async (request: MockRequest): Promise<MockResponse | undefined> => {
+      let pending: Promise<MockResponse | undefined> | undefined;
+      listeners.get('fetch')?.({
+        request,
+        respondWith(promise) {
+          pending = promise;
+        },
+      });
+      return pending;
+    };
+
+    networkCalls.length = 0;
+    networkManifestBody = '{"orientation":"any","rev":2}';
+    const onlineManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(onlineManifest?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    // Attente de la mise à jour asynchrone du cache déclenchée après clone()
+    await Promise.resolve();
+    await Promise.resolve();
+
+    networkAvailable = false;
+    networkCalls.length = 0;
+    const offlineManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(offlineManifest?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    networkCalls.length = 0;
+    const offlineIcon = await respondWithFetch({
+      url: `${origin}/icon-512.png`,
+      mode: 'no-cors',
+      destination: 'image',
+    });
+    expect(offlineIcon?.body).toBe('asset:/icon-512.png');
+    expect(networkCalls).toEqual([]);
   });
 });
