@@ -311,7 +311,7 @@ function InlineSessionErrors({
       {networkError && (
         <div role="alert">
           {t(networkError, { defaultValue: networkError })}{" "}
-          <button type="button" onClick={onRetry}>
+          <button type="button" className="combat-menu-btn" onClick={onRetry}>
             {t("btn_retry")}
           </button>
         </div>
@@ -324,7 +324,7 @@ function InlineSessionErrors({
               : "round_preparation_failed",
           )}
           {roundPreparationError === "EXHAUSTED" && (
-            <button type="button" onClick={onRetry}>
+            <button type="button" className="combat-menu-btn" onClick={onRetry}>
               {t("btn_retry")}
             </button>
           )}

@@ -107,6 +107,7 @@
   position: relative;
   width: min(100%, 800px);
   margin-inline: auto;
+  border: 3px solid #aaaaaa;
   box-sizing: border-box;
 }
 
@@ -157,6 +158,8 @@
   max-height: min(540px, calc(100dvh - var(--modal-safe-top) - var(--modal-safe-bottom)));
   padding: 12px;
   background-color: rgba(0, 0, 0, 0.94);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .retro-modal-shop[open] {
@@ -551,7 +554,7 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   background: rgb(0 0 0 / 88%);
   color: #ffffff;
   font-family: "Courier New", monospace;
-  font-size: clamp(0.75rem, 0.65rem + 1.2cqi, 1rem);
+  font-size: clamp(0.75rem, 0.65rem + 1.2vmin, 1rem);
   font-weight: 700;
   text-align: center;
   text-shadow: 0 0 8px #55ffff;
@@ -559,6 +562,12 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   overflow-wrap: break-word;
   transform: translateX(-50%);
   animation: zeus-announcement-in 180ms steps(2, end);
+}
+
+@supports (font-size: 1cqi) {
+  .zeus-announcement {
+    font-size: clamp(0.75rem, 0.65rem + 1.2cqi, 1rem);
+  }
 }
 
 @keyframes zeus-announcement-in {
@@ -1290,7 +1299,7 @@ canvas {
   width: 100%;
   height: auto;
   aspect-ratio: 800 / 480;
-  border: 3px solid #aaaaaa;
+  border: 0;
   image-rendering: pixelated;
   background: #000000;
   box-sizing: border-box;
@@ -1785,18 +1794,8 @@ canvas {
     pointer-events: none;
   }
 
-  .wind-banner {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-  }
-
   .retro-hud {
-    position: absolute;
-    top: 34px;
-    left: 4px;
-    right: 4px;
+    margin-inline: 4px;
     width: auto;
   }
 
@@ -1820,18 +1819,8 @@ canvas {
       pointer-events: auto;
     }
 
-    .wind-banner {
-      position: static;
-      top: auto;
-      left: auto;
-      right: auto;
-    }
-
     .retro-hud {
-      position: static;
-      top: auto;
-      left: auto;
-      right: auto;
+      margin-inline: 0;
       width: 100%;
     }
 
@@ -1855,18 +1844,8 @@ canvas {
         pointer-events: none;
       }
 
-      .wind-banner {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-      }
-
       .retro-hud {
-        position: absolute;
-        top: 34px;
-        left: 4px;
-        right: 4px;
+        margin-inline: 4px;
         width: auto;
       }
 

@@ -30,8 +30,10 @@ export function ShotEarningsOverlay({
   canvasHeight = DEFAULT_CANVAS_HEIGHT,
   onDismiss,
 }: ShotEarningsOverlayProps) {
-  const safeWidth = canvasWidth > 0 ? canvasWidth : DEFAULT_CANVAS_WIDTH;
-  const safeHeight = canvasHeight > 0 ? canvasHeight : DEFAULT_CANVAS_HEIGHT;
+  const safeWidth =
+    Number.isFinite(canvasWidth) && canvasWidth > 0 ? canvasWidth : DEFAULT_CANVAS_WIDTH;
+  const safeHeight =
+    Number.isFinite(canvasHeight) && canvasHeight > 0 ? canvasHeight : DEFAULT_CANVAS_HEIGHT;
 
   useEffect(() => {
     const remainingDisplay = Math.max(

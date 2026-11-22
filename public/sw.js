@@ -44,39 +44,71 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
-  if (!e.request.url.startsWith(self.location.origin)) {
+  if (e.request.method && e.request.method !== "GET") {
     return;
   }
 
-  const requestUrl = new URL(e.request.url);
+  let requestUrl;
+  try {
+    requestUrl = new URL(e.request.url);
+  } catch {
+    return;
+  }
+
+  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
   const isManifestRequest =
     requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
+  const isNavigate = e.request.mode === "navigate";
 
   // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
   // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
   if (e.request.mode === "navigate" || isManifestRequest) {
+    const fetchRequest =
+      isManifestRequest && !isNavigate
+        ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
+        : fetch(e.request);
+
     e.respondWith(
-      fetch(e.request, isManifestRequest ? MANIFEST_FETCH_OPTIONS : undefined)
+      fetchRequest
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));
+            const cacheWrite = caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(e.request, copy))
+              .catch((err) => {
+                if (typeof console !== "undefined") {
+                  console.warn("[sw] Cache update failed", err);
+                }
+              });
+            if (typeof e.waitUntil === "function") {
+              e.waitUntil(cacheWrite);
+            }
           }
           return response;
         })
-        .catch(() => {
+        .catch((err) => {
           return caches
             .match(e.request, { cacheName: CACHE_NAME })
             .then((cachedResponse) => {
               if (cachedResponse) {
                 return cachedResponse;
               }
-              if (e.request.mode === "navigate") {
-                return caches.match("/index.html", { cacheName: CACHE_NAME });
+              if (isManifestRequest) {
+                return caches.match(MANIFEST_PATH, { cacheName: CACHE_NAME });
               }
-              return caches.match(MANIFEST_PATH, { cacheName: CACHE_NAME });
+              return caches.match("/index.html", { cacheName: CACHE_NAME });
+            })
+            .then((fallback) => {
+              if (fallback) {
+                return fallback;
+              }
+              throw err;
             });
         })
     );

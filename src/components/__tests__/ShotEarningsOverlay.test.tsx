@@ -86,6 +86,26 @@ describe("ShotEarningsOverlay", () => {
     expect(nanReward.style.getPropertyValue("--award-y")).toBe("0.5");
   });
 
+  it("retombe sur les dimensions par défaut 800x480 si canvasWidth ou canvasHeight n'est pas fini", () => {
+    render(
+      <ShotEarningsOverlay
+        overlay={{
+          shotId: 10,
+          displayedAt: 1_000,
+          awards: [
+            { playerId: "p1", playerName: "ALICE", color: "#55FFFF", amount: 100, x: 180, y: 320 },
+          ],
+        }}
+        canvasWidth={Number.POSITIVE_INFINITY}
+        canvasHeight={Number.NaN}
+        onDismiss={onDismiss}
+      />,
+    );
+    const reward = screen.getByText("+100$");
+    expect(reward.style.getPropertyValue("--award-x")).toBe("0.225");
+    expect(reward.style.getPropertyValue("--award-y")).toBe("0.5875");
+  });
+
   it("ferme automatiquement après trois secondes", () => {
     render(
       <ShotEarningsOverlay

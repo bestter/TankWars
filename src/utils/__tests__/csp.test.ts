@@ -81,7 +81,8 @@ describe('Service worker cache strategy', () => {
     expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
     expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
     expect(content).toContain('e.request.destination === "manifest"');
-    expect(content).toContain('self.location.origin');
+    expect(content).toContain('requestUrl.origin !== self.location.origin');
+    expect(content).not.toContain('e.request.url.startsWith(self.location.origin)');
     expect(content).toContain('throw err');
   });
 
@@ -94,6 +95,7 @@ describe('Service worker cache strategy', () => {
 
     interface MockRequest {
       url: string;
+      method?: string;
       mode?: string;
       destination?: string;
       cache?: RequestCache;
@@ -123,6 +125,7 @@ describe('Service worker cache strategy', () => {
     ]);
 
     let networkAvailable = true;
+    let httpCacheFresh = true;
     let networkManifestBody = '{"orientation":"any"}';
     const networkCalls: string[] = [];
     let skipWaitingCalled = false;
@@ -139,7 +142,7 @@ describe('Service worker cache strategy', () => {
     ): Promise<MockResponse> => {
       const key = resolveKey(input);
       const cacheMode = options?.cache ?? (typeof input === 'string' ? undefined : input.cache);
-      if (key === '/manifest.json' && cacheMode !== 'reload' && cacheMode !== 'no-cache') {
+      if (httpCacheFresh && key === '/manifest.json' && cacheMode !== 'reload' && cacheMode !== 'no-cache') {
         return makeResponse(httpCachedManifest);
       }
       networkCalls.push(key);
@@ -244,14 +247,47 @@ describe('Service worker cache strategy', () => {
 
     const respondWithFetch = async (request: MockRequest): Promise<MockResponse | undefined> => {
       let pending: Promise<MockResponse | undefined> | undefined;
+      const waitUntilPromises: Promise<unknown>[] = [];
       listeners.get('fetch')?.({
         request,
+        waitUntil(promise) {
+          waitUntilPromises.push(promise);
+        },
         respondWith(promise) {
           pending = promise;
         },
       });
-      return pending;
+      const response = await pending;
+      await Promise.all(waitUntilPromises);
+      return response;
     };
+
+    networkCalls.length = 0;
+    const crossOriginPrefixed = await respondWithFetch({
+      url: `${origin}.attacker.test/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(crossOriginPrefixed).toBeUndefined();
+    expect(networkCalls).toEqual([]);
+
+    const headManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      method: 'HEAD',
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(headManifest).toBeUndefined();
+    expect(networkCalls).toEqual([]);
+
+    const postManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      method: 'POST',
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(postManifest).toBeUndefined();
+    expect(networkCalls).toEqual([]);
 
     networkCalls.length = 0;
     networkManifestBody = '{"orientation":"any","rev":2}';
@@ -263,10 +299,6 @@ describe('Service worker cache strategy', () => {
     expect(onlineManifest?.body).toBe('{"orientation":"any","rev":2}');
     expect(networkCalls).toEqual(['/manifest.json']);
 
-    // Attente de la mise à jour asynchrone du cache déclenchée après clone()
-    await Promise.resolve();
-    await Promise.resolve();
-
     networkAvailable = false;
     networkCalls.length = 0;
     const offlineManifest = await respondWithFetch({
@@ -275,6 +307,16 @@ describe('Service worker cache strategy', () => {
       destination: 'manifest',
     });
     expect(offlineManifest?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    httpCacheFresh = false;
+    networkCalls.length = 0;
+    const offlineManifestNavigation = await respondWithFetch({
+      url: `${origin}/manifest.json?source=direct`,
+      mode: 'navigate',
+      destination: 'document',
+    });
+    expect(offlineManifestNavigation?.body).toBe('{"orientation":"any","rev":2}');
     expect(networkCalls).toEqual(['/manifest.json']);
 
     networkCalls.length = 0;

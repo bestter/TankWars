@@ -406,7 +406,7 @@ export function WeaponShop({
           marginBottom: 10,
           overflowY: "auto",
           flex: "1 1 auto",
-          minHeight: 0,
+          minHeight: 96,
           paddingRight: 4,
         }}
       >

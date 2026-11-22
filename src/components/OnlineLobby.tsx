@@ -40,7 +40,7 @@ export function OnlineLobby(props: OnlineLobbyProps) {
 
           {error && (
             <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}
-              {lobby.roundPreparationFailed && <button type="button" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
+              {lobby.roundPreparationFailed && <button type="button" className="lobby-secondary-btn" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
             </div>
           )}
 

@@ -158,7 +158,21 @@ describe('styles CSS cleanup (#405)', () => {
       /\.retro-modal\s*\{[^}]*--modal-safe-top:\s*max\(10px,\s*env\(safe-area-inset-top,\s*0px\)\);[^}]*--modal-safe-right:\s*max\(8px,\s*env\(safe-area-inset-right,\s*0px\)\);[^}]*--modal-safe-bottom:\s*max\(10px,\s*env\(safe-area-inset-bottom,\s*0px\)\);[^}]*--modal-safe-left:\s*max\(8px,\s*env\(safe-area-inset-left,\s*0px\)\);[^}]*inset:\s*0;[^}]*inset:\s*var\(--modal-safe-top\)\s+var\(--modal-safe-right\)\s+var\(--modal-safe-bottom\)\s+var\(--modal-safe-left\);[^}]*max-width:\s*calc\(100%\s*-\s*var\(--modal-safe-left\)\s*-\s*var\(--modal-safe-right\)\);[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\);/s,
     );
     expect(appCss).toMatch(
-      /\.retro-modal-shop\s*\{[^}]*max-height:\s*min\(540px,\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\)\);/s,
+      /\.retro-modal-shop\s*\{[^}]*max-height:\s*min\(540px,\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\)\);[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/s,
     );
+  });
+
+  it('stacks desktop HUD inside .combat-hud-stack without fixed top, isolates stage border, and keeps vmin fallback on .zeus-announcement (#446)', () => {
+    expect(appCss).toMatch(
+      /\.combat-canvas-stage\s*\{[^}]*border:\s*3px solid #aaaaaa;[^}]*box-sizing:\s*border-box;/,
+    );
+    expect(appCss).toMatch(/\.game-canvas\s*\{[^}]*border:\s*0;/);
+    expect(appCss).toMatch(
+      /\.zeus-announcement\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.65rem \+ 1\.2vmin,\s*1rem\);/,
+    );
+    expect(appCss).toMatch(
+      /@supports\s*\(font-size:\s*1cqi\)\s*\{\s*\.zeus-announcement\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.65rem \+ 1\.2cqi,\s*1rem\);/,
+    );
+    expect(appCss).not.toMatch(/top:\s*34px;/);
   });
 });
