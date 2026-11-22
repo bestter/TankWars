@@ -65,7 +65,7 @@ function AppScreen({
 }: AppScreenProps) {
   if (!showMenu) {
     return (
-      <div style={{ display: "flex", justifyContent: "center" }}>
+      <div className="game-stage-shell">
         <GameCanvas
           initialPlayers={players ?? undefined}
           onReturnToMenu={onReturnToMenu}
@@ -209,18 +209,9 @@ function App() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#000000",
-        fontFamily: "monospace",
-        // Padding seulement hors menu (le menu gère son propre centrage full black)
-        padding: showMenu ? 0 : "12px",
-        position: "relative",
-      }}
-    >
+    <div className={`app-shell${showMenu ? " app-shell--menu" : ""}`}>
       <SEO titleKey="seo_title" descriptionKey="seo_description" />
-      <header>
+      <header className="app-header">
         <a
           href="#main-content"
           className="skip-link visually-hidden"
@@ -231,12 +222,12 @@ function App() {
           {t("skip_to_content")}
         </a>
         {/* Sélecteur de langue disponible partout */}
-        <div style={{ position: "absolute", top: 12, right: 12, zIndex: 100 }}>
+        <div className="app-header-lang">
           <LanguageSwitcher />
         </div>
       </header>
 
-      <main ref={mainRef} id="main-content" tabIndex={-1}>
+      <main ref={mainRef} id="main-content" tabIndex={-1} className="app-main">
         <OnlinePersistenceAlerts messages={messages} />
         {showEndurance && EnduranceScreen ? (
           <Suspense fallback={<p>{t("endurance_loading")}</p>}>

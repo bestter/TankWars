@@ -95,8 +95,6 @@ export function SessionErrorDialog({
       onClose={handleClose}
       style={{
         border: `4px solid ${VGA_PALETTE.RED}`,
-        width: "min(460px, 92%)",
-        backgroundColor: "rgba(0, 0, 0, 0.94)",
       }}
     >
       <h2

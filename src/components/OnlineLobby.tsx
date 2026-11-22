@@ -30,8 +30,8 @@ export function OnlineLobby(props: OnlineLobbyProps) {
   const { view, error, isJoinMode } = lobby;
 
   return (
-    <div className="retro-menu-container" style={{ padding: 12 }}>
-      <div className="retro-menu-frame" style={{ maxWidth: 820, margin: '0 auto' }}>
+    <div className="retro-menu-container">
+      <div className="retro-menu-frame retro-lobby-frame">
         <div className="retro-menu-inner">
           <GameLogo compact />
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>

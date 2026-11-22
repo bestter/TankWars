@@ -6,7 +6,6 @@ import { isAimingInspectionVisible } from "./playerStatus";
 import type { EnduranceSession } from "../game/endurance/session";
 import { type RoundMap } from "../game/round/prepareRound";
 import { useTranslation } from "react-i18next";
-import { VGA_PALETTE } from "../types/game";
 import type { Player } from "../types/player";
 import { GameHUD } from "./GameHUD";
 import { WindBanner } from "./WindBanner";
@@ -55,20 +54,18 @@ export interface GameCanvasProps {
 }
 
 function MenuButton({
-  canvasWidth,
   onReturnToMenu,
 }: {
-  readonly canvasWidth: number;
   readonly onReturnToMenu?: () => void;
 }) {
   const { t } = useTranslation();
   if (!onReturnToMenu) return null;
   return (
-    <div style={{ display: "flex", justifyContent: "flex-end", width: canvasWidth }}>
+    <div className="combat-topbar">
       <button
         type="button"
+        className="combat-menu-btn"
         onClick={onReturnToMenu}
-        style={{ fontSize: 12, padding: "3px 9px" }}
         title={t("btn_menu_title")}
       >
         {t("btn_menu")}
@@ -129,17 +126,13 @@ function CombatAdvisor({
   return <ShotAdvisorPanel {...advisor} view={view} />;
 }
 
-function CombatControls({
+function CombatHudOverlay({
   gameMode,
   round,
   gamePhase,
   wind,
   turnInfo,
   onWeaponSelect,
-  onAdjustAngle,
-  onAdjustPower,
-  onCycleWeapon,
-  onFire,
 }: {
   readonly gameMode: GameCanvasProps["gameMode"];
   readonly round: number;
@@ -147,25 +140,16 @@ function CombatControls({
   readonly wind: number;
   readonly turnInfo: GameCanvasState["turnInfo"];
   readonly onWeaponSelect: (weaponId: WeaponId) => void;
-  readonly onAdjustAngle: (delta: number) => void;
-  readonly onAdjustPower: (delta: number) => void;
-  readonly onCycleWeapon: (delta: 1 | -1) => void;
-  readonly onFire: () => void;
 }) {
   const active = gamePhase === "COMBAT" || gamePhase === "RESOLUTION";
   if (!active) return null;
   return (
     <>
       <CombatStatusAnnouncer round={round} turnInfo={turnInfo} wind={wind} />
-      <WindBanner windForce={wind} />
-      <GameHUD turnInfo={turnInfo} gameMode={gameMode} onWeaponSelect={onWeaponSelect} />
-      <MobileControls
-        turnInfo={turnInfo}
-        onAdjustAngle={onAdjustAngle}
-        onAdjustPower={onAdjustPower}
-        onCycleWeapon={onCycleWeapon}
-        onFire={onFire}
-      />
+      <div className="combat-hud-stack">
+        <WindBanner windForce={wind} />
+        <GameHUD turnInfo={turnInfo} gameMode={gameMode} onWeaponSelect={onWeaponSelect} />
+      </div>
     </>
   );
 }
@@ -176,6 +160,8 @@ function TransientOverlays({
   fireRejection,
   protocolMismatch,
   gamePhase,
+  canvasWidth,
+  canvasHeight,
   onDismissEarnings,
 }: {
   readonly earningsOverlay: GameCanvasState["earningsOverlay"];
@@ -183,13 +169,20 @@ function TransientOverlays({
   readonly fireRejection: GameCanvasState["fireRejection"];
   readonly protocolMismatch: GameCanvasState["protocolMismatch"];
   readonly gamePhase: GameCanvasState["gamePhase"];
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
   readonly onDismissEarnings: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <>
       {earningsOverlay && (
-        <ShotEarningsOverlay overlay={earningsOverlay} onDismiss={onDismissEarnings} />
+        <ShotEarningsOverlay
+          overlay={earningsOverlay}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
+          onDismiss={onDismissEarnings}
+        />
       )}
       {zeusAnnouncement && (
         <div className="zeus-announcement" role="status" aria-live="polite">
@@ -251,18 +244,15 @@ function RoundPhaseOverlay({
   switch (state.gamePhase) {
     case "SUMMARY":
       return (
-        <>
-          <RoundSummary
-            round={state.currentManche}
-            players={state.uiPlayers}
-            result={state.roundResult}
-            roundOutcome={state.lastRoundOutcome}
-            onNextRound={onNextRound}
-            onNewGame={onNewGameFromSummary}
-            freeWeapons={freeWeapons}
-          />
-          <div className="retro-badge">PHASE: {state.gamePhase}</div>
-        </>
+        <RoundSummary
+          round={state.currentManche}
+          players={state.uiPlayers}
+          result={state.roundResult}
+          roundOutcome={state.lastRoundOutcome}
+          onNextRound={onNextRound}
+          onNewGame={onNewGameFromSummary}
+          freeWeapons={freeWeapons}
+        />
       );
     case "SHOP":
       return state.shopPlayers.length > 0 ? (
@@ -375,6 +365,7 @@ export function GameCanvas({
     canvasRef,
     state,
     CANVAS_WIDTH,
+    CANVAS_HEIGHT,
     handleCanvasClick,
     handleWeaponSelect,
     handleShopBuySell,
@@ -405,6 +396,7 @@ export function GameCanvas({
   } = state;
 
   const hasBlockingModalError = isBlockingModalErrorActive(state);
+  const isCombatActive = gamePhase === "COMBAT" || gamePhase === "RESOLUTION";
   const terrainCursor = getTerrainCursor({
     gameMode,
     gamePhase,
@@ -415,14 +407,7 @@ export function GameCanvas({
   });
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 8,
-      }}
-    >
+    <div className="combat-shell">
       {!endurance && gameMode === "local" && diagnostics && DiagnosticPanel && <Suspense fallback={null}><DiagnosticPanel source={diagnostics} /></Suspense>}
       <InlineSessionErrors
         suppressed={hasBlockingModalError}
@@ -430,83 +415,92 @@ export function GameCanvas({
         roundPreparationError={state.roundPreparationError}
         onRetry={retryRoundPreparation}
       />
-      <MenuButton canvasWidth={CANVAS_WIDTH} onReturnToMenu={endurance ? undefined : onReturnToMenu} />
+      <MenuButton onReturnToMenu={endurance ? undefined : onReturnToMenu} />
 
-      <div style={{ position: "relative" }}>
-        <TransientOverlays
-          earningsOverlay={earningsOverlay}
-          zeusAnnouncement={zeusAnnouncement}
-          fireRejection={fireRejection}
-          protocolMismatch={protocolMismatch}
-          gamePhase={gamePhase}
-          onDismissEarnings={dismissEarningsOverlay}
-        />
-
-        <canvas
-          ref={canvasRef}
-          className="game-canvas"
-          onClick={handleCanvasClick}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              handleCanvasClick();
-            }
-          }}
-          tabIndex={0}
-          role="img"
-          aria-label={t("canvas_game_aria_label")}
-          style={{
-            border: `3px solid ${VGA_PALETTE.GRAY}`,
-            imageRendering: "pixelated",
-            cursor: terrainCursor,
-            background: "#000000",
-          }}
-        />
-
-        <CombatControls
+      <div className="combat-battlefield">
+        <CombatHudOverlay
           gameMode={gameMode}
           round={state.currentManche}
           gamePhase={gamePhase}
           wind={wind}
           turnInfo={turnInfo}
           onWeaponSelect={handleWeaponSelect}
+        />
+
+        <div className="combat-canvas-stage">
+          <TransientOverlays
+            earningsOverlay={earningsOverlay}
+            zeusAnnouncement={zeusAnnouncement}
+            fireRejection={fireRejection}
+            protocolMismatch={protocolMismatch}
+            gamePhase={gamePhase}
+            canvasWidth={CANVAS_WIDTH}
+            canvasHeight={CANVAS_HEIGHT}
+            onDismissEarnings={dismissEarningsOverlay}
+          />
+
+          <canvas
+            ref={canvasRef}
+            className="game-canvas"
+            onClick={handleCanvasClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleCanvasClick();
+              }
+            }}
+            tabIndex={0}
+            role="img"
+            aria-label={t("canvas_game_aria_label")}
+            style={{ cursor: terrainCursor }}
+          />
+
+          <RoundPhaseOverlay
+            state={state}
+            gameMode={gameMode}
+            isLocalShopTurn={isLocalShopTurn}
+            shopDisplayPlayer={shopDisplayPlayer}
+            localShopDone={localShopDone}
+            freeWeapons={freeWeapons}
+            onNextRound={endurance ? () => {} : handleNextRound}
+            onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
+            onShopBuySell={handleShopBuySell}
+            onShopReady={handleShopReady}
+            onRetry={retryRoundPreparation}
+            onReturnToMenu={endurance ? undefined : onReturnToMenu}
+          />
+        </div>
+      </div>
+
+      {isCombatActive && (
+        <MobileControls
+          turnInfo={turnInfo}
           onAdjustAngle={handleAdjustAngle}
           onAdjustPower={handleAdjustPower}
           onCycleWeapon={handleCycleWeapon}
           onFire={handleFire}
         />
+      )}
 
-        <AimingPlayerStatus
-          players={state.playerStatus}
-          gamePhase={gamePhase}
-          turnInfo={turnInfo}
-          gameMode={gameMode}
-          lockedTargetId={advisor.lockFor ? advisor.lockFor(turnInfo?.playerId) : (advisor.view.playerId === turnInfo?.playerId ? advisor.view.lockedTargetId : undefined)}
-          onToggleLock={advisor.toggleLock}
-        />
+      <AimingPlayerStatus
+        players={state.playerStatus}
+        gamePhase={gamePhase}
+        turnInfo={turnInfo}
+        gameMode={gameMode}
+        lockedTargetId={advisor.lockFor ? advisor.lockFor(turnInfo?.playerId) : (advisor.view.playerId === turnInfo?.playerId ? advisor.view.lockedTargetId : undefined)}
+        onToggleLock={advisor.toggleLock}
+      />
 
-        <CombatAdvisor
-          gameMode={gameMode}
-          gamePhase={gamePhase}
-          turnInfo={turnInfo}
-          advisor={advisor}
-        />
+      <CombatAdvisor
+        gameMode={gameMode}
+        gamePhase={gamePhase}
+        turnInfo={turnInfo}
+        advisor={advisor}
+      />
 
-        <RoundPhaseOverlay
-          state={state}
-          gameMode={gameMode}
-          isLocalShopTurn={isLocalShopTurn}
-          shopDisplayPlayer={shopDisplayPlayer}
-          localShopDone={localShopDone}
-          freeWeapons={freeWeapons}
-          onNextRound={endurance ? () => {} : handleNextRound}
-          onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
-          onShopBuySell={handleShopBuySell}
-          onShopReady={handleShopReady}
-          onRetry={retryRoundPreparation}
-          onReturnToMenu={endurance ? undefined : onReturnToMenu}
-        />
-      </div>
+      {!hasBlockingModalError && gamePhase === "SUMMARY" && (
+        <div className="retro-badge">PHASE: {gamePhase}</div>
+      )}
 
       <NewGameButton visible={showNewGameButton} onNewGame={handleNewGame} />
 

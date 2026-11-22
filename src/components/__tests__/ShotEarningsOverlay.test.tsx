@@ -37,9 +37,38 @@ describe("ShotEarningsOverlay", () => {
     );
     const aliceReward = screen.getByText("+100$");
     expect(aliceReward.style.color).toBe("rgb(85, 255, 255)");
-    expect(aliceReward.style.left).toBe("180px");
-    expect(aliceReward.style.top).toBe("282px");
-    expect(screen.getByText("+25$").style.color).toBe("rgb(255, 255, 85)");
+    expect(aliceReward.style.left).toBe("22.5%");
+    expect(aliceReward.style.top).toBe("58.75%");
+    const bobReward = screen.getByText("+25$");
+    expect(bobReward.style.color).toBe("rgb(255, 255, 85)");
+    expect(bobReward.style.left).toBe("77.5%");
+    expect(bobReward.style.top).toBe("53.5417%");
+  });
+
+  it("projette et borne les coordonnées extrêmes en pourcentages sur la scène 800×480", () => {
+    render(
+      <ShotEarningsOverlay
+        overlay={{
+          shotId: 9,
+          displayedAt: 1_000,
+          awards: [
+            { playerId: "left", playerName: "LEFT", color: "#55FFFF", amount: 10, x: 0, y: 10 },
+            { playerId: "right", playerName: "RIGHT", color: "#FFFF55", amount: 20, x: 800, y: 480 },
+            { playerId: "out", playerName: "OUT", color: "#FF5555", amount: 30, x: 950, y: 600 },
+          ],
+        }}
+        onDismiss={onDismiss}
+      />,
+    );
+    const leftReward = screen.getByText("+10$");
+    expect(leftReward.style.left).toBe("8%");
+    expect(leftReward.style.top).toBe("10%");
+    const rightReward = screen.getByText("+20$");
+    expect(rightReward.style.left).toBe("92%");
+    expect(rightReward.style.top).toBe("92.0833%");
+    const outReward = screen.getByText("+30$");
+    expect(outReward.style.left).toBe("92%");
+    expect(outReward.style.top).toBe("95%");
   });
 
   it("ferme automatiquement après trois secondes", () => {

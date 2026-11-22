@@ -15,30 +15,22 @@ export function LanguageSwitcher() {
     >
       <button
         type="button"
+        className="language-switcher-btn"
         onClick={() => toggleLang("fr")}
         style={{
           background: currentLang.startsWith("fr") ? VGA_PALETTE.GREEN : "#111",
           color: currentLang.startsWith("fr") ? "#000" : VGA_PALETTE.GRAY,
-          border: "none",
-          padding: "2px 6px",
-          cursor: "pointer",
-          fontWeight: "bold",
-          fontSize: "12px",
         }}
       >
         FR
       </button>
       <button
         type="button"
+        className="language-switcher-btn"
         onClick={() => toggleLang("en")}
         style={{
           background: currentLang.startsWith("en") ? VGA_PALETTE.GREEN : "#111",
           color: currentLang.startsWith("en") ? "#000" : VGA_PALETTE.GRAY,
-          border: "none",
-          padding: "2px 6px",
-          cursor: "pointer",
-          fontWeight: "bold",
-          fontSize: "12px",
         }}
       >
         EN

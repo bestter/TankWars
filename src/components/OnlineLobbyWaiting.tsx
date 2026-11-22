@@ -41,7 +41,7 @@ export function OnlineLobbyWaiting({
 
   return (
     <>
-      <div style={{ color: VGA_PALETTE.CYAN, marginBottom: 8, fontSize: 13 }}>
+      <div className="lobby-room-code" style={{ color: VGA_PALETTE.CYAN, marginBottom: 8, fontSize: 13 }}>
         {roomId ? `${t('room_code_label')}: ${roomId}` : t('connecting')}
       </div>
 
@@ -50,12 +50,12 @@ export function OnlineLobbyWaiting({
           <div style={{ marginBottom: 6 }}>{t('you_are_player', { num: (initialSlot ?? 0) + 1, slot: initialSlot ?? 0 })}</div>
           <input
             type="text"
+            className="lobby-name-input"
             placeholder={t('enter_name_placeholder')}
             aria-label={t('enter_name_placeholder')}
             value={myName}
             maxLength={16}
             onChange={(e) => setMyName(e.target.value.slice(0, 16))}
-            style={{ width: '100%', padding: 6, background: '#000', color: '#fff', border: '1px solid #555' }}
           />
           <button
             type="button"
@@ -74,20 +74,20 @@ export function OnlineLobbyWaiting({
         <div style={{ marginBottom: 10 }}>
           <div style={{ color: '#AAAAAA', fontSize: 12, marginBottom: 4 }}>{t('room_created')}</div>
           {slotsInfo.map((s) => (
-            <div key={s.slot} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12 }}>
-              <span style={{ color: s.type === 'human' ? VGA_PALETTE.FLASH_GREEN : '#888', width: 140 }}>
+            <div key={s.slot} className="lobby-wait-slot-row">
+              <span className="lobby-wait-slot-label" style={{ color: s.type === 'human' ? VGA_PALETTE.FLASH_GREEN : '#888' }}>
                 {t('slot_label', { num: s.slot + 1 })} — {s.type === 'human' ? (s.slot === 0 ? t('your_slot') : 'HUMAIN') : `IA ${s.aiProfile || ''}`}
               </span>
               {s.url && (
-                <>
-                  <button type="button" onClick={() => onCopyLink(s.url, s.slot)} style={{ fontSize: 12 }}>
+                <span className="lobby-wait-slot-actions">
+                  <button type="button" className="lobby-action-btn" onClick={() => onCopyLink(s.url, s.slot)}>
                     {copyFeedback[s.slot] ? t('link_copied') : t('copy_link')}
                   </button>
                   {/* Security: Prevent reverse tabnabbing on external links */}
-                  <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: VGA_PALETTE.ELECTRIC_CYAN }}>
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="lobby-action-link" style={{ color: VGA_PALETTE.ELECTRIC_CYAN }}>
                     {t('open_link')}
                   </a>
-                </>
+                </span>
               )}
               {!s.url && <span style={{ color: '#666' }}>(IA — pas de lien)</span>}
             </div>
@@ -100,7 +100,7 @@ export function OnlineLobbyWaiting({
         {t('waiting_room_title')} — {t('players_connected', { joined: roster.length, total: numPlayers || slotsInfo.length || 2 })}
       </div>
 
-      <div style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>
+      <div className="lobby-roster">
         {roster.length === 0 && <span>{t('waiting_for_players')}</span>}
         {roster.map((r) => (
           <div key={r.slot} style={{ color: r.type === 'ai' ? '#888' : '#fff' }}>
@@ -117,8 +117,8 @@ export function OnlineLobbyWaiting({
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-        <button type="button" onClick={onLeaveRoom}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+        <button type="button" className="lobby-action-btn" onClick={onLeaveRoom}>
           {t('leave_room')}
         </button>
       </div>

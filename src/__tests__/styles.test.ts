@@ -90,4 +90,20 @@ describe('styles CSS cleanup (#405)', () => {
     expect(indexCss).toContain('--text-h');
     expect(indexCss).toContain('--border');
   });
+
+  it('supports fluid mobile layout, safe-areas, adaptive container queries, and touch targets (#445)', () => {
+    expect(indexCss).toContain('min-height: 100dvh;');
+    expect(appCss).toContain('min-height: 100dvh;');
+    expect(appCss).toContain('env(safe-area-inset-');
+    expect(appCss).toContain('container: combat / inline-size;');
+    expect(appCss).toContain('@container combat');
+    expect(appCss).toMatch(/\.game-canvas\s*\{[^}]*display:\s*block;[^}]*aspect-ratio:\s*800\s*\/\s*480;/);
+    expect(appCss).toMatch(/\.mobile-controls-panel\s*\{[^}]*flex-wrap:\s*wrap;/);
+    expect(appCss).toMatch(/\.retro-player-row\s*\{[^}]*flex-wrap:\s*wrap;/);
+    expect(appCss).toMatch(/\.retro-logo\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto;/);
+    expect(appCss).toMatch(/\.retro-inc-btn\s*\{[^}]*min-block-size:\s*24px;/);
+    expect(appCss).toContain('@media (pointer: coarse)');
+    expect(appCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
+    expect(indexCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
+  });
 });

@@ -46,10 +46,7 @@ export function PlayerConfigRow({
   const isHuman = cfg.isHuman;
 
   return (
-    <div
-      className="retro-player-row"
-      style={{ display: "flex", alignItems: "center", gap: "8px" }}
-    >
+    <div className="retro-player-row">
       {/* Aperçu miniature du tank */}
       <TankPreview color={color} />
 

@@ -3,6 +3,119 @@
  * Keeps only runtime-varying values (colors, states) in JSX style props.
  * Hardcoded VGA hexes from src/types/game.ts for static parts.
  */
+.app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #000000;
+  font-family: monospace;
+  position: relative;
+  box-sizing: border-box;
+  padding-block-start: max(8px, env(safe-area-inset-top, 0px));
+  padding-block-end: max(12px, env(safe-area-inset-bottom, 0px));
+  padding-inline-start: max(8px, env(safe-area-inset-left, 0px));
+  padding-inline-end: max(8px, env(safe-area-inset-right, 0px));
+}
+
+.app-shell--menu {
+  padding-block-start: env(safe-area-inset-top, 0px);
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+  padding-inline-start: env(safe-area-inset-left, 0px);
+  padding-inline-end: env(safe-area-inset-right, 0px);
+}
+
+.app-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 0 6px;
+  box-sizing: border-box;
+}
+
+.app-shell--menu .app-header {
+  padding: 6px 8px 0;
+}
+
+.app-header-lang {
+  z-index: 100;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.game-stage-shell {
+  display: flex;
+  justify-content: center;
+  justify-content: safe center;
+  width: 100%;
+  min-inline-size: 0;
+}
+
+.combat-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 800px;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  container: combat / inline-size;
+}
+
+.combat-topbar {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  min-inline-size: 0;
+}
+
+.combat-menu-btn {
+  font-family: monospace;
+  font-size: 12px;
+  padding: 4px 10px;
+  min-block-size: 24px;
+  cursor: pointer;
+}
+
+.combat-battlefield {
+  position: relative;
+  width: 100%;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.combat-hud-stack {
+  width: 100%;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+}
+
+.combat-canvas-stage {
+  position: relative;
+  width: min(100%, 800px);
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+@media (max-height: 540px) {
+  .combat-canvas-stage {
+    width: min(100%, 800px, calc(max(160px, 100vh - 150px) * 5 / 3));
+    width: min(100%, 800px, calc(max(160px, 100dvh - 150px) * 5 / 3));
+  }
+}
+
 .retro-modal {
   inset: 0;
   margin: auto;
@@ -16,7 +129,25 @@
   padding: 14px 18px 18px;
   text-align: center;
   box-sizing: border-box;
+  max-width: calc(100% - 16px);
   max-height: 96%;
+  max-height: calc(100dvh - max(20px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px)));
+}
+
+.retro-modal-summary {
+  width: min(460px, 92%);
+  padding: 14px 16px 18px;
+  background-color: rgba(0, 0, 0, 0.92);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.retro-modal-shop {
+  width: min(520px, 94%);
+  max-height: min(540px, 92vh);
+  max-height: min(540px, calc(100dvh - max(20px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))));
+  padding: 12px;
+  background-color: rgba(0, 0, 0, 0.94);
 }
 
 .retro-modal-shop[open] {
@@ -35,30 +166,44 @@ dialog.retro-modal::backdrop {
 }
 
 .retro-hud {
-  position: absolute;
-  top: 34px; /* below WindBanner (~28px) */
-  left: 4px;
-  right: 4px;
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
   z-index: 5;
   background-color: rgba(0, 0, 0, 0.82);
+  border: 3px solid #55ffff;
   font-family: monospace;
+  font-size: 12px;
+  line-height: 1.1;
   color: #ffffff;
-  padding: 3px 8px;
+  padding: 4px 8px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  row-gap: 4px;
+  gap: 8px 10px;
   pointer-events: none;
   box-shadow: 0 0 0 1px #000 inset;
+}
+
+.retro-hud-player {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  pointer-events: none;
+}
+
+.retro-hud-player-name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .retro-hud-weapons {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 3px;
-  margin-left: auto;
+  gap: 4px;
+  margin-left: 0;
   max-width: 100%;
   pointer-events: auto;
   cursor: default;
@@ -211,34 +356,66 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 .retro-btn {
   font-family: monospace;
   font-size: 15px;
-  padding: 10px 28px;
+  padding: 10px 20px;
   background-color: #222;
   color: #ffffff;
   border: 3px solid #55ffff; /* VGA CYAN */
   cursor: pointer;
   font-weight: bold;
   letter-spacing: 0.5px;
+  max-width: 100%;
+  min-block-size: 44px;
+  box-sizing: border-box;
 }
 
 .retro-inc-btn {
   font-family: monospace;
-  font-size: 12px;
-  width: 26px;
-  height: 20px;
-  padding: 0;
+  font-size: 13px;
+  font-weight: bold;
+  min-inline-size: 28px;
+  min-block-size: 24px;
+  padding: 0 4px;
   border: 1px solid;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .retro-weapon-btn {
   font-family: monospace;
   font-size: 12px;
-  padding: 2px 4px;
+  padding: 3px 5px;
   text-align: center;
   line-height: 1;
-  min-width: 42px;
+  min-inline-size: 42px;
+  min-block-size: 24px;
   border: 2px solid;
   outline: none;
   pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.weapon-shop-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  background-color: #111;
+  border: 1px solid #555555;
+  box-sizing: border-box;
+}
+
+.weapon-shop-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.weapon-shop-ready-btn {
+  padding: 8px 20px;
 }
 
 .retro-badge {
@@ -259,7 +436,10 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   font-family: monospace;
   color: #55ffff; /* VGA CYAN */
   background: rgba(0, 0, 0, 0.8);
-  padding: 12px 24px;
+  padding: 10px 16px;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  overflow-wrap: break-word;
   text-align: center;
 }
 
@@ -268,7 +448,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   border: 4px solid #ff5555;
   color: #ff5555;
   background: rgba(0, 0, 0, 0.94);
-  padding: 24px;
+  padding: 20px;
+  overflow-y: auto;
 }
 
 .protocol-mismatch-overlay[open] {
@@ -277,6 +458,12 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   align-items: center;
   justify-content: center;
   gap: 12px;
+}
+
+.retro-modal-error {
+  width: min(460px, 92%);
+  background-color: rgba(0, 0, 0, 0.94);
+  overflow-y: auto;
 }
 
 .retro-modal-error[open] {
@@ -307,6 +494,7 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   background: #55ff55;
   border: 2px solid #ffffff;
   padding: 6px 16px;
+  min-block-size: 32px;
   cursor: pointer;
 }
 
@@ -321,7 +509,10 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   color: #ff5555; /* VGA LIGHT RED */
   background: rgba(0, 0, 0, 0.85);
   border: 2px solid #ff5555;
-  padding: 12px 24px;
+  padding: 10px 16px;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  overflow-wrap: break-word;
   text-align: center;
   pointer-events: none;
   animation: fire-rejection-in 150ms ease-out;
@@ -342,19 +533,21 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 .zeus-announcement {
   position: absolute;
   z-index: 45;
-  top: 46px;
+  top: 8px;
   left: 50%;
-  width: min(700px, calc(100% - 32px));
-  padding: 10px 14px;
+  width: min(700px, calc(100% - 16px));
+  box-sizing: border-box;
+  padding: 6px 10px;
   border: 2px solid #ffff55;
   background: rgb(0 0 0 / 88%);
   color: #ffffff;
   font-family: "Courier New", monospace;
-  font-size: 16px;
+  font-size: clamp(0.75rem, 0.65rem + 1.2cqi, 1rem);
   font-weight: 700;
   text-align: center;
   text-shadow: 0 0 8px #55ffff;
   pointer-events: none;
+  overflow-wrap: break-word;
   transform: translateX(-50%);
   animation: zeus-announcement-in 180ms steps(2, end);
 }
@@ -372,14 +565,54 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .retro-newgame-btn {
-  margin-top: 16px;
-  padding: 12px 32px;
-  font-size: 20px;
+  margin-top: 8px;
+  padding: 12px 28px;
+  font-size: 18px;
   background-color: #222;
   color: #ffffff;
   border: 3px solid #55ffff; /* VGA CYAN */
   cursor: pointer;
   font-family: monospace;
+  max-width: 100%;
+  min-block-size: 44px;
+  box-sizing: border-box;
+}
+
+.game-over-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 16px);
+  box-sizing: border-box;
+  text-align: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.game-over-winner {
+  font-size: clamp(1.75rem, 0.5rem + 6vw, 4rem);
+  font-size: clamp(1.75rem, 0.5rem + 6.5cqi, 4rem);
+  font-weight: bold;
+  text-shadow: 0 0 20px #000, 0 0 40px #000;
+  font-family: monospace;
+  line-height: 1.1;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.game-over-subtitle {
+  font-size: clamp(0.95rem, 0.7rem + 1.5cqi, 1.5rem);
+  color: #aaaaaa;
+}
+
+.game-controls-explanation {
+  color: #aaaaaa;
+  font-size: 12px;
+  text-align: center;
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 /* ========================================
@@ -388,19 +621,27 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
    ======================================== */
 
 .retro-menu-frame {
+  width: 100%;
   max-width: 620px;
-  margin: 32px auto;
+  margin: 8px auto;
   background: #aaaaaa;
   padding: 4px; /* outer "line" for double border effect */
   box-shadow: 0 0 0 1px #000000;
+  box-sizing: border-box;
+}
+
+.retro-lobby-frame {
+  max-width: 820px;
+  margin: 0 auto;
 }
 
 .retro-menu-inner {
   background: #000000;
-  padding: 18px 22px 14px;
+  padding: 12px 10px;
   font-family: monospace;
   color: #ffffff;
   border: 2px solid #000000; /* inner separator */
+  box-sizing: border-box;
 }
 
 .retro-title {
@@ -412,6 +653,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 .retro-logo {
   display: block;
   margin: 0 auto;
+  max-width: 100%;
+  height: auto;
   shape-rendering: crispEdges;
 }
 
@@ -430,8 +673,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .skip-link {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
   z-index: 1000;
   padding: 6px 12px;
   background-color: #000000;
@@ -470,12 +713,15 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .retro-player-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 5px 6px;
+  padding: 6px;
   background: #0a0a0a;
   margin-bottom: 5px;
   border: 1px solid #333333;
+  min-inline-size: 0;
+  box-sizing: border-box;
 }
 
 .retro-color-swatch {
@@ -494,6 +740,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   font-size: 12px;
   flex: 1;
   min-width: 80px;
+  min-block-size: 28px;
+  box-sizing: border-box;
 }
 
 .retro-input:focus {
@@ -502,8 +750,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .retro-player-name-field {
-  flex: 1;
-  min-width: 80px;
+  flex: 1 1 100px;
+  min-inline-size: 0;
 }
 
 .retro-player-name-field .retro-input {
@@ -546,6 +794,9 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   color: #00f7ff;
   font-size: 12px;
   cursor: pointer;
+  max-width: 100%;
+  min-block-size: 32px;
+  box-sizing: border-box;
 }
 
 .retro-type-btn {
@@ -565,15 +816,25 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   border-color: #55ff55;
 }
 
+.retro-num-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
 .retro-num-btn {
   font-family: monospace;
   font-size: 12px;
   padding: 4px 10px;
+  min-inline-size: 36px;
+  min-block-size: 28px;
   background: #111111;
   color: #aaaaaa;
   border: 2px solid #444444;
   cursor: pointer;
-  margin-right: 3px;
+  box-sizing: border-box;
 }
 
 .retro-num-btn.active {
@@ -582,10 +843,18 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   border-color: #55ffff;
 }
 
+.retro-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 28px;
+  max-width: 100%;
+}
+
 .retro-start-btn {
   font-family: monospace;
   font-size: 17px;
-  padding: 12px 42px;
+  padding: 12px 20px;
   background: #1a1a1a;
   color: #ffff55;
   border: 4px solid #ffff55;
@@ -594,6 +863,10 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   letter-spacing: 0.8px;
   margin-top: 10px;
   display: inline-block;
+  max-width: 100%;
+  min-block-size: 44px;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
 }
 
 .retro-start-btn:hover {
@@ -614,26 +887,33 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   letter-spacing: 0.3px;
 }
 
+.retro-color-picker {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
 .retro-color-swatch-btn {
   padding: 0;
   margin: 0;
   flex-shrink: 0;
   box-sizing: border-box;
   position: relative;
-  transition: all 0.15s ease-in-out;
-  width: 12px;
-  height: 10px;
+  transition: opacity 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  width: 24px;
+  height: 24px;
   border: 1px solid #555555;
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .retro-color-swatch-btn.selected {
-  width: 16px;
-  height: 14px;
+  width: 24px;
+  height: 24px;
   border: 2px solid #ffffff;
   opacity: 1;
-  transform: scale(1.15);
 }
 
 .retro-color-swatch-btn.unavailable {
@@ -644,7 +924,6 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .retro-color-swatch-btn:hover:not(:disabled) {
   opacity: 1 !important;
-  transform: scale(1.2) !important;
 }
 
 .retro-color-swatch-unavailable-mark {
@@ -673,16 +952,16 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .wind-banner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
   z-index: 6;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 5px 12px;
+  gap: 6px 10px;
+  padding: 5px 10px;
   background: rgba(0, 0, 0, 0.72);
   border-bottom: 2px solid #55ffff; /* VGA_PALETTE.CYAN */
   font-family: monospace;
@@ -692,22 +971,50 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   letter-spacing: 0.06em;
 }
 
+.wind-banner-gauge {
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.wind-banner-gauge-fill {
+  max-width: 100%;
+}
+
 .round-summary-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
   margin-bottom: 4px;
   background-color: #111;
   border: 1px solid #555555; /* VGA_PALETTE.DARK_GRAY */
+  min-inline-size: 0;
+}
+
+.round-summary-name {
+  flex: 1 1 70px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.round-summary-next-btn {
+  font-size: 15px;
+  padding: 11px 16px;
+  min-inline-size: min(260px, 100%);
+  max-width: 100%;
+  min-block-size: 44px;
+  box-sizing: border-box;
 }
 
 .shot-earnings-overlay {
   position: absolute;
   inset: 0;
   z-index: 40;
+  overflow: clip;
   font-family: monospace;
-  font-size: 16px;
+  font-size: clamp(0.75rem, 0.5rem + 1.5cqi, 1rem);
   font-weight: bold;
   pointer-events: none;
   text-shadow:
@@ -741,14 +1048,19 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .round-summary-menu-btn {
+  display: block;
   margin-top: 10px;
+  margin-inline: auto;
   font-size: 10px;
   padding: 3px 10px;
+  min-block-size: 28px;
+  max-width: 100%;
   background-color: transparent;
   border: 1px solid #555555; /* VGA_PALETTE.DARK_GRAY */
   color: #aaaaaa; /* VGA_PALETTE.GRAY */
   cursor: pointer;
   letter-spacing: 0.5px;
+  box-sizing: border-box;
 }
 
 .celebration-banner {
@@ -764,6 +1076,10 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   z-index: 20;
   pointer-events: none;
   text-shadow: 0 0 4px #000;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  overflow-wrap: break-word;
+  text-align: center;
 }
 
 .language-switcher {
@@ -777,24 +1093,137 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   font-size: 12px;
 }
 
+.language-switcher-btn {
+  min-inline-size: 28px;
+  min-block-size: 24px;
+  padding: 3px 8px;
+  border: none;
+  cursor: pointer;
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
 .retro-menu-container {
-  min-height: 100vh;
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
   background: #000000;
   color: #ffffff;
   font-family: monospace;
   display: flex;
   align-items: center;
+  align-items: safe center;
   justify-content: center;
-  padding: 12px;
+  justify-content: safe center;
+  padding: 8px;
 }
 
 .retro-player-select {
-  width: 120px;
-  flex: none;
+  flex: 0 1 110px;
+  width: auto;
+  min-inline-size: 100px;
+  max-width: 100%;
+  min-block-size: 28px;
   font-size: 11px;
   padding: 2px 4px;
   cursor: pointer;
   background: #000000;
+  box-sizing: border-box;
+}
+
+.lobby-slot-row {
+  margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  text-align: left;
+  min-inline-size: 0;
+}
+
+.lobby-slot-label {
+  flex: 0 0 auto;
+  min-inline-size: 92px;
+}
+
+.lobby-slot-select {
+  background: #111;
+  color: #fff;
+  border: 1px solid #555;
+  padding: 3px 6px;
+  max-width: 100%;
+  min-block-size: 28px;
+  box-sizing: border-box;
+}
+
+.lobby-slot-hint {
+  min-inline-size: 0;
+  overflow-wrap: break-word;
+}
+
+.lobby-secondary-btn {
+  font-size: 12px;
+  min-block-size: 28px;
+  padding: 4px 12px;
+  max-width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.lobby-room-code,
+.lobby-roster {
+  font-size: 12px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.lobby-name-input {
+  width: 100%;
+  padding: 6px;
+  background: #000;
+  color: #fff;
+  border: 1px solid #555;
+  box-sizing: border-box;
+  min-block-size: 32px;
+  font-family: monospace;
+}
+
+.lobby-wait-slot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  text-align: left;
+  min-inline-size: 0;
+}
+
+.lobby-wait-slot-label {
+  flex: 1 1 140px;
+  min-inline-size: 0;
+  overflow-wrap: break-word;
+}
+
+.lobby-wait-slot-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lobby-action-btn,
+.lobby-action-link {
+  font-size: 12px;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 /* Responsive canvas settings */
@@ -805,6 +1234,14 @@ canvas {
 }
 
 .game-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 800 / 480;
+  border: 3px solid #aaaaaa;
+  image-rendering: pixelated;
+  background: #000000;
+  box-sizing: border-box;
   content-visibility: auto;
   contain-intrinsic-size: auto 800px auto 480px;
 }
@@ -812,14 +1249,16 @@ canvas {
 /* Mobile controls panel rules */
 .mobile-controls-panel {
   display: flex;
-  justify-content: space-around;
+  flex-wrap: wrap;
+  justify-content: space-evenly;
   align-items: center;
+  gap: 10px 12px;
   width: 100%;
   max-width: 800px;
   background-color: rgba(0, 0, 0, 0.9);
   border: 3px dashed #55ffff; /* VGA CYAN */
   padding: 10px 6px;
-  margin-top: 10px;
+  margin-top: 2px;
   box-sizing: border-box;
 }
 
@@ -838,7 +1277,7 @@ canvas {
 
 .mobile-button-row {
   display: flex;
-  gap: 12px;
+  gap: 8px;
 }
 
 .retro-mobile-btn {
@@ -890,21 +1329,24 @@ canvas {
 
 .mobile-actions-group {
   flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 10px;
+  max-width: 100%;
 }
 
 .btn-weapon {
-  padding: 0 10px;
-  height: 44px;
+  padding: 6px 10px;
+  min-block-size: 44px;
   font-size: 12px;
   border-color: #ff55ff; /* VGA NEON PINK / MAGENTA */
   color: #ff55ff;
 }
 
 .btn-fire {
-  padding: 0 16px;
-  height: 44px;
+  padding: 6px 16px;
+  min-block-size: 44px;
   font-size: 14px;
   font-weight: 900;
 }
@@ -919,8 +1361,9 @@ canvas {
 .player-status {
   width: 100%;
   max-width: 800px;
+  min-inline-size: 0;
   box-sizing: border-box;
-  margin: 8px 0;
+  margin: 0;
   padding: 8px;
   border: 2px solid #55ffff;
   background: #000000;
@@ -1019,6 +1462,8 @@ canvas {
 
 .player-status-lock {
   min-height: 44px;
+  max-width: 100%;
+  overflow-wrap: break-word;
   align-self: flex-start;
   background: #111111;
   color: #ffffff;
@@ -1048,9 +1493,13 @@ canvas {
   background: #000;
   color: #fff;
   padding: 8px;
+  width: 100%;
   max-width: 800px;
+  min-inline-size: 0;
   box-sizing: border-box;
   font: 12px monospace;
+  text-align: left;
+  overflow-wrap: break-word;
 }
 
 .shot-advisor-actions {
@@ -1060,9 +1509,24 @@ canvas {
   gap: 8px;
 }
 
+.shot-advisor-objective {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.shot-advisor ul {
+  padding-inline-start: 18px;
+  margin: 6px 0;
+}
+
 .shot-advisor button,
 .shot-advisor select {
   min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
   background: #111;
   color: #fff;
   border: 2px solid #aaa;
@@ -1136,4 +1600,232 @@ canvas {
 .diagnostic-status-warning {
   color: #ffff55;
   background: #333300;
+}
+
+@media (min-width: 480px) {
+  .retro-menu-inner {
+    padding: 18px 22px 14px;
+  }
+
+  .retro-start-btn {
+    padding: 12px 42px;
+  }
+
+  .round-summary-next-btn {
+    padding: 11px 28px;
+  }
+
+  .weapon-shop-ready-btn {
+    padding: 8px 32px;
+  }
+}
+
+@media (min-width: 640px) {
+  .retro-menu-container {
+    padding: 12px;
+  }
+}
+
+@media (min-width: 640px) and (min-height: 600px) {
+  .retro-menu-frame {
+    margin: 32px auto;
+  }
+
+  .retro-lobby-frame {
+    margin: 0 auto;
+  }
+}
+
+@media (min-width: 1025px) {
+  .app-shell:not(.app-shell--menu) {
+    padding-block-start: max(12px, env(safe-area-inset-top, 0px));
+    padding-inline-start: max(12px, env(safe-area-inset-left, 0px));
+    padding-inline-end: max(12px, env(safe-area-inset-right, 0px));
+  }
+}
+
+@media (min-width: 1025px) and (min-height: 520px) {
+  .app-header {
+    display: block;
+    padding: 0;
+  }
+
+  .app-shell--menu .app-header {
+    padding: 0;
+  }
+
+  .app-header-lang {
+    position: absolute;
+    top: max(12px, env(safe-area-inset-top, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    z-index: 100;
+  }
+}
+
+@media (pointer: coarse) {
+  .language-switcher-btn,
+  .retro-weapon-btn,
+  .retro-inc-btn,
+  .retro-num-btn,
+  .retro-start-btn,
+  .retro-online-btn,
+  .retro-checkbox-label,
+  .retro-input,
+  .retro-player-select,
+  .round-summary-menu-btn,
+  .combat-menu-btn,
+  .protocol-mismatch-overlay button,
+  .retro-modal-error button,
+  .lobby-slot-select,
+  .lobby-secondary-btn,
+  .lobby-name-input,
+  .lobby-action-btn,
+  .lobby-action-link {
+    min-block-size: 44px;
+  }
+
+  .language-switcher-btn {
+    min-inline-size: 44px;
+    font-size: 13px;
+  }
+
+  .retro-weapon-btn {
+    min-inline-size: 44px;
+    padding: 6px 8px;
+  }
+
+  .retro-inc-btn {
+    min-inline-size: 44px;
+    font-size: 18px;
+  }
+
+  .retro-num-btn {
+    min-inline-size: 44px;
+  }
+
+  .round-summary-menu-btn {
+    font-size: 12px;
+    padding: 6px 14px;
+  }
+
+  .retro-color-picker {
+    gap: 6px;
+  }
+
+  .retro-color-swatch-btn,
+  .retro-color-swatch-btn.selected {
+    width: 32px;
+    height: 32px;
+  }
+
+  .weapon-shop-actions {
+    flex-direction: row;
+    gap: 6px;
+  }
+}
+
+@media (min-width: 760px) and (min-height: 541px) {
+  .combat-hud-stack {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: 0;
+    z-index: 6;
+    pointer-events: none;
+  }
+
+  .wind-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+  }
+
+  .retro-hud {
+    position: absolute;
+    top: 34px;
+    left: 4px;
+    right: 4px;
+    width: auto;
+  }
+
+  .retro-hud-weapons {
+    margin-left: auto;
+  }
+
+  .zeus-announcement {
+    top: 46px;
+    padding: 10px 14px;
+  }
+}
+
+@supports (container-type: inline-size) {
+  @media (min-width: 760px) and (min-height: 541px) {
+    .combat-hud-stack {
+      position: static;
+      inset-block-start: auto;
+      inset-inline: auto;
+      z-index: auto;
+      pointer-events: auto;
+    }
+
+    .wind-banner {
+      position: static;
+      top: auto;
+      left: auto;
+      right: auto;
+    }
+
+    .retro-hud {
+      position: static;
+      top: auto;
+      left: auto;
+      right: auto;
+      width: 100%;
+    }
+
+    .retro-hud-weapons {
+      margin-left: 0;
+    }
+
+    .zeus-announcement {
+      top: 8px;
+      padding: 6px 10px;
+    }
+  }
+
+  @media (min-height: 541px) {
+    @container combat (inline-size >= 720px) {
+      .combat-hud-stack {
+        position: absolute;
+        inset-block-start: 0;
+        inset-inline: 0;
+        z-index: 6;
+        pointer-events: none;
+      }
+
+      .wind-banner {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+      }
+
+      .retro-hud {
+        position: absolute;
+        top: 34px;
+        left: 4px;
+        right: 4px;
+        width: auto;
+      }
+
+      .retro-hud-weapons {
+        margin-left: auto;
+      }
+
+      .zeus-announcement {
+        top: 46px;
+        padding: 10px 14px;
+      }
+    }
+  }
 }

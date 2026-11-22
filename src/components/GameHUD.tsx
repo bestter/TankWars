@@ -38,7 +38,10 @@ function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
           verticalAlign: "middle",
         }}
       />
-      <span style={{ color: turnInfo.playerColor, fontWeight: "bold" }}>
+      <span
+        className="retro-hud-player-name"
+        style={{ color: turnInfo.playerColor, fontWeight: "bold" }}
+      >
         {turnInfo.playerName}
       </span>
     </>
@@ -130,23 +133,9 @@ export const GameHUD = memo(function GameHUD({ turnInfo, gameMode, onWeaponSelec
   const currentWeapon = turnInfo?.currentWeapon;
 
   return (
-    <div
-      className="retro-hud"
-      style={{
-        border: `3px solid ${VGA_PALETTE.CYAN}`,
-        fontSize: "12px",
-        lineHeight: "1.1",
-      }}
-    >
+    <div className="retro-hud">
       {/* === PLAYER === */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          pointerEvents: "none",
-        }}
-      >
+      <div className="retro-hud-player">
         <span style={{ color: VGA_PALETTE.MAGENTA, fontWeight: "bold" }}>
           P:
         </span>

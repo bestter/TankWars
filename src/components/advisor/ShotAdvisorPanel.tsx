@@ -18,7 +18,7 @@ export function ShotAdvisorPanel({ view, request, apply, setObjective }: ShotAdv
   return (
     <section className="shot-advisor" aria-label={t("advisor_title")} onKeyDown={(event) => event.stopPropagation()}>
       <div className="shot-advisor-actions">
-        <label>
+        <label className="shot-advisor-objective">
           {t("advisor_objective")}{" "}
           <select value={view.objective} onChange={(event) => setObjective(event.target.value === "SURVIE" ? "SURVIE" : "OPTIMISER_PROFIT")}>
             <option value="OPTIMISER_PROFIT">{t("advisor_profit")}</option>

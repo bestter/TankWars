@@ -38,6 +38,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
         <>
           <span style={{ color: VGA_PALETTE.GREEN }}>{info.strength}</span>
           <div
+            className="wind-banner-gauge"
             style={{
               width: 120,
               height: 8,
@@ -46,6 +47,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
             }}
           >
             <div
+              className="wind-banner-gauge-fill"
               style={{
                 width: barWidth,
                 height: "100%",

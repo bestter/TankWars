@@ -256,4 +256,15 @@ describe('RoundSummary', () => {
     expect(blockedCancelEvent.defaultPrevented).toBe(true);
     expect(onNextRoundMock).toHaveBeenCalledTimes(1);
   });
+
+  it('uses fluid modal and button classes without fixed 420px or 260px inline minWidth (#445)', () => {
+    render(<RoundSummary {...defaultProps} />);
+    const dialog = screen.getByRole('dialog', { name: 'round_summary_title 3' }) as HTMLDialogElement;
+    const primaryBtn = screen.getByRole('button', { name: 'btn_go_to_shop' });
+
+    expect(dialog.classList.contains('retro-modal-summary')).toBe(true);
+    expect(dialog.style.minWidth).toBe('');
+    expect(primaryBtn.classList.contains('round-summary-next-btn')).toBe(true);
+    expect(primaryBtn.style.minWidth).toBe('');
+  });
 });
