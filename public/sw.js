@@ -1,4 +1,7 @@
 const CACHE_NAME = "tankwars-v4";
+const MANIFEST_PATH = "/manifest.json";
+// Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
+const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
   "/",
   "/index.html",
@@ -6,7 +9,6 @@ const ASSETS = [
   "/favicon-32.png",
   "/apple-touch-icon.png",
   "/icon-512.png",
-  "/manifest.json",
 ];
 
 self.addEventListener("install", (e) => {
@@ -14,7 +16,11 @@ self.addEventListener("install", (e) => {
     caches
       .open(CACHE_NAME)
       .then((cache) => {
-        return cache.addAll(ASSETS);
+        const manifest = new Request(
+          new URL(MANIFEST_PATH, self.location.origin),
+          MANIFEST_FETCH_OPTIONS
+        );
+        return cache.addAll([...ASSETS, manifest]);
       })
       .then(() => self.skipWaiting())
   );
@@ -45,14 +51,14 @@ self.addEventListener("fetch", (e) => {
 
   const requestUrl = new URL(e.request.url);
   const isManifestRequest =
-    requestUrl.pathname === "/manifest.json" ||
+    requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
 
   // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
   // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
   if (e.request.mode === "navigate" || isManifestRequest) {
     e.respondWith(
-      fetch(e.request)
+      fetch(e.request, isManifestRequest ? MANIFEST_FETCH_OPTIONS : undefined)
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();
@@ -70,7 +76,7 @@ self.addEventListener("fetch", (e) => {
               if (e.request.mode === "navigate") {
                 return caches.match("/index.html", { cacheName: CACHE_NAME });
               }
-              return caches.match("/manifest.json", { cacheName: CACHE_NAME });
+              return caches.match(MANIFEST_PATH, { cacheName: CACHE_NAME });
             });
         })
     );

@@ -78,13 +78,14 @@ describe('Service worker cache strategy', () => {
     const content = fs.readFileSync(swPath, 'utf-8');
     expect(content).toContain('const CACHE_NAME = "tankwars-v4"');
     expect(content).toContain('e.request.mode === "navigate"');
-    expect(content).toContain('requestUrl.pathname === "/manifest.json"');
+    expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
+    expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
     expect(content).toContain('e.request.destination === "manifest"');
     expect(content).toContain('self.location.origin');
     expect(content).toContain('throw err');
   });
 
-  it('invalidates tankwars-v3 on upgrade, revalidates /manifest.json over network, and keeps offline fallback', async () => {
+  it('refreshes a manifest with a fresh HTTP cache entry during installation and online, and keeps it offline', async () => {
     interface MockResponse {
       ok: boolean;
       body: string;
@@ -95,6 +96,7 @@ describe('Service worker cache strategy', () => {
       url: string;
       mode?: string;
       destination?: string;
+      cache?: RequestCache;
     }
 
     type SwEventHandler = (event: {
@@ -115,8 +117,9 @@ describe('Service worker cache strategy', () => {
     const content = fs.readFileSync(swPath, 'utf-8');
     const origin = 'https://tankwars.example';
 
+    let httpCachedManifest = '{"orientation":"landscape"}';
     const cacheStorage = new Map<string, Map<string, MockResponse>>([
-      ['tankwars-v3', new Map([['/manifest.json', makeResponse('{"orientation":"landscape"}')]])],
+      ['tankwars-v3', new Map([['/manifest.json', makeResponse(httpCachedManifest)]])],
     ]);
 
     let networkAvailable = true;
@@ -130,14 +133,22 @@ describe('Service worker cache strategy', () => {
       return new URL(rawUrl, origin).pathname;
     };
 
-    const mockFetch = async (input: string | MockRequest): Promise<MockResponse> => {
+    const mockFetch = async (
+      input: string | MockRequest,
+      options?: RequestInit,
+    ): Promise<MockResponse> => {
       const key = resolveKey(input);
+      const cacheMode = options?.cache ?? (typeof input === 'string' ? undefined : input.cache);
+      if (key === '/manifest.json' && cacheMode !== 'reload' && cacheMode !== 'no-cache') {
+        return makeResponse(httpCachedManifest);
+      }
       networkCalls.push(key);
       if (!networkAvailable) {
         throw new Error('Offline');
       }
       if (key === '/manifest.json') {
-        return makeResponse(networkManifestBody);
+        httpCachedManifest = networkManifestBody;
+        return makeResponse(httpCachedManifest);
       }
       return makeResponse(`asset:${key}`);
     };
@@ -150,10 +161,10 @@ describe('Service worker cache strategy', () => {
           cacheStorage.set(cacheName, store);
         }
         return {
-          async addAll(urls: string[]) {
-            for (const url of urls) {
-              const res = await mockFetch(url);
-              store!.set(url, res);
+          async addAll(requests: (string | MockRequest)[]) {
+            for (const request of requests) {
+              const response = await mockFetch(request);
+              store!.set(resolveKey(request), response);
             }
           },
           async put(request: string | MockRequest, response: MockResponse) {
@@ -202,6 +213,7 @@ describe('Service worker cache strategy', () => {
       self: swSelf,
       caches: mockCaches,
       fetch: mockFetch,
+      Request,
       URL,
       Promise,
       Error,
@@ -226,7 +238,9 @@ describe('Service worker cache strategy', () => {
     expect(skipWaitingCalled).toBe(true);
     expect(clientsClaimCalled).toBe(true);
     expect(cacheStorage.has('tankwars-v3')).toBe(false);
-    expect(cacheStorage.has('tankwars-v4')).toBe(true);
+    expect(cacheStorage.get('tankwars-v4')?.get('/manifest.json')?.body)
+      .toBe('{"orientation":"any"}');
+    expect(networkCalls).toContain('/manifest.json');
 
     const respondWithFetch = async (request: MockRequest): Promise<MockResponse | undefined> => {
       let pending: Promise<MockResponse | undefined> | undefined;
