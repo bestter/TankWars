@@ -126,4 +126,20 @@ describe('styles CSS cleanup (#405)', () => {
     expect(keyframesBlock).toContain('translateY(-100%)');
     expect(keyframesBlock).not.toContain('translate(-50%');
   });
+
+  it('preserves desktop 800x480 stage, overlaid HUD, and top-right header on short desktop viewports >= 1025px (#446)', () => {
+    expect(appCss).toContain('@media (max-width: 1024px) and (max-height: 540px)');
+    expect(appCss).not.toMatch(/@media\s*\(\s*max-height:\s*540px\s*\)/);
+    expect(appCss).not.toMatch(/@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*min-height:\s*520px\s*\)/);
+    expect(appCss).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*,\s*\(\s*min-width:\s*1080px\s*\)\s*\{[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    const fallbackAndResetMatches = appCss.match(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-width:\s*760px\s*\)\s*and\s*\(\s*min-height:\s*541px\s*\)/g,
+    );
+    expect(fallbackAndResetMatches).toHaveLength(2);
+    expect(appCss).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-height:\s*541px\s*\)\s*\{\s*@container combat \(inline-size >= 720px\)/,
+    );
+  });
 });

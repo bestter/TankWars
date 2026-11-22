@@ -109,7 +109,7 @@
   box-sizing: border-box;
 }
 
-@media (max-height: 540px) {
+@media (max-width: 1024px) and (max-height: 540px) {
   .combat-canvas-stage {
     width: min(100%, 800px, calc(max(160px, 100vh - 150px) * 5 / 3));
     width: min(100%, 800px, calc(max(160px, 100dvh - 150px) * 5 / 3));
@@ -1687,7 +1687,7 @@ canvas {
   }
 }
 
-@media (min-width: 1025px) and (min-height: 520px) {
+@media (min-width: 1025px) and (pointer: fine), (min-width: 1080px) {
   .app-header {
     display: block;
     padding: 0;
@@ -1767,7 +1767,7 @@ canvas {
   }
 }
 
-@media (min-width: 760px) and (min-height: 541px) {
+@media (min-width: 1025px), (min-width: 760px) and (min-height: 541px) {
   .combat-hud-stack {
     position: absolute;
     inset-block-start: 0;
@@ -1802,7 +1802,7 @@ canvas {
 }
 
 @supports (container-type: inline-size) {
-  @media (min-width: 760px) and (min-height: 541px) {
+  @media (min-width: 1025px), (min-width: 760px) and (min-height: 541px) {
     .combat-hud-stack {
       position: static;
       inset-block-start: auto;
@@ -1836,7 +1836,7 @@ canvas {
     }
   }
 
-  @media (min-height: 541px) {
+  @media (min-width: 1025px), (min-height: 541px) {
     @container combat (inline-size >= 720px) {
       .combat-hud-stack {
         position: absolute;
