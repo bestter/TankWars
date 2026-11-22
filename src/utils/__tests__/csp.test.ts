@@ -127,7 +127,7 @@ describe('Service worker cache strategy', () => {
 
     const resolveKey = (input: string | MockRequest): string => {
       const rawUrl = typeof input === 'string' ? input : input.url;
-      return rawUrl.startsWith(origin) ? rawUrl.slice(origin.length) || '/' : rawUrl;
+      return new URL(rawUrl, origin).pathname;
     };
 
     const mockFetch = async (input: string | MockRequest): Promise<MockResponse> => {
