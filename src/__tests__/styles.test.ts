@@ -120,10 +120,14 @@ describe('styles CSS cleanup (#405)', () => {
     );
     expect(appCss).toMatch(/\.shot-earnings-overlay\s*\{[^}]*overflow:\s*clip;[^}]*container:\s*shot-earnings \/ size;/);
     expect(appCss).toMatch(
-      /@supports\s*\(translate:\s*1cqi 1cqb\)\s*and\s*\(font-size:\s*1cqi\)\s*\{\s*\.shot-earnings-line\s*\{[^}]*translate:[^}]*50%[^}]*100cqi - 100%/,
+      /\.shot-earnings-line\s*\{[^}]*--award-line-height:\s*1\.25;[^}]*--award-rise:\s*1\.9;[^}]*line-height:\s*var\(--award-line-height\);[^}]*top:\s*clamp\(\s*calc\(1em \* var\(--award-line-height\) \* var\(--award-rise\) \+ 6px\),/,
+    );
+    expect(appCss).toMatch(
+      /@supports\s*\(translate:\s*1cqi 1cqb\)\s*and\s*\(font-size:\s*1cqi\)\s*\{\s*\.shot-earnings-line\s*\{[^}]*translate:[^}]*50%[^}]*100cqi - 100%[^}]*calc\(100% \* var\(--award-rise\) \+ 6px\)/,
     );
     const keyframesBlock = appCss.match(/@keyframes shot-earnings-float\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(keyframesBlock).toContain('translateY(-100%)');
+    expect(keyframesBlock).toContain('translateY(calc(-100% * var(--award-rise)))');
     expect(keyframesBlock).not.toContain('translate(-50%');
   });
 

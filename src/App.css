@@ -1086,9 +1086,16 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .shot-earnings-line {
+  --award-line-height: 1.25;
+  --award-rise: 1.9;
+  line-height: var(--award-line-height);
   position: absolute;
   left: clamp(16%, calc(var(--award-x, 0.5) * 100%), 84%);
-  top: clamp(22%, calc(var(--award-y, 0.5) * 100%), 95%);
+  top: clamp(
+    calc(1em * var(--award-line-height) * var(--award-rise) + 6px),
+    calc(var(--award-y, 0.5) * 100%),
+    95%
+  );
   translate: -50% 0;
   transform: translateY(-100%) scale(1);
   white-space: nowrap;
@@ -1107,7 +1114,7 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
         calc(100cqi - 100% - 8px)
       )
       clamp(
-        calc(190% + 6px),
+        calc(100% * var(--award-rise) + 6px),
         calc(var(--award-y, 0.5) * 100cqb),
         calc(100cqb - 8px)
       );
@@ -1127,7 +1134,7 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
     opacity: 1;
   }
   100% {
-    transform: translateY(-190%) scale(1);
+    transform: translateY(calc(-100% * var(--award-rise))) scale(1);
     opacity: 0;
   }
 }

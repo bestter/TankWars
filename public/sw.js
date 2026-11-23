@@ -11,6 +11,15 @@ const ASSETS = [
   "/icon-512.png",
 ];
 
+async function findCachedManifest(request) {
+  const options = { cacheName: CACHE_NAME };
+  const exact = await caches.match(request, options);
+  if (exact?.ok) return exact;
+
+  const canonical = await caches.match(MANIFEST_PATH, options);
+  return canonical?.ok ? canonical : undefined;
+}
+
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
@@ -75,7 +84,15 @@ self.addEventListener("fetch", (e) => {
 
     e.respondWith(
       fetchRequest
-        .then((response) => {
+        .then(async (response) => {
+          if (isManifestRequest && response.status >= 500 && response.status < 600) {
+            try {
+              return (await findCachedManifest(e.request)) ?? response;
+            } catch (err) {
+              console.warn("[sw] Cached manifest lookup failed", err);
+              return response;
+            }
+          }
           if (response.ok) {
             const copy = response.clone();
             const cacheWrite = caches
@@ -92,24 +109,13 @@ self.addEventListener("fetch", (e) => {
           }
           return response;
         })
-        .catch((err) => {
-          return caches
-            .match(e.request, { cacheName: CACHE_NAME })
-            .then((cachedResponse) => {
-              if (cachedResponse) {
-                return cachedResponse;
-              }
-              if (isManifestRequest) {
-                return caches.match(MANIFEST_PATH, { cacheName: CACHE_NAME });
-              }
-              return caches.match("/index.html", { cacheName: CACHE_NAME });
-            })
-            .then((fallback) => {
-              if (fallback) {
-                return fallback;
-              }
-              throw err;
-            });
+        .catch(async (err) => {
+          const options = { cacheName: CACHE_NAME };
+          const fallback = isManifestRequest
+            ? await findCachedManifest(e.request)
+            : (await caches.match(e.request, options)) ?? (await caches.match("/index.html", options));
+          if (fallback) return fallback;
+          throw err;
         })
     );
     return;

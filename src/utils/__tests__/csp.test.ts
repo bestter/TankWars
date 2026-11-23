@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vm from 'node:vm';
@@ -84,6 +84,64 @@ describe('Service worker cache strategy', () => {
     expect(content).toContain('requestUrl.origin !== self.location.origin');
     expect(content).not.toContain('e.request.url.startsWith(self.location.origin)');
     expect(content).toContain('throw err');
+  });
+
+  it.each([
+    ['prefers the exact manifest on HTTP 503', 503, 'exact', 'exact', ['/manifest.json?rev=2']],
+    ['uses the canonical manifest on HTTP 503', 503, 'canonical', 'canonical', ['/manifest.json?rev=2', '/manifest.json']],
+    ['returns HTTP 503 with no cached manifest', 503, 'empty', 'network', ['/manifest.json?rev=2', '/manifest.json']],
+    ['rejects an invalid cached manifest on HTTP 503', 503, 'invalid', 'network', ['/manifest.json?rev=2', '/manifest.json']],
+    ['returns HTTP 503 when Cache Storage fails', 503, 'unavailable', 'network', ['/manifest.json?rev=2']],
+    ['passes through a manifest HTTP 404', 404, 'exact', 'network', []],
+    ['passes through an ordinary navigation HTTP 503', 503, 'page', 'network', []],
+  ] as const)('%s', async (_name, status, cache, expectedSource, lookups) => {
+    const origin = 'https://tankwars.example';
+    const route = cache === 'page' ? '/' : '/manifest.json?rev=2';
+    const networkResponse = new Response('Server response', { status });
+    const exact = new Response('{"orientation":"any","rev":2}');
+    const canonical = new Response('{"orientation":"any"}');
+    const cached = new Map<string, Response>();
+    if (cache === 'exact') cached.set(route, exact);
+    if (cache === 'exact' || cache === 'canonical') cached.set('/manifest.json', canonical);
+    if (cache === 'invalid') cached.set(route, new Response('Invalid entry', { status: 500 }));
+    if (cache === 'page') cached.set(route, new Response('Cached navigation'));
+    const match = vi.fn<(request: string | { url: string }, options: { cacheName: string }) => Promise<Response | undefined>>(async (request) => {
+      if (cache === 'unavailable') throw new Error('Cache Storage unavailable');
+      const url = new URL(typeof request === 'string' ? request : request.url, origin);
+      return cached.get(`${url.pathname}${url.search}`);
+    });
+    const open = vi.fn();
+    const listeners = new Map<string, (event: {
+      request: { url: string; method: string; mode: string; destination: string };
+      respondWith: (response: Promise<Response>) => void;
+    }) => void>();
+    vm.runInNewContext(fs.readFileSync(path.resolve(process.cwd(), 'public/sw.js'), 'utf-8'), {
+      self: { location: { origin }, addEventListener: listeners.set.bind(listeners) },
+      fetch: async () => networkResponse,
+      caches: { match, open },
+      console: { warn: vi.fn() },
+      URL,
+    });
+
+    let pending: Promise<Response> | undefined;
+    listeners.get('fetch')?.({
+      request: {
+        url: `${origin}${route}`,
+        method: 'GET',
+        mode: route === '/' ? 'navigate' : 'cors',
+        destination: route === '/' ? 'document' : 'manifest',
+      },
+      respondWith(response) { pending = response; },
+    });
+
+    const responses = { exact, canonical, network: networkResponse };
+    expect(await pending).toBe(responses[expectedSource]);
+    expect(match.mock.calls.map(([input, options]) => {
+      expect(options).toEqual({ cacheName: 'tankwars-v4' });
+      const url = new URL(typeof input === 'string' ? input : input.url, origin);
+      return `${url.pathname}${url.search}`;
+    })).toEqual(lookups);
+    expect(open).not.toHaveBeenCalled();
   });
 
   it('refreshes a manifest with a fresh HTTP cache entry during installation and online, and keeps it offline', async () => {
