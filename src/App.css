@@ -1705,7 +1705,7 @@ canvas {
   }
 }
 
-@media (min-width: 1025px) and (pointer: fine), (min-width: 1080px) {
+@media (min-width: 1025px) and (pointer: fine) {
   .app-header {
     display: block;
     padding: 0;
@@ -1860,7 +1860,7 @@ canvas {
     }
   }
 
-  @media (min-width: 1025px) and (pointer: fine), (min-width: 1080px) {
+  @media (min-width: 1025px) and (pointer: fine) {
     .app-header {
       display: flex;
       padding: 0 0 6px;
