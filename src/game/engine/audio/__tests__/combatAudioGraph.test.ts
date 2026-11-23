@@ -61,6 +61,16 @@ describe("combat audio graph", () => {
     });
   });
 
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "records stopping the flight alert for %s",
+    async (weaponId) => {
+      await expectAudioGraph(`fire-stop-${weaponId}`, (audio) => {
+        audio.playFire(weaponId);
+        audio.stopFlightAlert();
+      });
+    },
+  );
+
   it.each(ALL_WEAPON_IDS)("records the impact graph for %s", async (weaponId) => {
     await expectAudioGraph(`impact-${weaponId}`, (audio) => {
       audio.playImpact(weaponId);

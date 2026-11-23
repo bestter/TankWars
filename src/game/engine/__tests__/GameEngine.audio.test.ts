@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makePlayer, makeRoundMap, makeTank } from "../../__tests__/helpers";
+import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../../types/terrain";
 import type { ZeusStrikeResult } from "../../zeus/zeusDomain";
 import { CombatAudio } from "../audio/CombatAudio";
 import { GameEngine } from "../GameEngine";
+
+function getUpdateFn(engine: GameEngine): (dt: number) => void {
+  return Reflect.get(engine, "update") as (dt: number) => void;
+}
 
 function twoPlayers() {
   return [
@@ -14,6 +19,7 @@ function twoPlayers() {
 describe("GameEngine audio", () => {
   let engine: GameEngine;
   let playFire: ReturnType<typeof vi.spyOn>;
+  let stopFlightAlert: ReturnType<typeof vi.spyOn>;
   let playImpact: ReturnType<typeof vi.spyOn>;
   let playZeusAppointment: ReturnType<typeof vi.spyOn>;
   let playZeusStrike: ReturnType<typeof vi.spyOn>;
@@ -27,6 +33,7 @@ describe("GameEngine audio", () => {
 
   beforeEach(() => {
     playFire = vi.spyOn(CombatAudio.prototype, "playFire");
+    stopFlightAlert = vi.spyOn(CombatAudio.prototype, "stopFlightAlert");
     playImpact = vi.spyOn(CombatAudio.prototype, "playImpact");
     playZeusAppointment = vi.spyOn(CombatAudio.prototype, "playZeusAppointment");
     playZeusStrike = vi.spyOn(CombatAudio.prototype, "playZeusStrike");
@@ -194,5 +201,280 @@ describe("GameEngine audio", () => {
     engine.stop();
 
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  describe("cycle sonore des tirs nucléaires (#435)", () => {
+    function setupFlatCombat(groundY = 360) {
+      const players = [
+        makePlayer({
+          id: "a",
+          name: "Alice",
+          inventory: { NUKE: 2, THERMONUCLEAR: 2 },
+          tank: makeTank("tank-a", 120, groundY),
+        }),
+        makePlayer({
+          id: "b",
+          name: "Bob",
+          inventory: { NUKE: 2, THERMONUCLEAR: 2 },
+          tank: makeTank("tank-b", 680, groundY),
+        }),
+      ];
+      engine.setPlayers(players);
+      engine.setWindForce(0);
+      engine
+        .getTerrain()
+        .loadHeights(
+          new Array<number>(800).fill(groundY),
+          new Array<TerrainMaterial>(800).fill(TERRAIN_MATERIAL.DIRT),
+        );
+      const shooter = engine.getTankManager().getPlayerById("a")!;
+      const target = engine.getTankManager().getPlayerById("b")!;
+      shooter.tank.position = { x: 120, y: groundY };
+      target.tank.position = { x: 680, y: groundY };
+      playFire.mockClear();
+      stopFlightAlert.mockClear();
+      playImpact.mockClear();
+      return { shooter, target };
+    }
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "démarre une seule alerte, la coupe avant l'explosion unique sur impact terrain (%s, vol court)",
+      (weaponId) => {
+        const { shooter } = setupFlatCombat();
+        const order: string[] = [];
+        stopFlightAlert.mockImplementation(() => {
+          order.push("stop");
+        });
+        playImpact.mockImplementation(() => {
+          order.push("impact");
+        });
+
+        expect(
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 45, power: 25, weaponId },
+            shooter.id,
+          ),
+        ).toBe(true);
+        expect(playFire).toHaveBeenCalledTimes(1);
+        expect(playFire).toHaveBeenCalledWith(weaponId);
+        order.length = 0;
+
+        const shell = engine.getActiveProjectiles()[0];
+        shell.x = 300;
+        shell.y = 360;
+        shell.vy = 20;
+        const stepUpdate = getUpdateFn(engine);
+        stepUpdate.call(engine, 1 / 120);
+
+        expect(engine.getActiveProjectiles()).toHaveLength(0);
+        expect(playImpact).toHaveBeenCalledTimes(1);
+        expect(playImpact).toHaveBeenCalledWith(weaponId);
+        expect(order).toEqual(["stop", "impact"]);
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "maintient l'alerte pendant un vol long puis la coupe sur impact direct tank (%s)",
+      (weaponId) => {
+        const { shooter, target } = setupFlatCombat(420);
+        const stepUpdate = getUpdateFn(engine);
+
+        expect(
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 85, power: 80, weaponId },
+            shooter.id,
+          ),
+        ).toBe(true);
+        expect(playFire).toHaveBeenCalledTimes(1);
+        stopFlightAlert.mockClear();
+
+        // Vol long (~4 secondes = 480 pas à 120 Hz) sans coupure anticipée ni impact
+        for (let step = 0; step < 480; step++) {
+          const active = engine.getActiveProjectiles()[0];
+          if (active) {
+            active.x = 320;
+            active.y = 80;
+            active.vx = 0;
+            active.vy = 0;
+          }
+          stepUpdate.call(engine, 1 / 120);
+        }
+        expect(engine.getActiveProjectiles()).toHaveLength(1);
+        expect(stopFlightAlert).not.toHaveBeenCalled();
+        expect(playImpact).not.toHaveBeenCalled();
+
+        // Impact direct sur le tank cible
+        const active = engine.getActiveProjectiles()[0];
+        active.x = target.tank.position.x;
+        active.y = target.tank.position.y - 6;
+        stepUpdate.call(engine, 1 / 120);
+
+        expect(engine.getActiveProjectiles()).toHaveLength(0);
+        expect(stopFlightAlert).toHaveBeenCalled();
+        expect(playImpact).toHaveBeenCalledTimes(1);
+        expect(playImpact).toHaveBeenCalledWith(weaponId);
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "coupe l'alerte sans explosion lors d'une sortie hors limites (%s)",
+      (weaponId) => {
+        const { shooter } = setupFlatCombat();
+        const stepUpdate = getUpdateFn(engine);
+
+        expect(
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 20, power: 100, weaponId },
+            shooter.id,
+          ),
+        ).toBe(true);
+        stopFlightAlert.mockClear();
+
+        const shell = engine.getActiveProjectiles()[0];
+        shell.x = 5000;
+        stepUpdate.call(engine, 1 / 120);
+
+        expect(engine.getActiveProjectiles()).toHaveLength(0);
+        expect(stopFlightAlert).toHaveBeenCalledTimes(1);
+        expect(playImpact).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "coupe l'alerte sans explosion au nettoyage de manche, clear(false) ou arrêt du moteur (%s)",
+      (weaponId) => {
+        const { shooter } = setupFlatCombat();
+
+        // 1. clear(false) direct (ex. annulation ou transition silencieuse)
+        expect(
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            shooter.id,
+          ),
+        ).toBe(true);
+        stopFlightAlert.mockClear();
+        engine.getPhysicsEngine().clear(false);
+        expect(stopFlightAlert).toHaveBeenCalledTimes(1);
+        expect(playImpact).not.toHaveBeenCalled();
+
+        // 2. enterInterRoundPhase puis startNextRound
+        engine.resetGame();
+        const { shooter: shooter2 } = setupFlatCombat();
+        expect(
+          engine.fireProjectile(
+            shooter2.tank.position,
+            { angle: 45, power: 50, weaponId },
+            shooter2.id,
+          ),
+        ).toBe(true);
+        stopFlightAlert.mockClear();
+        engine.enterInterRoundPhase();
+        expect(stopFlightAlert).toHaveBeenCalled();
+        expect(playImpact).not.toHaveBeenCalled();
+
+        // 3. Fermeture du moteur en plein vol
+        engine.resetGame();
+        const { shooter: shooter3 } = setupFlatCombat();
+        expect(
+          engine.fireProjectile(
+            shooter3.tank.position,
+            { angle: 45, power: 50, weaponId },
+            shooter3.id,
+          ),
+        ).toBe(true);
+        dispose.mockClear();
+        playImpact.mockClear();
+        engine.stop();
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(playImpact).not.toHaveBeenCalled();
+      },
+    );
+
+    it("laisse un tir refusé silencieux et un tir sans contexte Web Audio se dérouler normalement", () => {
+      const { shooter } = setupFlatCombat();
+
+      // Tir refusé : arme inconnue
+      expect(
+        engine.fireProjectile(
+          shooter.tank.position,
+          { angle: 45, power: 50, weaponId: "UNKNOWN" as "NUKE" },
+          shooter.id,
+        ),
+      ).toBe(false);
+      expect(playFire).not.toHaveBeenCalled();
+
+      // Tir refusé par observateur
+      engine.combatObserver = { emit: () => false };
+      expect(
+        engine.fireProjectile(
+          shooter.tank.position,
+          { angle: 45, power: 50, weaponId: "NUKE" },
+          shooter.id,
+        ),
+      ).toBe(false);
+      expect(playFire).not.toHaveBeenCalled();
+      engine.combatObserver = undefined;
+
+      // Sans window.AudioContext, le tir nucléaire s'exécute et impacte normalement
+      expect(
+        engine.fireProjectile(
+          shooter.tank.position,
+          { angle: 45, power: 50, weaponId: "THERMONUCLEAR" },
+          shooter.id,
+        ),
+      ).toBe(true);
+      // Second tir refusé pendant qu'un tir est actif : silencieux
+      expect(
+        engine.fireProjectile(
+          shooter.tank.position,
+          { angle: 45, power: 50, weaponId: "NUKE" },
+          shooter.id,
+        ),
+      ).toBe(false);
+      expect(playFire).toHaveBeenCalledTimes(1);
+
+      const shell = engine.getActiveProjectiles()[0];
+      shell.x = 300;
+      shell.y = 360;
+      shell.vy = 20;
+      const stepUpdate = getUpdateFn(engine);
+      expect(() => stepUpdate.call(engine, 1 / 120)).not.toThrow();
+      expect(engine.getActiveProjectiles()).toHaveLength(0);
+      expect(playImpact).toHaveBeenCalledTimes(1);
+    });
+
+    it("en ligne, garde l'intention FIRE silencieuse et ne démarre l'alerte qu'au SHOT confirmé", () => {
+      const { shooter } = setupFlatCombat();
+      const sentIntents: unknown[] = [];
+      const tm = engine.getTurnManager();
+      tm.setLocalPlayerId(shooter.id);
+      tm.setFireIntentHandler((command) => {
+        sentIntents.push(command);
+      });
+
+      // Intention FIRE locale -> aucun tir ni alerte sonore
+      expect(tm.selectWeapon("NUKE")).toBe(true);
+      expect(tm.tryFire()).toBe(true);
+      expect(sentIntents).toHaveLength(1);
+      expect(playFire).not.toHaveBeenCalled();
+      expect(engine.getActiveProjectiles()).toHaveLength(0);
+
+      // Confirmation serveur SHOT -> une seule alerte
+      tm.executeRemoteFire(
+        { angle: 45, power: 50, weaponId: "NUKE" },
+        {
+          fromSlot: 0,
+          ownerId: shooter.id,
+          identity: { shotId: 1, isFirstShotOfRound: true },
+          mode: "LIVE_LOCAL",
+        },
+      );
+      expect(playFire).toHaveBeenCalledTimes(1);
+      expect(playFire).toHaveBeenCalledWith("NUKE");
+    });
   });
 });

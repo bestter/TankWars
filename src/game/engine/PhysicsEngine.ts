@@ -64,6 +64,149 @@ export interface ProjectileHitEvent {
   directTargetId?: string;
 }
 
+export interface ProjectileRemovedEvent {
+  shotId: number;
+  munitionId: number;
+  weaponId: WeaponId;
+  reason: "out-of-bounds" | "cleared";
+}
+
+interface NuclearProjectileVisual {
+  readonly radius: number;
+  readonly haloRadius: number;
+  readonly innerRimRadius: number;
+  readonly coreRadius: number;
+  readonly secondaryBandRadius: number | null;
+  readonly pulsePeriodMs: number;
+  readonly lowRgb: readonly [number, number, number];
+  readonly highRgb: readonly [number, number, number];
+  readonly rimColor: string;
+  readonly coreColor: string;
+  readonly haloColor: string;
+  readonly outlineWidth: number;
+  readonly innerRimWidth: number;
+  readonly glintSize: number;
+}
+
+const NUCLEAR_PROJECTILE_VISUALS: Record<"NUKE" | "THERMONUCLEAR", NuclearProjectileVisual> = {
+  NUKE: {
+    // 18 px body diameter (2x CLUSTER parent 9 px), scarlet red
+    radius: 9,
+    haloRadius: 11,
+    innerRimRadius: 7.2,
+    coreRadius: 3.8,
+    secondaryBandRadius: null,
+    pulsePeriodMs: 480,
+    lowRgb: [184, 16, 36],
+    highRgb: [242, 36, 59],
+    rimColor: "#ff8a8a",
+    coreColor: "#ff6b6b",
+    haloColor: "#f2243b",
+    outlineWidth: 1.5,
+    innerRimWidth: 1,
+    glintSize: 2,
+  },
+  THERMONUCLEAR: {
+    // 36 px body diameter (4x CLUSTER parent 9 px), forest green
+    radius: 18,
+    haloRadius: 20.5,
+    innerRimRadius: 15.8,
+    coreRadius: 6.2,
+    secondaryBandRadius: 11.2,
+    pulsePeriodMs: 680,
+    lowRgb: [23, 89, 38],
+    highRgb: [43, 138, 62],
+    rimColor: "#7ce08a",
+    coreColor: "#4cb85f",
+    haloColor: "#2b8a3e",
+    outlineWidth: 2,
+    innerRimWidth: 1.5,
+    glintSize: 3,
+  },
+};
+
+function rgbChannelToHex(value: number): string {
+  return Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, "0");
+}
+
+function interpolateHexColor(
+  low: readonly [number, number, number],
+  high: readonly [number, number, number],
+  t: number,
+): string {
+  const r = low[0] + (high[0] - low[0]) * t;
+  const g = low[1] + (high[1] - low[1]) * t;
+  const b = low[2] + (high[2] - low[2]) * t;
+  return `#${rgbChannelToHex(r)}${rgbChannelToHex(g)}${rgbChannelToHex(b)}`;
+}
+
+function drawNuclearProjectile(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  weaponId: "NUKE" | "THERMONUCLEAR",
+  nowMs: number,
+): void {
+  const style = NUCLEAR_PROJECTILE_VISUALS[weaponId];
+  const pulse = 0.5 + 0.5 * Math.sin((nowMs / style.pulsePeriodMs) * Math.PI * 2);
+  const bodyColor = interpolateHexColor(style.lowRgb, style.highRgb, pulse);
+
+  ctx.save();
+  try {
+    // Subtle pulsing outer warning halo (outside measured body diameter)
+    ctx.globalAlpha = 0.2 + 0.24 * pulse;
+    ctx.strokeStyle = style.haloColor;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, style.haloRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Solid opaque body centered on simulated position + dark rim for light backgrounds
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = VGA_PALETTE.BLACK;
+    ctx.lineWidth = style.outlineWidth;
+    ctx.beginPath();
+    ctx.arc(x, y, style.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Bright inner rim for readability on dark backgrounds
+    ctx.globalAlpha = 0.5 + 0.35 * pulse;
+    ctx.strokeStyle = style.rimColor;
+    ctx.lineWidth = style.innerRimWidth;
+    ctx.beginPath();
+    ctx.arc(x, y, style.innerRimRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (style.secondaryBandRadius !== null) {
+      ctx.globalAlpha = 0.35 + 0.3 * pulse;
+      ctx.strokeStyle = style.coreColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, style.secondaryBandRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Gentle pulsing inner core
+    ctx.globalAlpha = 0.38 + 0.35 * pulse;
+    ctx.fillStyle = style.coreColor;
+    ctx.beginPath();
+    ctx.arc(x, y, style.coreRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Retro white center glint
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = VGA_PALETTE.WHITE;
+    const halfGlint = style.glintSize / 2;
+    ctx.fillRect(x - halfGlint, y - halfGlint, style.glintSize, style.glintSize);
+  } finally {
+    ctx.restore();
+  }
+}
+
 export class PhysicsEngine {
   public onPhysicalObserved?: (event: PhysicalObservation) => void;
   private readonly random: () => number;
@@ -107,6 +250,9 @@ export class PhysicsEngine {
 
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
   public onProjectileHit?: (event: ProjectileHitEvent) => void;
+
+  /** Callback appelé lorsqu'un projectile est retiré sans impact (hors limites ou clear). */
+  public onProjectileRemoved?: (event: ProjectileRemovedEvent) => void;
 
   /**
    * Lance un nouveau projectile.
@@ -226,8 +372,19 @@ export class PhysicsEngine {
       const outOfBounds = projectileOutOfBounds(p, terrainManager.width, terrainManager.height);
 
       if (outOfBounds) {
+        const removedEvent: ProjectileRemovedEvent | null = this.onProjectileRemoved
+          ? {
+              shotId: p.shotId,
+              munitionId: p.munitionId,
+              weaponId: p.weaponId,
+              reason: "out-of-bounds",
+            }
+          : null;
         this.freeProjectile(this.projectiles[i]);
         this.projectiles.splice(i, 1);
+        if (removedEvent) {
+          this.onProjectileRemoved?.(removedEvent);
+        }
         continue;
       }
 
@@ -533,10 +690,16 @@ export class PhysicsEngine {
 
   /**
    * Dessine tous les projectiles actifs.
-   * Style simple et performant (petit cercle blanc/rouge).
+   * Les obus ordinaires gardent leur style simple; NUKE et THERMONUCLEAR
+   * affichent une silhouette d'alerte dédiée (18 px rouge écarlate, 36 px vert forêt).
    */
-  public draw(ctx: CanvasRenderingContext2D): void {
+  public draw(ctx: CanvasRenderingContext2D, nowMs: number = Date.now()): void {
     for (const p of this.projectiles) {
+      if (p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR") {
+        drawNuclearProjectile(ctx, p.x, p.y, p.weaponId, nowMs);
+        continue;
+      }
+
       const weapon = WEAPON_REGISTRY[p.weaponId];
       // Inherit firer's tank color for visual harmonization (Step 4), fallback to weapon color or white
       ctx.fillStyle = p.ownerColor ?? weapon?.color ?? VGA_PALETTE.WHITE;
@@ -578,11 +741,26 @@ export class PhysicsEngine {
    */
   public clear(notifySettlement = true): void {
     const hadProjectiles = this.projectiles.length > 0;
+    const removed: ProjectileRemovedEvent[] | null =
+      hadProjectiles && this.onProjectileRemoved
+        ? this.projectiles.map((p) => ({
+            shotId: p.shotId,
+            munitionId: p.munitionId,
+            weaponId: p.weaponId,
+            reason: "cleared",
+          }))
+        : null;
     for (const p of this.projectiles) {
       this.freeProjectile(p);
     }
     this.projectiles.length = 0;
     this.previousCount = 0;
+
+    if (removed) {
+      for (const event of removed) {
+        this.onProjectileRemoved?.(event);
+      }
+    }
 
     if (hadProjectiles && notifySettlement) {
       this.onAllProjectilesSettled?.();

@@ -11,7 +11,11 @@ import {
 } from "./tankSounds";
 import type { EnsureAudioContext } from "./types";
 import type { WeaponId } from "../../../types/weapon";
-import { playFireSound, playImpactSound } from "./weaponSounds";
+import {
+  playFireSound,
+  playImpactSound,
+  type ActiveFlightAlert,
+} from "./weaponSounds";
 import { playZeusAppointmentSound, playZeusStrikeSound } from "./zeusSounds";
 
 /**
@@ -36,6 +40,7 @@ export interface CombatAudioOptions {
 
 export class CombatAudio {
   private audioContext: AudioContext | null = null;
+  private activeFlightAlert: ActiveFlightAlert | null = null;
   private readonly victoryOscillators: OscillatorNode[] = [];
   private cancelFinalChord: (() => void) | null = null;
   private readonly lastSlideTimes = new Map<string, number>();
@@ -50,10 +55,21 @@ export class CombatAudio {
   }
 
   playFire(weaponId: WeaponId): void {
-    playFireSound(this.ensureContext, weaponId);
+    this.stopFlightAlert();
+    this.activeFlightAlert = playFireSound(this.ensureContext, weaponId);
+  }
+
+  stopFlightAlert(): void {
+    const alert = this.activeFlightAlert;
+    if (!alert) return;
+    this.activeFlightAlert = null;
+    alert.stop();
   }
 
   playImpact(weaponId: WeaponId): void {
+    if (this.activeFlightAlert?.weaponId === weaponId) {
+      this.stopFlightAlert();
+    }
     playImpactSound(this.ensureContext, weaponId);
   }
 
@@ -107,8 +123,9 @@ export class CombatAudio {
     this.lastSlideTimes.clear();
   }
 
-  /** Arrête la musique puis ferme l'AudioContext (best effort). */
+  /** Arrête l'alerte de vol et la musique puis ferme l'AudioContext (best effort). */
   dispose(): void {
+    this.stopFlightAlert();
     this.stopVictoryMusic();
     const audioContext = this.audioContext;
     this.audioContext = null;

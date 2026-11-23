@@ -162,6 +162,7 @@ export class GameEngine {
   /** SUMMARY / SHOP / CELEBRATION — combat simulation paused until next round. */
   public enterInterRoundPhase(): void {
     this.roundCombatActive = false;
+    this.audio.stopFlightAlert();
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
     this.terrainImpactParticles.clear();
@@ -325,6 +326,9 @@ export class GameEngine {
       });
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
+      if (hit.weaponId === "NUKE" || hit.weaponId === "THERMONUCLEAR") {
+        this.audio.stopFlightAlert();
+      }
       this.audio.playImpact(hit.weaponId);
 
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
@@ -340,6 +344,12 @@ export class GameEngine {
           hit.y,
           this.physicsEngine.getLastImpactMaterial(),
         );
+      }
+    };
+
+    this.physicsEngine.onProjectileRemoved = (removed) => {
+      if (removed.weaponId === "NUKE" || removed.weaponId === "THERMONUCLEAR") {
+        this.audio.stopFlightAlert();
       }
     };
 
@@ -392,6 +402,7 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.gameOver = false;
     this.winner = null;
+    this.audio.stopFlightAlert();
     this.audio.resetSlideThrottle();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
     this.turnManager.setRoundNumber(map?.roundNumber ?? 1);
@@ -964,6 +975,7 @@ export class GameEngine {
     this.winner = null;
     this.roundCombatActive = true;
 
+    this.audio.stopFlightAlert();
     this.audio.stopVictoryMusic();
     this.physicsEngine.clear(false);
     this.celebrationFireworks.clear();
@@ -1104,6 +1116,7 @@ export class GameEngine {
 
     this.tankManager.setPlayers(players);
     this.roundCombatActive = false;
+    this.audio.stopFlightAlert();
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
     this.resetZeusForRound();
@@ -1381,6 +1394,7 @@ export class GameEngine {
 
   public invalidateCombatSimulation(): void {
     this.turnManager.reset();
+    this.audio.stopFlightAlert();
     this.physicsEngine.clear(false);
     this.activeShotLedger = null; this.pendingShotResult = null;
     this.pendingZeusAppointment = null; this.pendingSpecialRoundOutcome = null;
@@ -1429,6 +1443,7 @@ export class GameEngine {
   /** Fully resets the game for a new match */
   public resetGame(players?: Player[]): void {
     const prepared = players ? this.prepareCombatRound(players, 1) : null;
+    this.audio.stopFlightAlert();
     this.audio.stopVictoryMusic();
     this.gameOver = false;
     this.winner = null;

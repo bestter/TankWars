@@ -384,4 +384,95 @@ describe("CombatAudio", () => {
     expect(defaultAudioContext()).toBeNull();
     expect(webkitAudioContextSpy).not.toHaveBeenCalled();
   });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "maintient une alerte continue en vol pour %s jusqu'à stopFlightAlert, impact ou dispose",
+    (weaponId) => {
+      const fake = createFakeContext();
+      const audio = createAudio(() => fake.context);
+
+      audio.playFire(weaponId);
+      const alertOscs = [...fake.oscillators];
+      expect(alertOscs.length).toBeGreaterThanOrEqual(3);
+      for (const osc of alertOscs) {
+        expect(osc.start).toHaveBeenCalledOnce();
+        expect(osc.stop).not.toHaveBeenCalled();
+      }
+
+      // Arrêt explicite idempotent (ex. hors limites ou nettoyage de manche)
+      alertOscs[0]?.stop.mockImplementationOnce(() => {
+        throw new Error("Invalid state");
+      });
+      expect(() => audio.stopFlightAlert()).not.toThrow();
+      for (const osc of alertOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+      expect(() => audio.stopFlightAlert()).not.toThrow();
+      for (const osc of alertOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+
+      // L'impact coupe l'alerte active avant de jouer l'explosion
+      const beforeSecond = fake.oscillators.length;
+      audio.playFire(weaponId);
+      const secondAlertOscs = fake.oscillators.slice(beforeSecond);
+      expect(secondAlertOscs.every((osc) => osc.stop.mock.calls.length === 0)).toBe(true);
+
+      audio.playImpact(weaponId);
+      for (const osc of secondAlertOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+      // Des oscillateurs d'explosion ont été créés et programmés pour s'arrêter
+      const impactOscs = fake.oscillators.slice(beforeSecond + secondAlertOscs.length);
+      expect(impactOscs.length).toBeGreaterThanOrEqual(2);
+      for (const osc of impactOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+
+      // Un tir ultérieur et dispose libèrent aussi une alerte encore active
+      const beforeThird = fake.oscillators.length;
+      audio.playFire(weaponId);
+      const thirdAlertOscs = fake.oscillators.slice(beforeThird);
+      audio.playFire("MISSILE");
+      for (const osc of thirdAlertOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+
+      const beforeFourth = fake.oscillators.length;
+      audio.playFire(weaponId);
+      const fourthAlertOscs = fake.oscillators.slice(beforeFourth);
+      audio.dispose();
+      for (const osc of fourthAlertOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it("distingue l'alerte en vol et la détonation de NUKE et THERMONUCLEAR", () => {
+    const nukeCtx = createFakeContext();
+    const thermoCtx = createFakeContext();
+    const nukeAudio = createAudio(() => nukeCtx.context);
+    const thermoAudio = createAudio(() => thermoCtx.context);
+
+    nukeAudio.playFire("NUKE");
+    thermoAudio.playFire("THERMONUCLEAR");
+
+    const nukeFreqs = nukeCtx.oscillators.map((osc) => osc.frequency.value);
+    const thermoFreqs = thermoCtx.oscillators.map((osc) => osc.frequency.value);
+    expect(nukeFreqs).not.toEqual(thermoFreqs);
+
+    const nukeBeforeImpact = nukeCtx.oscillators.length;
+    const thermoBeforeImpact = thermoCtx.oscillators.length;
+    nukeAudio.playImpact("NUKE");
+    thermoAudio.playImpact("THERMONUCLEAR");
+
+    const nukeImpactFreqs = nukeCtx.oscillators
+      .slice(nukeBeforeImpact)
+      .map((osc) => osc.frequency.value);
+    const thermoImpactFreqs = thermoCtx.oscillators
+      .slice(thermoBeforeImpact)
+      .map((osc) => osc.frequency.value);
+    expect(nukeImpactFreqs).not.toEqual(thermoImpactFreqs);
+    expect(thermoCtx.buffers).toBeGreaterThan(nukeCtx.buffers);
+  });
 });

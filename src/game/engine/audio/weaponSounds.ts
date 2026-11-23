@@ -5,20 +5,75 @@ import type { EnsureAudioContext } from "./types";
 /**
  * Tables exhaustives : une arme ajoutée à `WeaponId` sans entrée fait échouer
  * le build. BULLET et BULLDOZER restent muets au tir, explicitement.
+ * Les armes nucléaires retournent une poignée d'alerte continue en vol.
  * Le guide est dans le README, section « Ajouter ou modifier un son ».
  */
 
-type WeaponSound = (
+export interface ActiveFlightAlert {
+  readonly weaponId: WeaponId;
+  stop(): void;
+}
+
+type WeaponFireSound = (
+  ctx: AudioContext,
+  ensure: EnsureAudioContext,
+  now: number,
+) => ActiveFlightAlert | null;
+
+type WeaponImpactSound = (
   ctx: AudioContext,
   ensure: EnsureAudioContext,
   now: number,
 ) => void;
 
-function playSilentFire(): void {
-  // Aucun oscillateur et aucun bruit : le contexte a déjà été demandé par l'appelant.
+const ALERT_FADE_OUT_SECONDS = 0.025;
+const ALERT_STOP_OFFSET_SECONDS = 0.03;
+
+function createFlightAlertHandle(
+  weaponId: WeaponId,
+  ctx: AudioContext,
+  masterGain: GainNode,
+  oscillators: readonly OscillatorNode[],
+): ActiveFlightAlert {
+  let stopped = false;
+  return {
+    weaponId,
+    stop(): void {
+      if (stopped) return;
+      stopped = true;
+      let stopAt: number | undefined;
+      try {
+        const stopTime = ctx.currentTime;
+        stopAt = stopTime + ALERT_STOP_OFFSET_SECONDS;
+        masterGain.gain.cancelScheduledValues(stopTime);
+        masterGain.gain.setValueAtTime(
+          Math.max(0.0001, masterGain.gain.value),
+          stopTime,
+        );
+        masterGain.gain.linearRampToValueAtTime(
+          0.0001,
+          stopTime + ALERT_FADE_OUT_SECONDS,
+        );
+      } catch {
+        /* ignore */
+      }
+      for (const osc of oscillators) {
+        try {
+          osc.stop(stopAt);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  };
 }
 
-function playMissileFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function playSilentFire(): null {
+  // Aucun oscillateur et aucun bruit : le contexte a déjà été demandé par l'appelant.
+  return null;
+}
+
+function playMissileFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): null {
   // Classic rocket launch: mid noise whoosh + quick low "thump" body
   playNoiseBurst(ensure, 0.09, 0.22, 1800, 420);
   // subtle low end "report"
@@ -33,9 +88,10 @@ function playMissileFire(ctx: AudioContext, ensure: EnsureAudioContext, now: num
   gain.gain.setValueAtTime(0.18, now);
   gain.gain.linearRampToValueAtTime(0.0005, now + 0.07);
   osc.stop(now + 0.09);
+  return null;
 }
 
-function playGrenadeFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function playGrenadeFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): null {
   // Lobbed: shorter, slightly higher noise "pop" with a little tail
   playNoiseBurst(ensure, 0.07, 0.26, 2400, 650);
   const osc = ctx.createOscillator();
@@ -49,48 +105,146 @@ function playGrenadeFire(ctx: AudioContext, ensure: EnsureAudioContext, now: num
   gain.gain.setValueAtTime(0.15, now);
   gain.gain.linearRampToValueAtTime(0.0004, now + 0.09);
   osc.stop(now + 0.11);
+  return null;
 }
 
-function playClusterFire(_ctx: AudioContext, ensure: EnsureAudioContext): void {
+function playClusterFire(_ctx: AudioContext, ensure: EnsureAudioContext): null {
   // Multiple small noisy "submunition release" pops — not clean chirps
   for (let k = 0; k < 4; k++) {
     playNoiseBurst(ensure, 0.045, 0.15, 2600 + k * 120, 900);
   }
+  return null;
 }
 
-function playNukeFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
-  // Deep heavy launch rumble
-  playNoiseBurst(ensure, 0.28, 0.28, 650, 140);
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "triangle";
-  osc.frequency.value = 55;
-  gain.gain.value = 0.35;
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(now);
-  gain.gain.setValueAtTime(0.35, now);
-  gain.gain.linearRampToValueAtTime(0.0003, now + 0.26);
-  osc.stop(now + 0.32);
+function playNukeFire(
+  ctx: AudioContext,
+  ensure: EnsureAudioContext,
+  now: number,
+): ActiveFlightAlert {
+  // Short launch ignition thump + continuous shrill Cold War air-raid alert in flight
+  playNoiseBurst(ensure, 0.14, 0.16, 680, 180);
+
+  const osc1 = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  const lfo = ctx.createOscillator();
+  const voiceGain1 = ctx.createGain();
+  const voiceGain2 = ctx.createGain();
+  const lfoGain1 = ctx.createGain();
+  const lfoGain2 = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  const masterGain = ctx.createGain();
+
+  osc1.type = "sawtooth";
+  osc1.frequency.value = 690;
+  osc2.type = "triangle";
+  osc2.frequency.value = 920;
+
+  lfo.type = "sine";
+  lfo.frequency.value = 2.6;
+  lfoGain1.gain.value = 155;
+  lfoGain2.gain.value = 195;
+
+  voiceGain1.gain.value = 0.65;
+  voiceGain2.gain.value = 0.35;
+
+  filter.type = "lowpass";
+  filter.frequency.value = 1650;
+
+  masterGain.gain.value = 0.0005;
+  masterGain.gain.setValueAtTime(0.0005, now);
+  masterGain.gain.linearRampToValueAtTime(0.14, now + 0.045);
+
+  lfo.connect(lfoGain1);
+  lfoGain1.connect(osc1.frequency);
+  lfo.connect(lfoGain2);
+  lfoGain2.connect(osc2.frequency);
+
+  osc1.connect(voiceGain1);
+  voiceGain1.connect(filter);
+  osc2.connect(voiceGain2);
+  voiceGain2.connect(filter);
+  filter.connect(masterGain);
+  masterGain.connect(ctx.destination);
+
+  osc1.start(now);
+  osc2.start(now);
+  lfo.start(now);
+
+  return createFlightAlertHandle("NUKE", ctx, masterGain, [osc1, osc2, lfo]);
 }
 
-function playThermonuclearFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
-  // Massive thermonuclear launch — deeper/longer than nuke
-  playNoiseBurst(ensure, 0.36, 0.33, 520, 85);
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "triangle";
-  osc.frequency.value = 38;
-  gain.gain.value = 0.38;
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(now);
-  gain.gain.setValueAtTime(0.38, now);
-  gain.gain.linearRampToValueAtTime(0.0002, now + 0.38);
-  osc.stop(now + 0.42);
+function playThermonuclearFire(
+  ctx: AudioContext,
+  ensure: EnsureAudioContext,
+  now: number,
+): ActiveFlightAlert {
+  // Brief heavy launch thump + continuous deep ominous Cold War tritone klaxon (distinct from NUKE)
+  playNoiseBurst(ensure, 0.18, 0.18, 500, 110);
+
+  const osc1 = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  const lfoFreq = ctx.createOscillator();
+  const lfoFilter = ctx.createOscillator();
+  const voiceGain1 = ctx.createGain();
+  const voiceGain2 = ctx.createGain();
+  const lfoFreqGain1 = ctx.createGain();
+  const lfoFreqGain2 = ctx.createGain();
+  const lfoFilterGain = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  const masterGain = ctx.createGain();
+
+  osc1.type = "sawtooth";
+  osc1.frequency.value = 310;
+  osc2.type = "square";
+  osc2.frequency.value = 440;
+
+  lfoFreq.type = "triangle";
+  lfoFreq.frequency.value = 0.95;
+  lfoFreqGain1.gain.value = 72;
+  lfoFreqGain2.gain.value = 96;
+
+  lfoFilter.type = "sine";
+  lfoFilter.frequency.value = 1.9;
+  lfoFilterGain.gain.value = 320;
+
+  voiceGain1.gain.value = 0.62;
+  voiceGain2.gain.value = 0.38;
+
+  filter.type = "lowpass";
+  filter.frequency.value = 920;
+
+  masterGain.gain.value = 0.0005;
+  masterGain.gain.setValueAtTime(0.0005, now);
+  masterGain.gain.linearRampToValueAtTime(0.15, now + 0.06);
+
+  lfoFreq.connect(lfoFreqGain1);
+  lfoFreqGain1.connect(osc1.frequency);
+  lfoFreq.connect(lfoFreqGain2);
+  lfoFreqGain2.connect(osc2.frequency);
+  lfoFilter.connect(lfoFilterGain);
+  lfoFilterGain.connect(filter.frequency);
+
+  osc1.connect(voiceGain1);
+  voiceGain1.connect(filter);
+  osc2.connect(voiceGain2);
+  voiceGain2.connect(filter);
+  filter.connect(masterGain);
+  masterGain.connect(ctx.destination);
+
+  osc1.start(now);
+  osc2.start(now);
+  lfoFreq.start(now);
+  lfoFilter.start(now);
+
+  return createFlightAlertHandle("THERMONUCLEAR", ctx, masterGain, [
+    osc1,
+    osc2,
+    lfoFreq,
+    lfoFilter,
+  ]);
 }
 
-function playDrillerFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function playDrillerFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): null {
   // Rapid noisy "drilling / boring" texture — series of gritty ticks
   for (let k = 0; k < 5; k++) {
     playNoiseBurst(ensure, 0.028, 0.18, 3200 - k * 180, 1100);
@@ -109,6 +263,7 @@ function playDrillerFire(ctx: AudioContext, ensure: EnsureAudioContext, now: num
   gain.gain.setValueAtTime(0.12, now);
   gain.gain.linearRampToValueAtTime(0.0004, now + 0.13);
   osc.stop(now + 0.15);
+  return null;
 }
 
 const FIRE_SOUNDS = {
@@ -120,69 +275,110 @@ const FIRE_SOUNDS = {
   DRILLER: playDrillerFire,
   BULLET: playSilentFire,
   BULLDOZER: playSilentFire,
-} satisfies Record<WeaponId, WeaponSound>;
+} satisfies Record<WeaponId, WeaponFireSound>;
 
-export function playFireSound(ensure: EnsureAudioContext, weaponId: WeaponId): void {
+export function playFireSound(
+  ensure: EnsureAudioContext,
+  weaponId: WeaponId,
+): ActiveFlightAlert | null {
   const ctx = ensure();
-  if (!ctx) return;
+  if (!ctx) return null;
   try {
     const now = ctx.currentTime;
     // Goal: move away from clean PONG-style square/saw beeps toward short, noisy, percussive
-    // "launch reports" in the spirit of old TankWars / Scorched Earth on NES/ATARI-era hardware.
-    // Heavy use of noise (LFSR) + a little low tone for body. Short, gritty, not melodic.
-    FIRE_SOUNDS[weaponId](ctx, ensure, now);
+    // "launch reports" in the spirit of old TankWars / Scorched Earth on NES/ATARI-era hardware,
+    // with continuous Cold War flight alerts for NUKE and THERMONUCLEAR.
+    return FIRE_SOUNDS[weaponId](ctx, ensure, now);
   } catch {
     /* silent */
+    return null;
   }
 }
 
 function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
-  // HUGE bomb sound: long multi-layer nuclear rumble + aftershocks (deeper + longer than nuke)
-  playNoiseBurst(ensure, 0.82, 0.39, 1750, 48);
-  playNoiseBurst(ensure, 0.62, 0.28, 880, 35, 0.18);
-  // deep body layers
+  // Massive multi-wave megaton detonation: shockfront + secondary blast + seismic fallout
+  // Controlled headroom so it stays imposing and distinct from NUKE without saturating.
+  playNoiseBurst(ensure, 1.15, 0.3, 2200, 55);
+  playNoiseBurst(ensure, 0.95, 0.22, 1100, 42, 0.22);
+  playNoiseBurst(ensure, 0.8, 0.14, 420, 30, 0.52);
+
+  // Primary deep sub-bass drop
   const osc1 = ctx.createOscillator();
   const gain1 = ctx.createGain();
   osc1.type = "triangle";
-  osc1.frequency.value = 32;
-  gain1.gain.value = 0.46;
+  osc1.frequency.value = 62;
+  gain1.gain.value = 0.3;
   osc1.connect(gain1);
   gain1.connect(ctx.destination);
   osc1.start(now);
-  gain1.gain.setValueAtTime(0.46, now);
-  gain1.gain.linearRampToValueAtTime(0.00015, now + 0.85);
-  osc1.stop(now + 0.92);
+  osc1.frequency.setValueAtTime(62, now);
+  osc1.frequency.linearRampToValueAtTime(22, now + 0.85);
+  gain1.gain.setValueAtTime(0.3, now);
+  gain1.gain.linearRampToValueAtTime(0.00015, now + 1.25);
+  osc1.stop(now + 1.32);
 
+  // Delayed filtered tectonic rumble harmonic
   const osc2 = ctx.createOscillator();
+  const filter2 = ctx.createBiquadFilter();
   const gain2 = ctx.createGain();
   osc2.type = "sawtooth";
-  osc2.frequency.value = 28;
-  gain2.gain.value = 0.22;
-  osc2.connect(gain2);
+  osc2.frequency.value = 46;
+  filter2.type = "lowpass";
+  filter2.frequency.value = 320;
+  gain2.gain.value = 0.16;
+  osc2.connect(filter2);
+  filter2.connect(gain2);
   gain2.connect(ctx.destination);
-  osc2.start(now + 0.12);
-  osc2.frequency.setValueAtTime(28, now + 0.12);
-  osc2.frequency.linearRampToValueAtTime(22, now + 0.75);
-  gain2.gain.setValueAtTime(0.22, now + 0.12);
-  gain2.gain.linearRampToValueAtTime(0.0001, now + 0.95);
-  osc2.stop(now + 1.0);
+  osc2.start(now + 0.1);
+  osc2.frequency.setValueAtTime(46, now + 0.1);
+  osc2.frequency.linearRampToValueAtTime(19, now + 1.15);
+  filter2.frequency.setValueAtTime(320, now + 0.1);
+  filter2.frequency.linearRampToValueAtTime(80, now + 1.2);
+  gain2.gain.setValueAtTime(0.16, now + 0.1);
+  gain2.gain.linearRampToValueAtTime(0.0001, now + 1.3);
+  osc2.stop(now + 1.38);
 }
 
 function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
-  // Huge dirty explosion
-  playNoiseBurst(ensure, 0.55, 0.32, 2100, 95);
-  // very low body
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "triangle";
-  osc.frequency.value = 42;
-  gain.gain.value = 0.42;
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(now);
-  gain.gain.setValueAtTime(0.42, now);
-  gain.gain.linearRampToValueAtTime(0.0002, now + 0.6);
-  osc.stop(now + 0.7);
+  // Recognizable two-stage nuclear detonation: crisp shockfront + echo + bass punch + crackle
+  playNoiseBurst(ensure, 0.72, 0.28, 2400, 110);
+  playNoiseBurst(ensure, 0.55, 0.18, 950, 65, 0.16);
+
+  // Nuclear bass punch with downward pitch drop
+  const osc1 = ctx.createOscillator();
+  const gain1 = ctx.createGain();
+  osc1.type = "triangle";
+  osc1.frequency.value = 88;
+  gain1.gain.value = 0.28;
+  osc1.connect(gain1);
+  gain1.connect(ctx.destination);
+  osc1.start(now);
+  osc1.frequency.setValueAtTime(88, now);
+  osc1.frequency.linearRampToValueAtTime(34, now + 0.45);
+  gain1.gain.setValueAtTime(0.28, now);
+  gain1.gain.linearRampToValueAtTime(0.0002, now + 0.72);
+  osc1.stop(now + 0.78);
+
+  // Filtered fallout roar texture
+  const osc2 = ctx.createOscillator();
+  const filter2 = ctx.createBiquadFilter();
+  const gain2 = ctx.createGain();
+  osc2.type = "sawtooth";
+  osc2.frequency.value = 145;
+  filter2.type = "lowpass";
+  filter2.frequency.value = 520;
+  gain2.gain.value = 0.11;
+  osc2.connect(filter2);
+  filter2.connect(gain2);
+  gain2.connect(ctx.destination);
+  osc2.start(now);
+  osc2.frequency.setValueAtTime(145, now);
+  osc2.frequency.linearRampToValueAtTime(48, now + 0.52);
+  filter2.frequency.setValueAtTime(520, now);
+  filter2.frequency.linearRampToValueAtTime(120, now + 0.56);
+  gain2.gain.setValueAtTime(0.11, now);
+  gain2.gain.linearRampToValueAtTime(0.0002, now + 0.58);
+  osc2.stop(now + 0.64);
 }
 
 function playClusterImpact(_ctx: AudioContext, ensure: EnsureAudioContext): void {
@@ -225,7 +421,7 @@ const IMPACT_SOUNDS = {
   DRILLER: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 3200, 160),
   BULLET: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
   BULLDOZER: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
-} satisfies Record<WeaponId, WeaponSound>;
+} satisfies Record<WeaponId, WeaponImpactSound>;
 
 export function playImpactSound(ensure: EnsureAudioContext, weaponId: WeaponId): void {
   const ctx = ensure();
