@@ -53,6 +53,6 @@
   "allowScripts": {
     "msgpackr-extract@3.0.4": true,
     "esbuild@0.28.2": true,
-    "workerd@1.20261117.1": true
+    "workerd@1.20261119.1": true
   }
 }
