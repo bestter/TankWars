@@ -1,0 +1,40 @@
+createOscillator osc-1
+createOscillator osc-2
+createOscillator osc-3
+createGain gain-1
+createGain gain-2
+createGain gain-3
+createGain gain-4
+createBiquadFilter filter-1
+createGain gain-5
+createGain gain-6
+osc-1.type=sawtooth
+osc-1.frequency.value=690
+osc-2.type=triangle
+osc-2.frequency.value=920
+osc-3.type=sine
+osc-3.frequency.value=2.6
+gain-3.gain.value=155
+gain-4.gain.value=195
+gain-1.gain.value=0.65
+gain-2.gain.value=0.35
+filter-1.type=lowpass
+filter-1.frequency.value=1650
+gain-5.gain.value=0.0005
+gain-5.gain.setValueAtTime value=0.0005 time=0
+gain-5.gain.linearRampToValueAtTime value=0.14 time=0.045
+gain-6.gain.value=1
+connect osc-3 -> gain-3
+connect gain-3 -> osc-1.frequency
+connect osc-3 -> gain-4
+connect gain-4 -> osc-2.frequency
+connect osc-1 -> gain-1
+connect gain-1 -> filter-1
+connect osc-2 -> gain-2
+connect gain-2 -> filter-1
+connect filter-1 -> gain-5
+connect gain-5 -> gain-6
+connect gain-6 -> destination
+osc-1.start when=0
+osc-2.start when=0
+osc-3.start when=0

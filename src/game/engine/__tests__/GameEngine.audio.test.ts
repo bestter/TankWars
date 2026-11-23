@@ -20,6 +20,7 @@ describe("GameEngine audio", () => {
   let engine: GameEngine;
   let playFire: ReturnType<typeof vi.spyOn>;
   let stopFlightAlert: ReturnType<typeof vi.spyOn>;
+  let resumeFlightAlert: ReturnType<typeof vi.spyOn>;
   let playImpact: ReturnType<typeof vi.spyOn>;
   let playZeusAppointment: ReturnType<typeof vi.spyOn>;
   let playZeusStrike: ReturnType<typeof vi.spyOn>;
@@ -34,6 +35,7 @@ describe("GameEngine audio", () => {
   beforeEach(() => {
     playFire = vi.spyOn(CombatAudio.prototype, "playFire");
     stopFlightAlert = vi.spyOn(CombatAudio.prototype, "stopFlightAlert");
+    resumeFlightAlert = vi.spyOn(CombatAudio.prototype, "resumeFlightAlert");
     playImpact = vi.spyOn(CombatAudio.prototype, "playImpact");
     playZeusAppointment = vi.spyOn(CombatAudio.prototype, "playZeusAppointment");
     playZeusStrike = vi.spyOn(CombatAudio.prototype, "playZeusStrike");
@@ -475,6 +477,278 @@ describe("GameEngine audio", () => {
       );
       expect(playFire).toHaveBeenCalledTimes(1);
       expect(playFire).toHaveBeenCalledWith("NUKE");
+    });
+
+    describe("suspension et reprise selon la visibilité de l'onglet", () => {
+      function stubVisibilityEnvironment(initialState: DocumentVisibilityState = "visible") {
+        let state: DocumentVisibilityState = initialState;
+        const listeners = new Set<() => void>();
+        const addEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+          if (type === "visibilitychange" && typeof listener === "function") {
+            listeners.add(listener as () => void);
+          }
+        });
+        const removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+          if (type === "visibilitychange" && typeof listener === "function") {
+            listeners.delete(listener as () => void);
+          }
+        });
+        vi.stubGlobal("document", {
+          get visibilityState() {
+            return state;
+          },
+          addEventListener,
+          removeEventListener,
+        });
+        vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+        vi.stubGlobal("cancelAnimationFrame", vi.fn());
+        return {
+          setVisibility(next: DocumentVisibilityState) {
+            state = next;
+            for (const listener of [...listeners]) {
+              listener();
+            }
+          },
+          listenerCount: () => listeners.size,
+          addEventListener,
+          removeEventListener,
+        };
+      }
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "suspend l'alerte de %s quand l'onglet est masqué et la reprend au retour si le projectile vole encore",
+        (weaponId) => {
+          const vis = stubVisibilityEnvironment("visible");
+          const { shooter } = setupFlatCombat();
+          engine.start();
+          expect(vis.listenerCount()).toBe(1);
+
+          expect(
+            engine.fireProjectile(
+              shooter.tank.position,
+              { angle: 45, power: 50, weaponId },
+              shooter.id,
+            ),
+          ).toBe(true);
+          expect(playFire).toHaveBeenCalledTimes(1);
+          stopFlightAlert.mockClear();
+          resumeFlightAlert.mockClear();
+
+          vis.setVisibility("hidden");
+          expect(stopFlightAlert).toHaveBeenCalledTimes(1);
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+          // Retour tant que le projectile est toujours actif
+          expect(engine.getActiveProjectiles()).toHaveLength(1);
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).toHaveBeenCalledTimes(1);
+          expect(resumeFlightAlert).toHaveBeenCalledWith(weaponId);
+          expect(playFire).toHaveBeenCalledTimes(1);
+
+          // L'impact final coupe l'alerte reprise avant l'explosion
+          const order: string[] = [];
+          stopFlightAlert.mockImplementation(() => order.push("stop"));
+          playImpact.mockImplementation(() => order.push("impact"));
+          const shell = engine.getActiveProjectiles()[0]!;
+          shell.x = 300;
+          shell.y = 360;
+          shell.vy = 20;
+          getUpdateFn(engine).call(engine, 1 / 120);
+
+          expect(order).toEqual(["stop", "impact"]);
+          engine.stop();
+          expect(vis.listenerCount()).toBe(0);
+        },
+      );
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "ne crée aucune sirène en double lors de changements de visibilité répétés ou redondants (%s)",
+        (weaponId) => {
+          const vis = stubVisibilityEnvironment("visible");
+          const { shooter } = setupFlatCombat();
+          engine.start();
+
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            shooter.id,
+          );
+          stopFlightAlert.mockClear();
+          resumeFlightAlert.mockClear();
+
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+          vis.setVisibility("hidden");
+          vis.setVisibility("hidden");
+          expect(stopFlightAlert).toHaveBeenCalledTimes(1);
+
+          vis.setVisibility("visible");
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).toHaveBeenCalledTimes(1);
+
+          vis.setVisibility("hidden");
+          vis.setVisibility("visible");
+          expect(stopFlightAlert).toHaveBeenCalledTimes(2);
+          expect(resumeFlightAlert).toHaveBeenCalledTimes(2);
+
+          engine.stop();
+        },
+      );
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "ne reprend pas l'alerte si le projectile est retiré pendant que l'onglet est masqué (%s)",
+        (weaponId) => {
+          const vis = stubVisibilityEnvironment("visible");
+          const { shooter } = setupFlatCombat();
+          engine.start();
+
+          // 1. Sortie hors limites pendant hidden
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 20, power: 100, weaponId },
+            shooter.id,
+          );
+          vis.setVisibility("hidden");
+          resumeFlightAlert.mockClear();
+
+          const shell = engine.getActiveProjectiles()[0]!;
+          shell.x = 5000;
+          getUpdateFn(engine).call(engine, 1 / 120);
+          expect(engine.getActiveProjectiles()).toHaveLength(0);
+
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+          // 2. clear(false) pendant hidden
+          engine.resetGame();
+          const { shooter: shooter2 } = setupFlatCombat();
+          engine.fireProjectile(
+            shooter2.tank.position,
+            { angle: 45, power: 50, weaponId },
+            shooter2.id,
+          );
+          vis.setVisibility("hidden");
+          resumeFlightAlert.mockClear();
+          engine.getPhysicsEngine().clear(false);
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+          // 3. Impact pendant hidden
+          engine.resetGame();
+          const { shooter: shooter3 } = setupFlatCombat();
+          engine.fireProjectile(
+            shooter3.tank.position,
+            { angle: 45, power: 25, weaponId },
+            shooter3.id,
+          );
+          vis.setVisibility("hidden");
+          resumeFlightAlert.mockClear();
+          const shell3 = engine.getActiveProjectiles()[0]!;
+          shell3.x = 300;
+          shell3.y = 360;
+          shell3.vy = 20;
+          getUpdateFn(engine).call(engine, 1 / 120);
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+          engine.stop();
+        },
+      );
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "ne reprend pas l'alerte après fin de manche, fin de partie ou arrêt pendant hidden (%s)",
+        (weaponId) => {
+          const vis = stubVisibilityEnvironment("visible");
+          const stepUpdate = getUpdateFn(engine);
+
+          const transitions: Array<() => void> = [
+            () => engine.enterInterRoundPhase(),
+            () => engine.syncRoundEndFromRemote([...engine.getTankManager().getPlayers()], "a", false),
+            () => {
+              engine.startNextRound();
+            },
+            () => engine.resetGame(),
+            () => engine.declareMatchWinner(engine.getTankManager().getPlayers()[0]!),
+            () => engine.declareMatchDraw(),
+          ];
+
+          for (const finish of transitions) {
+            engine.resetGame();
+            const { shooter } = setupFlatCombat();
+            engine.fireProjectile(
+              shooter.tank.position,
+              { angle: 45, power: 50, weaponId },
+              shooter.id,
+            );
+            engine.start();
+            vis.setVisibility("hidden");
+            resumeFlightAlert.mockClear();
+            finish();
+            vis.setVisibility("visible");
+            expect(resumeFlightAlert).not.toHaveBeenCalled();
+            void stepUpdate;
+          }
+
+          // Arrêt complet du moteur pendant hidden : retire aussi l'écouteur
+          engine.resetGame();
+          const { shooter: lastShooter } = setupFlatCombat();
+          engine.fireProjectile(
+            lastShooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            lastShooter.id,
+          );
+          engine.start();
+          expect(vis.listenerCount()).toBe(1);
+          vis.setVisibility("hidden");
+          resumeFlightAlert.mockClear();
+          engine.stop();
+          expect(vis.listenerCount()).toBe(0);
+          vis.setVisibility("visible");
+          expect(resumeFlightAlert).not.toHaveBeenCalled();
+        },
+      );
+
+      it("n'émet pas d'alerte en arrière-plan lors d'un tir déclenché onglet masqué, et gère associateActiveShotId et MISSILE", () => {
+        const vis = stubVisibilityEnvironment("hidden");
+        const { shooter } = setupFlatCombat();
+        engine.start();
+
+        // Tir NUKE alors que l'onglet est déjà masqué
+        expect(
+          engine.fireProjectile(
+            shooter.tank.position,
+            { angle: 45, power: 50, weaponId: "NUKE" },
+            shooter.id,
+            { shotId: 1, isFirstShotOfRound: true },
+          ),
+        ).toBe(true);
+        expect(playFire).not.toHaveBeenCalled();
+        expect(engine.associateActiveShotId(42, true)).toBe(true);
+
+        resumeFlightAlert.mockClear();
+        vis.setVisibility("visible");
+        expect(resumeFlightAlert).toHaveBeenCalledTimes(1);
+        expect(resumeFlightAlert).toHaveBeenCalledWith("NUKE");
+
+        // Retrait puis tir MISSILE : aucune reprise sur changement de visibilité
+        engine.resetGame();
+        const { shooter: shooter2 } = setupFlatCombat();
+        resumeFlightAlert.mockClear();
+        expect(
+          engine.fireProjectile(
+            shooter2.tank.position,
+            { angle: 45, power: 50, weaponId: "MISSILE" },
+            shooter2.id,
+            { shotId: 43, isFirstShotOfRound: false },
+          ),
+        ).toBe(true);
+        vis.setVisibility("hidden");
+        vis.setVisibility("visible");
+        expect(resumeFlightAlert).not.toHaveBeenCalled();
+
+        engine.stop();
+      });
     });
   });
 });

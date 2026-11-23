@@ -9,8 +9,14 @@ import type { EnsureAudioContext } from "./types";
  * Le guide est dans le README, section « Ajouter ou modifier un son ».
  */
 
+export type FlightAlertWeaponId = "NUKE" | "THERMONUCLEAR";
+
+export function isFlightAlertWeapon(weaponId: WeaponId): weaponId is FlightAlertWeaponId {
+  return weaponId === "NUKE" || weaponId === "THERMONUCLEAR";
+}
+
 export interface ActiveFlightAlert {
-  readonly weaponId: WeaponId;
+  readonly weaponId: FlightAlertWeaponId;
   stop(): void;
 }
 
@@ -19,6 +25,11 @@ type WeaponFireSound = (
   ensure: EnsureAudioContext,
   now: number,
 ) => ActiveFlightAlert | null;
+
+type FlightAlertSound = (
+  ctx: AudioContext,
+  now: number,
+) => ActiveFlightAlert;
 
 type WeaponImpactSound = (
   ctx: AudioContext,
@@ -30,9 +41,10 @@ const ALERT_FADE_OUT_SECONDS = 0.025;
 const ALERT_STOP_OFFSET_SECONDS = 0.03;
 
 function createFlightAlertHandle(
-  weaponId: WeaponId,
+  weaponId: FlightAlertWeaponId,
   ctx: AudioContext,
   masterGain: GainNode,
+  stopGain: GainNode,
   oscillators: readonly OscillatorNode[],
 ): ActiveFlightAlert {
   let stopped = false;
@@ -45,15 +57,15 @@ function createFlightAlertHandle(
       try {
         const stopTime = ctx.currentTime;
         stopAt = stopTime + ALERT_STOP_OFFSET_SECONDS;
-        masterGain.gain.cancelScheduledValues(stopTime);
-        masterGain.gain.setValueAtTime(
-          Math.max(0.0001, masterGain.gain.value),
-          stopTime,
-        );
-        masterGain.gain.linearRampToValueAtTime(
-          0.0001,
-          stopTime + ALERT_FADE_OUT_SECONDS,
-        );
+        if (typeof masterGain.gain.cancelAndHoldAtTime === "function") {
+          try {
+            masterGain.gain.cancelAndHoldAtTime(stopTime);
+          } catch {
+            /* ignore */
+          }
+        }
+        stopGain.gain.setValueAtTime(1, stopTime);
+        stopGain.gain.linearRampToValueAtTime(0, stopTime + ALERT_FADE_OUT_SECONDS);
       } catch {
         /* ignore */
       }
@@ -116,14 +128,10 @@ function playClusterFire(_ctx: AudioContext, ensure: EnsureAudioContext): null {
   return null;
 }
 
-function playNukeFire(
+function startNukeFlightAlert(
   ctx: AudioContext,
-  ensure: EnsureAudioContext,
   now: number,
 ): ActiveFlightAlert {
-  // Short launch ignition thump + continuous shrill Cold War air-raid alert in flight
-  playNoiseBurst(ensure, 0.14, 0.16, 680, 180);
-
   const osc1 = ctx.createOscillator();
   const osc2 = ctx.createOscillator();
   const lfo = ctx.createOscillator();
@@ -133,6 +141,7 @@ function playNukeFire(
   const lfoGain2 = ctx.createGain();
   const filter = ctx.createBiquadFilter();
   const masterGain = ctx.createGain();
+  const stopGain = ctx.createGain();
 
   osc1.type = "sawtooth";
   osc1.frequency.value = 690;
@@ -153,6 +162,7 @@ function playNukeFire(
   masterGain.gain.value = 0.0005;
   masterGain.gain.setValueAtTime(0.0005, now);
   masterGain.gain.linearRampToValueAtTime(0.14, now + 0.045);
+  stopGain.gain.value = 1;
 
   lfo.connect(lfoGain1);
   lfoGain1.connect(osc1.frequency);
@@ -164,23 +174,30 @@ function playNukeFire(
   osc2.connect(voiceGain2);
   voiceGain2.connect(filter);
   filter.connect(masterGain);
-  masterGain.connect(ctx.destination);
+  masterGain.connect(stopGain);
+  stopGain.connect(ctx.destination);
 
   osc1.start(now);
   osc2.start(now);
   lfo.start(now);
 
-  return createFlightAlertHandle("NUKE", ctx, masterGain, [osc1, osc2, lfo]);
+  return createFlightAlertHandle("NUKE", ctx, masterGain, stopGain, [osc1, osc2, lfo]);
 }
 
-function playThermonuclearFire(
+function playNukeFire(
   ctx: AudioContext,
   ensure: EnsureAudioContext,
   now: number,
 ): ActiveFlightAlert {
-  // Brief heavy launch thump + continuous deep ominous Cold War tritone klaxon (distinct from NUKE)
-  playNoiseBurst(ensure, 0.18, 0.18, 500, 110);
+  // Short launch ignition thump + continuous shrill Cold War air-raid alert in flight
+  playNoiseBurst(ensure, 0.14, 0.16, 680, 180);
+  return startNukeFlightAlert(ctx, now);
+}
 
+function startThermonuclearFlightAlert(
+  ctx: AudioContext,
+  now: number,
+): ActiveFlightAlert {
   const osc1 = ctx.createOscillator();
   const osc2 = ctx.createOscillator();
   const lfoFreq = ctx.createOscillator();
@@ -192,6 +209,7 @@ function playThermonuclearFire(
   const lfoFilterGain = ctx.createGain();
   const filter = ctx.createBiquadFilter();
   const masterGain = ctx.createGain();
+  const stopGain = ctx.createGain();
 
   osc1.type = "sawtooth";
   osc1.frequency.value = 310;
@@ -216,6 +234,7 @@ function playThermonuclearFire(
   masterGain.gain.value = 0.0005;
   masterGain.gain.setValueAtTime(0.0005, now);
   masterGain.gain.linearRampToValueAtTime(0.15, now + 0.06);
+  stopGain.gain.value = 1;
 
   lfoFreq.connect(lfoFreqGain1);
   lfoFreqGain1.connect(osc1.frequency);
@@ -229,19 +248,30 @@ function playThermonuclearFire(
   osc2.connect(voiceGain2);
   voiceGain2.connect(filter);
   filter.connect(masterGain);
-  masterGain.connect(ctx.destination);
+  masterGain.connect(stopGain);
+  stopGain.connect(ctx.destination);
 
   osc1.start(now);
   osc2.start(now);
   lfoFreq.start(now);
   lfoFilter.start(now);
 
-  return createFlightAlertHandle("THERMONUCLEAR", ctx, masterGain, [
+  return createFlightAlertHandle("THERMONUCLEAR", ctx, masterGain, stopGain, [
     osc1,
     osc2,
     lfoFreq,
     lfoFilter,
   ]);
+}
+
+function playThermonuclearFire(
+  ctx: AudioContext,
+  ensure: EnsureAudioContext,
+  now: number,
+): ActiveFlightAlert {
+  // Brief heavy launch thump + continuous deep ominous Cold War tritone klaxon (distinct from NUKE)
+  playNoiseBurst(ensure, 0.18, 0.18, 500, 110);
+  return startThermonuclearFlightAlert(ctx, now);
 }
 
 function playDrillerFire(ctx: AudioContext, ensure: EnsureAudioContext, now: number): null {
@@ -276,6 +306,25 @@ const FIRE_SOUNDS = {
   BULLET: playSilentFire,
   BULLDOZER: playSilentFire,
 } satisfies Record<WeaponId, WeaponFireSound>;
+
+const FLIGHT_ALERT_SOUNDS = {
+  NUKE: startNukeFlightAlert,
+  THERMONUCLEAR: startThermonuclearFlightAlert,
+} satisfies Record<FlightAlertWeaponId, FlightAlertSound>;
+
+export function playFlightAlertSound(
+  ensure: EnsureAudioContext,
+  weaponId: FlightAlertWeaponId,
+): ActiveFlightAlert | null {
+  const ctx = ensure();
+  if (!ctx) return null;
+  try {
+    return FLIGHT_ALERT_SOUNDS[weaponId](ctx, ctx.currentTime);
+  } catch {
+    /* silent */
+    return null;
+  }
+}
 
 export function playFireSound(
   ensure: EnsureAudioContext,

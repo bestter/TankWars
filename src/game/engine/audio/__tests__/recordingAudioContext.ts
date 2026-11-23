@@ -187,6 +187,12 @@ class RecordedParam {
       `${this.label}.cancelScheduledValues time=${formatRelative(time, this.now())}`,
     );
   }
+
+  cancelAndHoldAtTime(time: number): void {
+    this.lines.push(
+      `${this.label}.cancelAndHoldAtTime time=${formatRelative(time, this.now())}`,
+    );
+  }
 }
 
 class RecordedOscillator {

@@ -2,6 +2,10 @@ import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type Prep
 import type { DiagnosticInput, DiagnosticState } from "../diagnostics/types";
 import { secureRandom } from "../../utils/random";
 import { CombatAudio } from "./audio/CombatAudio";
+import {
+  isFlightAlertWeapon,
+  type FlightAlertWeaponId,
+} from "./audio/weaponSounds";
 import { CelebrationFireworks } from "./vfx/celebrationFireworks";
 import { ImpactExplosions, type ImpactExplosion } from "./vfx/impactExplosions";
 import {
@@ -162,7 +166,7 @@ export class GameEngine {
   /** SUMMARY / SHOP / CELEBRATION — combat simulation paused until next round. */
   public enterInterRoundPhase(): void {
     this.roundCombatActive = false;
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
     this.terrainImpactParticles.clear();
@@ -195,6 +199,13 @@ export class GameEngine {
   > = {};
 
   private readonly audio: CombatAudio;
+  private activeNuclearAlertProjectile: {
+    shotId: number;
+    readonly munitionId: number;
+    readonly weaponId: FlightAlertWeaponId;
+  } | null = null;
+  private isFlightAlertSuspendedByVisibility = false;
+  private visibilityListenerAttached = false;
   private readonly celebrationFireworks: CelebrationFireworks;
   private readonly impactExplosions: ImpactExplosions;
   private readonly terrainImpactParticles: TerrainImpactParticles;
@@ -326,8 +337,13 @@ export class GameEngine {
       });
 
       // Distinct impact/explosion sound per projectile (called for every terrain/tank hit)
-      if (hit.weaponId === "NUKE" || hit.weaponId === "THERMONUCLEAR") {
-        this.audio.stopFlightAlert();
+      if (
+        isFlightAlertWeapon(hit.weaponId) &&
+        (!this.activeNuclearAlertProjectile ||
+          (this.activeNuclearAlertProjectile.shotId === hit.shotId &&
+            this.activeNuclearAlertProjectile.munitionId === hit.munitionId))
+      ) {
+        this.clearFlightAlertTracking();
       }
       this.audio.playImpact(hit.weaponId);
 
@@ -348,8 +364,13 @@ export class GameEngine {
     };
 
     this.physicsEngine.onProjectileRemoved = (removed) => {
-      if (removed.weaponId === "NUKE" || removed.weaponId === "THERMONUCLEAR") {
-        this.audio.stopFlightAlert();
+      if (
+        isFlightAlertWeapon(removed.weaponId) &&
+        (!this.activeNuclearAlertProjectile ||
+          (this.activeNuclearAlertProjectile.shotId === removed.shotId &&
+            this.activeNuclearAlertProjectile.munitionId === removed.munitionId))
+      ) {
+        this.clearFlightAlertTracking();
       }
     };
 
@@ -402,7 +423,7 @@ export class GameEngine {
     this.roundCombatActive = true;
     this.gameOver = false;
     this.winner = null;
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.audio.resetSlideThrottle();
     this.turnManager.setEnvironment(this.windForce, this.config.gravity);
     this.turnManager.setRoundNumber(map?.roundNumber ?? 1);
@@ -487,7 +508,24 @@ export class GameEngine {
     this.tankManager.beginShotAttribution(shotId, ownerId, command.weaponId);
 
     // Per-weapon fire sound (distinct for each projectile type)
-    this.audio.playFire(command.weaponId);
+    if (isFlightAlertWeapon(command.weaponId)) {
+      this.activeNuclearAlertProjectile = {
+        shotId,
+        munitionId: 0,
+        weaponId: command.weaponId,
+      };
+      if (this.isDocumentVisible()) {
+        this.isFlightAlertSuspendedByVisibility = false;
+        this.audio.playFire(command.weaponId);
+      } else {
+        this.isFlightAlertSuspendedByVisibility = true;
+        this.audio.stopFlightAlert();
+      }
+    } else {
+      this.activeNuclearAlertProjectile = null;
+      this.isFlightAlertSuspendedByVisibility = false;
+      this.audio.playFire(command.weaponId);
+    }
 
     // Calculate barrel tip position so the projectile starts at the end of the barrel
     // instead of the bottom-center of the tank (which is on the ground and causes self-explosions/missed settlements).
@@ -536,6 +574,9 @@ export class GameEngine {
     for (const event of this.activeShotLedger.destructionEvents) event.shotId = shotId;
     this.tankManager.reassignShotAttribution(previousShotId, shotId);
     this.physicsEngine.reassignShotId(previousShotId, shotId);
+    if (this.activeNuclearAlertProjectile?.shotId === previousShotId) {
+      this.activeNuclearAlertProjectile.shotId = shotId;
+    }
     return true;
   }
 
@@ -902,6 +943,7 @@ export class GameEngine {
     if (!outcome?.isRoundEnd || !this.roundCombatActive || this.gameOver) return;
     this.pendingSpecialRoundOutcome = null;
     this.roundCombatActive = false;
+    this.clearFlightAlertTracking();
     const survivors = this.tankManager.getAlivePlayers();
     const roundWinner = outcome.roundWinnerId
       ? this.tankManager.getPlayerById(outcome.roundWinnerId) ?? null
@@ -941,6 +983,7 @@ export class GameEngine {
     if (this.gameOver) return;
     this.gameOver = true;
     this.winner = winner;
+    this.clearFlightAlertTracking();
     this.audio.playVictoryFanfare();
     this.celebrationFireworks.start(
       winner.tank.position.x,
@@ -957,6 +1000,7 @@ export class GameEngine {
     if (this.gameOver) return;
     this.gameOver = true;
     this.winner = null;
+    this.clearFlightAlertTracking();
     console.log("[GAME OVER] DRAW (partie nulle)");
     this.onDraw?.();
   }
@@ -975,7 +1019,7 @@ export class GameEngine {
     this.winner = null;
     this.roundCombatActive = true;
 
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.audio.stopVictoryMusic();
     this.physicsEngine.clear(false);
     this.celebrationFireworks.clear();
@@ -1009,9 +1053,79 @@ export class GameEngine {
 
   // === Game Loop ===
 
+  private isDocumentVisible(): boolean {
+    return typeof document === "undefined" || document.visibilityState === "visible";
+  }
+
+  private hasActiveNuclearAlertProjectile(tracked: {
+    readonly shotId: number;
+    readonly munitionId: number;
+    readonly weaponId: FlightAlertWeaponId;
+  }): boolean {
+    return this.physicsEngine.getProjectiles().some(
+      (projectile) =>
+        projectile.shotId === tracked.shotId &&
+        projectile.munitionId === tracked.munitionId &&
+        projectile.weaponId === tracked.weaponId,
+    );
+  }
+
+  private clearFlightAlertTracking(): void {
+    this.activeNuclearAlertProjectile = null;
+    this.isFlightAlertSuspendedByVisibility = false;
+    this.audio.stopFlightAlert();
+  }
+
+  private readonly handleVisibilityChange = (): void => {
+    this.syncFlightAlertVisibility();
+  };
+
+  private syncFlightAlertVisibility(): void {
+    if (!this.isRunning) return;
+    if (!this.isDocumentVisible()) {
+      if (this.activeNuclearAlertProjectile !== null) {
+        if (!this.isFlightAlertSuspendedByVisibility) {
+          this.isFlightAlertSuspendedByVisibility = true;
+          this.audio.stopFlightAlert();
+        }
+      } else {
+        this.audio.stopFlightAlert();
+      }
+      return;
+    }
+
+    const tracked = this.activeNuclearAlertProjectile;
+    if (!tracked) {
+      this.isFlightAlertSuspendedByVisibility = false;
+      return;
+    }
+    if (
+      this.gameOver ||
+      !this.roundCombatActive ||
+      this.turnManager.isInterRoundPaused() ||
+      !this.hasActiveNuclearAlertProjectile(tracked)
+    ) {
+      this.clearFlightAlertTracking();
+      return;
+    }
+    if (this.isFlightAlertSuspendedByVisibility) {
+      this.isFlightAlertSuspendedByVisibility = false;
+      this.audio.resumeFlightAlert(tracked.weaponId);
+    }
+  }
+
   public start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
+    if (
+      !this.visibilityListenerAttached &&
+      typeof document !== "undefined" &&
+      typeof document.addEventListener === "function"
+    ) {
+      document.addEventListener("visibilitychange", this.handleVisibilityChange);
+      this.visibilityListenerAttached = true;
+    }
+    this.syncFlightAlertVisibility();
     this.lastTimestamp = performance.now();
     this.accumulator = 0;
     this.rafId = requestAnimationFrame(this.loop);
@@ -1020,6 +1134,16 @@ export class GameEngine {
   public stop(): void {
     this.turnManager.pauseForInterRound();
     this.isRunning = false;
+    if (
+      this.visibilityListenerAttached &&
+      typeof document !== "undefined" &&
+      typeof document.removeEventListener === "function"
+    ) {
+      document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+      this.visibilityListenerAttached = false;
+    }
+    this.activeNuclearAlertProjectile = null;
+    this.isFlightAlertSuspendedByVisibility = false;
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -1116,7 +1240,7 @@ export class GameEngine {
 
     this.tankManager.setPlayers(players);
     this.roundCombatActive = false;
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.physicsEngine.clear(false);
     this.turnManager.pauseForInterRound();
     this.resetZeusForRound();
@@ -1394,7 +1518,7 @@ export class GameEngine {
 
   public invalidateCombatSimulation(): void {
     this.turnManager.reset();
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.physicsEngine.clear(false);
     this.activeShotLedger = null; this.pendingShotResult = null;
     this.pendingZeusAppointment = null; this.pendingSpecialRoundOutcome = null;
@@ -1443,7 +1567,7 @@ export class GameEngine {
   /** Fully resets the game for a new match */
   public resetGame(players?: Player[]): void {
     const prepared = players ? this.prepareCombatRound(players, 1) : null;
-    this.audio.stopFlightAlert();
+    this.clearFlightAlertTracking();
     this.audio.stopVictoryMusic();
     this.gameOver = false;
     this.winner = null;

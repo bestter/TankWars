@@ -14,12 +14,13 @@ interface FakeOscillator {
 interface FakeContext {
   context: AudioContext;
   oscillators: FakeOscillator[];
+  gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }>;
   close: ReturnType<typeof vi.fn>;
   buffers: number;
 }
 
-function audioParam(): AudioParam {
-  return {
+function audioParam(options?: { withCancelAndHold?: boolean }): AudioParam {
+  const param: Record<string, unknown> = {
     value: 0,
     setValueAtTime: vi.fn(),
     linearRampToValueAtTime: vi.fn(),
@@ -31,19 +32,26 @@ function audioParam(): AudioParam {
     automationRate: "a-rate",
     minValue: 0,
     maxValue: 1,
-  } as unknown as AudioParam;
+  };
+  if (options?.withCancelAndHold ?? true) {
+    param.cancelAndHoldAtTime = vi.fn();
+  }
+  return param as unknown as AudioParam;
 }
 
 function createFakeContext(options?: {
   createBufferThrows?: boolean;
   closeRejects?: boolean;
   state?: AudioContextState;
+  withCancelAndHold?: boolean;
 }): FakeContext {
   const oscillators: FakeOscillator[] = [];
+  const gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }> = [];
   const buffers = { count: 0 };
   const close = vi.fn(() => (
     options?.closeRejects ? Promise.reject(new Error("close")) : Promise.resolve()
   ));
+  const paramOptions = { withCancelAndHold: options?.withCancelAndHold ?? true };
   const context = {
     state: options?.state ?? "running",
     sampleRate: 44_100,
@@ -53,20 +61,24 @@ function createFakeContext(options?: {
       const oscillator: FakeOscillator = {
         type: "sine",
         stop: vi.fn(),
-        frequency: audioParam(),
+        frequency: audioParam(paramOptions),
         connect: vi.fn(),
         start: vi.fn(),
       };
       oscillators.push(oscillator);
       return oscillator;
     }),
-    createGain: vi.fn(() => ({ gain: audioParam(), connect: vi.fn() })),
+    createGain: vi.fn(() => {
+      const gainNode = { gain: audioParam(paramOptions), connect: vi.fn() };
+      gains.push(gainNode);
+      return gainNode;
+    }),
     createBiquadFilter: vi.fn(() => ({
       type: "lowpass",
-      frequency: audioParam(),
+      frequency: audioParam(paramOptions),
       connect: vi.fn(),
     })),
-    createStereoPanner: vi.fn(() => ({ pan: audioParam(), connect: vi.fn() })),
+    createStereoPanner: vi.fn(() => ({ pan: audioParam(paramOptions), connect: vi.fn() })),
     createBuffer: vi.fn((_channels: number, length: number) => {
       if (options?.createBufferThrows) throw new Error("buffer");
       buffers.count += 1;
@@ -82,6 +94,7 @@ function createFakeContext(options?: {
   return {
     context: context as unknown as AudioContext,
     oscillators,
+    gains,
     close,
     get buffers() {
       return buffers.count;
@@ -475,4 +488,82 @@ describe("CombatAudio", () => {
     expect(nukeImpactFreqs).not.toEqual(thermoImpactFreqs);
     expect(thermoCtx.buffers).toBeGreaterThan(nukeCtx.buffers);
   });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "reprend l'alerte de vol pour %s sans bruit de mise à feu ni doublon",
+    (weaponId) => {
+      const fake = createFakeContext();
+      const audio = createAudio(() => fake.context);
+
+      // Armes non nucléaires ignorées
+      audio.resumeFlightAlert("MISSILE");
+      expect(fake.oscillators).toHaveLength(0);
+
+      audio.resumeFlightAlert(weaponId);
+      const initialCount = fake.oscillators.length;
+      expect(initialCount).toBeGreaterThanOrEqual(3);
+      expect(fake.buffers).toBe(0);
+
+      // Appels répétés pour la même arme : aucun doublon créé
+      audio.resumeFlightAlert(weaponId);
+      expect(fake.oscillators).toHaveLength(initialCount);
+
+      // Remplacement par l'autre arme nucléaire : coupe la précédente d'abord
+      const otherWeapon = weaponId === "NUKE" ? "THERMONUCLEAR" : "NUKE";
+      audio.resumeFlightAlert(otherWeapon);
+      for (const osc of fake.oscillators.slice(0, initialCount)) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+      const secondOscs = fake.oscillators.slice(initialCount);
+      expect(secondOscs.length).toBeGreaterThanOrEqual(3);
+      for (const osc of secondOscs) {
+        expect(osc.stop).not.toHaveBeenCalled();
+      }
+
+      audio.stopFlightAlert();
+      for (const osc of secondOscs) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "rampe stopGain de 1 à 0 même si cancelAndHoldAtTime est absent ou lève (%s)",
+    (weaponId) => {
+      // 1. Navigateur sans cancelAndHoldAtTime (ex. Firefox)
+      const withoutHold = createFakeContext({ withCancelAndHold: false });
+      const audioWithoutHold = createAudio(() => withoutHold.context);
+      audioWithoutHold.playFire(weaponId);
+      const stopGainWithoutHold = withoutHold.gains.at(-1)!;
+      expect(stopGainWithoutHold.gain.value).toBe(1);
+
+      expect(() => audioWithoutHold.stopFlightAlert()).not.toThrow();
+      expect(stopGainWithoutHold.gain.setValueAtTime).toHaveBeenCalledWith(1, 0);
+      expect(stopGainWithoutHold.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0, 0.025);
+      for (const osc of withoutHold.oscillators) {
+        expect(osc.stop).toHaveBeenCalledWith(0.03);
+      }
+
+      // 2. cancelAndHoldAtTime présent mais qui lève une exception
+      const throwingHold = createFakeContext({ withCancelAndHold: true });
+      const audioThrowingHold = createAudio(() => throwingHold.context);
+      audioThrowingHold.playFire(weaponId);
+      const masterGain = throwingHold.gains.at(-2)!;
+      const stopGainThrowing = throwingHold.gains.at(-1)!;
+      (
+        masterGain.gain as unknown as {
+          cancelAndHoldAtTime: ReturnType<typeof vi.fn>;
+        }
+      ).cancelAndHoldAtTime.mockImplementationOnce(() => {
+        throw new Error("unsupported");
+      });
+
+      expect(() => audioThrowingHold.stopFlightAlert()).not.toThrow();
+      expect(stopGainThrowing.gain.setValueAtTime).toHaveBeenCalledWith(1, 0);
+      expect(stopGainThrowing.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0, 0.025);
+      for (const osc of throwingHold.oscillators) {
+        expect(osc.stop).toHaveBeenCalledWith(0.03);
+      }
+    },
+  );
 });

@@ -12,7 +12,9 @@ import {
 import type { EnsureAudioContext } from "./types";
 import type { WeaponId } from "../../../types/weapon";
 import {
+  isFlightAlertWeapon,
   playFireSound,
+  playFlightAlertSound,
   playImpactSound,
   type ActiveFlightAlert,
 } from "./weaponSounds";
@@ -64,6 +66,16 @@ export class CombatAudio {
     if (!alert) return;
     this.activeFlightAlert = null;
     alert.stop();
+  }
+
+  /** Reprend uniquement l'alerte continue en vol (sans bruit de mise à feu), de façon idempotente. */
+  resumeFlightAlert(weaponId: WeaponId): void {
+    if (!isFlightAlertWeapon(weaponId)) return;
+    if (this.activeFlightAlert?.weaponId === weaponId) return;
+    if (this.activeFlightAlert) {
+      this.stopFlightAlert();
+    }
+    this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId);
   }
 
   playImpact(weaponId: WeaponId): void {

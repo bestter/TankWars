@@ -23,6 +23,7 @@ createGain gain-4
 createGain gain-5
 createBiquadFilter filter-2
 createGain gain-6
+createGain gain-7
 osc-1.type=sawtooth
 osc-1.frequency.value=690
 osc-2.type=triangle
@@ -38,6 +39,7 @@ filter-2.frequency.value=1650
 gain-6.gain.value=0.0005
 gain-6.gain.setValueAtTime value=0.0005 time=0
 gain-6.gain.linearRampToValueAtTime value=0.14 time=0.045
+gain-7.gain.value=1
 connect osc-3 -> gain-4
 connect gain-4 -> osc-1.frequency
 connect osc-3 -> gain-5
@@ -47,7 +49,8 @@ connect gain-2 -> filter-2
 connect osc-2 -> gain-3
 connect gain-3 -> filter-2
 connect filter-2 -> gain-6
-connect gain-6 -> destination
+connect gain-6 -> gain-7
+connect gain-7 -> destination
 osc-1.start when=0
 osc-2.start when=0
 osc-3.start when=0
