@@ -66,10 +66,14 @@ describe("additive AI observation and cancellation", () => {
     expect(observed.index).toBe(ordinary.index); expect(observed.index).toBe(sequence.length);
     const detail = observed.details[0]; expect(detail.evaluated).not.toBeNull();
     expect(detail.steps.map(s => s.kind)).toEqual(["gaffe", "offset", "direction-error", "power-error", "reaction", "finalize"]);
-    expect(detail.steps[2].after?.angle).toBe(45);
-    expect(detail.steps[3].after?.power).toBe(80);
+    expect(detail.steps[2].before).toEqual({ angle: detail.evaluated!.angle, power: detail.evaluated!.power });
+    expect(detail.steps[2].after?.angle).toBeCloseTo(detail.steps[2].before!.angle - 7.5, 10);
+    expect(detail.steps[2].after?.power).toBe(detail.steps[2].before!.power);
     expect(detail.steps[3].before).toEqual(detail.steps[2].after);
+    expect(detail.steps[3].after?.angle).toBe(detail.steps[3].before!.angle);
+    expect(detail.steps[3].after?.power).toBeCloseTo(detail.steps[3].before!.power + 9, 10);
     expect(detail.steps[4].before).toEqual(detail.steps[3].after);
+    expect(detail.steps[5].before).toEqual(detail.steps[4].after);
     expect(detail.final).toEqual(observed.result);
   });
   it.each<AiProfile>(["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"])("keeps %s reaction and gaffe draws passive", async profile => {

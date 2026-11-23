@@ -9,7 +9,12 @@ import {
 import { TerrainManager } from "../../../engine/Terrain";
 import { simulateShot } from "../BallisticsSimulator";
 import { makeGameState, makePlayer, makeTank, flatTerrain } from "../../../__tests__/helpers";
-import { finalizeAdvancedAim } from "../aimCorruption";
+import {
+  finalizeAdvancedAim,
+  finalizeSimpleAim,
+  interpolateAimCommands,
+} from "../aimCorruption";
+import * as aimCorruption from "../aimCorruption";
 import * as random from "../../../../utils/random";
 import * as fallible from "../fallibleAim";
 import * as heuristicShot from "../heuristicShot";
@@ -813,16 +818,180 @@ describe("AI nuclear combat selection (#429)", () => {
           hitReaction: { wasDirectHit: true, fallDistance: 0 },
         }),
       });
-      // NUKE (0.05) -> no early gaffe (0.99) -> offset (0.5, 0.5) -> dir error (0 -> 90°) -> power error (0 -> 50) -> reaction (0.5, 0.5, 0.99)
-      installSequence([0.05, 0.99, 0.5, 0.5, 0, 0.5, 0, 0.5, 0.5, 0.99, 0.99]);
+      const normalSolverSpy = vi.spyOn(heuristicShot, "computeHeuristicShot");
+      // NUKE (0.05) -> no early gaffe (0.99) -> offset (0.5, 0.5)
+      // -> dir error (0, -15 via r=0) -> power error (0, +14.97 via r=0.999)
+      // -> reaction (0.5, 0.99, 0.99 -> { angle: 90, power: 99 })
+      installSequence([0.05, 0.99, 0.5, 0.5, 0, 0, 0, 0.999, 0.5, 0.99, 0.99]);
       const corruptedShot = await errorStrategy.executeTurn(
         "shooter-tank",
         { ...makeGameState(errorShooter, closeWeakTarget, "v1-random"), roundNumber: 5 },
         terrain,
       );
-      expect(corruptedShot.weaponId).toBe("NUKE");
-      expect(corruptedShot.angle).toBe(90);
-      expect(corruptedShot.power).toBeGreaterThan(50);
+      const solverCommand = normalSolverSpy.mock.results[0].value as {
+        angle: number;
+        power: number;
+      };
+      expect(corruptedShot).toEqual({
+        ...finalizeSimpleAim(
+          interpolateAimCommands(
+            {
+              angle: solverCommand.angle - 15,
+              power: solverCommand.power + 14.97,
+            },
+            { angle: 90, power: 99 },
+            0.28,
+          ),
+        ),
+        weaponId: "NUKE",
+      });
+      expect(errorShooter.tank.hitReaction).toEqual({
+        wasDirectHit: false,
+        fallDistance: 0,
+      });
+    });
+
+    it("conserve les fractions et dépassements temporaires jusqu'à finalizeSimpleAim avec ou sans réaction", async () => {
+      const terrain = flatTerrain(800, 480);
+      const target = makePlayer({
+        id: "enemy",
+        tank: makeTank("enemy-tank", 500, 336),
+      });
+
+      const runFractionCase = async (params: {
+        solver: { angle: number; power: number };
+        sequence: readonly number[];
+        hitReaction?: { wasDirectHit: boolean; fallDistance: number };
+      }) => {
+        vi.restoreAllMocks();
+        vi.spyOn(heuristicShot, "computeHeuristicShot").mockReturnValue(
+          params.solver,
+        );
+        const interpolateSpy = vi.spyOn(aimCorruption, "interpolateAimCommands");
+        const finalizeSpy = vi.spyOn(aimCorruption, "finalizeSimpleAim");
+        const shooter = makePlayer({
+          id: "ai",
+          isHuman: false,
+          aiProfile: "v1-random",
+          inventory: { MISSILE: 99 },
+          tank: makeTank("shooter-tank", 80, 336, {
+            currentWeapon: "MISSILE",
+            hitReaction: params.hitReaction,
+          }),
+        });
+        const queue = [...params.sequence];
+        vi.spyOn(random, "secureRandom").mockImplementation(() => {
+          if (queue.length === 0) throw new Error("EXTRA_RNG_DRAW");
+          return queue.shift()!;
+        });
+        const shot = await new AISimpleStrategy().executeTurn(
+          "shooter-tank",
+          { ...makeGameState(shooter, target, "v1-random"), roundNumber: 5 },
+          terrain,
+        );
+        return {
+          shot,
+          interpolatedFrom: interpolateSpy.mock.calls[0]?.[0],
+          finalizedInput: finalizeSpy.mock.calls[0]?.[0],
+        };
+      };
+
+      // Angle bas (5 - 15 = -10) : sans réaction finit à 0°, avec réaction -10° est transmis tel quel
+      const lowAngleNoReaction = await runFractionCase({
+        solver: { angle: 5, power: 50 },
+        sequence: [0.99, 0, 0, 0, 0, 0.99],
+      });
+      expect(lowAngleNoReaction.finalizedInput).toEqual({ angle: -10, power: 50 });
+      expect(lowAngleNoReaction.shot).toMatchObject({ angle: 0, power: 50 });
+
+      const lowAngleWithReaction = await runFractionCase({
+        solver: { angle: 5, power: 50 },
+        sequence: [0.99, 0, 0, 0, 0, 0.99, 0.5, 0.99, 0.99],
+        hitReaction: { wasDirectHit: true, fallDistance: 0 },
+      });
+      expect(lowAngleWithReaction.interpolatedFrom).toEqual({
+        angle: -10,
+        power: 50,
+      });
+      expect(lowAngleWithReaction.shot).toMatchObject(
+        finalizeSimpleAim(
+          interpolateAimCommands(
+            { angle: -10, power: 50 },
+            { angle: 90, power: 99 },
+            0.28,
+          ),
+        ),
+      );
+
+      // Angle haut (175 + 14.97 = 189.97) : sans réaction finit à 179.9°, avec réaction 189.97° est transmis
+      const highAngleNoReaction = await runFractionCase({
+        solver: { angle: 175, power: 50 },
+        sequence: [0.99, 0, 0, 0, 0.999, 0.99],
+      });
+      expect(highAngleNoReaction.finalizedInput?.angle).toBeCloseTo(189.97, 10);
+      expect(highAngleNoReaction.shot).toMatchObject({ angle: 179.9, power: 50 });
+
+      const highAngleWithReaction = await runFractionCase({
+        solver: { angle: 175, power: 50 },
+        sequence: [0.99, 0, 0, 0, 0.999, 0.99, 0.5, 0, 0],
+        hitReaction: { wasDirectHit: true, fallDistance: 0 },
+      });
+      expect(highAngleWithReaction.interpolatedFrom?.angle).toBeCloseTo(
+        189.97,
+        10,
+      );
+      expect(highAngleWithReaction.shot).toMatchObject(
+        finalizeSimpleAim(
+          interpolateAimCommands(
+            { angle: 189.97, power: 50 },
+            { angle: 90, power: 1 },
+            0.28,
+          ),
+        ),
+      );
+
+      // Fraction de puissance sans réaction : 60 + (-7.5 via r=0.25) = 52.5 -> 53
+      const fractionalPower = await runFractionCase({
+        solver: { angle: 45, power: 60 },
+        sequence: [0.99, 0, 0, 0.99, 0, 0.25],
+      });
+      expect(fractionalPower.finalizedInput).toEqual({ angle: 45, power: 52.5 });
+      expect(fractionalPower.shot).toMatchObject({ angle: 45, power: 53 });
+
+      // Puissance basse (5 - 15 = -10) et puissance haute (95 + 14.97 = 109.97)
+      const lowPowerNoReaction = await runFractionCase({
+        solver: { angle: 45, power: 5 },
+        sequence: [0.99, 0, 0, 0.99, 0, 0],
+      });
+      expect(lowPowerNoReaction.finalizedInput).toEqual({ angle: 45, power: -10 });
+      expect(lowPowerNoReaction.shot).toMatchObject({ angle: 45, power: 1 });
+
+      const lowPowerWithReaction = await runFractionCase({
+        solver: { angle: 45, power: 5 },
+        sequence: [0.99, 0, 0, 0.99, 0, 0, 0.5, 0.99, 0.99],
+        hitReaction: { wasDirectHit: true, fallDistance: 0 },
+      });
+      expect(lowPowerWithReaction.interpolatedFrom).toEqual({
+        angle: 45,
+        power: -10,
+      });
+
+      const highPowerNoReaction = await runFractionCase({
+        solver: { angle: 45, power: 95 },
+        sequence: [0.99, 0, 0, 0.99, 0, 0.999],
+      });
+      expect(highPowerNoReaction.finalizedInput?.power).toBeCloseTo(109.97, 10);
+      expect(highPowerNoReaction.shot).toMatchObject({ angle: 45, power: 99 });
+
+      const highPowerWithReaction = await runFractionCase({
+        solver: { angle: 45, power: 95 },
+        sequence: [0.99, 0, 0, 0.99, 0, 0.999, 0.5, 0, 0],
+        hitReaction: { wasDirectHit: true, fallDistance: 0 },
+      });
+      expect(highPowerWithReaction.interpolatedFrom?.power).toBeCloseTo(
+        109.97,
+        10,
+      );
     });
   });
 

@@ -25,6 +25,8 @@ export const ADVANCED_GAFFES: Record<
   "v4-smart": { chance: 0.02, angleAmplitude: 10, powerAmplitude: 5 },
 };
 
+const SIMPLE_SECONDARY_ERROR_MAX = 15;
+
 function randomSign(): number {
   return secureRandom() < 0.5 ? -1 : 1;
 }
@@ -33,11 +35,16 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-export function randomIntegerInclusive(
+function randomIntegerInclusive(
   minimum: number,
   maximum: number,
 ): number {
   return minimum + Math.floor(secureRandom() * (maximum - minimum + 1));
+}
+
+/** Échantillonne un écart secondaire SIMPLE uniforme dans [-15, +15[. */
+export function sampleSimpleSecondaryDelta(): number {
+  return (2 * secureRandom() - 1) * SIMPLE_SECONDARY_ERROR_MAX;
 }
 
 /** Échantillonner la distribution de grosse gaffe SIMPLE. */

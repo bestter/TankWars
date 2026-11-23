@@ -317,66 +317,100 @@ describe("contrats de séquence des stratégies IA", () => {
     });
   });
 
-  it("SIMPLE applique les remplacements indépendants de direction et puissance", async () => {
+  it("SIMPLE applique des écarts secondaires bornés et indépendants de direction et puissance", async () => {
     const terrain = flatTerrain(800, 480);
     const target = makeTarget("target", 500);
+    const runWithSequence = async (sequence: readonly number[]) => {
+      vi.spyOn(heuristicShot, "computeHeuristicShot").mockReturnValue({
+        angle: 42,
+        power: 60,
+      });
+      const queue = [...sequence];
+      const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+        if (queue.length === 0) throw new Error("EXTRA_RNG_DRAW");
+        return queue.shift()!;
+      });
+      const shot = await new AISimpleStrategy().executeTurn(
+        "self-tank",
+        {
+          ...makeGameState(makeShooter("v1-random"), target, "v1-random"),
+          roundNumber: 5,
+        },
+        terrain,
+      );
+      return { shot, draws: rng.mock.calls.length, remaining: queue.length };
+    };
 
-    const directionOnly = new AISimpleStrategy();
-    vi.spyOn(random, "secureRandom")
-      .mockReturnValueOnce(0.99)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.5)
-      .mockReturnValueOnce(0.99);
-    const directionShot = await directionOnly.executeTurn(
-      "self-tank",
-      {
-        ...makeGameState(makeShooter("v1-random"), target, "v1-random"),
-        roundNumber: 5,
-      },
-      terrain,
-    );
-    expect(directionShot.angle).toBe(90);
-
-    vi.restoreAllMocks();
-    const powerOnly = new AISimpleStrategy();
-    vi.spyOn(random, "secureRandom")
-      .mockReturnValueOnce(0.99)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.99)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.5);
-    const powerShot = await powerOnly.executeTurn(
-      "self-tank",
-      {
-        ...makeGameState(makeShooter("v1-random"), target, "v1-random"),
-        roundNumber: 5,
-      },
-      terrain,
-    );
-    expect(powerShot.power).toBe(50);
+    const none = await runWithSequence([0.99, 0, 0, 0.99, 0.99]);
+    expect(none).toEqual({
+      shot: { angle: 42, power: 60, weaponId: "MISSILE" },
+      draws: 5,
+      remaining: 0,
+    });
 
     vi.restoreAllMocks();
-    const both = new AISimpleStrategy();
-    vi.spyOn(random, "secureRandom")
-      .mockReturnValueOnce(0.99)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.5)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.5);
-    const bothShot = await both.executeTurn(
-      "self-tank",
-      {
-        ...makeGameState(makeShooter("v1-random"), target, "v1-random"),
-        roundNumber: 5,
-      },
-      terrain,
-    );
-    expect(bothShot).toMatchObject({ angle: 90, power: 50 });
+    const dirMin = await runWithSequence([0.99, 0, 0, 0, 0, 0.99]);
+    expect(dirMin).toEqual({
+      shot: { angle: 27, power: 60, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const dirZero = await runWithSequence([0.99, 0, 0, 0, 0.5, 0.99]);
+    expect(dirZero).toEqual({
+      shot: { angle: 42, power: 60, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const dirMax = await runWithSequence([0.99, 0, 0, 0, 0.999, 0.99]);
+    expect(dirMax).toEqual({
+      shot: { angle: 57, power: 60, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const powMin = await runWithSequence([0.99, 0, 0, 0.99, 0, 0]);
+    expect(powMin).toEqual({
+      shot: { angle: 42, power: 45, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const powZero = await runWithSequence([0.99, 0, 0, 0.99, 0, 0.5]);
+    expect(powZero).toEqual({
+      shot: { angle: 42, power: 60, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const powMax = await runWithSequence([0.99, 0, 0, 0.99, 0, 0.999]);
+    expect(powMax).toEqual({
+      shot: { angle: 42, power: 75, weaponId: "MISSILE" },
+      draws: 6,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const bothOpposite = await runWithSequence([0.99, 0, 0, 0, 0, 0, 0.999]);
+    expect(bothOpposite).toEqual({
+      shot: { angle: 27, power: 75, weaponId: "MISSILE" },
+      draws: 7,
+      remaining: 0,
+    });
+
+    vi.restoreAllMocks();
+    const bothSwapped = await runWithSequence([0.99, 0, 0, 0, 0.999, 0, 0]);
+    expect(bothSwapped).toEqual({
+      shot: { angle: 57, power: 45, weaponId: "MISSILE" },
+      draws: 7,
+      remaining: 0,
+    });
   });
 
   it("SIMPLE ne tire une référence de gaffe que lorsqu'une réaction est en attente", async () => {
@@ -548,55 +582,50 @@ describe("contrats de séquence des stratégies IA", () => {
 
   it.each([
     {
-      name: "sans remplacement",
-      randomValues: [0.99, 0.99, 0.99, 0.99, 0.99, 0.5, 0.99, 0.99],
-      beforeReaction: (baseline: { angle: number; power: number }) => baseline,
+      name: "sans écart",
+      randomValues: [0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+      beforeReaction: (solver: { angle: number; power: number }) => solver,
     },
     {
       name: "avec direction seule",
-      randomValues: [0.99, 0.99, 0.99, 0, 0.5, 0.99, 0.5, 0.99, 0.99],
-      beforeReaction: (baseline: { angle: number; power: number }) => ({
-        angle: 90,
-        power: baseline.power,
+      randomValues: [0.99, 0.99, 0.99, 0, 0.999, 0.99, 0.99, 0.99, 0.99],
+      beforeReaction: (solver: { angle: number; power: number }) => ({
+        angle: solver.angle + 14.97,
+        power: solver.power,
       }),
     },
     {
       name: "avec puissance seule",
-      randomValues: [0.99, 0.99, 0.99, 0.99, 0, 0.5, 0.5, 0.99, 0.99],
-      beforeReaction: (baseline: { angle: number; power: number }) => ({
-        angle: baseline.angle,
-        power: 50,
+      randomValues: [0.99, 0.99, 0.99, 0.99, 0, 0, 0.99, 0.99, 0.99],
+      beforeReaction: (solver: { angle: number; power: number }) => ({
+        angle: solver.angle,
+        power: solver.power - 15,
       }),
     },
     {
-      name: "avec direction et puissance",
-      randomValues: [0.99, 0.99, 0.99, 0, 0.5, 0, 0.5, 0.5, 0.99, 0.99],
-      beforeReaction: () => ({ angle: 90, power: 50 }),
+      name: "avec direction et puissance opposées",
+      randomValues: [0.99, 0.99, 0.99, 0, 0.999, 0, 0, 0.99, 0.99, 0.99],
+      beforeReaction: (solver: { angle: number; power: number }) => ({
+        angle: solver.angle + 14.97,
+        power: solver.power - 15,
+      }),
     },
   ])(
     "SIMPLE interpole $name avant de consommer sa réaction",
     async ({ randomValues, beforeReaction }) => {
       const terrain = flatTerrain(800, 480);
-      const baselineTarget = makeTarget("target", 500);
-      const baselineSelf = makeShooter("v1-random");
-      vi.spyOn(random, "secureRandom").mockReturnValue(0.99);
-      const baseline = await new AISimpleStrategy().executeTurn(
-        "self-tank",
-        {
-          ...makeGameState(baselineSelf, baselineTarget, "v1-random"),
-          roundNumber: 5,
-        },
-        terrain,
+      const solverCommand = { angle: 35, power: 60 };
+      vi.spyOn(heuristicShot, "computeHeuristicShot").mockReturnValue(
+        solverCommand,
       );
-
-      vi.restoreAllMocks();
       const self = makeShooter("v1-random");
       self.tank.hitReaction = { wasDirectHit: true, fallDistance: 0 };
       const target = makeTarget("target", 500);
       const remainingValues = [...randomValues];
-      vi.spyOn(random, "secureRandom").mockImplementation(
-        () => remainingValues.shift() ?? 0.99,
-      );
+      const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+        if (remainingValues.length === 0) throw new Error("EXTRA_RNG_DRAW");
+        return remainingValues.shift()!;
+      });
       const shot = await new AISimpleStrategy().executeTurn(
         "self-tank",
         {
@@ -609,12 +638,15 @@ describe("contrats de séquence des stratégies IA", () => {
       expect(shot).toMatchObject(
         finalizeSimpleAim(
           interpolateAimCommands(
-            beforeReaction(baseline),
-            { angle: 90, power: 99 },
+            beforeReaction(solverCommand),
+            { angle: 180 * 0.99, power: 99 },
             0.28,
           ),
         ),
       );
+      expect(shot.angle - solverCommand.angle).toBeGreaterThan(15);
+      expect(rng).toHaveBeenCalledTimes(randomValues.length);
+      expect(remainingValues).toHaveLength(0);
       expect(self.tank.hitReaction).toEqual({
         wasDirectHit: false,
         fallDistance: 0,

@@ -28,7 +28,10 @@ export function getHitReactionIntensity(
 ): number {
   if (!hitReaction) return 0;
 
-  const reactionProfile = REACTION_PROFILES[profile ?? "v1-random"];
+  const reactionProfile =
+    profile !== undefined && Object.hasOwn(REACTION_PROFILES, profile)
+      ? REACTION_PROFILES[profile]
+      : REACTION_PROFILES["v1-random"];
   const fallDistance = Number.isFinite(hitReaction.fallDistance)
     ? Math.max(0, hitReaction.fallDistance)
     : 0;
