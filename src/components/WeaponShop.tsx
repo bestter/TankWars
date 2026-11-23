@@ -165,23 +165,13 @@ function WeaponShopRow({
   });
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "5px 8px",
-        marginBottom: 4,
-        backgroundColor: "#111",
-        border: `1px solid ${VGA_PALETTE.DARK_GRAY}`,
-      }}
-    >
+    <div className="weapon-shop-row">
       {/* Weapon info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div
-          style={{ display: "flex", justifyContent: "space-between" }}
+          style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 6 }}
         >
-          <span style={{ color: row.def.color, fontWeight: "bold" }}>
+          <span style={{ color: row.def.color, fontWeight: "bold", overflowWrap: "break-word" }}>
             {t(WEAPON_KEYS[weaponId])}
           </span>
           <span style={{ color: VGA_PALETTE.YELLOW }}>
@@ -249,7 +239,7 @@ function WeaponShopRow({
       </div>
 
       {/* +/- buttons */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div className="weapon-shop-actions">
         <button
           type="button"
           onClick={() => onBuySell(weaponId, 1)}
@@ -324,11 +314,6 @@ export function WeaponShop({
       onClose={handleClose}
       style={{
         border: `4px solid ${VGA_PALETTE.MAGENTA}`,
-        width: "min(520px, 92%)",
-        maxHeight: "min(460px, 95%)",
-        padding: "12px 16px",
-        backgroundColor: "rgba(0, 0, 0, 0.94)",
-        boxSizing: "border-box",
       }}
     >
       {/* Header */}
@@ -347,8 +332,10 @@ export function WeaponShop({
       </div>
 
       <div
+        className="weapon-shop-player-header"
         style={{
           display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           justifyContent: "center",
           gap: 8,
@@ -364,6 +351,7 @@ export function WeaponShop({
             backgroundColor: player.tank.color,
             border: `2px solid ${VGA_PALETTE.WHITE}`,
             verticalAlign: "middle",
+            flexShrink: 0,
           }}
         />
         <span
@@ -371,6 +359,7 @@ export function WeaponShop({
             color: player.tank.color,
             fontWeight: "bold",
             fontSize: "18px",
+            overflowWrap: "anywhere",
           }}
         >
           {player.name}
@@ -379,7 +368,6 @@ export function WeaponShop({
           style={{
             color: VGA_PALETTE.YELLOW,
             fontSize: "20px",
-            marginLeft: 12,
           }}
         >
           {money}$
@@ -418,7 +406,7 @@ export function WeaponShop({
           marginBottom: 10,
           overflowY: "auto",
           flex: "1 1 auto",
-          minHeight: 0,
+          minHeight: 96,
           paddingRight: 4,
         }}
       >
@@ -442,8 +430,7 @@ export function WeaponShop({
           type="button"
           onClick={onReady}
           disabled={controlsDisabled}
-          className="retro-btn"
-          style={{ padding: "8px 32px" }}
+          className="retro-btn weapon-shop-ready-btn"
         >
           {t("btn_ready_next_player")}
         </button>

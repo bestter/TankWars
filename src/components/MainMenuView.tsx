@@ -64,8 +64,8 @@ export function MainMenuView({
           </p>
 
           <div className="retro-section">{t("battle_configuration")}</div>
-          <div style={{ marginBottom: 10 }}>
-            <span style={{ color: "#AAAAAA", fontSize: 12, marginRight: 8 }}>
+          <div className="retro-num-row">
+            <span style={{ color: "#AAAAAA", fontSize: 12 }}>
               {t("num_players")}
             </span>
             {[2, 3, 4].map((count) => (
@@ -103,7 +103,7 @@ export function MainMenuView({
           </div>
 
           <div style={{ margin: "10px 0 14px", textAlign: "left", fontSize: 13 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", cursor: "pointer", gap: 8, color: "#FFFF55" }}>
+            <label className="retro-checkbox-label" style={{ cursor: "pointer", color: "#FFFF55" }}>
               <input
                 type="checkbox"
                 checked={freeWeapons}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "../App";
 
 vi.hoisted(() => { vi.stubEnv("MODE", "endurance"); });
@@ -14,7 +14,15 @@ vi.mock("../components/endurance/EnduranceScreen", () => ({
   EnduranceScreen: ({ onExit }: { onExit: () => void }) => <button onClick={onExit}>endurance_config</button>,
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
+beforeEach(() => {
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 it("opens and exits endurance in the explicitly enabled test build", async () => {
   render(<App />);

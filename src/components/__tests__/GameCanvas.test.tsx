@@ -186,6 +186,40 @@ describe("GameCanvas component", () => {
     expect(canvas.tabIndex).toBe(0);
   });
 
+  it("updates the stage's height budget when the touch controls wrap or disappear", () => {
+    type Resize = (entries: { contentRect: { height: number } }[]) => void;
+    let notifyResize: Resize | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      observe = observe;
+      disconnect = disconnect;
+
+      constructor(callback: Resize) {
+        notifyResize = callback;
+      }
+    });
+
+    try {
+      const { container, unmount } = render(<GameCanvas />);
+      const shell = container.querySelector<HTMLElement>(".combat-shell");
+      const controls = container.querySelector(".combat-mobile-controls");
+      expect(shell).not.toBeNull();
+      expect(controls?.querySelector(".mobile-controls-panel")).not.toBeNull();
+      expect(observe).toHaveBeenCalledWith(controls);
+
+      notifyResize?.([{ contentRect: { height: 151.5 } }]);
+      expect(shell?.style.getPropertyValue("--combat-controls-height")).toBe("151.5px");
+      notifyResize?.([{ contentRect: { height: 0 } }]);
+      expect(shell?.style.getPropertyValue("--combat-controls-height")).toBe("0px");
+
+      unmount();
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
@@ -1193,5 +1227,61 @@ describe("GameCanvas component", () => {
     // Clicking the canvas outside the HUD fires normally
     fireEvent.click(screen.getByRole("img"));
     expect(mockHandlers.handleCanvasClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses fluid combat shell without 800px MenuButton lock and isolates spatial overlays inside .combat-canvas-stage (#445)", () => {
+    const session = vi.mocked(useGameSession)({});
+    session.state = {
+      ...defaultSessionState,
+      playerStatus: livingStatus,
+      earningsOverlay: {
+        shotId: 2,
+        displayedAt: Date.now(),
+        awards: [{ playerId: "p1", playerName: "Player 1", color: "#ff0000", amount: 40, x: 200, y: 240 }],
+      },
+      zeusAnnouncement: { appointmentId: 1, playerName: "CPU 2", displayedAt: Date.now() },
+      fireRejection: "NO_AMMO",
+    };
+    session.advisor = {
+      ...session.advisor,
+      view: { playerId: "p1", objective: "SURVIE" as const, status: "idle" as const },
+    };
+    vi.mocked(useGameSession).mockReturnValue(session);
+
+    const { rerender } = render(<GameCanvas onReturnToMenu={vi.fn()} />);
+
+    const shell = document.querySelector(".combat-shell");
+    const stage = document.querySelector(".combat-canvas-stage");
+    const topbar = document.querySelector(".combat-topbar") as HTMLElement | null;
+    expect(shell).not.toBeNull();
+    expect(stage).not.toBeNull();
+    expect(topbar).not.toBeNull();
+    expect(topbar?.style.width).toBe("");
+
+    expect(stage?.contains(screen.getByRole("img"))).toBe(true);
+    expect(stage?.contains(document.querySelector(".shot-earnings-overlay"))).toBe(true);
+    expect(stage?.contains(document.querySelector(".zeus-announcement"))).toBe(true);
+    expect(stage?.contains(document.querySelector(".fire-rejection-toast"))).toBe(true);
+
+    const mobilePanel = document.querySelector(".mobile-controls-panel");
+    const playerStatus = screen.getByRole("region", { name: "player_status_title" });
+    const advisorPanel = document.querySelector(".shot-advisor");
+    expect(mobilePanel).not.toBeNull();
+    expect(advisorPanel).not.toBeNull();
+    expect(stage?.contains(mobilePanel)).toBe(false);
+    expect(stage?.contains(playerStatus)).toBe(false);
+    expect(stage?.contains(advisorPanel)).toBe(false);
+    expect(shell?.contains(mobilePanel)).toBe(true);
+    expect(shell?.contains(playerStatus)).toBe(true);
+    expect(shell?.contains(advisorPanel)).toBe(true);
+    expect(playerStatus.compareDocumentPosition(advisorPanel as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    session.state = {
+      ...defaultSessionState,
+      gamePhase: "GAME_OVER",
+      winner: p1,
+    };
+    rerender(<GameCanvas onReturnToMenu={vi.fn()} />);
+    expect(stage?.contains(document.querySelector(".game-over-overlay"))).toBe(true);
   });
 });

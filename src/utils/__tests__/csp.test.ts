@@ -1,7 +1,8 @@
 /// <reference types="node" />
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vm from 'node:vm';
 
 describe('Content Security Policy (CSP) Safety Checks', () => {
   it('should require style-src to allow unsafe-inline in index.html to prevent Vite and React UI breakage', () => {
@@ -72,11 +73,317 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
 });
 
 describe('Service worker cache strategy', () => {
-  it('uses network-first for navigations and ignores cross-origin fetches', () => {
+  it('uses network-first for navigations and manifest.json while ignoring cross-origin fetches', () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const content = fs.readFileSync(swPath, 'utf-8');
+    expect(content).toContain('const CACHE_NAME = "tankwars-v4"');
     expect(content).toContain('e.request.mode === "navigate"');
-    expect(content).toContain('self.location.origin');
+    expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
+    expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
+    expect(content).toContain('e.request.destination === "manifest"');
+    expect(content).toContain('requestUrl.origin !== self.location.origin');
+    expect(content).not.toContain('e.request.url.startsWith(self.location.origin)');
     expect(content).toContain('throw err');
+  });
+
+  it.each([
+    ['prefers the exact manifest on HTTP 503', 503, 'exact', 'exact', ['/manifest.json?rev=2']],
+    ['uses the canonical manifest on HTTP 503', 503, 'canonical', 'canonical', ['/manifest.json?rev=2', '/manifest.json']],
+    ['returns HTTP 503 with no cached manifest', 503, 'empty', 'network', ['/manifest.json?rev=2', '/manifest.json']],
+    ['rejects an invalid cached manifest on HTTP 503', 503, 'invalid', 'network', ['/manifest.json?rev=2', '/manifest.json']],
+    ['returns HTTP 503 when Cache Storage fails', 503, 'unavailable', 'network', ['/manifest.json?rev=2']],
+    ['passes through a manifest HTTP 404', 404, 'exact', 'network', []],
+    ['passes through an ordinary navigation HTTP 503', 503, 'page', 'network', []],
+  ] as const)('%s', async (_name, status, cache, expectedSource, lookups) => {
+    const origin = 'https://tankwars.example';
+    const route = cache === 'page' ? '/' : '/manifest.json?rev=2';
+    const networkResponse = new Response('Server response', { status });
+    const exact = new Response('{"orientation":"any","rev":2}');
+    const canonical = new Response('{"orientation":"any"}');
+    const cached = new Map<string, Response>();
+    if (cache === 'exact') cached.set(route, exact);
+    if (cache === 'exact' || cache === 'canonical') cached.set('/manifest.json', canonical);
+    if (cache === 'invalid') cached.set(route, new Response('Invalid entry', { status: 500 }));
+    if (cache === 'page') cached.set(route, new Response('Cached navigation'));
+    const match = vi.fn<(request: string | { url: string }, options: { cacheName: string }) => Promise<Response | undefined>>(async (request) => {
+      if (cache === 'unavailable') throw new Error('Cache Storage unavailable');
+      const url = new URL(typeof request === 'string' ? request : request.url, origin);
+      return cached.get(`${url.pathname}${url.search}`);
+    });
+    const open = vi.fn();
+    const listeners = new Map<string, (event: {
+      request: { url: string; method: string; mode: string; destination: string };
+      respondWith: (response: Promise<Response>) => void;
+    }) => void>();
+    vm.runInNewContext(fs.readFileSync(path.resolve(process.cwd(), 'public/sw.js'), 'utf-8'), {
+      self: { location: { origin }, addEventListener: listeners.set.bind(listeners) },
+      fetch: async () => networkResponse,
+      caches: { match, open },
+      console: { warn: vi.fn() },
+      URL,
+    });
+
+    let pending: Promise<Response> | undefined;
+    listeners.get('fetch')?.({
+      request: {
+        url: `${origin}${route}`,
+        method: 'GET',
+        mode: route === '/' ? 'navigate' : 'cors',
+        destination: route === '/' ? 'document' : 'manifest',
+      },
+      respondWith(response) { pending = response; },
+    });
+
+    const responses = { exact, canonical, network: networkResponse };
+    expect(await pending).toBe(responses[expectedSource]);
+    expect(match.mock.calls.map(([input, options]) => {
+      expect(options).toEqual({ cacheName: 'tankwars-v4' });
+      const url = new URL(typeof input === 'string' ? input : input.url, origin);
+      return `${url.pathname}${url.search}`;
+    })).toEqual(lookups);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a manifest with a fresh HTTP cache entry during installation and online, and keeps it offline', async () => {
+    interface MockResponse {
+      ok: boolean;
+      body: string;
+      clone: () => MockResponse;
+    }
+
+    interface MockRequest {
+      url: string;
+      method?: string;
+      mode?: string;
+      destination?: string;
+      cache?: RequestCache;
+    }
+
+    type SwEventHandler = (event: {
+      request?: MockRequest;
+      waitUntil?: (promise: Promise<unknown>) => void;
+      respondWith?: (promise: Promise<MockResponse | undefined>) => void;
+    }) => void;
+
+    const makeResponse = (body: string, ok = true): MockResponse => ({
+      ok,
+      body,
+      clone() {
+        return makeResponse(body, ok);
+      },
+    });
+
+    const swPath = path.resolve(process.cwd(), 'public/sw.js');
+    const content = fs.readFileSync(swPath, 'utf-8');
+    const origin = 'https://tankwars.example';
+
+    let httpCachedManifest = '{"orientation":"landscape"}';
+    const cacheStorage = new Map<string, Map<string, MockResponse>>([
+      ['tankwars-v3', new Map([['/manifest.json', makeResponse(httpCachedManifest)]])],
+    ]);
+
+    let networkAvailable = true;
+    let httpCacheFresh = true;
+    let networkManifestBody = '{"orientation":"any"}';
+    const networkCalls: string[] = [];
+    let skipWaitingCalled = false;
+    let clientsClaimCalled = false;
+
+    const resolveKey = (input: string | MockRequest): string => {
+      const rawUrl = typeof input === 'string' ? input : input.url;
+      return new URL(rawUrl, origin).pathname;
+    };
+
+    const mockFetch = async (
+      input: string | MockRequest,
+      options?: RequestInit,
+    ): Promise<MockResponse> => {
+      const key = resolveKey(input);
+      const cacheMode = options?.cache ?? (typeof input === 'string' ? undefined : input.cache);
+      if (httpCacheFresh && key === '/manifest.json' && cacheMode !== 'reload' && cacheMode !== 'no-cache') {
+        return makeResponse(httpCachedManifest);
+      }
+      networkCalls.push(key);
+      if (!networkAvailable) {
+        throw new Error('Offline');
+      }
+      if (key === '/manifest.json') {
+        httpCachedManifest = networkManifestBody;
+        return makeResponse(httpCachedManifest);
+      }
+      return makeResponse(`asset:${key}`);
+    };
+
+    const mockCaches = {
+      async open(cacheName: string) {
+        let store = cacheStorage.get(cacheName);
+        if (!store) {
+          store = new Map();
+          cacheStorage.set(cacheName, store);
+        }
+        return {
+          async addAll(requests: (string | MockRequest)[]) {
+            for (const request of requests) {
+              const response = await mockFetch(request);
+              store!.set(resolveKey(request), response);
+            }
+          },
+          async put(request: string | MockRequest, response: MockResponse) {
+            store!.set(resolveKey(request), response);
+          },
+        };
+      },
+      async keys() {
+        return Array.from(cacheStorage.keys());
+      },
+      async delete(cacheName: string) {
+        return cacheStorage.delete(cacheName);
+      },
+      async match(request: string | MockRequest, options?: { cacheName?: string }) {
+        const key = resolveKey(request);
+        if (options?.cacheName) {
+          return cacheStorage.get(options.cacheName)?.get(key);
+        }
+        for (const store of cacheStorage.values()) {
+          const hit = store.get(key);
+          if (hit) {
+            return hit;
+          }
+        }
+        return undefined;
+      },
+    };
+
+    const listeners = new Map<string, SwEventHandler>();
+    const swSelf = {
+      location: { origin },
+      addEventListener(type: string, handler: SwEventHandler) {
+        listeners.set(type, handler);
+      },
+      async skipWaiting() {
+        skipWaitingCalled = true;
+      },
+      clients: {
+        async claim() {
+          clientsClaimCalled = true;
+        },
+      },
+    };
+
+    vm.runInNewContext(content, {
+      self: swSelf,
+      caches: mockCaches,
+      fetch: mockFetch,
+      Request,
+      URL,
+      Promise,
+      Error,
+    });
+
+    const installPromises: Promise<unknown>[] = [];
+    listeners.get('install')?.({
+      waitUntil(promise) {
+        installPromises.push(promise);
+      },
+    });
+    await Promise.all(installPromises);
+
+    const activatePromises: Promise<unknown>[] = [];
+    listeners.get('activate')?.({
+      waitUntil(promise) {
+        activatePromises.push(promise);
+      },
+    });
+    await Promise.all(activatePromises);
+
+    expect(skipWaitingCalled).toBe(true);
+    expect(clientsClaimCalled).toBe(true);
+    expect(cacheStorage.has('tankwars-v3')).toBe(false);
+    expect(cacheStorage.get('tankwars-v4')?.get('/manifest.json')?.body)
+      .toBe('{"orientation":"any"}');
+    expect(networkCalls).toContain('/manifest.json');
+
+    const respondWithFetch = async (request: MockRequest): Promise<MockResponse | undefined> => {
+      let pending: Promise<MockResponse | undefined> | undefined;
+      const waitUntilPromises: Promise<unknown>[] = [];
+      listeners.get('fetch')?.({
+        request,
+        waitUntil(promise) {
+          waitUntilPromises.push(promise);
+        },
+        respondWith(promise) {
+          pending = promise;
+        },
+      });
+      const response = await pending;
+      await Promise.all(waitUntilPromises);
+      return response;
+    };
+
+    networkCalls.length = 0;
+    const crossOriginPrefixed = await respondWithFetch({
+      url: `${origin}.attacker.test/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(crossOriginPrefixed).toBeUndefined();
+    expect(networkCalls).toEqual([]);
+
+    const headManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      method: 'HEAD',
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(headManifest).toBeUndefined();
+    expect(networkCalls).toEqual([]);
+
+    const postManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      method: 'POST',
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(postManifest).toBeUndefined();
+    expect(networkCalls).toEqual([]);
+
+    networkCalls.length = 0;
+    networkManifestBody = '{"orientation":"any","rev":2}';
+    const onlineManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(onlineManifest?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    networkAvailable = false;
+    networkCalls.length = 0;
+    const offlineManifest = await respondWithFetch({
+      url: `${origin}/manifest.json`,
+      mode: 'cors',
+      destination: 'manifest',
+    });
+    expect(offlineManifest?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    httpCacheFresh = false;
+    networkCalls.length = 0;
+    const offlineManifestNavigation = await respondWithFetch({
+      url: `${origin}/manifest.json?source=direct`,
+      mode: 'navigate',
+      destination: 'document',
+    });
+    expect(offlineManifestNavigation?.body).toBe('{"orientation":"any","rev":2}');
+    expect(networkCalls).toEqual(['/manifest.json']);
+
+    networkCalls.length = 0;
+    const offlineIcon = await respondWithFetch({
+      url: `${origin}/icon-512.png`,
+      mode: 'no-cors',
+      destination: 'image',
+    });
+    expect(offlineIcon?.body).toBe('asset:/icon-512.png');
+    expect(networkCalls).toEqual([]);
   });
 });

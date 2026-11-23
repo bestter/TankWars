@@ -28,7 +28,7 @@ export function OnlineLobbyCreate({
   return (
     <>
       <div style={{ marginBottom: 10, color: '#AAAAAA', fontSize: 12 }}>{t('num_players_label')}</div>
-      <div style={{ marginBottom: 14 }}>
+      <div className="retro-num-row" style={{ marginBottom: 14 }}>
         {[2, 3, 4].map((n) => (
           <button
             key={n}
@@ -52,12 +52,13 @@ export function OnlineLobbyCreate({
       )}
 
       {slotConfigs.map((cfg, idx) => (
-        <div key={cfg.id} style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ width: 92, color: VGA_PALETTE.YELLOW, fontSize: 12 }}>
+        <div key={cfg.id} className="lobby-slot-row">
+          <span className="lobby-slot-label" style={{ color: VGA_PALETTE.YELLOW, fontSize: 12 }}>
             {t('slot_label', { num: idx + 1 })}
           </span>
 
           <select
+            className="lobby-slot-select"
             aria-label={t('controller_type_aria_label', { num: idx + 1 })}
             value={cfg.type === 'human' ? 'human' : `ai:${cfg.aiProfile}`}
             onChange={(e) => {
@@ -69,7 +70,6 @@ export function OnlineLobbyCreate({
                 onUpdateSlot(idx, { type: 'ai', aiProfile: prof });
               }
             }}
-            style={{ background: '#111', color: '#fff', border: '1px solid #555', padding: '2px 6px' }}
           >
             <option value="human">{t('slot_human')}</option>
             <option value="ai:v1-random">{t('slot_ai_simple')}</option>
@@ -79,7 +79,7 @@ export function OnlineLobbyCreate({
           </select>
 
           {cfg.type === 'human' && idx > 0 && (
-            <span style={{ fontSize: 12, color: '#666' }}>
+            <span className="lobby-slot-hint" style={{ fontSize: 12, color: '#666' }}>
               {t('link_instructions')}
             </span>
           )}
@@ -99,7 +99,7 @@ export function OnlineLobbyCreate({
       </div>
 
       <div style={{ marginTop: 16, textAlign: 'center' }}>
-        <button type="button" onClick={onExitToLocalMenu} style={{ fontSize: 12 }}>
+        <button type="button" className="lobby-secondary-btn" onClick={onExitToLocalMenu}>
           {t('online_back_to_local')}
         </button>
       </div>

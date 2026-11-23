@@ -71,9 +71,16 @@ describe('HTML head theme and color-scheme metadata (#406)', () => {
 
   // Le manifeste PWA conserve son accent cyan VGA (#55FFFF) pour la fenêtre installée
   // et son fond noir (#000000) pour le splash screen.
-  it('preserves PWA manifest colors unchanged', () => {
+  it('preserves PWA manifest colors and allows free orientation (#406, #445)', () => {
     expect(manifest.background_color).toBe('#000000');
     expect(manifest.theme_color).toBe('#55FFFF');
+    expect(manifest.orientation).toBe('any');
+  });
+
+  it('includes viewport-fit=cover in the viewport meta tag for notched mobile devices (#445)', () => {
+    const viewportMatches = indexHtml.match(/<meta\s+[^>]*name=["']viewport["'][^>]*>/gi) || [];
+    expect(viewportMatches).toHaveLength(1);
+    expect(viewportMatches[0]).toContain('viewport-fit=cover');
   });
 
   // Test exécuté lorsque dist/index.html existe (garanti par l'ordre build -> test en CI et validation).
@@ -81,5 +88,6 @@ describe('HTML head theme and color-scheme metadata (#406)', () => {
     const distHtml = fs.readFileSync(distHtmlPath, 'utf-8');
     expect(distHtml).toMatch(/<meta\s+[^>]*name=["']color-scheme["'][^>]*content=["']dark light["']/i);
     expect(distHtml).toMatch(/<meta\s+[^>]*name=["']theme-color["'][^>]*content=["']#000000["']/i);
+    expect(distHtml).toMatch(/<meta\s+[^>]*name=["']viewport["'][^>]*viewport-fit=cover/i);
   });
 });

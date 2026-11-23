@@ -48,4 +48,22 @@ describe('GameOverOverlay', () => {
     const gameOverElement = screen.getByText('game_over');
     expect(gameOverElement).not.toBeNull();
   });
+
+  it('structures max-length 16-char winner name inside .game-over-overlay hierarchy', () => {
+    const winner = makePlayer({
+      id: 'player-max',
+      name: 'MMMMMMMMMMMMMMMM',
+      tank: makeTank('tank-max', 120, 300, { color: '#55ffff' as Color }),
+    });
+
+    const { container } = render(<GameOverOverlay winner={winner} />);
+
+    const overlay = container.querySelector('.game-over-overlay');
+    const winnerElement = overlay?.querySelector('.game-over-winner');
+    const subtitleElement = overlay?.querySelector('.game-over-subtitle');
+
+    expect(overlay).not.toBeNull();
+    expect(winnerElement?.textContent).toBe('winner_wins MMMMMMMMMMMMMMMM');
+    expect(subtitleElement?.textContent).toBe('game_over');
+  });
 });

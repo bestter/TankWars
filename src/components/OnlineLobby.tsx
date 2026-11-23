@@ -30,8 +30,8 @@ export function OnlineLobby(props: OnlineLobbyProps) {
   const { view, error, isJoinMode } = lobby;
 
   return (
-    <div className="retro-menu-container" style={{ padding: 12 }}>
-      <div className="retro-menu-frame" style={{ maxWidth: 820, margin: '0 auto' }}>
+    <div className="retro-menu-container">
+      <div className="retro-menu-frame retro-lobby-frame">
         <div className="retro-menu-inner">
           <GameLogo compact />
           <p className="retro-subtitle" style={{ marginBottom: 12 }}>{t('create_online_game')}</p>
@@ -40,7 +40,7 @@ export function OnlineLobby(props: OnlineLobbyProps) {
 
           {error && (
             <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}
-              {lobby.roundPreparationFailed && <button type="button" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
+              {lobby.roundPreparationFailed && <button type="button" className="lobby-secondary-btn" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
             </div>
           )}
 

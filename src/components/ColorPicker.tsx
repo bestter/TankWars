@@ -21,14 +21,7 @@ export function ColorPicker({
   const { t } = useTranslation();
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: "4px",
-        alignItems: "center",
-        flexWrap: "wrap",
-      }}
-    >
+    <div className="retro-color-picker">
       {colorPool.map((color) => {
         const isSelected = color === selectedColor;
         const isUnavailable = color !== selectedColor && unavailableColors.has(color);

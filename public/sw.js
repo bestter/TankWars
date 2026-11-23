@@ -1,4 +1,7 @@
-const CACHE_NAME = "tankwars-v3";
+const CACHE_NAME = "tankwars-v4";
+const MANIFEST_PATH = "/manifest.json";
+// Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
+const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
   "/",
   "/index.html",
@@ -6,15 +9,27 @@ const ASSETS = [
   "/favicon-32.png",
   "/apple-touch-icon.png",
   "/icon-512.png",
-  "/manifest.json",
 ];
+
+async function findCachedManifest(request) {
+  const options = { cacheName: CACHE_NAME };
+  const exact = await caches.match(request, options);
+  if (exact?.ok) return exact;
+
+  const canonical = await caches.match(MANIFEST_PATH, options);
+  return canonical?.ok ? canonical : undefined;
+}
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
       .open(CACHE_NAME)
       .then((cache) => {
-        return cache.addAll(ASSETS);
+        const manifest = new Request(
+          new URL(MANIFEST_PATH, self.location.origin),
+          MANIFEST_FETCH_OPTIONS
+        );
+        return cache.addAll([...ASSETS, manifest]);
       })
       .then(() => self.skipWaiting())
   );
@@ -38,30 +53,69 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
-  if (!e.request.url.startsWith(self.location.origin)) {
+  if (e.request.method && e.request.method !== "GET") {
     return;
   }
 
-  // Stratégie Network-First pour les requêtes de navigation (index.html)
-  // afin de toujours charger la version la plus récente contenant les bons bundles JS
-  if (e.request.mode === "navigate") {
+  let requestUrl;
+  try {
+    requestUrl = new URL(e.request.url);
+  } catch {
+    return;
+  }
+
+  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  const isManifestRequest =
+    requestUrl.pathname === MANIFEST_PATH ||
+    e.request.destination === "manifest";
+  const isNavigate = e.request.mode === "navigate";
+
+  // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
+  // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
+  if (e.request.mode === "navigate" || isManifestRequest) {
+    const fetchRequest =
+      isManifestRequest && !isNavigate
+        ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
+        : fetch(e.request);
+
     e.respondWith(
-      fetch(e.request)
-        .then((response) => {
+      fetchRequest
+        .then(async (response) => {
+          if (isManifestRequest && response.status >= 500 && response.status < 600) {
+            try {
+              return (await findCachedManifest(e.request)) ?? response;
+            } catch (err) {
+              console.warn("[sw] Cached manifest lookup failed", err);
+              return response;
+            }
+          }
           if (response.ok) {
             const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));
+            const cacheWrite = caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(e.request, copy))
+              .catch((err) => {
+                if (typeof console !== "undefined") {
+                  console.warn("[sw] Cache update failed", err);
+                }
+              });
+            if (typeof e.waitUntil === "function") {
+              e.waitUntil(cacheWrite);
+            }
           }
           return response;
         })
-        .catch(() => {
-          return caches.match(e.request).then((cachedResponse) => {
-            if (cachedResponse) {
-              return cachedResponse;
-            }
-            return caches.match("/index.html");
-          });
+        .catch(async (err) => {
+          const options = { cacheName: CACHE_NAME };
+          const fallback = isManifestRequest
+            ? await findCachedManifest(e.request)
+            : (await caches.match(e.request, options)) ?? (await caches.match("/index.html", options));
+          if (fallback) return fallback;
+          throw err;
         })
     );
     return;
@@ -69,15 +123,17 @@ self.addEventListener("fetch", (e) => {
 
   // Stratégie Cache-First pour les autres ressources locales
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(e.request).catch((err) => {
-        // Propager l'erreur réseau au lieu de renvoyer undefined
-        throw err;
-      });
-    })
+    caches
+      .match(e.request, { cacheName: CACHE_NAME })
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        return fetch(e.request).catch((err) => {
+          // Propager l'erreur réseau au lieu de renvoyer undefined
+          throw err;
+        });
+      })
   );
 });
 

@@ -9,30 +9,14 @@ export function GameOverOverlay({ winner }: GameOverOverlayProps) {
   const { t } = useTranslation();
   if (!winner) return null;
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: "50%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        textAlign: "center",
-        pointerEvents: "none",
-        zIndex: 10,
-      }}
-    >
+    <div className="game-over-overlay">
       <div
-        style={{
-          fontSize: "72px",
-          fontWeight: "bold",
-          color: winner.tank.color,
-          textShadow: "0 0 20px #000, 0 0 40px #000",
-          fontFamily: "monospace",
-          marginBottom: "12px",
-        }}
+        className="game-over-winner"
+        style={{ color: winner.tank.color }}
       >
         {t("winner_wins", { name: winner.name })}
       </div>
-      <div style={{ fontSize: "24px", color: "#AAAAAA" }}>{t("game_over")}</div>
+      <div className="game-over-subtitle">{t("game_over")}</div>
     </div>
   );
 }

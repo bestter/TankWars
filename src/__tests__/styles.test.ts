@@ -90,4 +90,104 @@ describe('styles CSS cleanup (#405)', () => {
     expect(indexCss).toContain('--text-h');
     expect(indexCss).toContain('--border');
   });
+
+  it('supports fluid mobile layout, safe-areas, adaptive container queries, and touch targets (#445)', () => {
+    expect(indexCss).toContain('min-height: 100dvh;');
+    expect(appCss).toContain('min-height: 100dvh;');
+    expect(appCss).toContain('env(safe-area-inset-');
+    expect(appCss).toContain('container: combat / inline-size;');
+    expect(appCss).toContain('@container combat');
+    expect(appCss).toMatch(/\.game-canvas\s*\{[^}]*display:\s*block;[^}]*aspect-ratio:\s*800\s*\/\s*480;/);
+    expect(appCss).toMatch(/\.mobile-controls-panel\s*\{[^}]*flex-wrap:\s*wrap;/);
+    expect(appCss).toMatch(/\.retro-player-row\s*\{[^}]*flex-wrap:\s*wrap;/);
+    expect(appCss).toMatch(/\.retro-logo\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto;/);
+    expect(appCss).toMatch(/\.retro-inc-btn\s*\{[^}]*min-block-size:\s*24px;/);
+    expect(appCss).toContain('@media (pointer: coarse)');
+    expect(appCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
+    expect(indexCss).not.toMatch(/(?:html|body)\s*\{[^}]*overflow-x:\s*(?:hidden|clip)/);
+  });
+
+  it('sizes GameOverOverlay and clamps ShotEarningsOverlay against their own 2D stage containers (#446)', () => {
+    expect(appCss).not.toMatch(/\.combat-canvas-stage\s*\{[^}]*container(?:-type)?\s*:/);
+    expect(appCss).toMatch(
+      /\.game-over-overlay\s*\{[^}]*inset:\s*0;[^}]*justify-content:\s*safe center;[^}]*container:\s*game-over \/ size;/,
+    );
+    expect(appCss).toMatch(
+      /\.game-over-winner\s*\{[^}]*font-size:\s*clamp\(1\.25rem,\s*0\.25rem \+ min\(6\.5cqi,\s*10\.5cqb\),\s*3\.125rem\);/,
+    );
+    expect(appCss).toMatch(
+      /\.game-over-subtitle\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.35rem \+ min\(2cqi,\s*3\.4cqb\),\s*1\.5rem\);/,
+    );
+    expect(appCss).toMatch(/\.shot-earnings-overlay\s*\{[^}]*overflow:\s*clip;[^}]*container:\s*shot-earnings \/ size;/);
+    expect(appCss).toMatch(
+      /\.shot-earnings-line\s*\{[^}]*--award-line-height:\s*1\.25;[^}]*--award-rise:\s*1\.9;[^}]*line-height:\s*var\(--award-line-height\);[^}]*top:\s*clamp\(\s*calc\(1em \* var\(--award-line-height\) \* var\(--award-rise\) \+ 6px\),/,
+    );
+    expect(appCss).toMatch(
+      /@supports\s*\(translate:\s*1cqi 1cqb\)\s*and\s*\(font-size:\s*1cqi\)\s*\{\s*\.shot-earnings-line\s*\{[^}]*translate:[^}]*50%[^}]*100cqi - 100%[^}]*calc\(100% \* var\(--award-rise\) \+ 6px\)/,
+    );
+    const keyframesBlock = appCss.match(/@keyframes shot-earnings-float\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(keyframesBlock).toContain('translateY(-100%)');
+    expect(keyframesBlock).toContain('translateY(calc(-100% * var(--award-rise)))');
+    expect(keyframesBlock).not.toContain('translate(-50%');
+  });
+
+  it('preserves desktop 800x480 stage, overlaid HUD, and top-right header on short desktop viewports >= 1025px (#446)', () => {
+    expect(appCss).toMatch(/@media \(min-width: 1025px\)\s*\{\s*\.combat-shell\s*\{[^}]*max-width:\s*calc\(800px \+ 2 \* var\(--combat-stage-border\)\);/);
+    expect(appCss).toContain('@media (max-width: 1024px) and (max-height: 540px)');
+    expect(appCss).not.toMatch(/@media\s*\(\s*max-height:\s*540px\s*\)/);
+    expect(appCss).not.toMatch(/@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*min-height:\s*520px\s*\)/);
+    expect(appCss).toMatch(/\.app-shell\s*\{[^}]*container:\s*app-shell\s*\/\s*inline-size;/);
+    const [beforeSupports, supportsBlock = ''] = appCss.split('@supports (container-type: inline-size)');
+    expect(beforeSupports).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*\{[^}]*\.app-header[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    expect(beforeSupports).not.toMatch(/@media[^{]*min-width:\s*1080px/);
+    expect(supportsBlock).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*\{[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*static;/,
+    );
+    expect(supportsBlock).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*pointer:\s*fine\s*\)\s*\{\s*@container app-shell \(inline-size >= 960px\)[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    expect(supportsBlock).toMatch(
+      /@media\s*\(\s*min-width:\s*1080px\s*\)\s*\{\s*@container app-shell \(inline-size >= 1024px\)[\s\S]*?\.app-header-lang\s*\{[^}]*position:\s*absolute;/,
+    );
+    const fallbackAndResetMatches = appCss.match(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-width:\s*760px\s*\)\s*and\s*\(\s*min-height:\s*541px\s*\)/g,
+    );
+    expect(fallbackAndResetMatches).toHaveLength(2);
+    expect(appCss).toMatch(
+      /@media\s*\(\s*min-width:\s*1025px\s*\)\s*,\s*\(\s*min-height:\s*541px\s*\)\s*\{\s*@container combat \(inline-size >= 720px\)/,
+    );
+  });
+
+  it('fits the landscape stage above the measured touch controls within the safe viewport (#446)', () => {
+    expect(appCss).toMatch(
+      /--combat-available-height:\s*calc\(\s*var\(--combat-viewport-height\)\s*-\s*env\(safe-area-inset-top, 0px\)\s*-\s*env\(safe-area-inset-bottom, 0px\)\s*-\s*var\(--combat-controls-height, 150px\)\s*-\s*var\(--combat-stack-gap\)\s*\);/,
+    );
+    expect(appCss).toContain('--combat-viewport-height: 100vh;');
+    expect(appCss).toMatch(/@supports \(height: 100dvh\)\s*\{\s*\.combat-canvas-stage\s*\{[^}]*--combat-viewport-height:\s*100dvh;/);
+  });
+
+  it('constrains native <dialog> modals on every side using safe-area insets (#446)', () => {
+    expect(appCss).toMatch(
+      /\.retro-modal\s*\{[^}]*--modal-safe-top:\s*max\(10px,\s*env\(safe-area-inset-top,\s*0px\)\);[^}]*--modal-safe-right:\s*max\(8px,\s*env\(safe-area-inset-right,\s*0px\)\);[^}]*--modal-safe-bottom:\s*max\(10px,\s*env\(safe-area-inset-bottom,\s*0px\)\);[^}]*--modal-safe-left:\s*max\(8px,\s*env\(safe-area-inset-left,\s*0px\)\);[^}]*inset:\s*0;[^}]*inset:\s*var\(--modal-safe-top\)\s+var\(--modal-safe-right\)\s+var\(--modal-safe-bottom\)\s+var\(--modal-safe-left\);[^}]*max-width:\s*calc\(100%\s*-\s*var\(--modal-safe-left\)\s*-\s*var\(--modal-safe-right\)\);[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\);/s,
+    );
+    expect(appCss).toMatch(
+      /\.retro-modal-shop\s*\{[^}]*max-height:\s*min\(540px,\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\)\);[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/s,
+    );
+  });
+
+  it('stacks desktop HUD inside .combat-hud-stack without fixed top, isolates stage border, and keeps vmin fallback on .zeus-announcement (#446)', () => {
+    expect(appCss).toMatch(
+      /\.combat-canvas-stage\s*\{[^}]*border:\s*var\(--combat-stage-border\) solid #aaaaaa;[^}]*box-sizing:\s*border-box;/,
+    );
+    expect(appCss).toMatch(/\.game-canvas\s*\{[^}]*border:\s*0;/);
+    expect(appCss).toMatch(
+      /\.zeus-announcement\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.65rem \+ 1\.2vmin,\s*1rem\);/,
+    );
+    expect(appCss).toMatch(
+      /@supports\s*\(font-size:\s*1cqi\)\s*\{\s*\.zeus-announcement\s*\{[^}]*font-size:\s*clamp\(0\.75rem,\s*0\.65rem \+ 1\.2cqi,\s*1rem\);/,
+    );
+    expect(appCss).not.toMatch(/top:\s*34px;/);
+  });
 });

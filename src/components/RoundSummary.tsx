@@ -71,16 +71,12 @@ export function RoundSummary({
   return (
     <dialog
       ref={dialogRef}
-      className="retro-modal"
+      className="retro-modal retro-modal-summary"
       aria-labelledby={titleId}
       onCancel={handleCancel}
       onClose={handleClose}
       style={{
         border: `4px solid ${VGA_PALETTE.CYAN}`,
-        minWidth: 420,
-        maxWidth: "88%",
-        padding: "14px 18px 18px",
-        backgroundColor: "rgba(0, 0, 0, 0.92)",
       }}
     >
       <h2
@@ -137,10 +133,10 @@ export function RoundSummary({
                 }}
               />
               <span
+                className="round-summary-name"
                 style={{
                   color: p.tank.color,
                   fontWeight: "bold",
-                  minWidth: 70,
                 }}
               >
                 {p.name}
@@ -189,11 +185,8 @@ export function RoundSummary({
         type="button"
         onClick={onNextRound}
         disabled={!canContinue}
-        className="retro-btn"
+        className="retro-btn round-summary-next-btn"
         style={{
-          fontSize: "15px",
-          padding: "11px 28px",
-          minWidth: 260,
           opacity: canContinue ? 1 : 0.45,
           cursor: canContinue ? "pointer" : "not-allowed",
         }}
