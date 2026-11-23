@@ -128,6 +128,7 @@ describe('styles CSS cleanup (#405)', () => {
   });
 
   it('preserves desktop 800x480 stage, overlaid HUD, and top-right header on short desktop viewports >= 1025px (#446)', () => {
+    expect(appCss).toMatch(/@media \(min-width: 1025px\)\s*\{\s*\.combat-shell\s*\{[^}]*max-width:\s*calc\(800px \+ 2 \* var\(--combat-stage-border\)\);/);
     expect(appCss).toContain('@media (max-width: 1024px) and (max-height: 540px)');
     expect(appCss).not.toMatch(/@media\s*\(\s*max-height:\s*540px\s*\)/);
     expect(appCss).not.toMatch(/@media\s*\(\s*min-width:\s*1025px\s*\)\s*and\s*\(\s*min-height:\s*520px\s*\)/);
@@ -155,6 +156,14 @@ describe('styles CSS cleanup (#405)', () => {
     );
   });
 
+  it('fits the landscape stage above the measured touch controls within the safe viewport (#446)', () => {
+    expect(appCss).toMatch(
+      /--combat-available-height:\s*calc\(\s*var\(--combat-viewport-height\)\s*-\s*env\(safe-area-inset-top, 0px\)\s*-\s*env\(safe-area-inset-bottom, 0px\)\s*-\s*var\(--combat-controls-height, 150px\)\s*-\s*var\(--combat-stack-gap\)\s*\);/,
+    );
+    expect(appCss).toContain('--combat-viewport-height: 100vh;');
+    expect(appCss).toMatch(/@supports \(height: 100dvh\)\s*\{\s*\.combat-canvas-stage\s*\{[^}]*--combat-viewport-height:\s*100dvh;/);
+  });
+
   it('constrains native <dialog> modals on every side using safe-area insets (#446)', () => {
     expect(appCss).toMatch(
       /\.retro-modal\s*\{[^}]*--modal-safe-top:\s*max\(10px,\s*env\(safe-area-inset-top,\s*0px\)\);[^}]*--modal-safe-right:\s*max\(8px,\s*env\(safe-area-inset-right,\s*0px\)\);[^}]*--modal-safe-bottom:\s*max\(10px,\s*env\(safe-area-inset-bottom,\s*0px\)\);[^}]*--modal-safe-left:\s*max\(8px,\s*env\(safe-area-inset-left,\s*0px\)\);[^}]*inset:\s*0;[^}]*inset:\s*var\(--modal-safe-top\)\s+var\(--modal-safe-right\)\s+var\(--modal-safe-bottom\)\s+var\(--modal-safe-left\);[^}]*max-width:\s*calc\(100%\s*-\s*var\(--modal-safe-left\)\s*-\s*var\(--modal-safe-right\)\);[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--modal-safe-top\)\s*-\s*var\(--modal-safe-bottom\)\);/s,
@@ -166,7 +175,7 @@ describe('styles CSS cleanup (#405)', () => {
 
   it('stacks desktop HUD inside .combat-hud-stack without fixed top, isolates stage border, and keeps vmin fallback on .zeus-announcement (#446)', () => {
     expect(appCss).toMatch(
-      /\.combat-canvas-stage\s*\{[^}]*border:\s*3px solid #aaaaaa;[^}]*box-sizing:\s*border-box;/,
+      /\.combat-canvas-stage\s*\{[^}]*border:\s*var\(--combat-stage-border\) solid #aaaaaa;[^}]*box-sizing:\s*border-box;/,
     );
     expect(appCss).toMatch(/\.game-canvas\s*\{[^}]*border:\s*0;/);
     expect(appCss).toMatch(

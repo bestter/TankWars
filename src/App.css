@@ -58,10 +58,12 @@
 }
 
 .combat-shell {
+  --combat-stage-border: 3px;
+  --combat-stack-gap: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--combat-stack-gap);
   width: 100%;
   max-width: 800px;
   min-inline-size: 0;
@@ -73,6 +75,7 @@
   display: flex;
   justify-content: flex-end;
   width: 100%;
+  max-width: 800px;
   min-inline-size: 0;
 }
 
@@ -105,16 +108,37 @@
 
 .combat-canvas-stage {
   position: relative;
-  width: min(100%, 800px);
+  width: 100%;
   margin-inline: auto;
-  border: 3px solid #aaaaaa;
+  border: var(--combat-stage-border) solid #aaaaaa;
   box-sizing: border-box;
+}
+
+@media (min-width: 1025px) {
+  .combat-shell {
+    max-width: calc(800px + 2 * var(--combat-stage-border));
+  }
 }
 
 @media (max-width: 1024px) and (max-height: 540px) {
   .combat-canvas-stage {
-    width: min(100%, 800px, calc(max(160px, 100vh - 150px) * 5 / 3));
-    width: min(100%, 800px, calc(max(160px, 100dvh - 150px) * 5 / 3));
+    --combat-viewport-height: 100vh;
+    /* Conserver la taille habituelle en paysage, puis réduire si les commandes prennent plus de place. */
+    --combat-preferred-height: max(160px, calc(var(--combat-viewport-height) - 150px));
+    --combat-available-height: calc(
+      var(--combat-viewport-height) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+      - var(--combat-controls-height, 150px) - var(--combat-stack-gap)
+    );
+    /* Sous 120 px, garder le terrain lisible et laisser la page défiler. */
+    --combat-stage-height: clamp(120px, var(--combat-available-height), var(--combat-preferred-height));
+    --combat-stage-frame: calc(2 * var(--combat-stage-border));
+    width: min(100%, calc((var(--combat-stage-height) - var(--combat-stage-frame)) * 5 / 3 + var(--combat-stage-frame)));
+  }
+
+  @supports (height: 100dvh) {
+    .combat-canvas-stage {
+      --combat-viewport-height: 100dvh;
+    }
   }
 }
 
@@ -1308,6 +1332,17 @@ canvas {
 }
 
 /* Mobile controls panel rules */
+.combat-mobile-controls {
+  /* Inclure la marge du panneau dans sa hauteur mesurée. */
+  display: flow-root;
+  width: 100%;
+  max-width: 800px;
+}
+
+.combat-mobile-controls:empty {
+  display: none;
+}
+
 .mobile-controls-panel {
   display: flex;
   flex-wrap: wrap;
@@ -1414,6 +1449,7 @@ canvas {
 
 /* Hide on desktop pointer-based devices with wider screens */
 @media (pointer: fine) and (min-width: 1025px) {
+  .combat-mobile-controls,
   .mobile-controls-panel {
     display: none !important;
   }

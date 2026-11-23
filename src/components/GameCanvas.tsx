@@ -1,5 +1,5 @@
 import { ShotAdvisorPanel, type ShotAdvisorPanelProps } from "./advisor/ShotAdvisorPanel";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 const DiagnosticPanel = import.meta.env.DEV || import.meta.env.MODE === "endurance" ? lazy(() => import("./diagnostics/DiagnosticPanel")) : null;
 import { PlayerStatusList } from "./PlayerStatusList";
 import { isAimingInspectionVisible } from "./playerStatus";
@@ -397,6 +397,20 @@ export function GameCanvas({
 
   const hasBlockingModalError = isBlockingModalErrorActive(state);
   const isCombatActive = gamePhase === "COMBAT" || gamePhase === "RESOLUTION";
+  const combatShellRef = useRef<HTMLDivElement>(null);
+  const mobileControlsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const shell = combatShellRef.current;
+    const controls = mobileControlsRef.current;
+    if (!shell || !controls || typeof ResizeObserver !== "function") return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      shell.style.setProperty("--combat-controls-height", `${entry.contentRect.height}px`);
+    });
+    observer.observe(controls);
+    return () => observer.disconnect();
+  }, []);
   const terrainCursor = getTerrainCursor({
     gameMode,
     gamePhase,
@@ -407,7 +421,7 @@ export function GameCanvas({
   });
 
   return (
-    <div className="combat-shell">
+    <div className="combat-shell" ref={combatShellRef}>
       {!endurance && gameMode === "local" && diagnostics && DiagnosticPanel && <Suspense fallback={null}><DiagnosticPanel source={diagnostics} /></Suspense>}
       <InlineSessionErrors
         suppressed={hasBlockingModalError}
@@ -472,15 +486,17 @@ export function GameCanvas({
         </div>
       </div>
 
-      {isCombatActive && (
-        <MobileControls
-          turnInfo={turnInfo}
-          onAdjustAngle={handleAdjustAngle}
-          onAdjustPower={handleAdjustPower}
-          onCycleWeapon={handleCycleWeapon}
-          onFire={handleFire}
-        />
-      )}
+      <div className="combat-mobile-controls" ref={mobileControlsRef}>
+        {isCombatActive && (
+          <MobileControls
+            turnInfo={turnInfo}
+            onAdjustAngle={handleAdjustAngle}
+            onAdjustPower={handleAdjustPower}
+            onCycleWeapon={handleCycleWeapon}
+            onFire={handleFire}
+          />
+        )}
+      </div>
 
       <AimingPlayerStatus
         players={state.playerStatus}

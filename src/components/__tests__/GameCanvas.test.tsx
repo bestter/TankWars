@@ -186,6 +186,40 @@ describe("GameCanvas component", () => {
     expect(canvas.tabIndex).toBe(0);
   });
 
+  it("updates the stage's height budget when the touch controls wrap or disappear", () => {
+    type Resize = (entries: { contentRect: { height: number } }[]) => void;
+    let notifyResize: Resize | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      observe = observe;
+      disconnect = disconnect;
+
+      constructor(callback: Resize) {
+        notifyResize = callback;
+      }
+    });
+
+    try {
+      const { container, unmount } = render(<GameCanvas />);
+      const shell = container.querySelector<HTMLElement>(".combat-shell");
+      const controls = container.querySelector(".combat-mobile-controls");
+      expect(shell).not.toBeNull();
+      expect(controls?.querySelector(".mobile-controls-panel")).not.toBeNull();
+      expect(observe).toHaveBeenCalledWith(controls);
+
+      notifyResize?.([{ contentRect: { height: 151.5 } }]);
+      expect(shell?.style.getPropertyValue("--combat-controls-height")).toBe("151.5px");
+      notifyResize?.([{ contentRect: { height: 0 } }]);
+      expect(shell?.style.getPropertyValue("--combat-controls-height")).toBe("0px");
+
+      unmount();
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders the bilingual Zeus announcement key with the appointed player name", () => {
     vi.mocked(useGameSession).mockReturnValue({
       diagnostics: { read: async () => null, capture: () => {}, mark: () => {} },
