@@ -16,6 +16,7 @@ import { chooseExpertFallback, createExpertForecastCache, evaluateExpertShot, ex
 import { aimCone, aimSearchPolicyCacheToken, ORDINARY_AIM_POLICY } from "../aimSearch";
 import { solveExpertAim } from "../expertAim";
 import { solveHeuristicAim } from "../heuristicShot";
+import * as heuristicShot from "../heuristicShot";
 import { solveSniperAim } from "../sniperAim";
 import { AISimpleStrategy } from "../AISimpleStrategy";
 import { chooseExpertPlan } from "../expertPlanner";
@@ -707,6 +708,84 @@ describe("physical parity and EXPERT fallback ranking", () => {
     expect(rng).toHaveBeenCalledTimes(count);
     expect(router).toMatchObject({ heuristic: null, sniper: null, smart: null });
   });
+
+  it.each([
+    { profile: undefined, label: "absent" },
+    { profile: "v99-unknown", label: "unknown runtime string" },
+  ])(
+    "missing/unknown profile ($label) matches explicit SIMPLE hitReaction intensity, draws, single consumption, and next turn",
+    async ({ profile }) => {
+      const reactions = [
+        { label: "direct hit", value: { wasDirectHit: true, fallDistance: 0 } },
+        { label: "fall", value: { wasDirectHit: false, fallDistance: 60 } },
+      ];
+
+      for (const reaction of reactions) {
+        const solverSpy = vi.spyOn(heuristicShot, "computeHeuristicShot");
+        const firstTurnSequence = [0.9, 0.5, 0.5, 0, 0.25, 0, 0.8, 0.2, 0.2, 0.5];
+        const nextTurnSequence = [0.9, 0.5, 0.5, 0.9, 0.9];
+
+        const run = async (useRouter: boolean, assignedProfile: unknown) => {
+          const f = fixture();
+          f.state.roundNumber = 1;
+          f.self.tank.currentWeapon = "MISSILE";
+          f.self.tank.hitReaction = { ...reaction.value };
+          Object.assign(f.self, { aiProfile: assignedProfile });
+
+          const queue1 = [...firstTurnSequence];
+          const rng = vi.spyOn(random, "secureRandom").mockImplementation(() => {
+            if (queue1.length === 0) throw new Error("EXTRA_RNG_DRAW");
+            return queue1.shift()!;
+          });
+          const strategy = useRouter ? new AIByProfileStrategy() : new AISimpleStrategy();
+          const firstShot = await strategy.executeTurn("self", f.state, f.terrain);
+          const firstDraws = rng.mock.calls.length;
+          const afterFirstReaction = { ...f.self.tank.hitReaction };
+
+          rng.mockReset();
+          const queue2 = [...nextTurnSequence];
+          rng.mockImplementation(() => {
+            if (queue2.length === 0) throw new Error("EXTRA_RNG_DRAW");
+            return queue2.shift()!;
+          });
+          const nextShot = await strategy.executeTurn(
+            "self",
+            { ...f.state, turn: 2 },
+            f.terrain,
+          );
+          const nextDraws = rng.mock.calls.length;
+          rng.mockRestore();
+          return {
+            firstShot,
+            firstDraws,
+            afterFirstReaction,
+            nextShot,
+            nextDraws,
+            router: useRouter ? strategy : null,
+          };
+        };
+
+        const baseline = await run(false, "v1-random");
+        expect(solverSpy, reaction.label).toHaveBeenCalledTimes(2);
+        solverSpy.mockClear();
+
+        const routed = await run(true, profile);
+        expect(solverSpy, reaction.label).toHaveBeenCalledTimes(2);
+        expect(routed.firstShot, reaction.label).toEqual(baseline.firstShot);
+        expect(routed.firstDraws, reaction.label).toBe(firstTurnSequence.length);
+        expect(routed.firstDraws, reaction.label).toBe(baseline.firstDraws);
+        expect(routed.afterFirstReaction, reaction.label).toEqual({
+          wasDirectHit: false,
+          fallDistance: 0,
+        });
+        expect(routed.nextShot, reaction.label).toEqual(baseline.nextShot);
+        expect(routed.nextDraws, reaction.label).toBe(nextTurnSequence.length);
+        expect(routed.nextDraws, reaction.label).toBe(baseline.nextDraws);
+        expect(routed.router).toMatchObject({ heuristic: null, sniper: null, smart: null });
+        vi.restoreAllMocks();
+      }
+    },
+  );
 });
 
 describe("EXPERT own/adverse boundary and material fallback", () => {

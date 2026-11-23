@@ -8,8 +8,8 @@ import { DecisionObservation, observedFallback, captureDecisionInitial } from ".
 import {
   finalizeSimpleAim,
   interpolateAimCommands,
-  randomIntegerInclusive,
   sampleSimpleGaffe,
+  sampleSimpleSecondaryDelta,
 } from "./aimCorruption";
 import {
   type AimMemory,
@@ -139,7 +139,7 @@ export class AISimpleStrategy implements AIEngine {
     onWeaponSelected?.(weaponId);
     const chances = getSimpleErrorChances(gameState.roundNumber);
     const reactionIntensity = getHitReactionIntensity(
-      self.aiProfile ?? "v1-random",
+      "v1-random",
       self.tank.hitReaction,
     );
 
@@ -173,14 +173,14 @@ export class AISimpleStrategy implements AIEngine {
 
     let before = command;
     if (maybeGaffe(chances.direction)) {
-      command = { ...command, angle: secureRandom() * 180 };
+      command = { ...command, angle: command.angle + sampleSimpleSecondaryDelta() };
       observation?.step("direction-error", before, command, { chance: chances.direction, occurred: true });
     } else {
       observation?.step("direction-error", before, command, { chance: chances.direction, occurred: false });
     }
     before = command;
     if (maybeGaffe(chances.power)) {
-      command = { ...command, power: randomIntegerInclusive(1, 99) };
+      command = { ...command, power: command.power + sampleSimpleSecondaryDelta() };
       observation?.step("power-error", before, command, { chance: chances.power, occurred: true });
     } else {
       observation?.step("power-error", before, command, { chance: chances.power, occurred: false });

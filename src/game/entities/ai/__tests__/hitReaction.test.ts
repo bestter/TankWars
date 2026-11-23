@@ -67,4 +67,14 @@ describe("hitReaction", () => {
       }),
     ).toBe(0);
   });
+
+  it("replie les profils absents, inconnus et les clés prototypes sur le barème SIMPLE", () => {
+    const direct = { wasDirectHit: true, fallDistance: 0 };
+    const fall = { wasDirectHit: false, fallDistance: FALL_DISTANCE_MAX_PX };
+    for (const unknownProfile of [undefined, "v99-unknown", "toString", "__proto__"]) {
+      const profile = unknownProfile as Parameters<typeof getHitReactionIntensity>[0];
+      expect(getHitReactionIntensity(profile, direct)).toBe(0.28);
+      expect(getHitReactionIntensity(profile, fall)).toBe(0.6);
+    }
+  });
 });

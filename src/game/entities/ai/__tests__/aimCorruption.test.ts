@@ -6,6 +6,7 @@ import {
   finalizeSimpleAim,
   interpolateAimCommands,
   sampleSimpleGaffe,
+  sampleSimpleSecondaryDelta,
 } from "../aimCorruption";
 import * as random from "../../../../utils/random";
 
@@ -67,6 +68,42 @@ describe("aimCorruption", () => {
       angle: 179.9,
       power: 99,
     });
+    expect(finalizeSimpleAim({ angle: -10, power: -10 })).toEqual({
+      angle: 0,
+      power: 1,
+    });
+    expect(finalizeSimpleAim({ angle: 179.95, power: 109.97 })).toEqual({
+      angle: 179.9,
+      power: 99,
+    });
+    expect(finalizeSimpleAim({ angle: 194, power: 0.2 })).toEqual({
+      angle: 179.9,
+      power: 1,
+    });
+    expect(finalizeSimpleAim({ angle: 42.34, power: 52.5 })).toEqual({
+      angle: 42.3,
+      power: 53,
+    });
+    expect(finalizeSimpleAim({ angle: 42.34, power: 52.4 })).toEqual({
+      angle: 42.3,
+      power: 52,
+    });
+  });
+
+  it("échantillonne les écarts secondaires SIMPLE dans [-15, +15[", () => {
+    const randomSpy = vi.spyOn(random, "secureRandom");
+    randomSpy
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.25)
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.8)
+      .mockReturnValueOnce(0.999);
+
+    expect(sampleSimpleSecondaryDelta()).toBe(-15);
+    expect(sampleSimpleSecondaryDelta()).toBe(-7.5);
+    expect(sampleSimpleSecondaryDelta()).toBe(0);
+    expect(sampleSimpleSecondaryDelta()).toBeCloseTo(9, 10);
+    expect(sampleSimpleSecondaryDelta()).toBeCloseTo(14.97, 10);
   });
 
   it("échantillonne la grosse gaffe SIMPLE dans ses deux bandes", () => {
