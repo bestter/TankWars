@@ -187,7 +187,8 @@ export class CombatAudio {
     const fadeEndTime = this.prepareImpactStartTime(weaponId);
     const context = this.ensureContext();
     if (!context) return;
-    if (tankDestructions === 0 && fadeEndTime === undefined) {
+    const hasTankDestruction = tankDestructions > 0;
+    if (!hasTankDestruction && fadeEndTime === undefined) {
       const startTime = context.currentTime;
       prepareImpactSound(context, weaponId, (start) => start(startTime));
       return;
@@ -195,7 +196,7 @@ export class CombatAudio {
 
     const sources: Array<(time: number) => void> = [];
     const schedule: ScheduleAudioSource = (start) => { sources.push(start); };
-    if (tankDestructions > 0) {
+    if (hasTankDestruction) {
       // Les morts simultanées produiraient des voix identiques et en phase.
       // Une seule voix atténuée laisse de la place à la détonation.
       prepareTankDestroyedByExplosionSound(context, schedule, NUCLEAR_TANK_DESTRUCTION_LEVEL);
@@ -225,7 +226,8 @@ export class CombatAudio {
   playTankDestroyedByExplosion(): void {
     const context = this.ensureContext();
     if (!context) return;
-    prepareTankDestroyedByExplosionSound(context, (start) => start(context.currentTime));
+    const startTime = context.currentTime;
+    prepareTankDestroyedByExplosionSound(context, (start) => start(startTime));
   }
 
   playTankSadBurial(): void {

@@ -1479,5 +1479,27 @@ describe("CombatAudio", () => {
         1.75,
       ]);
     });
+
+    it("garde un départ immédiat sur playImpact avec tankDestructions négatif ou NaN et un départ commun sur playTankDestroyedByExplosion", () => {
+      for (const count of [-1, Number.NaN]) {
+        const fake = createFakeContext({ currentTime: 2 });
+        const audio = createAudio(() => fake.context);
+        audio.playImpact("MISSILE", count);
+        expect(fake.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([2]);
+        expect(fake.oscillators.map((o) => o.start.mock.calls[0]?.[0])).toEqual([2]);
+      }
+
+      const fakeDestroy = createFakeContext({ currentTime: 3 });
+      const origCreateBuffer = fakeDestroy.context.createBuffer.bind(fakeDestroy.context);
+      fakeDestroy.context.createBuffer = vi.fn((channels: number, length: number, sampleRate: number) => {
+        fakeDestroy.setCurrentTime(3.012);
+        return origCreateBuffer(channels, length, sampleRate);
+      });
+      const audioDestroy = createAudio(() => fakeDestroy.context);
+      audioDestroy.playTankDestroyedByExplosion();
+
+      expect(fakeDestroy.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([3]);
+      expect(fakeDestroy.oscillators.map((o) => o.start.mock.calls[0]?.[0])).toEqual([3]);
+    });
   });
 });
