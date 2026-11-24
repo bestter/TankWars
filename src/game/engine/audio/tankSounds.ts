@@ -1,28 +1,30 @@
-import { playNoiseBurst } from "./noiseBurst";
-import type { EnsureAudioContext } from "./types";
+import { playNoiseBurst, prepareNoiseBurst } from "./noiseBurst";
+import type { EnsureAudioContext, ScheduleAudioSource } from "./types";
 
-export function playTankDestroyedByExplosionSound(ensure: EnsureAudioContext): void {
-  const ctx = ensure();
-  if (!ctx) return;
+export function prepareTankDestroyedByExplosionSound(
+  ctx: AudioContext,
+  schedule: ScheduleAudioSource,
+  level = 1,
+): void {
   try {
-    const now = ctx.currentTime;
-
     // Tank vaporized by direct/splash hit — big noisy boom + debris crackle
     // Primary is a longer LFSR noise with strong downward sweep
-    playNoiseBurst(ensure, 0.38, 0.29, 2400, 180);
+    prepareNoiseBurst(ctx, schedule, 0.38, 0.29 * level, 2400, 180);
 
     // Low dirty body (triangle for that old console bass thump)
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "triangle";
     osc.frequency.value = 58;
-    gain.gain.value = 0.32;
+    gain.gain.value = 0.32 * level;
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.start(now);
-    gain.gain.setValueAtTime(0.32, now);
-    gain.gain.linearRampToValueAtTime(0.0003, now + 0.42);
-    osc.stop(now + 0.48);
+    schedule((now) => {
+      osc.start(now);
+      gain.gain.setValueAtTime(0.32 * level, now);
+      gain.gain.linearRampToValueAtTime(0.0003 * level, now + 0.42);
+      osc.stop(now + 0.48);
+    });
   } catch {
     /* silent */
   }

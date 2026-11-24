@@ -74,6 +74,7 @@ export interface ExplosionDamageOptions {
   munitionId?: number;
   canCarveRock?: boolean;
   directHitTankIds?: ReadonlySet<string>;
+  reportWithProjectileImpact?: boolean;
 }
 
 /** Offsets et dimensions pour le rendu des jauges (bouclier et vie) et du nom au-dessus du tank */
@@ -127,6 +128,7 @@ export class TankManager {
     cause: "explosion" | "burial" | "zeus",
     details: string,
     killerId?: string,
+    reportedWithProjectileImpact?: boolean,
   ) => void;
 
   public onDamageApplied?: (event: CombatDamageEvent) => void;
@@ -673,7 +675,7 @@ export class TankManager {
    * Les chutes viennent ensuite. Un tank déjà mort de l'explosion ne reçoit pas
    * d'impulsion. Un survivant qualifié conserve le diviseur 4 pour ses PV de chute.
    */
-  public beginLocalNuclearImpact(options: ExplosionDamageOptions): void {
+  public beginLocalNuclearImpact(options: ExplosionDamageOptions): number {
     const {
       explosionX,
       explosionY,
@@ -706,7 +708,7 @@ export class TankManager {
       }
     }
 
-    this.applyExplosionDamage({
+    return this.applyExplosionDamage({
       ...options,
       canCarveRock: true,
       directHitTankIds,
@@ -723,7 +725,7 @@ export class TankManager {
    *   (reuses existing applyGravity + fall damage + lava death).
    * @param killerId - Optional shooter id (for round-end kill attribution; splash counts for the explosion's firer)
    * @param weaponId - Optional weapon for special direct-hit / kill-zone rules
-   * @returns Number of *new* kills caused by *this* explosion (for attribution to the killer)
+   * @returns Number of tanks destroyed directly by this explosion.
    */
   public applyExplosionDamage(options: ExplosionDamageOptions): number {
     const {
@@ -739,6 +741,7 @@ export class TankManager {
       munitionId,
       canCarveRock = false,
       directHitTankIds,
+      reportWithProjectileImpact,
     } = options;
     let killsThisExplosion = 0;
 
@@ -884,7 +887,8 @@ export class TankManager {
         tank.isDead = true;
         this.invalidateAliveCache();
         const details = `explosion by ${shooterId ?? "unknown"} (damage=${(shieldAbsorbed + healthDamage).toFixed(1)})`;
-        this.onPlayerDied?.(player.id, "explosion", details, shooterId);
+        this.onPlayerDied?.(player.id, "explosion", details, shooterId, reportWithProjectileImpact);
+        killsThisExplosion++;
         if (shooterId) {
           if (shotId !== undefined) {
             this.onTankDestroyed?.({
@@ -895,7 +899,6 @@ export class TankManager {
               cause: "health-zero",
             });
           }
-          killsThisExplosion++;
         }
       }
     }

@@ -316,7 +316,7 @@ describe("GameEngine audio", () => {
         expect(engine.getActiveProjectiles()).toHaveLength(0);
         expect(stopFlightAlert).toHaveBeenCalled();
         expect(playImpact).toHaveBeenCalledTimes(1);
-        expect(playImpact).toHaveBeenCalledWith(weaponId);
+        expect(playImpact).toHaveBeenCalledWith(weaponId, 1);
       },
     );
 
@@ -757,6 +757,7 @@ describe("GameEngine audio", () => {
         const fakeAudio = {
           state: "running" as AudioContextState,
           currentTime: 0,
+          onCreateBuffer: () => {},
           oscillators: [] as Array<{
             type: OscillatorType;
             start: ReturnType<typeof vi.fn>;
@@ -858,9 +859,10 @@ describe("GameEngine audio", () => {
               frequency: makeParam(),
               connect: vi.fn(),
             })),
-            createBuffer: vi.fn((_c: number, length: number) => ({
-              getChannelData: () => new Float32Array(length),
-            })),
+            createBuffer: vi.fn((_c: number, length: number) => {
+              fakeAudio.onCreateBuffer();
+              return { getChannelData: () => new Float32Array(length) };
+            }),
             createBufferSource: vi.fn(() => {
               const src = {
                 buffer: null,
@@ -1092,6 +1094,78 @@ describe("GameEngine audio", () => {
           await Promise.resolve();
           expect(harnessD.fakeAudio.oscillators).toHaveLength(oscCountAfterOobD);
           harnessD.integratedEngine.stop();
+        },
+      );
+
+      it.each([
+        { weaponId: "NUKE", scenario: "active", startTime: 2.025 },
+        { weaponId: "THERMONUCLEAR", scenario: "active", startTime: 2.025 },
+        { weaponId: "NUKE", scenario: "hidden", startTime: 2 + 0.01 },
+        { weaponId: "THERMONUCLEAR", scenario: "hidden", startTime: 2 + 0.01 },
+        { weaponId: "NUKE", scenario: "fin du fondu pendant l'impact", startTime: 2.004 + 0.01 },
+        { weaponId: "THERMONUCLEAR", scenario: "fin du fondu pendant l'impact", startTime: 2.004 + 0.01 },
+        { weaponId: "NUKE", scenario: "fin du fondu pendant la préparation audio", startTime: 2.028 + 0.01 },
+        { weaponId: "THERMONUCLEAR", scenario: "fin du fondu pendant la préparation audio", startTime: 2.028 + 0.01 },
+      ] as const)(
+        "synchronise la destruction d'un tank et la détonation ($weaponId, $scenario)",
+        ({ weaponId, scenario, startTime }) => {
+          const visibility = scenario === "hidden" ? "hidden" : "visible";
+          const { integratedEngine, shooter, fakeAudio, setVisibility } = createWebAudioEngineHarness(visibility);
+          integratedEngine.start();
+          try {
+            expect(integratedEngine.fireProjectile(
+              shooter.tank.position,
+              { angle: 45, power: 25, weaponId },
+              shooter.id,
+            )).toBe(true);
+            const tanks = integratedEngine.getTankManager();
+            const target = tanks.getPlayerById("b")!;
+            const shell = integratedEngine.getActiveProjectiles()[0]!;
+            shell.x = target.tank.position.x;
+            shell.y = target.tank.position.y - 5;
+            shell.vx = 0;
+            shell.vy = 0;
+            if (scenario === "fin du fondu pendant l'impact") {
+              fakeAudio.currentTime = 1.976;
+              setVisibility("hidden");
+              const checkTankBurial = tanks.checkTankBurial.bind(tanks);
+              vi.spyOn(tanks, "checkTankBurial").mockImplementation((terrain) => {
+                expect(target.tank.isDead).toBe(true);
+                fakeAudio.currentTime = 2.004;
+                checkTankBurial(terrain);
+              });
+            }
+            fakeAudio.currentTime = 2;
+            if (scenario === "fin du fondu pendant l'impact") setVisibility("visible");
+            const oscillatorsBeforeImpact = fakeAudio.oscillators.length;
+            const buffersBeforeImpact = fakeAudio.bufferSources.length;
+            if (scenario === "fin du fondu pendant la préparation audio") {
+              fakeAudio.onCreateBuffer = () => {
+                for (const node of fakeAudio.oscillators.slice(oscillatorsBeforeImpact)) {
+                  expect(node.start).not.toHaveBeenCalled();
+                }
+                for (const node of fakeAudio.bufferSources.slice(buffersBeforeImpact)) {
+                  expect(node.start).not.toHaveBeenCalled();
+                }
+                fakeAudio.currentTime = 2.028;
+              };
+            }
+
+            getUpdateFn(integratedEngine).call(integratedEngine, 1 / 120);
+
+            expect(target.tank.isDead).toBe(true);
+            expect(integratedEngine.getActiveProjectiles()).toHaveLength(0);
+            const weaponOscillatorOffsets = weaponId === "NUKE" ? [0, 0] : [0, 0.1];
+            const weaponNoiseOffsets = weaponId === "NUKE" ? [0, 0.16] : [0, 0.22, 0.52];
+            expect(fakeAudio.oscillators.slice(oscillatorsBeforeImpact)
+              .map((oscillator) => oscillator.start.mock.calls[0]?.[0]))
+              .toEqual([0, ...weaponOscillatorOffsets].map((offset) => startTime + offset));
+            expect(fakeAudio.bufferSources.slice(buffersBeforeImpact)
+              .map((source) => source.start.mock.calls[0]?.[0]))
+              .toEqual([0, ...weaponNoiseOffsets].map((offset) => startTime + offset));
+          } finally {
+            integratedEngine.stop();
+          }
         },
       );
 

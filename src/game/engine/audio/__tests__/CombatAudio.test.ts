@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ALL_WEAPON_IDS } from "../../../../types/weapon";
 import * as random from "../../../../utils/random";
 import { CombatAudio, defaultAudioContext } from "../CombatAudio";
-import { playImpactSound } from "../weaponSounds";
+import { prepareImpactSound } from "../weaponSounds";
 
 interface FakeOscillator {
   type: OscillatorType;
@@ -1465,14 +1465,14 @@ describe("CombatAudio", () => {
       }
     });
 
-    it("applique minStartTime à toutes les couches de MISSILE et CLUSTER dans playImpactSound", () => {
+    it("applique le même départ à toutes les couches de MISSILE et CLUSTER", () => {
       const fakeMissile = createFakeContext({ currentTime: 1 });
-      playImpactSound(() => fakeMissile.context, "MISSILE", 1.5);
+      prepareImpactSound(fakeMissile.context, "MISSILE", (start) => start(1.5));
       expect(fakeMissile.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([1.5]);
       expect(fakeMissile.oscillators.map((o) => o.start.mock.calls[0]?.[0])).toEqual([1.5]);
 
       const fakeCluster = createFakeContext({ currentTime: 1 });
-      playImpactSound(() => fakeCluster.context, "CLUSTER", 1.75);
+      prepareImpactSound(fakeCluster.context, "CLUSTER", (start) => start(1.75));
       expect(fakeCluster.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([
         1.75,
         1.75,

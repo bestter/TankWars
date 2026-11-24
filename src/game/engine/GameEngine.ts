@@ -261,10 +261,10 @@ export class GameEngine {
     this.tankManager = new TankManager();
 
     // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
-    this.tankManager.onPlayerDied = (playerId, cause, details) => {
+    this.tankManager.onPlayerDied = (playerId, cause, details, _killerId, reportedWithProjectileImpact) => {
       this.combatObserver?.emit({ kind: "death", playerId, cause });
       this.recordDeath(playerId, cause, details);
-      if (cause === "explosion" || cause === "zeus") {
+      if ((cause === "explosion" && !reportedWithProjectileImpact) || cause === "zeus") {
         this.audio.playTankDestroyedByExplosion();
       } else if (cause === "burial") {
         this.audio.playTankSadBurial();
@@ -322,7 +322,7 @@ export class GameEngine {
     };
 
     // Forward hit events from PhysicsEngine for VFX/audio.
-    this.physicsEngine.onProjectileHit = (hit) => {
+    this.physicsEngine.onProjectileHit = (hit, tankDestructions) => {
       this.diagnosticSink?.({ kind: "impact", hit: structuredClone(hit), step: this.diagnosticStep, material: this.terrain.getMaterialAt(hit.x) });
       const firer = this.currentFirerId ?? "unknown";
       const weapon = WEAPON_REGISTRY[hit.weaponId];
@@ -345,7 +345,11 @@ export class GameEngine {
       ) {
         this.clearFlightAlertTracking();
       }
-      this.audio.playImpact(hit.weaponId);
+      if (tankDestructions) {
+        this.audio.playImpact(hit.weaponId, tankDestructions);
+      } else {
+        this.audio.playImpact(hit.weaponId);
+      }
 
       // Huge red-orange thermonuclear explosion VFX (flash + particles)
       if (hit.weaponId === "THERMONUCLEAR") {

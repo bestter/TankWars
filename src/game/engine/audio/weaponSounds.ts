@@ -1,6 +1,6 @@
 import type { WeaponId } from "../../../types/weapon";
-import { playNoiseBurst } from "./noiseBurst";
-import type { EnsureAudioContext } from "./types";
+import { playNoiseBurst, prepareNoiseBurst } from "./noiseBurst";
+import type { EnsureAudioContext, ScheduleAudioSource } from "./types";
 
 /**
  * Tables exhaustives : une arme ajoutée à `WeaponId` sans entrée fait échouer
@@ -35,8 +35,7 @@ type FlightAlertSound = (
 
 type WeaponImpactSound = (
   ctx: AudioContext,
-  ensure: EnsureAudioContext,
-  now: number,
+  schedule: ScheduleAudioSource,
 ) => void;
 
 export const ALERT_FADE_OUT_SECONDS = 0.025;
@@ -426,12 +425,12 @@ export function playFireSound(
   }
 }
 
-function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function prepareThermonuclearImpact(ctx: AudioContext, schedule: ScheduleAudioSource): void {
   // Massive multi-wave megaton detonation: shockfront + secondary blast + seismic fallout
   // Controlled headroom so it stays imposing and distinct from NUKE without saturating.
-  playNoiseBurst(ensure, 1.15, 0.3, 2200, 55, 0, now);
-  playNoiseBurst(ensure, 0.95, 0.22, 1100, 42, 0.22, now);
-  playNoiseBurst(ensure, 0.8, 0.14, 420, 30, 0.52, now);
+  prepareNoiseBurst(ctx, schedule, 1.15, 0.3, 2200, 55);
+  prepareNoiseBurst(ctx, schedule, 0.95, 0.22, 1100, 42, 0.22);
+  prepareNoiseBurst(ctx, schedule, 0.8, 0.14, 420, 30, 0.52);
 
   // Primary deep sub-bass drop
   const osc1 = ctx.createOscillator();
@@ -441,12 +440,14 @@ function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, 
   gain1.gain.value = 0.3;
   osc1.connect(gain1);
   gain1.connect(ctx.destination);
-  osc1.start(now);
-  osc1.frequency.setValueAtTime(62, now);
-  osc1.frequency.linearRampToValueAtTime(22, now + 0.85);
-  gain1.gain.setValueAtTime(0.3, now);
-  gain1.gain.linearRampToValueAtTime(0.00015, now + 1.25);
-  osc1.stop(now + 1.32);
+  schedule((now) => {
+    osc1.start(now);
+    osc1.frequency.setValueAtTime(62, now);
+    osc1.frequency.linearRampToValueAtTime(22, now + 0.85);
+    gain1.gain.setValueAtTime(0.3, now);
+    gain1.gain.linearRampToValueAtTime(0.00015, now + 1.25);
+    osc1.stop(now + 1.32);
+  });
 
   // Delayed filtered tectonic rumble harmonic
   const osc2 = ctx.createOscillator();
@@ -460,20 +461,23 @@ function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, 
   osc2.connect(filter2);
   filter2.connect(gain2);
   gain2.connect(ctx.destination);
-  osc2.start(now + 0.1);
-  osc2.frequency.setValueAtTime(46, now + 0.1);
-  osc2.frequency.linearRampToValueAtTime(19, now + 1.15);
-  filter2.frequency.setValueAtTime(320, now + 0.1);
-  filter2.frequency.linearRampToValueAtTime(80, now + 1.2);
-  gain2.gain.setValueAtTime(0.16, now + 0.1);
-  gain2.gain.linearRampToValueAtTime(0.0001, now + 1.3);
-  osc2.stop(now + 1.38);
+  schedule((now) => {
+    const rumbleStart = now + 0.1;
+    osc2.start(rumbleStart);
+    osc2.frequency.setValueAtTime(46, rumbleStart);
+    osc2.frequency.linearRampToValueAtTime(19, now + 1.15);
+    filter2.frequency.setValueAtTime(320, rumbleStart);
+    filter2.frequency.linearRampToValueAtTime(80, now + 1.2);
+    gain2.gain.setValueAtTime(0.16, rumbleStart);
+    gain2.gain.linearRampToValueAtTime(0.0001, now + 1.3);
+    osc2.stop(now + 1.38);
+  });
 }
 
-function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function prepareNukeImpact(ctx: AudioContext, schedule: ScheduleAudioSource): void {
   // Recognizable two-stage nuclear detonation: crisp shockfront + echo + bass punch + crackle
-  playNoiseBurst(ensure, 0.72, 0.28, 2400, 110, 0, now);
-  playNoiseBurst(ensure, 0.55, 0.18, 950, 65, 0.16, now);
+  prepareNoiseBurst(ctx, schedule, 0.72, 0.28, 2400, 110);
+  prepareNoiseBurst(ctx, schedule, 0.55, 0.18, 950, 65, 0.16);
 
   // Nuclear bass punch with downward pitch drop
   const osc1 = ctx.createOscillator();
@@ -483,12 +487,14 @@ function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: numb
   gain1.gain.value = 0.28;
   osc1.connect(gain1);
   gain1.connect(ctx.destination);
-  osc1.start(now);
-  osc1.frequency.setValueAtTime(88, now);
-  osc1.frequency.linearRampToValueAtTime(34, now + 0.45);
-  gain1.gain.setValueAtTime(0.28, now);
-  gain1.gain.linearRampToValueAtTime(0.0002, now + 0.72);
-  osc1.stop(now + 0.78);
+  schedule((now) => {
+    osc1.start(now);
+    osc1.frequency.setValueAtTime(88, now);
+    osc1.frequency.linearRampToValueAtTime(34, now + 0.45);
+    gain1.gain.setValueAtTime(0.28, now);
+    gain1.gain.linearRampToValueAtTime(0.0002, now + 0.72);
+    osc1.stop(now + 0.78);
+  });
 
   // Filtered fallout roar texture
   const osc2 = ctx.createOscillator();
@@ -502,32 +508,33 @@ function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: numb
   osc2.connect(filter2);
   filter2.connect(gain2);
   gain2.connect(ctx.destination);
-  osc2.start(now);
-  osc2.frequency.setValueAtTime(145, now);
-  osc2.frequency.linearRampToValueAtTime(48, now + 0.52);
-  filter2.frequency.setValueAtTime(520, now);
-  filter2.frequency.linearRampToValueAtTime(120, now + 0.56);
-  gain2.gain.setValueAtTime(0.11, now);
-  gain2.gain.linearRampToValueAtTime(0.0002, now + 0.58);
-  osc2.stop(now + 0.64);
+  schedule((now) => {
+    osc2.start(now);
+    osc2.frequency.setValueAtTime(145, now);
+    osc2.frequency.linearRampToValueAtTime(48, now + 0.52);
+    filter2.frequency.setValueAtTime(520, now);
+    filter2.frequency.linearRampToValueAtTime(120, now + 0.56);
+    gain2.gain.setValueAtTime(0.11, now);
+    gain2.gain.linearRampToValueAtTime(0.0002, now + 0.58);
+    osc2.stop(now + 0.64);
+  });
 }
 
-function playClusterImpact(_ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
+function prepareClusterImpact(ctx: AudioContext, schedule: ScheduleAudioSource): void {
   // Several small noisy secondary blasts
   for (let k = 0; k < 3; k++) {
-    playNoiseBurst(ensure, 0.13, 0.18, 2800, 420, 0, now);
+    prepareNoiseBurst(ctx, schedule, 0.13, 0.18, 2800, 420);
   }
 }
 
-function playStandardImpact(
+function prepareStandardImpact(
   ctx: AudioContext,
-  ensure: EnsureAudioContext,
-  now: number,
+  schedule: ScheduleAudioSource,
   startCut: number,
   endCut: number,
 ): void {
   // Standard missile/grenade/driller/bullet/bulldozer hit
-  playNoiseBurst(ensure, 0.22, 0.26, startCut, endCut, 0, now);
+  prepareNoiseBurst(ctx, schedule, 0.22, 0.26, startCut, endCut);
 
   // light low body
   const osc = ctx.createOscillator();
@@ -537,40 +544,35 @@ function playStandardImpact(
   gain.gain.value = 0.17;
   osc.connect(gain);
   gain.connect(ctx.destination);
-  osc.start(now);
-  gain.gain.setValueAtTime(0.17, now);
-  gain.gain.linearRampToValueAtTime(0.0003, now + 0.18);
-  osc.stop(now + 0.22);
+  schedule((now) => {
+    osc.start(now);
+    gain.gain.setValueAtTime(0.17, now);
+    gain.gain.linearRampToValueAtTime(0.0003, now + 0.18);
+    osc.stop(now + 0.22);
+  });
 }
 
 const IMPACT_SOUNDS = {
-  THERMONUCLEAR: playThermonuclearImpact,
-  NUKE: playNukeImpact,
-  CLUSTER: playClusterImpact,
-  MISSILE: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
-  GRENADE: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 380),
-  DRILLER: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 3200, 160),
-  BULLET: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
-  BULLDOZER: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
+  THERMONUCLEAR: prepareThermonuclearImpact,
+  NUKE: prepareNukeImpact,
+  CLUSTER: prepareClusterImpact,
+  MISSILE: (ctx, schedule) => prepareStandardImpact(ctx, schedule, 1950, 160),
+  GRENADE: (ctx, schedule) => prepareStandardImpact(ctx, schedule, 1950, 380),
+  DRILLER: (ctx, schedule) => prepareStandardImpact(ctx, schedule, 3200, 160),
+  BULLET: (ctx, schedule) => prepareStandardImpact(ctx, schedule, 1950, 160),
+  BULLDOZER: (ctx, schedule) => prepareStandardImpact(ctx, schedule, 1950, 160),
 } satisfies Record<WeaponId, WeaponImpactSound>;
 
-export function playImpactSound(
-  ensure: EnsureAudioContext,
+export function prepareImpactSound(
+  ctx: AudioContext,
   weaponId: WeaponId,
-  minStartTime?: number,
+  schedule: ScheduleAudioSource,
 ): void {
-  const ctx = ensure();
-  if (!ctx) return;
   try {
-    const now =
-      minStartTime !== undefined && Number.isFinite(minStartTime)
-        ? Math.max(ctx.currentTime, minStartTime)
-        : ctx.currentTime;
-
     // Make impacts feel like real old-school artillery hits: the noise is the star.
     // Use LFSR noise + downward filter sweep (bright crackle → low rumble).
     // Only a little low triangle body for the "oomph", not a clean pongy tone.
-    IMPACT_SOUNDS[weaponId](ctx, ensure, now);
+    IMPACT_SOUNDS[weaponId](ctx, schedule);
   } catch {
     /* silent */
   }

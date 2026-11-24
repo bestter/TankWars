@@ -250,7 +250,7 @@ export class PhysicsEngine {
   }
 
   /** Callback appelé lorsqu'un projectile touche le terrain ou un tank (direct hit). */
-  public onProjectileHit?: (event: ProjectileHitEvent) => void;
+  public onProjectileHit?: (event: ProjectileHitEvent, tankDestructions?: number) => void;
 
   /** Callback appelé lorsqu'un projectile est retiré sans impact (hors limites ou clear). */
   public onProjectileRemoved?: (event: ProjectileRemovedEvent) => void;
@@ -485,9 +485,8 @@ export class PhysicsEngine {
       );
     }
 
-    const isLocalNuclear =
-      this.localMatch &&
-      (p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR");
+    const isNuclear = p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR";
+    const isLocalNuclear = this.localMatch && isNuclear;
 
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
@@ -513,9 +512,10 @@ export class PhysicsEngine {
     }
 
     // 2. Dégâts d'explosion et mise à jour des positions (chutes)
+    let tankDestructions = 0;
     if (tankManager) {
-      if (isLocalNuclear) {
-        tankManager.beginLocalNuclearImpact({
+      if (p.weaponId !== "BULLDOZER") {
+        const damage = {
           explosionX: p.x,
           explosionY: p.y,
           radius: blastRadius,
@@ -526,34 +526,31 @@ export class PhysicsEngine {
           terrain: terrainManager,
           shotId: p.shotId,
           munitionId: p.munitionId,
-        });
-      } else if (p.weaponId !== "BULLDOZER") {
-        tankManager.applyExplosionDamage({
-          explosionX: p.x,
-          explosionY: p.y,
-          radius: blastRadius,
-          maxDamage,
-          shooterId: p.ownerId,
-          weaponId: p.weaponId,
-          isDirectHit,
-          terrain: terrainManager,
-          shotId: p.shotId,
-          munitionId: p.munitionId,
-        });
+          reportWithProjectileImpact: isNuclear,
+        };
+        const destroyed = isLocalNuclear
+          ? tankManager.beginLocalNuclearImpact(damage)
+          : tankManager.applyExplosionDamage(damage);
+        if (isNuclear) tankDestructions = destroyed;
       }
       tankManager.updateTankPositions(terrainManager);
       tankManager.checkTankBurial(terrainManager);
     }
 
     // 3. Notifier l'extérieur
-    this.onProjectileHit?.({
+    const hit: ProjectileHitEvent = {
       shotId: p.shotId,
       munitionId: p.munitionId,
       x: p.x,
       y: p.y,
       weaponId: p.weaponId,
       directTargetId,
-    });
+    };
+    if (tankDestructions > 0) {
+      this.onProjectileHit?.(hit, tankDestructions);
+    } else {
+      this.onProjectileHit?.(hit);
+    }
 
     // 4. Retirer le projectile
     this.freeProjectile(p);

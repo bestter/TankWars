@@ -787,6 +787,34 @@ describe("signal rendu à l'arrêt de l'alerte nucléaire", () => {
   );
 
   it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "limite le niveau du son de destruction regroupé pour %s",
+    (weaponId) => {
+      const sampleRate = 48_000;
+      const renderImpact = (tankDestructions: number) => {
+        const sim = createSimulatedAudioContext({ sampleRate });
+        const audio = new CombatAudio({ getWidth: () => 200, createContext: () => sim.context });
+        audio.playImpact(weaponId, tankDestructions);
+
+        const samples = new Float32Array(sampleRate / 5);
+        renderSampleRange(samples, 0, samples.length, sampleRate, (time, dt) =>
+          sim.destination.incoming.reduce((total, node) => total + evalNodeAudio(node, time, dt), 0),
+        );
+        return { samples, sim };
+      };
+      const single = renderImpact(1);
+      const multiple = renderImpact(8);
+
+      // Le simulateur rend les oscillateurs. Le gain en tête du bruit est vérifié séparément.
+      const peak = single.samples.reduce((max, sample) => Math.max(max, Math.abs(sample)), 0);
+      expect(peak).toBeGreaterThan(0.25);
+      expect(peak).toBeLessThan(0.65);
+      expect(multiple.samples).toEqual(single.samples);
+      expect(multiple.sim.bufferSources).toHaveLength(single.sim.bufferSources.length);
+      expect(single.sim.gains[0]?.gain.valueAt(0.01)).toBeCloseTo(0.145);
+    },
+  );
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
     "termine complètement le fondu (2,025 s) avant le démarrage de la détonation à l'impact à 2,000 s (%s)",
     (weaponId) => {
       const sampleRate = 48_000;

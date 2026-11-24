@@ -5,11 +5,11 @@ import {
 } from "./celebrationSounds";
 import { playNoiseBurst } from "./noiseBurst";
 import {
-  playTankDestroyedByExplosionSound,
   playTankSadBurialSound,
   playTankTouchLowestFloorSound,
+  prepareTankDestroyedByExplosionSound,
 } from "./tankSounds";
-import type { EnsureAudioContext } from "./types";
+import type { EnsureAudioContext, ScheduleAudioSource } from "./types";
 import type { WeaponId } from "../../../types/weapon";
 import {
   ALERT_FADE_OUT_SECONDS,
@@ -17,7 +17,7 @@ import {
   isFlightAlertWeapon,
   playFireSound,
   playFlightAlertSound,
-  playImpactSound,
+  prepareImpactSound,
   type ActiveFlightAlert,
   type FlightAlertWeaponId,
 } from "./weaponSounds";
@@ -39,6 +39,9 @@ const ALERT_CLOSE_DRAIN_MS = 20;
 const ALERT_CLOSE_FALLBACK_MS =
   Math.ceil(ALERT_STOP_OFFSET_SECONDS * 1000) + ALERT_CLOSE_DRAIN_MS + 5;
 const ALERT_CLOSE_MAX_WAIT_MS = 120;
+// Leave several render blocks for submitting the prepared impact sources together.
+const IMPACT_SCHEDULING_LEAD_SECONDS = 0.01;
+const NUCLEAR_TANK_DESTRUCTION_LEVEL = 0.5;
 
 interface PendingFlightAlertFade {
   readonly context: AudioContext;
@@ -180,14 +183,35 @@ export class CombatAudio {
     this.deferFlightAlertResume(context, weaponId, shouldResume, null);
   }
 
-  playImpact(weaponId: WeaponId): void {
-    this.cancelPendingFlightAlertResume();
-    if (this.activeFlightAlert?.weaponId === weaponId) {
-      this.stopFlightAlert();
+  playImpact(weaponId: WeaponId, tankDestructions = 0): void {
+    const fadeEndTime = this.prepareImpactStartTime(weaponId);
+    const context = this.ensureContext();
+    if (!context) return;
+    if (tankDestructions === 0 && fadeEndTime === undefined) {
+      const startTime = context.currentTime;
+      prepareImpactSound(context, weaponId, (start) => start(startTime));
+      return;
     }
-    this.pruneInactiveFadingFlightAlerts();
-    const minStartTime = this.getImpactStartTime(weaponId);
-    playImpactSound(this.ensureContext, weaponId, minStartTime);
+
+    const sources: Array<(time: number) => void> = [];
+    const schedule: ScheduleAudioSource = (start) => { sources.push(start); };
+    if (tankDestructions > 0) {
+      // Les morts simultanées produiraient des voix identiques et en phase.
+      // Une seule voix atténuée laisse de la place à la détonation.
+      prepareTankDestroyedByExplosionSound(context, schedule, NUCLEAR_TANK_DESTRUCTION_LEVEL);
+    }
+    prepareImpactSound(context, weaponId, schedule);
+
+    const lead = context.state === "running" ? IMPACT_SCHEDULING_LEAD_SECONDS : 0;
+    const earliestStart = context.currentTime + lead;
+    const startTime = Math.max(earliestStart, fadeEndTime ?? 0);
+    for (const start of sources) {
+      try {
+        start(startTime);
+      } catch {
+        // A failed source must not suppress the rest of the impact.
+      }
+    }
   }
 
   playZeusAppointment(): void {
@@ -199,7 +223,9 @@ export class CombatAudio {
   }
 
   playTankDestroyedByExplosion(): void {
-    playTankDestroyedByExplosionSound(this.ensureContext);
+    const context = this.ensureContext();
+    if (!context) return;
+    prepareTankDestroyedByExplosionSound(context, (start) => start(context.currentTime));
   }
 
   playTankSadBurial(): void {
@@ -467,7 +493,12 @@ export class CombatAudio {
     pending.cleanup();
   }
 
-  private getImpactStartTime(weaponId: WeaponId): number | undefined {
+  private prepareImpactStartTime(weaponId: WeaponId): number | undefined {
+    this.cancelPendingFlightAlertResume();
+    if (this.activeFlightAlert?.weaponId === weaponId) {
+      this.stopFlightAlert();
+    }
+    this.pruneInactiveFadingFlightAlerts();
     if (!isFlightAlertWeapon(weaponId)) return undefined;
     const context = this.audioContext;
     if (!context || context.state !== "running") return undefined;
