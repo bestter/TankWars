@@ -14,13 +14,29 @@ interface FakeOscillator {
   emitEnded?: () => void;
 }
 
+interface FakeGainNode {
+  gain: AudioParam;
+  connect: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+}
+
+interface FakeBufferSource {
+  buffer: AudioBuffer | null;
+  connect: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+}
+
 interface FakeContext {
   context: AudioContext;
   oscillators: FakeOscillator[];
-  gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }>;
+  gains: FakeGainNode[];
+  bufferSources: FakeBufferSource[];
   close: ReturnType<typeof vi.fn>;
+  resume: ReturnType<typeof vi.fn>;
   buffers: number;
   setState: (next: AudioContextState) => void;
+  setCurrentTime: (next: number) => void;
 }
 
 function audioParam(options?: { withCancelAndHold?: boolean }): AudioParam {
@@ -47,11 +63,14 @@ function createFakeContext(options?: {
   createBufferThrows?: boolean;
   closeRejects?: boolean;
   state?: AudioContextState;
+  currentTime?: number;
   withCancelAndHold?: boolean;
   withEventTarget?: boolean;
+  resumeImplementation?: (fake: FakeContext) => Promise<void>;
 }): FakeContext {
   const oscillators: FakeOscillator[] = [];
-  const gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }> = [];
+  const gains: FakeGainNode[] = [];
+  const bufferSources: FakeBufferSource[] = [];
   const buffers = { count: 0 };
   const contextStateListeners = new Set<() => void>();
   const close = vi.fn(() => (
@@ -61,7 +80,7 @@ function createFakeContext(options?: {
   const contextObj: Record<string, unknown> = {
     state: options?.state ?? "running",
     sampleRate: 44_100,
-    currentTime: 0,
+    currentTime: options?.currentTime ?? 0,
     destination: {},
     createOscillator: vi.fn(() => {
       const endedListeners = new Set<() => void>();
@@ -90,7 +109,11 @@ function createFakeContext(options?: {
       return oscillator;
     }),
     createGain: vi.fn(() => {
-      const gainNode = { gain: audioParam(paramOptions), connect: vi.fn() };
+      const gainNode: FakeGainNode = {
+        gain: audioParam(paramOptions),
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      };
       gains.push(gainNode);
       return gainNode;
     }),
@@ -105,11 +128,16 @@ function createFakeContext(options?: {
       buffers.count += 1;
       return { getChannelData: () => new Float32Array(length) };
     }),
-    createBufferSource: vi.fn(() => ({
-      buffer: null,
-      connect: vi.fn(),
-      start: vi.fn(),
-    })),
+    createBufferSource: vi.fn(() => {
+      const source: FakeBufferSource = {
+        buffer: null,
+        connect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      };
+      bufferSources.push(source);
+      return source;
+    }),
     close,
   };
   if (options?.withEventTarget) {
@@ -120,11 +148,17 @@ function createFakeContext(options?: {
       if (type === "statechange") contextStateListeners.delete(cb);
     });
   }
-  return {
+  const resume = vi.fn(() =>
+    options?.resumeImplementation ? options.resumeImplementation(fakeContext) : Promise.resolve(),
+  );
+  contextObj.resume = resume;
+  const fakeContext: FakeContext = {
     context: contextObj as unknown as AudioContext,
     oscillators,
     gains,
+    bufferSources,
     close,
+    resume,
     get buffers() {
       return buffers.count;
     },
@@ -134,7 +168,11 @@ function createFakeContext(options?: {
         cb();
       }
     },
+    setCurrentTime(next: number) {
+      contextObj.currentTime = next;
+    },
   };
+  return fakeContext;
 }
 
 function createAudio(
@@ -752,5 +790,392 @@ describe("CombatAudio", () => {
       audioC.dispose();
       expect(fakeC.close).toHaveBeenCalledOnce();
     });
+  });
+
+  describe("neutralisation hors running, reprise asynchrone et alignement de détonation", () => {
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "neutralise immédiatement la sirène lors de stopFlightAlert() sur contexte suspendu (%s)",
+      (weaponId) => {
+        const fake = createFakeContext({ withEventTarget: true });
+        const audio = createAudio(() => fake.context);
+
+        audio.playFire(weaponId);
+        const stopGain = fake.gains.at(-1)!;
+        const alertOscs = [...fake.oscillators];
+
+        fake.setCurrentTime(2);
+        fake.setState("suspended");
+        audio.stopFlightAlert();
+
+        expect(stopGain.gain.cancelScheduledValues).toHaveBeenCalledWith(0);
+        expect(stopGain.gain.value).toBe(0);
+        expect(stopGain.gain.setValueAtTime).toHaveBeenCalledWith(0, 2);
+        expect(stopGain.disconnect).toHaveBeenCalledOnce();
+        expect(stopGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+        for (const osc of alertOscs) {
+          expect(osc.stop).toHaveBeenCalledWith(2);
+        }
+
+        // Aucun fondu pendant n'empêche dispose() de fermer tout de suite
+        audio.dispose();
+        expect(fake.close).toHaveBeenCalledOnce();
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "neutralise un fondu en cours si le contexte devient suspendu via statechange ou avant resumeFlightAlert (%s)",
+      (weaponId) => {
+        // 1. Suspension notifiée par statechange pendant le fondu
+        const fakeA = createFakeContext({ withEventTarget: true });
+        const audioA = createAudio(() => fakeA.context);
+        audioA.playFire(weaponId);
+        const stopGainA = fakeA.gains.at(-1)!;
+        const alertOscsA = [...fakeA.oscillators];
+        fakeA.setCurrentTime(2);
+        audioA.stopFlightAlert();
+
+        fakeA.setState("suspended");
+        expect(stopGainA.gain.cancelScheduledValues).toHaveBeenCalledWith(0);
+        expect(stopGainA.gain.value).toBe(0);
+        expect(stopGainA.gain.setValueAtTime).toHaveBeenCalledWith(0, 2);
+        expect(stopGainA.disconnect).toHaveBeenCalledOnce();
+        // L'oscillateur avait déjà reçu stop(2.03) : pas de second stop() risquant InvalidStateError
+        for (const osc of alertOscsA) {
+          expect(osc.stop).toHaveBeenCalledOnce();
+          expect(osc.stop).toHaveBeenCalledWith(2.03);
+        }
+
+        // 2. Suspension sans événement statechange, détectée lors de resumeFlightAlert
+        let resolveResume!: () => void;
+        const fakeB = createFakeContext({
+          withEventTarget: false,
+          resumeImplementation: () =>
+            new Promise<void>((resolve) => {
+              resolveResume = resolve;
+            }),
+        });
+        const audioB = createAudio(() => fakeB.context);
+        audioB.playFire(weaponId);
+        const stopGainB = fakeB.gains.at(-1)!;
+        fakeB.setCurrentTime(2);
+        audioB.stopFlightAlert();
+        const beforeResumeCount = fakeB.oscillators.length;
+
+        // Simule un contexte suspendu en silence avant la reprise d'onglet
+        fakeB.setState("suspended");
+        audioB.resumeFlightAlert(weaponId, () => true);
+
+        expect(stopGainB.gain.cancelScheduledValues).toHaveBeenCalledWith(0);
+        expect(stopGainB.gain.value).toBe(0);
+        expect(stopGainB.disconnect).toHaveBeenCalledOnce();
+        expect(fakeB.oscillators).toHaveLength(beforeResumeCount);
+        void resolveResume;
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "appelle resume() sans chevauchement ni doublon quand le contexte est suspendu (%s)",
+      async (weaponId) => {
+        let resolveResume!: () => void;
+        const fake = createFakeContext({
+          withEventTarget: true,
+          resumeImplementation: (ctx) =>
+            new Promise<void>((resolve) => {
+              resolveResume = () => {
+                ctx.setState("running");
+                resolve();
+              };
+            }),
+        });
+        const audio = createAudio(() => fake.context);
+
+        audio.playFire(weaponId);
+        const oldStopGain = fake.gains.at(-1)!;
+        fake.setCurrentTime(2);
+        fake.setState("suspended");
+        audio.stopFlightAlert();
+        const oscCountAfterStop = fake.oscillators.length;
+        const buffersAfterFire = fake.buffers;
+
+        audio.resumeFlightAlert(weaponId, () => true);
+        expect(fake.resume).toHaveBeenCalledOnce();
+        expect(fake.oscillators).toHaveLength(oscCountAfterStop);
+        expect(oldStopGain.disconnect).toHaveBeenCalledOnce();
+
+        // La résolution du resume() déclenche statechange puis .then(): une seule sirène est créée
+        resolveResume();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const resumedOscs = fake.oscillators.slice(oscCountAfterStop);
+        expect(resumedOscs.length).toBeGreaterThanOrEqual(3);
+        for (const osc of resumedOscs) {
+          expect(osc.start).toHaveBeenCalledExactlyOnceWith(2);
+        }
+        expect(fake.buffers).toBe(buffersAfterFire);
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "reste muet si resume() rejette puis démarre plus tard via statechange lorsque le navigateur autorise l'audio (%s)",
+      async (weaponId) => {
+        const fake = createFakeContext({
+          withEventTarget: true,
+          state: "suspended",
+          resumeImplementation: () => Promise.reject(new Error("autoplay blocked")),
+        });
+        const audio = createAudio(() => fake.context);
+        fake.setCurrentTime(2);
+
+        audio.resumeFlightAlert(weaponId, () => true);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(fake.oscillators).toHaveLength(0);
+
+        // Le navigateur débloque ensuite le contexte (statechange -> running)
+        fake.setState("running");
+        expect(fake.oscillators.length).toBeGreaterThanOrEqual(3);
+        for (const osc of fake.oscillators) {
+          expect(osc.start).toHaveBeenCalledExactlyOnceWith(2);
+        }
+      },
+    );
+
+    it("annule toute reprise en attente si shouldResume devient faux, sur stop, impact, dispose ou appels répétés", async () => {
+      // 1. shouldResume() devient faux avant la résolution
+      let allowResume = true;
+      let resolveA!: () => void;
+      const fakeA = createFakeContext({
+        withEventTarget: true,
+        state: "suspended",
+        resumeImplementation: (ctx) =>
+          new Promise<void>((resolve) => {
+            resolveA = () => {
+              ctx.setState("running");
+              resolve();
+            };
+          }),
+      });
+      const audioA = createAudio(() => fakeA.context);
+      audioA.resumeFlightAlert("NUKE", () => allowResume);
+      allowResume = false;
+      resolveA();
+      await Promise.resolve();
+      expect(fakeA.oscillators).toHaveLength(0);
+
+      // 2. stopFlightAlert() pendant l'attente
+      let resolveB!: () => void;
+      const fakeB = createFakeContext({
+        withEventTarget: true,
+        state: "suspended",
+        resumeImplementation: (ctx) =>
+          new Promise<void>((resolve) => {
+            resolveB = () => {
+              ctx.setState("running");
+              resolve();
+            };
+          }),
+      });
+      const audioB = createAudio(() => fakeB.context);
+      audioB.resumeFlightAlert("NUKE", () => true);
+      audioB.stopFlightAlert();
+      resolveB();
+      await Promise.resolve();
+      expect(fakeB.oscillators).toHaveLength(0);
+
+      // 3. playImpact() pendant l'attente : ne crée aucune nouvelle sirène au déblocage
+      let resolveC!: () => void;
+      const fakeC = createFakeContext({
+        withEventTarget: true,
+        state: "suspended",
+        resumeImplementation: (ctx) =>
+          new Promise<void>((resolve) => {
+            resolveC = () => {
+              ctx.setState("running");
+              resolve();
+            };
+          }),
+      });
+      const audioC = createAudio(() => fakeC.context);
+      audioC.resumeFlightAlert("THERMONUCLEAR", () => true);
+      audioC.playImpact("THERMONUCLEAR");
+      const oscCountAfterImpact = fakeC.oscillators.length;
+      resolveC();
+      await Promise.resolve();
+      expect(fakeC.oscillators).toHaveLength(oscCountAfterImpact);
+
+      // 4. dispose() pendant l'attente
+      let resolveD!: () => void;
+      const fakeD = createFakeContext({
+        withEventTarget: true,
+        state: "suspended",
+        resumeImplementation: (ctx) =>
+          new Promise<void>((resolve) => {
+            resolveD = () => {
+              ctx.setState("running");
+              resolve();
+            };
+          }),
+      });
+      const audioD = createAudio(() => fakeD.context);
+      audioD.resumeFlightAlert("NUKE", () => true);
+      audioD.dispose();
+      expect(fakeD.close).toHaveBeenCalledOnce();
+      resolveD();
+      await Promise.resolve();
+      expect(fakeD.oscillators).toHaveLength(0);
+
+      // 5. Appels répétés pendant l'attente : seul le dernier demande prévaut
+      const resolversE: Array<() => void> = [];
+      const fakeE = createFakeContext({
+        withEventTarget: true,
+        state: "suspended",
+        resumeImplementation: () =>
+          new Promise<void>((resolve) => {
+            resolversE.push(resolve);
+          }),
+      });
+      const audioE = createAudio(() => fakeE.context);
+      audioE.resumeFlightAlert("NUKE", () => true);
+      audioE.resumeFlightAlert("THERMONUCLEAR", () => true);
+      fakeE.setState("running");
+      for (const resolve of resolversE) {
+        resolve();
+      }
+      await Promise.resolve();
+      expect(fakeE.oscillators).toHaveLength(4); // THERMONUCLEAR uniquement (4 oscillateurs)
+    });
+
+    it.each([
+      {
+        weaponId: "NUKE" as const,
+        expectedNoiseStarts: [2.025, 2.025 + 0.16],
+        expectedOscStarts: [2.025, 2.025],
+      },
+      {
+        weaponId: "THERMONUCLEAR" as const,
+        expectedNoiseStarts: [2.025, 2.025 + 0.22, 2.025 + 0.52],
+        expectedOscStarts: [2.025, 2.025 + 0.1],
+      },
+    ])(
+      "planifie toutes les couches de détonation après la fin du fondu (2,025 s) si une sirène est active (%s)",
+      ({ weaponId, expectedNoiseStarts, expectedOscStarts }) => {
+        // Cas A : stopFlightAlert() puis playImpact() comme dans GameEngine.onProjectileHit
+        const fakeEnginePath = createFakeContext({ withEventTarget: true });
+        const audioA = createAudio(() => fakeEnginePath.context);
+        audioA.playFire(weaponId);
+        fakeEnginePath.setCurrentTime(2);
+        const oscBeforeA = fakeEnginePath.oscillators.length;
+        const srcBeforeA = fakeEnginePath.bufferSources.length;
+
+        audioA.stopFlightAlert();
+        audioA.playImpact(weaponId);
+
+        const impactOscStartsA = fakeEnginePath.oscillators
+          .slice(oscBeforeA)
+          .map((osc) => osc.start.mock.calls[0]?.[0] as number);
+        const impactNoiseStartsA = fakeEnginePath.bufferSources
+          .slice(srcBeforeA)
+          .map((src) => src.start.mock.calls[0]?.[0] as number);
+
+        expect(impactOscStartsA).toEqual(expectedOscStarts);
+        expect(impactNoiseStartsA).toEqual(expectedNoiseStarts);
+        expect(Math.min(...impactOscStartsA, ...impactNoiseStartsA)).toBe(2.025);
+
+        // Si dispose() survient 5 ms après l'impact, le contexte attend encore le fondu de sirène
+        vi.useFakeTimers();
+        audioA.dispose();
+        expect(fakeEnginePath.close).not.toHaveBeenCalled();
+        fakeEnginePath.oscillators[0]?.emitEnded?.();
+        vi.advanceTimersByTime(20);
+        expect(fakeEnginePath.close).toHaveBeenCalledOnce();
+        vi.useRealTimers();
+
+        // Cas B : playImpact() seul alors que l'alerte est active
+        const fakeDirectPath = createFakeContext({ withEventTarget: true });
+        const audioB = createAudio(() => fakeDirectPath.context);
+        audioB.playFire(weaponId);
+        fakeDirectPath.setCurrentTime(2);
+        const oscBeforeB = fakeDirectPath.oscillators.length;
+        const srcBeforeB = fakeDirectPath.bufferSources.length;
+
+        audioB.playImpact(weaponId);
+
+        expect(
+          fakeDirectPath.oscillators.slice(oscBeforeB).map((o) => o.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedOscStarts);
+        expect(
+          fakeDirectPath.bufferSources.slice(srcBeforeB).map((s) => s.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedNoiseStarts);
+      },
+    );
+
+    it.each([
+      {
+        weaponId: "NUKE" as const,
+        expectedNoiseOffsets: [0, 0.16],
+        expectedOscOffsets: [0, 0],
+      },
+      {
+        weaponId: "THERMONUCLEAR" as const,
+        expectedNoiseOffsets: [0, 0.22, 0.52],
+        expectedOscOffsets: [0, 0.1],
+      },
+    ])(
+      "démarre la détonation sans délai ajouté lorsqu'aucune sirène ni fondu actif ne joue (%s)",
+      ({ weaponId, expectedNoiseOffsets, expectedOscOffsets }) => {
+        // 1. Aucun tir / alerte préalable
+        const fakeDirect = createFakeContext();
+        fakeDirect.setCurrentTime(2);
+        const audioDirect = createAudio(() => fakeDirect.context);
+        audioDirect.playImpact(weaponId);
+
+        expect(fakeDirect.oscillators.map((o) => o.start.mock.calls[0]?.[0])).toEqual(
+          expectedOscOffsets.map((offset) => 2 + offset),
+        );
+        expect(fakeDirect.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual(
+          expectedNoiseOffsets.map((offset) => 2 + offset),
+        );
+
+        // 2. Fondu déjà achevé (stopFlightAlert à 1.000 -> fadeEndTime 1.025, impact à 2.000)
+        const fakeFinished = createFakeContext({ withEventTarget: true });
+        const audioFinished = createAudio(() => fakeFinished.context);
+        audioFinished.playFire(weaponId);
+        fakeFinished.setCurrentTime(1);
+        audioFinished.stopFlightAlert();
+
+        fakeFinished.setCurrentTime(2);
+        const oscBefore = fakeFinished.oscillators.length;
+        const srcBefore = fakeFinished.bufferSources.length;
+        audioFinished.playImpact(weaponId);
+
+        expect(
+          fakeFinished.oscillators.slice(oscBefore).map((o) => o.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedOscOffsets.map((offset) => 2 + offset));
+        expect(
+          fakeFinished.bufferSources.slice(srcBefore).map((s) => s.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedNoiseOffsets.map((offset) => 2 + offset));
+
+        // 3. Sirène neutralisée sur contexte suspendu puis reprise avant impact à 2.000
+        const fakeSuspended = createFakeContext({ withEventTarget: true });
+        const audioSuspended = createAudio(() => fakeSuspended.context);
+        audioSuspended.playFire(weaponId);
+        fakeSuspended.setCurrentTime(2);
+        fakeSuspended.setState("suspended");
+        audioSuspended.stopFlightAlert();
+        fakeSuspended.setState("running");
+
+        const oscBeforeSusp = fakeSuspended.oscillators.length;
+        const srcBeforeSusp = fakeSuspended.bufferSources.length;
+        audioSuspended.playImpact(weaponId);
+
+        expect(
+          fakeSuspended.oscillators.slice(oscBeforeSusp).map((o) => o.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedOscOffsets.map((offset) => 2 + offset));
+        expect(
+          fakeSuspended.bufferSources.slice(srcBeforeSusp).map((s) => s.start.mock.calls[0]?.[0]),
+        ).toEqual(expectedNoiseOffsets.map((offset) => 2 + offset));
+      },
+    );
   });
 });

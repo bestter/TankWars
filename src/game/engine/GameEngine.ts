@@ -1076,6 +1076,22 @@ export class GameEngine {
     this.audio.stopFlightAlert();
   }
 
+  private canResumeFlightAlert(tracked: {
+    readonly shotId: number;
+    readonly munitionId: number;
+    readonly weaponId: FlightAlertWeaponId;
+  }): boolean {
+    return (
+      this.isRunning &&
+      this.isDocumentVisible() &&
+      !this.gameOver &&
+      this.roundCombatActive &&
+      !this.turnManager.isInterRoundPaused() &&
+      this.activeNuclearAlertProjectile === tracked &&
+      this.hasActiveNuclearAlertProjectile(tracked)
+    );
+  }
+
   private readonly handleVisibilityChange = (): void => {
     this.syncFlightAlertVisibility();
   };
@@ -1099,18 +1115,15 @@ export class GameEngine {
       this.isFlightAlertSuspendedByVisibility = false;
       return;
     }
-    if (
-      this.gameOver ||
-      !this.roundCombatActive ||
-      this.turnManager.isInterRoundPaused() ||
-      !this.hasActiveNuclearAlertProjectile(tracked)
-    ) {
+    if (!this.canResumeFlightAlert(tracked)) {
       this.clearFlightAlertTracking();
       return;
     }
     if (this.isFlightAlertSuspendedByVisibility) {
       this.isFlightAlertSuspendedByVisibility = false;
-      this.audio.resumeFlightAlert(tracked.weaponId);
+      this.audio.resumeFlightAlert(tracked.weaponId, () =>
+        this.canResumeFlightAlert(tracked),
+      );
     }
   }
 

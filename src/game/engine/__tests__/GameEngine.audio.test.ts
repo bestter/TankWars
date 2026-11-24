@@ -542,7 +542,7 @@ describe("GameEngine audio", () => {
           expect(engine.getActiveProjectiles()).toHaveLength(1);
           vis.setVisibility("visible");
           expect(resumeFlightAlert).toHaveBeenCalledTimes(1);
-          expect(resumeFlightAlert).toHaveBeenCalledWith(weaponId);
+          expect(resumeFlightAlert).toHaveBeenCalledWith(weaponId, expect.any(Function));
           expect(playFire).toHaveBeenCalledTimes(1);
 
           // L'impact final coupe l'alerte reprise avant l'explosion
@@ -729,7 +729,7 @@ describe("GameEngine audio", () => {
         resumeFlightAlert.mockClear();
         vis.setVisibility("visible");
         expect(resumeFlightAlert).toHaveBeenCalledTimes(1);
-        expect(resumeFlightAlert).toHaveBeenCalledWith("NUKE");
+        expect(resumeFlightAlert).toHaveBeenCalledWith("NUKE", expect.any(Function));
 
         // Retrait puis tir MISSILE : aucune reprise sur changement de visibilité
         engine.resetGame();
@@ -749,6 +749,432 @@ describe("GameEngine audio", () => {
 
         engine.stop();
       });
+    });
+
+    describe("intégration Web Audio : interruption du contexte et alignement impact/fondu", () => {
+      function createWebAudioEngineHarness(initialVisibility: DocumentVisibilityState = "visible") {
+        vi.restoreAllMocks();
+        let visibilityState: DocumentVisibilityState = initialVisibility;
+        const visibilityListeners = new Set<() => void>();
+        const fakeAudio = {
+          state: "running" as AudioContextState,
+          currentTime: 0,
+          oscillators: [] as Array<{
+            type: OscillatorType;
+            start: ReturnType<typeof vi.fn>;
+            stop: ReturnType<typeof vi.fn>;
+            frequency: Record<string, unknown>;
+            connect: ReturnType<typeof vi.fn>;
+            addEventListener: ReturnType<typeof vi.fn>;
+            removeEventListener: ReturnType<typeof vi.fn>;
+          }>,
+          gains: [] as Array<{
+            gain: Record<string, unknown>;
+            connect: ReturnType<typeof vi.fn>;
+            disconnect: ReturnType<typeof vi.fn>;
+          }>,
+          bufferSources: [] as Array<{
+            buffer: AudioBuffer | null;
+            connect: ReturnType<typeof vi.fn>;
+            start: ReturnType<typeof vi.fn>;
+          }>,
+          resumeResolvers: [] as Array<() => void>,
+          setState(next: AudioContextState) {
+            fakeAudio.state = next;
+            for (const listener of [...stateListeners]) {
+              listener();
+            }
+          },
+          resolveNextResume(targetState: AudioContextState = "running") {
+            const resolve = fakeAudio.resumeResolvers.shift();
+            if (!resolve) throw new Error("Missing pending AudioContext.resume()");
+            fakeAudio.setState(targetState);
+            resolve();
+          },
+          resolveAllResumes(targetState: AudioContextState = "running") {
+            while (fakeAudio.resumeResolvers.length > 0) {
+              fakeAudio.resolveNextResume(targetState);
+            }
+          },
+        };
+        const stateListeners = new Set<() => void>();
+        const makeParam = () => ({
+          value: 0,
+          setValueAtTime: vi.fn(),
+          linearRampToValueAtTime: vi.fn(),
+          exponentialRampToValueAtTime: vi.fn(),
+          cancelScheduledValues: vi.fn(),
+          cancelAndHoldAtTime: vi.fn(),
+        });
+        const resumeMock = vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              fakeAudio.resumeResolvers.push(resolve);
+            }),
+        );
+        const FakeAudioContext = vi.fn(function MockAudioContext() {
+          return {
+            get state() {
+              return fakeAudio.state;
+            },
+            get currentTime() {
+              return fakeAudio.currentTime;
+            },
+            sampleRate: 48_000,
+            destination: {},
+            addEventListener: vi.fn((type: string, cb: () => void) => {
+              if (type === "statechange") stateListeners.add(cb);
+            }),
+            removeEventListener: vi.fn((type: string, cb: () => void) => {
+              if (type === "statechange") stateListeners.delete(cb);
+            }),
+            resume: resumeMock,
+            close: vi.fn(() => {
+              fakeAudio.state = "closed";
+              return Promise.resolve();
+            }),
+            createOscillator: vi.fn(() => {
+              const osc = {
+                type: "sine" as OscillatorType,
+                start: vi.fn(),
+                stop: vi.fn(),
+                frequency: makeParam(),
+                connect: vi.fn(),
+                addEventListener: vi.fn(),
+                removeEventListener: vi.fn(),
+              };
+              fakeAudio.oscillators.push(osc);
+              return osc;
+            }),
+            createGain: vi.fn(() => {
+              const gainNode = {
+                gain: makeParam(),
+                connect: vi.fn(),
+                disconnect: vi.fn(),
+              };
+              fakeAudio.gains.push(gainNode);
+              return gainNode;
+            }),
+            createBiquadFilter: vi.fn(() => ({
+              type: "lowpass",
+              frequency: makeParam(),
+              connect: vi.fn(),
+            })),
+            createBuffer: vi.fn((_c: number, length: number) => ({
+              getChannelData: () => new Float32Array(length),
+            })),
+            createBufferSource: vi.fn(() => {
+              const src = {
+                buffer: null,
+                connect: vi.fn(),
+                start: vi.fn(),
+              };
+              fakeAudio.bufferSources.push(src);
+              return src;
+            }),
+          };
+        });
+
+        vi.stubGlobal("window", {
+          AudioContext: FakeAudioContext,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        });
+        vi.stubGlobal("document", {
+          get visibilityState() {
+            return visibilityState;
+          },
+          addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+            if (type === "visibilitychange" && typeof listener === "function") {
+              visibilityListeners.add(listener as () => void);
+            }
+          }),
+          removeEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+            if (type === "visibilitychange" && typeof listener === "function") {
+              visibilityListeners.delete(listener as () => void);
+            }
+          }),
+        });
+        vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+        vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+        const integratedEngine = new GameEngine(800, 480, { headless: true });
+        const players = [
+          makePlayer({
+            id: "a",
+            name: "Alice",
+            inventory: { NUKE: 2, THERMONUCLEAR: 2 },
+            tank: makeTank("tank-a", 120, 360),
+          }),
+          makePlayer({
+            id: "b",
+            name: "Bob",
+            inventory: { NUKE: 2, THERMONUCLEAR: 2 },
+            tank: makeTank("tank-b", 680, 360),
+          }),
+        ];
+        integratedEngine.setPlayers(players);
+        integratedEngine.setWindForce(0);
+        integratedEngine
+          .getTerrain()
+          .loadHeights(
+            new Array<number>(800).fill(360),
+            new Array<TerrainMaterial>(800).fill(TERRAIN_MATERIAL.DIRT),
+          );
+        const shooter = integratedEngine.getTankManager().getPlayerById("a")!;
+        shooter.tank.position = { x: 120, y: 360 };
+        integratedEngine.getTankManager().getPlayerById("b")!.tank.position = { x: 680, y: 360 };
+
+        return {
+          integratedEngine,
+          shooter,
+          fakeAudio,
+          resumeMock,
+          setVisibility(next: DocumentVisibilityState) {
+            visibilityState = next;
+            for (const listener of [...visibilityListeners]) {
+              listener();
+            }
+          },
+        };
+      }
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "neutralise l'ancienne sirène et attend la reprise effective du contexte audio au retour à l'onglet (%s)",
+        async (weaponId) => {
+          const harness = createWebAudioEngineHarness("visible");
+          const { integratedEngine, shooter, fakeAudio, resumeMock } = harness;
+          integratedEngine.start();
+
+          expect(
+            integratedEngine.fireProjectile(
+              shooter.tank.position,
+              { angle: 45, power: 50, weaponId },
+              shooter.id,
+            ),
+          ).toBe(true);
+          const initialStopGain = fakeAudio.gains.at(-1)!;
+          const initialOscs = [...fakeAudio.oscillators];
+
+          // Passage en arrière-plan et suspension du contexte à t = 2,000 s
+          fakeAudio.currentTime = 2;
+          fakeAudio.setState("suspended");
+          harness.setVisibility("hidden");
+
+          expect(initialStopGain.disconnect).toHaveBeenCalledOnce();
+          expect(initialStopGain.gain.value).toBe(0);
+          for (const osc of initialOscs) {
+            expect(osc.stop).toHaveBeenCalledExactlyOnceWith(2);
+          }
+
+          // Retour à l'onglet : appelle resume(), reste muet jusqu'à résolution en running
+          harness.setVisibility("visible");
+          expect(resumeMock).toHaveBeenCalledOnce();
+          expect(fakeAudio.oscillators).toHaveLength(initialOscs.length);
+
+          fakeAudio.resolveNextResume("running");
+          await Promise.resolve();
+          await Promise.resolve();
+
+          const resumedOscs = fakeAudio.oscillators.slice(initialOscs.length);
+          expect(resumedOscs.length).toBeGreaterThanOrEqual(3);
+          for (const osc of resumedOscs) {
+            expect(osc.start).toHaveBeenCalledExactlyOnceWith(2);
+          }
+
+          integratedEngine.stop();
+        },
+      );
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "gère les bascules rapides de visibilité et la disparition du projectile pendant AudioContext.resume() (%s)",
+        async (weaponId) => {
+          // 1. Bascule rapide visible -> hidden avant résolution de resume() : aucune sirène en arrière-plan
+          const harnessA = createWebAudioEngineHarness("visible");
+          harnessA.integratedEngine.start();
+          harnessA.integratedEngine.fireProjectile(
+            harnessA.shooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            harnessA.shooter.id,
+          );
+          const oscCountAfterFireA = harnessA.fakeAudio.oscillators.length;
+          harnessA.fakeAudio.currentTime = 2;
+          harnessA.fakeAudio.setState("suspended");
+          harnessA.setVisibility("hidden");
+          harnessA.setVisibility("visible");
+          harnessA.setVisibility("hidden");
+
+          harnessA.fakeAudio.resolveAllResumes("running");
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(harnessA.fakeAudio.oscillators).toHaveLength(oscCountAfterFireA);
+
+          // Puis second retour visible tandis que le projectile vole encore : une seule sirène créée
+          harnessA.setVisibility("visible");
+          harnessA.fakeAudio.resolveAllResumes("running");
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(harnessA.fakeAudio.oscillators.length).toBeGreaterThan(oscCountAfterFireA);
+          const expectedAlertOscCount =
+            harnessA.fakeAudio.oscillators.length - oscCountAfterFireA;
+          harnessA.integratedEngine.stop();
+
+          // 2. Bascule hidden -> visible -> hidden -> visible avant toute résolution : pas de doublon
+          const harnessB = createWebAudioEngineHarness("visible");
+          harnessB.integratedEngine.start();
+          harnessB.integratedEngine.fireProjectile(
+            harnessB.shooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            harnessB.shooter.id,
+          );
+          const oscCountAfterFireB = harnessB.fakeAudio.oscillators.length;
+          harnessB.fakeAudio.currentTime = 2;
+          harnessB.fakeAudio.setState("suspended");
+          harnessB.setVisibility("hidden");
+          harnessB.setVisibility("visible");
+          harnessB.setVisibility("hidden");
+          harnessB.setVisibility("visible");
+
+          harnessB.fakeAudio.resolveAllResumes("running");
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(harnessB.fakeAudio.oscillators).toHaveLength(
+            oscCountAfterFireB + expectedAlertOscCount,
+          );
+          harnessB.integratedEngine.stop();
+
+          // 3. Impact terrain pendant que resume() est en attente : aucune sirène relancée après déblocage
+          const harnessC = createWebAudioEngineHarness("visible");
+          harnessC.integratedEngine.start();
+          harnessC.integratedEngine.fireProjectile(
+            harnessC.shooter.tank.position,
+            { angle: 45, power: 25, weaponId },
+            harnessC.shooter.id,
+          );
+          harnessC.fakeAudio.currentTime = 2;
+          harnessC.fakeAudio.setState("suspended");
+          harnessC.setVisibility("hidden");
+          harnessC.setVisibility("visible");
+
+          const shellC = harnessC.integratedEngine.getActiveProjectiles()[0]!;
+          shellC.x = 300;
+          shellC.y = 360;
+          shellC.vy = 20;
+          getUpdateFn(harnessC.integratedEngine).call(harnessC.integratedEngine, 1 / 120);
+          expect(harnessC.integratedEngine.getActiveProjectiles()).toHaveLength(0);
+          const oscCountAfterImpactC = harnessC.fakeAudio.oscillators.length;
+
+          harnessC.fakeAudio.resolveAllResumes("running");
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(harnessC.fakeAudio.oscillators).toHaveLength(oscCountAfterImpactC);
+          harnessC.integratedEngine.stop();
+
+          // 4. Sortie hors limites pendant que resume() est en attente : aucune sirène relancée
+          const harnessD = createWebAudioEngineHarness("visible");
+          harnessD.integratedEngine.start();
+          harnessD.integratedEngine.fireProjectile(
+            harnessD.shooter.tank.position,
+            { angle: 20, power: 100, weaponId },
+            harnessD.shooter.id,
+          );
+          harnessD.fakeAudio.currentTime = 2;
+          harnessD.fakeAudio.setState("suspended");
+          harnessD.setVisibility("hidden");
+          harnessD.setVisibility("visible");
+
+          const shellD = harnessD.integratedEngine.getActiveProjectiles()[0]!;
+          shellD.x = 5000;
+          getUpdateFn(harnessD.integratedEngine).call(harnessD.integratedEngine, 1 / 120);
+          expect(harnessD.integratedEngine.getActiveProjectiles()).toHaveLength(0);
+          const oscCountAfterOobD = harnessD.fakeAudio.oscillators.length;
+
+          harnessD.fakeAudio.resolveAllResumes("running");
+          await Promise.resolve();
+          await Promise.resolve();
+          expect(harnessD.fakeAudio.oscillators).toHaveLength(oscCountAfterOobD);
+          harnessD.integratedEngine.stop();
+        },
+      );
+
+      it.each([
+        {
+          weaponId: "NUKE" as const,
+          expectedNoiseOffsets: [0, 0.16],
+          expectedOscOffsets: [0, 0],
+        },
+        {
+          weaponId: "THERMONUCLEAR" as const,
+          expectedNoiseOffsets: [0, 0.22, 0.52],
+          expectedOscOffsets: [0, 0.1],
+        },
+      ])(
+        "décale la détonation à 2,025 s si une sirène est active à l'impact, ou 2,000 s sans sirène, sans retarder la physique (%s)",
+        ({ weaponId, expectedNoiseOffsets, expectedOscOffsets }) => {
+          // Cas 1 : sirène active à l'impact à t = 2,000 s
+          const withAlert = createWebAudioEngineHarness("visible");
+          withAlert.integratedEngine.start();
+          withAlert.integratedEngine.fireProjectile(
+            withAlert.shooter.tank.position,
+            { angle: 45, power: 25, weaponId },
+            withAlert.shooter.id,
+          );
+          withAlert.fakeAudio.currentTime = 2;
+          const oscBeforeImpact = withAlert.fakeAudio.oscillators.length;
+          const srcBeforeImpact = withAlert.fakeAudio.bufferSources.length;
+
+          const shellA = withAlert.integratedEngine.getActiveProjectiles()[0]!;
+          shellA.x = 300;
+          shellA.y = 360;
+          shellA.vy = 20;
+          getUpdateFn(withAlert.integratedEngine).call(withAlert.integratedEngine, 1 / 120);
+
+          // La physique retire le projectile immédiatement sans attendre la fin du fondu audio
+          expect(withAlert.integratedEngine.getActiveProjectiles()).toHaveLength(0);
+          expect(
+            withAlert.fakeAudio.oscillators
+              .slice(oscBeforeImpact)
+              .map((osc) => osc.start.mock.calls[0]?.[0]),
+          ).toEqual(expectedOscOffsets.map((offset) => 2.025 + offset));
+          expect(
+            withAlert.fakeAudio.bufferSources
+              .slice(srcBeforeImpact)
+              .map((src) => src.start.mock.calls[0]?.[0]),
+          ).toEqual(expectedNoiseOffsets.map((offset) => 2.025 + offset));
+          withAlert.integratedEngine.stop();
+
+          // Cas 2 : tir déclenché onglet masqué (aucune sirène active) puis impact à t = 2,000 s
+          const withoutAlert = createWebAudioEngineHarness("hidden");
+          withoutAlert.integratedEngine.start();
+          withoutAlert.integratedEngine.fireProjectile(
+            withoutAlert.shooter.tank.position,
+            { angle: 45, power: 25, weaponId },
+            withoutAlert.shooter.id,
+          );
+          withoutAlert.fakeAudio.currentTime = 2;
+          const oscBeforeNoAlert = withoutAlert.fakeAudio.oscillators.length;
+          const srcBeforeNoAlert = withoutAlert.fakeAudio.bufferSources.length;
+
+          const shellB = withoutAlert.integratedEngine.getActiveProjectiles()[0]!;
+          shellB.x = 300;
+          shellB.y = 360;
+          shellB.vy = 20;
+          getUpdateFn(withoutAlert.integratedEngine).call(withoutAlert.integratedEngine, 1 / 120);
+
+          expect(withoutAlert.integratedEngine.getActiveProjectiles()).toHaveLength(0);
+          expect(
+            withoutAlert.fakeAudio.oscillators
+              .slice(oscBeforeNoAlert)
+              .map((osc) => osc.start.mock.calls[0]?.[0]),
+          ).toEqual(expectedOscOffsets.map((offset) => 2 + offset));
+          expect(
+            withoutAlert.fakeAudio.bufferSources
+              .slice(srcBeforeNoAlert)
+              .map((src) => src.start.mock.calls[0]?.[0]),
+          ).toEqual(expectedNoiseOffsets.map((offset) => 2 + offset));
+          withoutAlert.integratedEngine.stop();
+        },
+      );
     });
   });
 });

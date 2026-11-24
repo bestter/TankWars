@@ -12,6 +12,7 @@ export function playNoiseBurst(
   cutoff: number,
   sweepTo?: number,
   startOffset = 0,
+  baseTime?: number,
 ): void {
   const ctx = ensure();
   if (!ctx) return;
@@ -40,7 +41,11 @@ export function playNoiseBurst(
     const gain = ctx.createGain();
     gain.gain.value = volume;
 
-    const t = ctx.currentTime + Math.max(0, startOffset);
+    const origin =
+      baseTime !== undefined && Number.isFinite(baseTime)
+        ? Math.max(ctx.currentTime, baseTime)
+        : ctx.currentTime;
+    const t = origin + Math.max(0, startOffset);
     gain.gain.setValueAtTime(volume, t);
     gain.gain.linearRampToValueAtTime(0.0004, t + duration);
 

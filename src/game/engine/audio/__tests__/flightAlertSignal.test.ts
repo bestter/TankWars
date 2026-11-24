@@ -128,6 +128,7 @@ class SimGainNode implements SimNode, SimConnectTarget {
   readonly id: string;
   readonly gain = new SimulatedAudioParam(1);
   readonly incoming: SimNode[] = [];
+  disconnected = false;
 
   constructor(id: string) {
     this.id = id;
@@ -136,6 +137,10 @@ class SimGainNode implements SimNode, SimConnectTarget {
   connect(target: SimConnectTarget): SimConnectTarget {
     target.incoming.push(this);
     return target;
+  }
+
+  disconnect(): void {
+    this.disconnected = true;
   }
 }
 
@@ -255,6 +260,7 @@ function evalNodeAudio(node: SimNode, time: number, dt: number): number {
     return 0;
   }
   if (node instanceof SimGainNode) {
+    if (node.disconnected) return 0;
     const sum = node.incoming.reduce((acc, src) => acc + evalNodeAudio(src, time, dt), 0);
     return sum * node.gain.valueAt(time);
   }
@@ -270,9 +276,11 @@ interface SimulatedAudioContext {
   readonly gains: SimGainNode[];
   readonly filters: SimFilterNode[];
   readonly oscillators: SimOscillatorNode[];
+  readonly bufferSources: SimBufferSourceNode[];
   currentTime: number;
   state: AudioContextState;
   closedAtTime: number | null;
+  setState: (next: AudioContextState) => void;
 }
 
 function createSimulatedAudioContext(options: {
@@ -280,6 +288,7 @@ function createSimulatedAudioContext(options: {
   withCancelAndHold?: boolean;
   withOscEvents?: boolean;
   initialState?: AudioContextState;
+  resumeImplementation?: (sim: SimulatedAudioContext) => Promise<void>;
 } = {}): SimulatedAudioContext {
   const sampleRate = options.sampleRate ?? 48_000;
   const withCancelAndHold = options.withCancelAndHold ?? true;
@@ -288,6 +297,7 @@ function createSimulatedAudioContext(options: {
   const gains: SimGainNode[] = [];
   const filters: SimFilterNode[] = [];
   const oscillators: SimOscillatorNode[] = [];
+  const bufferSources: SimBufferSourceNode[] = [];
   const stateListeners = new Set<() => void>();
   let count = 0;
 
@@ -309,6 +319,14 @@ function createSimulatedAudioContext(options: {
     gains,
     filters,
     oscillators,
+    bufferSources,
+    setState(next: AudioContextState) {
+      if (sim.state === next) return;
+      sim.state = next;
+      for (const cb of [...stateListeners]) {
+        cb();
+      }
+    },
     context: {
       get currentTime() {
         return sim.currentTime;
@@ -323,6 +341,13 @@ function createSimulatedAudioContext(options: {
       },
       removeEventListener(type: string, cb: () => void) {
         if (type === "statechange") stateListeners.delete(cb);
+      },
+      resume() {
+        if (options.resumeImplementation) {
+          return options.resumeImplementation(sim);
+        }
+        sim.setState("running");
+        return Promise.resolve();
       },
       close() {
         if (sim.state !== "closed") {
@@ -368,7 +393,9 @@ function createSimulatedAudioContext(options: {
         } as unknown as AudioBuffer;
       },
       createBufferSource() {
-        return new SimBufferSourceNode(`source-${++count}`) as unknown as AudioBufferSourceNode;
+        const src = new SimBufferSourceNode(`source-${++count}`);
+        bufferSources.push(src);
+        return src as unknown as AudioBufferSourceNode;
       },
     } as unknown as AudioContext,
   };
@@ -656,6 +683,178 @@ describe("signal rendu à l'arrêt de l'alerte nucléaire", () => {
           expect(envelope[Math.min(totalSamples - 1, closeSampleIdx)]).toBe(0);
         }
       }
+    },
+  );
+
+  it.each([
+    { weaponId: "NUKE" as FlightAlertWeaponId, expectedTargetPeak: 0.14 },
+    { weaponId: "THERMONUCLEAR" as FlightAlertWeaponId, expectedTargetPeak: 0.15 },
+  ])(
+    "neutralise l'ancienne sirène à 2,000 s lors d'une interruption et ne rejoue qu'une sirène à la reprise (%s)",
+    async ({ weaponId, expectedTargetPeak }) => {
+      const sampleRate = 48_000;
+      const resumeAt = 2;
+      const resumeIndex = resumeAt * sampleRate;
+      const totalSamples = Math.ceil(sampleRate * 2.1);
+
+      for (const suspendBeforeStop of [true, false]) {
+        let resolveResume!: () => void;
+        const sim = createSimulatedAudioContext({
+          sampleRate,
+          resumeImplementation: (target) =>
+            new Promise<void>((resolve) => {
+              resolveResume = () => {
+                target.setState("running");
+                resolve();
+              };
+            }),
+        });
+        const audio = new CombatAudio({
+          getWidth: () => 200,
+          createContext: () => sim.context,
+        });
+
+        audio.playFire(weaponId);
+        const firstChain = findMasterGainChain(sim);
+        const firstOscs = [...sim.oscillators];
+        const firstGainSnapshotCount = sim.gains.length;
+        const firstFilterSnapshotCount = sim.filters.length;
+
+        // Avance jusqu'à t = 2,000 s puis suspension (avant ou juste après arrêt) et reprise
+        sim.currentTime = resumeAt;
+        if (suspendBeforeStop) {
+          sim.setState("suspended");
+          audio.stopFlightAlert();
+        } else {
+          audio.stopFlightAlert();
+          sim.setState("suspended");
+        }
+        audio.resumeFlightAlert(weaponId, () => true);
+
+        // Tant que resume() n'a pas résolu, aucune nouvelle sirène n'est créée
+        expect(sim.oscillators).toHaveLength(firstOscs.length);
+
+        resolveResume();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const secondOscs = sim.oscillators.slice(firstOscs.length);
+        expect(secondOscs.length).toBeGreaterThanOrEqual(3);
+        for (const osc of secondOscs) {
+          expect(osc.startTime).toBe(resumeAt);
+        }
+
+        const secondFilter = sim.filters.slice(firstFilterSnapshotCount).at(-1)!;
+        const secondGains = sim.gains.slice(firstGainSnapshotCount);
+        const secondChain: SimGainNode[] = [];
+        let cursor: SimNode | undefined = secondGains.find((g) => g.incoming.includes(secondFilter));
+        while (cursor instanceof SimGainNode) {
+          secondChain.push(cursor);
+          cursor = secondGains.find((g) => g.incoming.includes(cursor!));
+        }
+        expect(secondChain).toHaveLength(2);
+
+        const sampleChain = (
+          chainNodes: readonly SimGainNode[],
+          oscNodes: readonly SimOscillatorNode[],
+          t: number,
+        ): number => {
+          if (chainNodes.some((node) => node.disconnected)) return 0;
+          const active = oscNodes.some((osc) => t >= osc.startTime && t < osc.stopTime);
+          if (!active) return 0;
+          return chainNodes.reduce((acc, node) => acc * node.gain.valueAt(t), 1);
+        };
+
+        const oldEnvelope = new Float32Array(totalSamples);
+        const newEnvelope = new Float32Array(totalSamples);
+        renderSampleRange(oldEnvelope, resumeIndex, totalSamples, sampleRate, (t) =>
+          sampleChain(firstChain, firstOscs, t),
+        );
+        renderSampleRange(newEnvelope, resumeIndex, totalSamples, sampleRate, (t) =>
+          sampleChain(secondChain, secondOscs, t),
+        );
+
+        // L'ancienne sirène reste rigoureusement à 0 sur tout t >= 2,000 s (y compris 2,000..2,025 s)
+        for (let i = resumeIndex; i < totalSamples; i++) {
+          expect(oldEnvelope[i]).toBe(0);
+        }
+
+        // La nouvelle sirène monte normalement depuis 2,000 s sans addition avec l'ancienne
+        expect(newEnvelope[resumeIndex]).toBeCloseTo(0.0005, 4);
+        expect(newEnvelope[totalSamples - 1]).toBeCloseTo(expectedTargetPeak, 4);
+      }
+    },
+  );
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "termine complètement le fondu (2,025 s) avant le démarrage de la détonation à l'impact à 2,000 s (%s)",
+    (weaponId) => {
+      const sampleRate = 48_000;
+      const impactTime = 2;
+      const impactIndex = impactTime * sampleRate;
+      const fadeEndTime = impactTime + 0.025;
+      const fadeEndIndex = Math.round(fadeEndTime * sampleRate);
+      const totalSamples = Math.ceil(sampleRate * 2.06);
+
+      const sim = createSimulatedAudioContext({ sampleRate });
+      const audio = new CombatAudio({
+        getWidth: () => 200,
+        createContext: () => sim.context,
+      });
+
+      audio.playFire(weaponId);
+      const alertChain = findMasterGainChain(sim);
+      const alertOscs = [...sim.oscillators];
+      const oscCountBeforeImpact = sim.oscillators.length;
+      const bufferCountBeforeImpact = sim.bufferSources.length;
+
+      sim.currentTime = impactTime;
+      audio.stopFlightAlert();
+      audio.playImpact(weaponId);
+
+      const alertEnvelope = new Float32Array(totalSamples);
+      renderSampleRange(alertEnvelope, impactIndex, totalSamples, sampleRate, (t) => {
+        if (alertChain.some((node) => node.disconnected)) return 0;
+        const oscActive = alertOscs.some((osc) => t >= osc.startTime && t < osc.stopTime);
+        if (!oscActive) return 0;
+        return alertChain.reduce((acc, node) => acc * node.gain.valueAt(t), 1);
+      });
+
+      // Pendant [2,000 ; 2,025[, la sirène décroît continûment et atteint exactement 0 à 2,025 s
+      expect(alertEnvelope[impactIndex]).toBeGreaterThan(0.1);
+      for (let i = impactIndex + 1; i <= fadeEndIndex; i++) {
+        expect(alertEnvelope[i]).toBeLessThanOrEqual((alertEnvelope[i - 1] ?? 0) + 1e-6);
+      }
+      expect(alertEnvelope[fadeEndIndex]).toBe(0);
+
+      // Aucune couche de détonation ne démarre avant 2,025 s; les premières démarrent exactement à 2,025 s
+      const impactOscStarts = sim.oscillators
+        .slice(oscCountBeforeImpact)
+        .map((osc) => osc.startTime);
+      const impactBufferStarts = sim.bufferSources
+        .slice(bufferCountBeforeImpact)
+        .map((src) => src.startTime);
+      const allDetonationStarts = [...impactOscStarts, ...impactBufferStarts];
+
+      expect(allDetonationStarts.length).toBeGreaterThanOrEqual(4);
+      expect(Math.min(...allDetonationStarts)).toBe(fadeEndTime);
+      for (const startTime of allDetonationStarts) {
+        expect(startTime).toBeGreaterThanOrEqual(fadeEndTime);
+      }
+
+      // Contrôle sans sirène active à t = 2,000 s : démarrage immédiat sans délai
+      const simNoAlert = createSimulatedAudioContext({ sampleRate });
+      simNoAlert.currentTime = impactTime;
+      const audioNoAlert = new CombatAudio({
+        getWidth: () => 200,
+        createContext: () => simNoAlert.context,
+      });
+      audioNoAlert.playImpact(weaponId);
+      const noAlertStarts = [
+        ...simNoAlert.oscillators.map((osc) => osc.startTime),
+        ...simNoAlert.bufferSources.map((src) => src.startTime),
+      ];
+      expect(Math.min(...noAlertStarts)).toBe(impactTime);
     },
   );
 });

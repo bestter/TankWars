@@ -17,7 +17,8 @@ export function isFlightAlertWeapon(weaponId: WeaponId): weaponId is FlightAlert
 
 export interface ActiveFlightAlert {
   readonly weaponId: FlightAlertWeaponId;
-  stop(): void;
+  stop(): number | null;
+  silenceImmediately?(): void;
   onEnded?(listener: () => void): (() => void) | null;
 }
 
@@ -49,14 +50,66 @@ function createFlightAlertHandle(
   oscillators: readonly OscillatorNode[],
 ): ActiveFlightAlert {
   let stopped = false;
+
+  const stopOscillatorsAt = (when?: number): void => {
+    for (const osc of oscillators) {
+      try {
+        osc.stop(when);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const silenceOutput = (): void => {
+    try {
+      if (typeof stopGain.gain.cancelScheduledValues === "function") {
+        stopGain.gain.cancelScheduledValues(0);
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      stopGain.gain.value = 0;
+      if (typeof stopGain.gain.setValueAtTime === "function") {
+        stopGain.gain.setValueAtTime(0, ctx.currentTime);
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (typeof stopGain.disconnect === "function") {
+        stopGain.disconnect();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const readCurrentTime = (): number | undefined => {
+    try {
+      return ctx.currentTime;
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
     weaponId,
-    stop(): void {
-      if (stopped) return;
+    stop(): number | null {
+      if (stopped) return null;
       stopped = true;
+      if (ctx.state !== "running") {
+        const stopTime = readCurrentTime();
+        silenceOutput();
+        stopOscillatorsAt(stopTime);
+        return null;
+      }
+      let fadeEndTime: number | null;
       let stopAt: number | undefined;
       try {
         const stopTime = ctx.currentTime;
+        fadeEndTime = stopTime + ALERT_FADE_OUT_SECONDS;
         stopAt = stopTime + ALERT_STOP_OFFSET_SECONDS;
         if (typeof masterGain.gain.cancelAndHoldAtTime === "function") {
           try {
@@ -66,17 +119,18 @@ function createFlightAlertHandle(
           }
         }
         stopGain.gain.setValueAtTime(1, stopTime);
-        stopGain.gain.linearRampToValueAtTime(0, stopTime + ALERT_FADE_OUT_SECONDS);
+        stopGain.gain.linearRampToValueAtTime(0, fadeEndTime);
       } catch {
-        /* ignore */
+        fadeEndTime = null;
       }
-      for (const osc of oscillators) {
-        try {
-          osc.stop(stopAt);
-        } catch {
-          /* ignore */
-        }
-      }
+      stopOscillatorsAt(stopAt);
+      return fadeEndTime !== null && Number.isFinite(fadeEndTime) ? fadeEndTime : null;
+    },
+    silenceImmediately(): void {
+      silenceOutput();
+      if (stopped) return;
+      stopped = true;
+      stopOscillatorsAt(readCurrentTime());
     },
     onEnded(listener: () => void): (() => void) | null {
       const primaryOsc = oscillators[0];
@@ -368,9 +422,9 @@ export function playFireSound(
 function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
   // Massive multi-wave megaton detonation: shockfront + secondary blast + seismic fallout
   // Controlled headroom so it stays imposing and distinct from NUKE without saturating.
-  playNoiseBurst(ensure, 1.15, 0.3, 2200, 55);
-  playNoiseBurst(ensure, 0.95, 0.22, 1100, 42, 0.22);
-  playNoiseBurst(ensure, 0.8, 0.14, 420, 30, 0.52);
+  playNoiseBurst(ensure, 1.15, 0.3, 2200, 55, 0, now);
+  playNoiseBurst(ensure, 0.95, 0.22, 1100, 42, 0.22, now);
+  playNoiseBurst(ensure, 0.8, 0.14, 420, 30, 0.52, now);
 
   // Primary deep sub-bass drop
   const osc1 = ctx.createOscillator();
@@ -411,8 +465,8 @@ function playThermonuclearImpact(ctx: AudioContext, ensure: EnsureAudioContext, 
 
 function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
   // Recognizable two-stage nuclear detonation: crisp shockfront + echo + bass punch + crackle
-  playNoiseBurst(ensure, 0.72, 0.28, 2400, 110);
-  playNoiseBurst(ensure, 0.55, 0.18, 950, 65, 0.16);
+  playNoiseBurst(ensure, 0.72, 0.28, 2400, 110, 0, now);
+  playNoiseBurst(ensure, 0.55, 0.18, 950, 65, 0.16, now);
 
   // Nuclear bass punch with downward pitch drop
   const osc1 = ctx.createOscillator();
@@ -493,11 +547,18 @@ const IMPACT_SOUNDS = {
   BULLDOZER: (ctx, ensure, now) => playStandardImpact(ctx, ensure, now, 1950, 160),
 } satisfies Record<WeaponId, WeaponImpactSound>;
 
-export function playImpactSound(ensure: EnsureAudioContext, weaponId: WeaponId): void {
+export function playImpactSound(
+  ensure: EnsureAudioContext,
+  weaponId: WeaponId,
+  minStartTime?: number,
+): void {
   const ctx = ensure();
   if (!ctx) return;
   try {
-    const now = ctx.currentTime;
+    const now =
+      minStartTime !== undefined && Number.isFinite(minStartTime)
+        ? Math.max(ctx.currentTime, minStartTime)
+        : ctx.currentTime;
 
     // Make impacts feel like real old-school artillery hits: the noise is the star.
     // Use LFSR noise + downward filter sweep (bright crackle → low rumble).
