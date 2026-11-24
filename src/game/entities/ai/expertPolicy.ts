@@ -1,6 +1,6 @@
 import type { ExpertConsequences } from "./expertConsequences";
 
-type AdvisorOutcome = ExpertConsequences & {
+export type AdvisorOutcome = ExpertConsequences & {
   readonly profit: number;
   readonly shooterDestroyed: boolean;
   /** Highest profile score among opponents actually harmed by the shot, including collateral damage. */

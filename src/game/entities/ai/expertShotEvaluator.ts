@@ -1,4 +1,4 @@
-import { advisorAdmissible, advisorSelectionReason, compareAdvisorOutcomes, type AdvisorPolicy } from "./expertPolicy";
+import { advisorAdmissible, advisorSelectionReason, compareAdvisorOutcomes, type AdvisorOutcome, type AdvisorPolicy } from "./expertPolicy";
 import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
@@ -496,7 +496,7 @@ export function chooseExpertFallback(
   const economic = state.localShotContext !== undefined;
   const choices: (Extract<ExpertFallbackChoice, { kind: "evaluated" }> & {
     insertionIndex: number;
-    advisorOutcome?: Parameters<typeof compareAdvisorOutcomes>[0];
+    advisorOutcome?: AdvisorOutcome;
   })[] = [];
   const seenCommands = new Set<string>();
   const victims = new Set(state.players.filter((player) => player.id !== self.id).map((player) => player.id));

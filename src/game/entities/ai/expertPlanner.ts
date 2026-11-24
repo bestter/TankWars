@@ -428,7 +428,7 @@ export function chooseExpertPlan(
     profitTransition = `aucun tir sûr ne détruit la menace ${threat.id} : optimisation sur tous les adversaires`;
   }
   if (advisorObjective === "SURVIE" && threatsToNeutralize.length > 1) {
-    profitTransition = "aucun tir sûr ne détruit une des menaces confirmées : optimisation sur tous les adversaires";
+    profitTransition = "aucune menace confirmée ne peut être neutralisée par un tir sûr : optimisation sur tous les adversaires";
   }
 
   const groups: Player[][] = lockedEnemy
