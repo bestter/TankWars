@@ -11,6 +11,7 @@ import * as physical from "../physicalShotForecast";
 import * as random from "../../../../utils/random";
 import * as rewards from "../../../economy/shotRewards";
 import { compareAdvisorOutcomes } from "../expertPolicy";
+import { LethalTransitionDetector } from "../lethalTransition";
 
 function advisorFixture() {
   const self = makePlayer({ id: "self", isHuman: true, inventory: { NUKE: 2, DRILLER: 1 },
@@ -60,6 +61,112 @@ it("observes every examined advisor proposal with DEV false without changing adv
 });
 
 describe("local advisor shared policies #273", () => {
+  it.each([
+    { expertLethal: true, expertKillable: true, sameProfile: false, lock: undefined, attempts: ["expert"], selected: "expert" },
+    { expertLethal: true, expertKillable: false, sameProfile: false, lock: undefined, attempts: ["expert", "enemy"], selected: "enemy" },
+    { expertLethal: false, expertKillable: true, sameProfile: false, lock: undefined, attempts: ["enemy"], selected: "enemy" },
+    { expertLethal: true, expertKillable: true, sameProfile: true, lock: undefined, attempts: ["enemy"], selected: "enemy" },
+    { expertLethal: true, expertKillable: true, sameProfile: false, lock: "enemy", attempts: ["enemy"], selected: "enemy" },
+    { expertLethal: true, expertKillable: true, sameProfile: false, lock: "invalid", attempts: ["expert"], selected: "expert" },
+  ])("tries confirmed threats in priority order ($attempts, lock $lock)", (scenario) => {
+    const f = advisorFixture();
+    f.self.inventory = {};
+    f.enemy.aiProfile = "v2-heuristic";
+    f.state.players.push(makePlayer({ id: "expert", isHuman: false,
+      aiProfile: scenario.sameProfile ? "v2-heuristic" : "v4-smart", tank: makeTank("expert", 650, 336) }));
+    const attempts = new Set<string>();
+    const evaluate: typeof evaluator.evaluateExpertShot = (_s, _t, shooter, _weapon, targets, kill) => {
+      if (shooter.id !== f.self.id) return shooter.id === "enemy" || scenario.expertLethal ? valid(0) : invalid;
+      const target = targets[0].id;
+      if (kill) attempts.add(target);
+      return target === "expert" && !scenario.expertKillable ? invalid :
+        { ...valid(0), primaryTargetId: target, destroyedIds: new Set([target]) };
+    };
+    const observe = vi.fn();
+    chooseExpertPlan(f.self, f.state, f.terrain, createIdealExpertAim(), evaluate,
+      observe, evaluator.createExpertForecastCache(), "SURVIE", scenario.lock);
+    expect([...attempts]).toEqual(scenario.attempts);
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({ phase: "SURVIE", selectedThreatId: scenario.selected }));
+  });
+
+  it("continues to optimization when every confirmed threat requires a suicidal shot", () => {
+    const f = advisorFixture();
+    f.self.inventory = {};
+    f.state.players.push(makePlayer({ id: "expert", isHuman: false,
+      aiProfile: "v4-smart", tank: makeTank("expert", 650, 336) }));
+    const attempts = new Set<string>();
+    const evaluate: typeof evaluator.evaluateExpertShot = (_s, _t, shooter, _weapon, targets, kill) => {
+      if (shooter.id !== f.self.id) return valid(0);
+      if (kill) attempts.add(targets[0].id);
+      return valid(0, kill);
+    };
+    const observe = vi.fn();
+    expect(chooseExpertPlan(f.self, f.state, f.terrain, createIdealExpertAim(), evaluate,
+      observe, evaluator.createExpertForecastCache(), "SURVIE")?.result?.shooterDestroyed).toBe(false);
+    expect([...attempts]).toEqual(["expert", "enemy"]);
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      phase: "OPTIMISER_PROFIT", selectedThreatId: undefined, survivalCandidateCount: 0,
+      transitionReason: expect.stringContaining("aucune menace confirmée"),
+    }));
+  });
+
+  it.each([0, 1])("scores real collateral shield loss across point, main and fallback candidates (%i)", (shieldLostMilli) => {
+    const f = advisorFixture();
+    f.self.inventory = { NUKE: 2 };
+    f.enemy.aiProfile = "v2-heuristic";
+    f.state.players.push(makePlayer({ id: "expert", isHuman: false,
+      aiProfile: "v4-smart", tank: makeTank("expert", 650, 336) }));
+    vi.spyOn(aimSolver, "solveExpertAim").mockImplementation((_self, _x, _y, _w, _g, _t, weaponId, policy) => ({
+      command: { angle: weaponId === "NUKE" && policy?.variant !== "full" ? 60 : 45, power: 50 }, complete: true,
+    }));
+    vi.spyOn(physical, "resolvePhysicalShot").mockImplementation((_s, _t, _self, _id, command) => {
+      const forecast = complete();
+      return {
+        ...forecast, survivors: [...forecast.survivors, "expert"],
+        aiDamageMilli: command.angle === 45 ? 2000 : 1000 + shieldLostMilli,
+        damage: command.angle === 45
+          ? [{ ...forecast.damage[0], healthDamageMilli: 2000 }]
+          : [...forecast.damage, { ...forecast.damage[0], victimId: "expert", healthDamageMilli: 0,
+            shieldAbsorbedMilli: 1, shieldLostMilli }],
+      };
+    });
+    const realRewards = rewards.calculateShotRewards;
+    vi.spyOn(rewards, "calculateShotRewards").mockImplementation((input) => ({ ...realRewards(input),
+      awards: [{ playerId: "self", amount: (input.weaponId === "NUKE" ? WEAPON_REGISTRY.NUKE.price : 0) + 100, components: [] }],
+    }));
+    const advisor = { objective: "OPTIMISER_PROFIT" } as const;
+    const aim = createIdealExpertAim().forTarget("enemy");
+    const cache = evaluator.createExpertForecastCache();
+    const angle = shieldLostMilli ? 60 : 45;
+    expect(evaluator.evaluateExpertShot(f.state, f.terrain, f.self, "NUKE", [f.enemy], false, true, cache,
+      { mode: "own", aim, selectionPolicy: "OPTIMISER_PROFIT", advisor })).toMatchObject({ command: { angle } });
+    expect(evaluator.chooseExpertFallback(f.state, f.terrain, f.self, f.enemy, "NUKE", cache, aim, advisor))
+      .toMatchObject({ command: { angle } });
+    if (shieldLostMilli === 0) return;
+
+    const detector = vi.spyOn(LethalTransitionDetector.prototype, "analyze")
+      .mockReturnValue({ status: "safe", reason: "no-new-threat", initial: null, after: null, reply: null });
+    const observe = vi.fn();
+    expect(calculateShotAdvice(f.snapshot, advisor.objective, observe, f.enemy.id)).toMatchObject({
+      command: { angle: 60 }, profit: 100, shooterDestroyed: false,
+    });
+    expect(observe).toHaveBeenLastCalledWith(expect.objectContaining({
+      selectionReason: "profil adverse affecté plus élevé",
+    }));
+
+    detector.mockImplementation(({ command }) => command.angle === 60
+      ? { status: "risk", reason: "provoked-survival", initial: null, after: null, reply: null }
+      : { status: "safe", reason: "no-new-threat", initial: null, after: null, reply: null });
+    expect(calculateShotAdvice(f.snapshot, advisor.objective, observe, f.enemy.id)).toMatchObject({
+      command: { angle: 45 }, profit: 100, shooterDestroyed: false,
+    });
+    expect(observe).toHaveBeenLastCalledWith(expect.objectContaining({
+      lethalTransition: expect.objectContaining({
+        reason: "alternative-accepted", initialCommand: expect.objectContaining({ angle: 60 }),
+      }),
+    }));
+  });
+
   it("SURVIE neutralizes without a roll and without using profit (EXPERT keeps profit)", () => {
     const f = advisorFixture();
     const evaluate: typeof evaluator.evaluateExpertShot = (_s, _t, shooter, weapon, _targets, _kill, _first, _cache, context) => {
