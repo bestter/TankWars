@@ -1,4 +1,4 @@
-import { advisorAdmissible, compareAdvisorOutcomes, type AdvisorPolicy } from "./expertPolicy";
+import { advisorAdmissible, advisorSelectionReason, compareAdvisorOutcomes, type AdvisorPolicy } from "./expertPolicy";
 import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
@@ -47,6 +47,7 @@ export interface ExpertEvaluatedAim extends ExpertTargetAim {
 
 export interface ValidExpertShotResult extends ExpertShotBase, ExpertConsequences, ExpertEvaluatedAim {
   readonly destination: ExpertPoint;
+  readonly affectedProfileScore?: number;
   readonly nonCriticalAlternative?: ValidExpertShotResult;
 }
 
@@ -60,6 +61,16 @@ export function isValidExpertShot(result: ExpertShotResult): result is ValidExpe
 
 export type PhysicalForecast = PhysicalResolution & { readonly profit: number };
 type DecisionForecast = PhysicalResolution & { readonly profit: number | null };
+
+function affectedProfileScore(forecast: PhysicalResolution, shooter: Player, players: readonly Player[]): number {
+  let score = 0;
+  for (const opponent of players) {
+    if (opponent.id === shooter.id || opponent.tank.isDead || opponent.tank.health <= 0) continue;
+    const profile = playerProfileScore(opponent);
+    if (profile > score && hasPhysicalEffect(forecast, shooter, new Set([opponent.id]))) score = profile;
+  }
+  return score;
+}
 
 export interface ExpertUnprofitableShot {
   readonly weaponId: WeaponId;
@@ -425,6 +436,9 @@ export function evaluateExpertShot(
       shooterDestroyed: mode === "own" ? !forecastSurvives(forecast, shooter.id, cache) : destroyedIds.has(shooter.id),
       pointOrder,
       forecast,
+      ...(advisor?.objective === "OPTIMISER_PROFIT" && {
+        affectedProfileScore: affectedProfileScore(forecast, shooter, state.players),
+      }),
     };
     if (advisor && !advisorAdmissible(advisor, weaponId, candidate.profit, candidate.shooterDestroyed)) {
       if (observation) observation.status = "advisor-policy"; continue;
@@ -480,7 +494,10 @@ export function chooseExpertFallback(
   advisor?: AdvisorPolicy,
 ): ExpertFallbackChoice {
   const economic = state.localShotContext !== undefined;
-  const choices: (Extract<ExpertFallbackChoice, { kind: "evaluated" }> & { insertionIndex: number })[] = [];
+  const choices: (Extract<ExpertFallbackChoice, { kind: "evaluated" }> & {
+    insertionIndex: number;
+    advisorOutcome?: Parameters<typeof compareAdvisorOutcomes>[0];
+  })[] = [];
   const seenCommands = new Set<string>();
   const victims = new Set(state.players.filter((player) => player.id !== self.id).map((player) => player.id));
   for (const weaponId of [...new Set([ordinary, "MISSILE" as const])]) {
@@ -510,15 +527,20 @@ export function chooseExpertFallback(
       if (seenCommands.has(commandKey)) { if (observation) observation.status = "duplicate-command"; continue; }
       seenCommands.add(commandKey);
       if (observation) observation.status = "admissible-fallback";
-      choices.push({ ...evaluatedProposal, weaponId, point, useful, forecast, insertionIndex: choices.length });
+      const advisorOutcome = advisor && forecast.profit !== null ? {
+        ...forecast, profit: forecast.profit, shooterDestroyed,
+        ...(advisor.objective === "OPTIMISER_PROFIT" && {
+          affectedProfileScore: affectedProfileScore(forecast, self, state.players),
+        }),
+      } : undefined;
+      choices.push({ ...evaluatedProposal, weaponId, point, useful, forecast, advisorOutcome, insertionIndex: choices.length });
     }
   }
   choices.sort((a, b) => {
     const left = a.forecast;
     const right = b.forecast;
-    if (advisor && left.profit !== null && right.profit !== null) return compareAdvisorOutcomes(
-      { ...left, profit: left.profit, shooterDestroyed: !forecastSurvives(left, self.id, cache) },
-      { ...right, profit: right.profit, shooterDestroyed: !forecastSurvives(right, self.id, cache) }, advisor,
+    if (advisor && a.advisorOutcome && b.advisorOutcome) return compareAdvisorOutcomes(
+      a.advisorOutcome, b.advisorOutcome, advisor,
     ) || a.insertionIndex - b.insertionIndex;
     return (economic && left.profit !== null && right.profit !== null
       ? right.profit - left.profit ||
@@ -534,6 +556,8 @@ export function chooseExpertFallback(
   if (best) {
     const next = choices[1];
     const selectionReason = !cache.diagnostics ? undefined : !next ? "seul candidat admissible" :
+      advisor && best.advisorOutcome && next.advisorOutcome
+        ? advisorSelectionReason(best.advisorOutcome, next.advisorOutcome, advisor) ?? "ordre stable des armes, des points ou des arcs" :
       economic && best.forecast.profit !== next.forecast.profit ? "profit net supérieur" :
       economic && forecastSurvives(best.forecast, self.id, cache) !== forecastSurvives(next.forecast, self.id, cache)
         ? "EXPERT survit, contrairement au suivant" :

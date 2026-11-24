@@ -1,7 +1,7 @@
 import { possibleExpertThreatWeapons } from "./expertThreatWeapons";
 export { possibleExpertThreatWeapons } from "./expertThreatWeapons";
 import { chooseTransitionSafePlan, type TransitionSelectionTrace } from "./lethalTransition";
-import { advisorAdmissible, compareAdvisorOutcomes, type AdvisorObjective } from "./expertPolicy";
+import { advisorAdmissible, advisorSelectionReason, compareAdvisorOutcomes, type AdvisorObjective } from "./expertPolicy";
 import { playerProfileScore } from "./profileScore";
 import type { GameState } from "../../../types/game";
 import type { Player } from "../../../types/player";
@@ -279,12 +279,14 @@ export function chooseExpertPlan(
     if (best && bestWeapon !== undefined) threats.push({ player: enemy, weaponId: bestWeapon, result: best });
   }
   threats.sort((a, b) =>
+    (advisorObjective === "SURVIE" ? playerProfileScore(b.player) - playerProfileScore(a.player) : 0) ||
     nextDelay(state, a.player) - nextDelay(state, b.player) ||
     (advisorObjective ? 0 : playerProfileScore(b.player) - playerProfileScore(a.player)) ||
     b.result.profit - a.result.profit ||
     state.players.indexOf(a.player) - state.players.indexOf(b.player));
 
   const threat = threats[0]?.player;
+  let selectedThreat = advisorObjective === "SURVIE" ? undefined : threat;
   let survivalRoll: number | undefined;
   let survivalCandidateCount = 0;
   let profitTransition = threat
@@ -330,7 +332,7 @@ export function chooseExpertPlan(
         turnsUntilShot: nextDelay(state, player),
         lethalProfit: result.profit,
       })),
-      selectedThreatId: threat?.id,
+      selectedThreatId: selectedThreat?.id,
       survivalRoll,
       survivalCandidateCount,
       availableWeapons: shooterWeapons,
@@ -343,7 +345,11 @@ export function chooseExpertPlan(
             ? "élimination de la cible sans nouvelle menace provoquée"
             : "tir mesuré sur la cible sans nouvelle menace provoquée")
           : "autre cible sans nouvelle menace provoquée")
-        : selectionReason(phase, selected, runnerUp)),
+        : advisorObjective && runnerUp
+          ? advisorSelectionReason(selected.result, runnerUp.result, {
+            objective: advisorObjective, neutralize: phase === "SURVIE",
+          }) ?? "ordre stable des cibles, des armes ou des points"
+          : selectionReason(phase, selected, runnerUp)),
       runnerUp: runnerUp && traceCandidate(runnerUp),
       bestByWeapon,
     });
@@ -366,7 +372,9 @@ export function chooseExpertPlan(
       a.nextTurnDelay - b.nextTurnDelay || a.nextTurnIndex - b.nextTurnIndex ||
       a.weaponOrder - b.weaponOrder || a.order - b.order || a.result.pointOrder - b.result.pointOrder
     : compareSurvivalPlans(a, b);
-  if (enterSurvival && threat) {
+  const threatsToNeutralize = advisorObjective === "SURVIE" ? threats.map(({ player }) => player) :
+    enterSurvival && threat ? [threat] : [];
+  for (const threat of threatsToNeutralize) {
     let bestSurvival: RankedPlan | null = null;
     const survivalCandidates: RankedPlan[] | null = onDecision ? [] : null;
     let order = 0;
@@ -409,6 +417,7 @@ export function chooseExpertPlan(
       }
     }
     if (bestSurvival) {
+      selectedThreat = threat;
       if (survivalCandidates) {
         survivalCandidates.sort(compareSurvival);
         report("SURVIE", `menace ${threat.id} à neutraliser par un tir non suicidaire`,
@@ -417,6 +426,9 @@ export function chooseExpertPlan(
       return bestSurvival;
     }
     profitTransition = `aucun tir sûr ne détruit la menace ${threat.id} : optimisation sur tous les adversaires`;
+  }
+  if (advisorObjective === "SURVIE" && threatsToNeutralize.length > 1) {
+    profitTransition = "aucun tir sûr ne détruit une des menaces confirmées : optimisation sur tous les adversaires";
   }
 
   const groups: Player[][] = lockedEnemy
@@ -463,7 +475,8 @@ export function chooseExpertPlan(
           policy: entry.policy,
           targetIds: group.map((player) => player.id),
           result: entry,
-          profileScore: group.reduce((sum, player) => sum + playerProfileScore(player), 0),
+          profileScore: advisorObjective === "OPTIMISER_PROFIT" ? entry.affectedProfileScore ?? 0 :
+            group.reduce((sum, player) => sum + playerProfileScore(player), 0),
           nextTurnDelay: nextDelay(state, earliest),
           nextTurnIndex: state.players.indexOf(earliest),
           weaponOrder: ALL_WEAPON_IDS.indexOf(weapon),

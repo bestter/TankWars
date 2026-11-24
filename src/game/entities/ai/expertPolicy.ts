@@ -1,5 +1,11 @@
 import type { ExpertConsequences } from "./expertConsequences";
 
+type AdvisorOutcome = ExpertConsequences & {
+  readonly profit: number;
+  readonly shooterDestroyed: boolean;
+  readonly affectedProfileScore?: number;
+};
+
 export type AdvisorObjective = "SURVIE" | "OPTIMISER_PROFIT";
 export interface AdvisorPolicy {
   readonly objective: AdvisorObjective;
@@ -18,10 +24,26 @@ export function compareNeutralConsequences(a: ExpertConsequences, b: ExpertConse
 }
 
 export function compareAdvisorOutcomes(
-  a: ExpertConsequences & { readonly profit: number; readonly shooterDestroyed: boolean },
-  b: ExpertConsequences & { readonly profit: number; readonly shooterDestroyed: boolean },
+  a: AdvisorOutcome,
+  b: AdvisorOutcome,
   policy: AdvisorPolicy,
 ): number {
   return (policy.neutralize ? 0 : b.profit - a.profit ||
-    Number(a.shooterDestroyed) - Number(b.shooterDestroyed)) || compareNeutralConsequences(a, b);
+    Number(a.shooterDestroyed) - Number(b.shooterDestroyed) ||
+    (policy.objective === "OPTIMISER_PROFIT" ? (b.affectedProfileScore ?? 0) - (a.affectedProfileScore ?? 0) : 0)) ||
+    compareNeutralConsequences(a, b);
+}
+
+export function advisorSelectionReason(a: AdvisorOutcome, b: AdvisorOutcome, policy: AdvisorPolicy): string | undefined {
+  if (!policy.neutralize) {
+    if (a.profit !== b.profit) return "profit net supérieur";
+    if (a.shooterDestroyed !== b.shooterDestroyed) return "le tireur survit au tir";
+    if (policy.objective === "OPTIMISER_PROFIT" && (a.affectedProfileScore ?? 0) !== (b.affectedProfileScore ?? 0)) {
+      return "profil adverse affecté plus élevé";
+    }
+  }
+  if (a.humanDestroyedCount + a.aiDestroyedCount !== b.humanDestroyedCount + b.aiDestroyedCount) {
+    return "davantage d’adversaires détruits";
+  }
+  if (compareNeutralConsequences(a, b) !== 0) return "davantage de dégâts aux adversaires";
 }
