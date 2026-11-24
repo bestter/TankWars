@@ -18,6 +18,7 @@ export function isFlightAlertWeapon(weaponId: WeaponId): weaponId is FlightAlert
 export interface ActiveFlightAlert {
   readonly weaponId: FlightAlertWeaponId;
   stop(): void;
+  onEnded?(listener: () => void): (() => void) | null;
 }
 
 type WeaponFireSound = (
@@ -37,8 +38,8 @@ type WeaponImpactSound = (
   now: number,
 ) => void;
 
-const ALERT_FADE_OUT_SECONDS = 0.025;
-const ALERT_STOP_OFFSET_SECONDS = 0.03;
+export const ALERT_FADE_OUT_SECONDS = 0.025;
+export const ALERT_STOP_OFFSET_SECONDS = 0.03;
 
 function createFlightAlertHandle(
   weaponId: FlightAlertWeaponId,
@@ -76,6 +77,26 @@ function createFlightAlertHandle(
           /* ignore */
         }
       }
+    },
+    onEnded(listener: () => void): (() => void) | null {
+      const primaryOsc = oscillators[0];
+      if (!primaryOsc || typeof primaryOsc.addEventListener !== "function") {
+        return null;
+      }
+      let active = true;
+      const handleEnded = (): void => {
+        if (!active) return;
+        active = false;
+        listener();
+      };
+      primaryOsc.addEventListener("ended", handleEnded, { once: true });
+      return () => {
+        if (!active) return;
+        active = false;
+        if (typeof primaryOsc.removeEventListener === "function") {
+          primaryOsc.removeEventListener("ended", handleEnded);
+        }
+      };
     },
   };
 }

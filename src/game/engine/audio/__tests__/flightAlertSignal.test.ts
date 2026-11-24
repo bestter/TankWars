@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CombatAudio } from "../CombatAudio";
 import {
   playFireSound,
   playFlightAlertSound,
@@ -162,6 +163,8 @@ class SimOscillatorNode implements SimNode {
   startTime = 0;
   stopTime = Number.POSITIVE_INFINITY;
   private phase = 0;
+  private readonly endedListeners = new Set<() => void>();
+  private endedEmitted = false;
 
   constructor(id: string) {
     this.id = id;
@@ -178,6 +181,27 @@ class SimOscillatorNode implements SimNode {
 
   stop(when = 0): void {
     this.stopTime = when;
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    if (type === "ended") {
+      this.endedListeners.add(listener);
+    }
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    if (type === "ended") {
+      this.endedListeners.delete(listener);
+    }
+  }
+
+  emitEndedIfReached(time: number): void {
+    if (this.endedEmitted || time < this.stopTime) return;
+    this.endedEmitted = true;
+    for (const listener of [...this.endedListeners]) {
+      this.endedListeners.delete(listener);
+      listener();
+    }
   }
 
   sampleAt(time: number, dt: number): number {
@@ -247,18 +271,24 @@ interface SimulatedAudioContext {
   readonly filters: SimFilterNode[];
   readonly oscillators: SimOscillatorNode[];
   currentTime: number;
+  state: AudioContextState;
+  closedAtTime: number | null;
 }
 
 function createSimulatedAudioContext(options: {
   sampleRate?: number;
   withCancelAndHold?: boolean;
+  withOscEvents?: boolean;
+  initialState?: AudioContextState;
 } = {}): SimulatedAudioContext {
   const sampleRate = options.sampleRate ?? 48_000;
   const withCancelAndHold = options.withCancelAndHold ?? true;
+  const withOscEvents = options.withOscEvents ?? true;
   const destination = new SimDestination();
   const gains: SimGainNode[] = [];
   const filters: SimFilterNode[] = [];
   const oscillators: SimOscillatorNode[] = [];
+  const stateListeners = new Set<() => void>();
   let count = 0;
 
   const stripCancelAndHold = (param: SimulatedAudioParam): SimulatedAudioParam => {
@@ -273,6 +303,8 @@ function createSimulatedAudioContext(options: {
 
   const sim: SimulatedAudioContext = {
     currentTime: 0,
+    state: options.initialState ?? "running",
+    closedAtTime: null,
     destination,
     gains,
     filters,
@@ -281,9 +313,27 @@ function createSimulatedAudioContext(options: {
       get currentTime() {
         return sim.currentTime;
       },
+      get state() {
+        return sim.state;
+      },
       sampleRate,
-      state: "running",
       destination: destination as unknown as AudioDestinationNode,
+      addEventListener(type: string, cb: () => void) {
+        if (type === "statechange") stateListeners.add(cb);
+      },
+      removeEventListener(type: string, cb: () => void) {
+        if (type === "statechange") stateListeners.delete(cb);
+      },
+      close() {
+        if (sim.state !== "closed") {
+          sim.state = "closed";
+          sim.closedAtTime = sim.currentTime;
+          for (const cb of [...stateListeners]) {
+            cb();
+          }
+        }
+        return Promise.resolve();
+      },
       createGain() {
         const node = new SimGainNode(`gain-${++count}`);
         stripCancelAndHold(node.gain);
@@ -299,6 +349,12 @@ function createSimulatedAudioContext(options: {
       createOscillator() {
         const node = new SimOscillatorNode(`osc-${++count}`);
         stripCancelAndHold(node.frequency);
+        if (!withOscEvents) {
+          Object.defineProperty(node, "addEventListener", {
+            value: undefined,
+            configurable: true,
+          });
+        }
         oscillators.push(node);
         return node as unknown as OscillatorNode;
       },
@@ -360,6 +416,10 @@ function maxSampleDelta(samples: Float32Array): { delta: number; index: number }
 }
 
 describe("signal rendu à l'arrêt de l'alerte nucléaire", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("détecte la discontinuité de l'ancienne séquence cancelScheduledValues + masterGain.gain.value", () => {
     const sampleRate = 48_000;
     const stopIndex = 1792;
@@ -491,6 +551,109 @@ describe("signal rendu à l'arrêt de l'alerte nucléaire", () => {
               expect(waveform[i]).toBe(0);
             }
           }
+        }
+      }
+    },
+  );
+
+  it("détecte une coupure brutale si AudioContext.close() s'exécute immédiatement lors de dispose()", () => {
+    const sampleRate = 48_000;
+    const stopTime = 0.08;
+    const stopIndex = Math.round(stopTime * sampleRate);
+    const totalSamples = Math.ceil(sampleRate * 0.14);
+
+    const sim = createSimulatedAudioContext({ sampleRate });
+    const alert = playFireSound(() => sim.context, "NUKE");
+    expect(alert).not.toBeNull();
+    const chain = findMasterGainChain(sim);
+    const envelope = new Float32Array(totalSamples);
+
+    renderSampleRange(envelope, 0, stopIndex, sampleRate, (t) =>
+      chain.reduce((acc, node) => acc * node.gain.valueAt(t), 1),
+    );
+
+    // Simulation de l'ancien comportement fautif : arrêt suivi d'une fermeture immédiate
+    sim.currentTime = stopTime;
+    alert!.stop();
+    void sim.context.close();
+    renderSampleRange(envelope, stopIndex, totalSamples, sampleRate, (t) =>
+      sim.closedAtTime !== null && t >= sim.closedAtTime
+        ? 0
+        : chain.reduce((acc, node) => acc * node.gain.valueAt(t), 1),
+    );
+
+    const { delta, index } = maxSampleDelta(envelope);
+    expect(index).toBe(stopIndex);
+    expect(delta).toBeGreaterThan(0.13);
+  });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "laisse le fondu complet atteindre zéro avant la fermeture de AudioContext dans CombatAudio.dispose() (%s)",
+    (weaponId) => {
+      vi.useFakeTimers();
+      const sampleRate = 48_000;
+      const disposeTimes = [1792 / sampleRate, 0.08];
+
+      for (const withOscEvents of [true, false]) {
+        for (const disposeTime of disposeTimes) {
+          let wallMs = 0;
+          const sim = createSimulatedAudioContext({ sampleRate, withOscEvents });
+          const audio = new CombatAudio({
+            getWidth: () => 200,
+            createContext: () => sim.context,
+            now: () => wallMs,
+          });
+
+          audio.playFire(weaponId);
+          const chain = findMasterGainChain(sim);
+          const alertOscs = sim.oscillators;
+          const totalDuration = disposeTime + 0.1;
+          const totalSamples = Math.ceil(sampleRate * totalDuration);
+          const disposeIndex = Math.round(disposeTime * sampleRate);
+          const envelope = new Float32Array(totalSamples);
+
+          const sampleEnvelope = (t: number) => {
+            if (sim.closedAtTime !== null && t >= sim.closedAtTime) return 0;
+            const oscActive = alertOscs.some((osc) => t >= osc.startTime && t < osc.stopTime);
+            if (!oscActive) return 0;
+            return chain.reduce((acc, node) => acc * node.gain.valueAt(t), 1);
+          };
+
+          renderSampleRange(envelope, 0, disposeIndex, sampleRate, sampleEnvelope);
+
+          sim.currentTime = disposeTime;
+          wallMs = Math.round(disposeTime * 1_000);
+          audio.dispose();
+
+          // Le contexte ne ferme pas immédiatement pendant le fondu
+          expect(sim.state).toBe("running");
+
+          // Avance milliseconde par milliseconde pour simuler l'horloge audio et les timers réels
+          let cursorIdx = disposeIndex;
+          while (cursorIdx < totalSamples) {
+            const nextIdx = Math.min(totalSamples, cursorIdx + Math.round(sampleRate * 0.001));
+            renderSampleRange(envelope, cursorIdx, nextIdx, sampleRate, sampleEnvelope);
+            cursorIdx = nextIdx;
+            wallMs += 1;
+            sim.currentTime += 0.001;
+            for (const osc of alertOscs) {
+              osc.emitEndedIfReached(sim.currentTime);
+            }
+            vi.advanceTimersByTime(1);
+          }
+
+          expect(sim.state).toBe("closed");
+          expect(sim.closedAtTime).not.toBeNull();
+          expect(sim.closedAtTime!).toBeGreaterThanOrEqual(disposeTime + 0.03);
+          expect(sim.closedAtTime!).toBeLessThanOrEqual(disposeTime + 0.065);
+
+          // Enveloppe totalement continue jusqu'à 0 (aucune coupure brutale à close())
+          const { delta } = maxSampleDelta(envelope);
+          expect(delta).toBeLessThanOrEqual(0.0005);
+
+          const closeSampleIdx = Math.round(sim.closedAtTime! * sampleRate);
+          expect(envelope[Math.max(0, closeSampleIdx - 1)]).toBe(0);
+          expect(envelope[Math.min(totalSamples - 1, closeSampleIdx)]).toBe(0);
         }
       }
     },

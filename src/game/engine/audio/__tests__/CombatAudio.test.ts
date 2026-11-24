@@ -9,6 +9,9 @@ interface FakeOscillator {
   frequency: AudioParam;
   connect: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
+  addEventListener?: ReturnType<typeof vi.fn>;
+  removeEventListener?: ReturnType<typeof vi.fn>;
+  emitEnded?: () => void;
 }
 
 interface FakeContext {
@@ -17,6 +20,7 @@ interface FakeContext {
   gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }>;
   close: ReturnType<typeof vi.fn>;
   buffers: number;
+  setState: (next: AudioContextState) => void;
 }
 
 function audioParam(options?: { withCancelAndHold?: boolean }): AudioParam {
@@ -44,20 +48,23 @@ function createFakeContext(options?: {
   closeRejects?: boolean;
   state?: AudioContextState;
   withCancelAndHold?: boolean;
+  withEventTarget?: boolean;
 }): FakeContext {
   const oscillators: FakeOscillator[] = [];
   const gains: Array<{ gain: AudioParam; connect: ReturnType<typeof vi.fn> }> = [];
   const buffers = { count: 0 };
+  const contextStateListeners = new Set<() => void>();
   const close = vi.fn(() => (
     options?.closeRejects ? Promise.reject(new Error("close")) : Promise.resolve()
   ));
   const paramOptions = { withCancelAndHold: options?.withCancelAndHold ?? true };
-  const context = {
+  const contextObj: Record<string, unknown> = {
     state: options?.state ?? "running",
     sampleRate: 44_100,
     currentTime: 0,
     destination: {},
     createOscillator: vi.fn(() => {
+      const endedListeners = new Set<() => void>();
       const oscillator: FakeOscillator = {
         type: "sine",
         stop: vi.fn(),
@@ -65,6 +72,20 @@ function createFakeContext(options?: {
         connect: vi.fn(),
         start: vi.fn(),
       };
+      if (options?.withEventTarget) {
+        oscillator.addEventListener = vi.fn((type: string, cb: () => void) => {
+          if (type === "ended") endedListeners.add(cb);
+        });
+        oscillator.removeEventListener = vi.fn((type: string, cb: () => void) => {
+          if (type === "ended") endedListeners.delete(cb);
+        });
+        oscillator.emitEnded = () => {
+          for (const cb of [...endedListeners]) {
+            endedListeners.delete(cb);
+            cb();
+          }
+        };
+      }
       oscillators.push(oscillator);
       return oscillator;
     }),
@@ -91,13 +112,27 @@ function createFakeContext(options?: {
     })),
     close,
   };
+  if (options?.withEventTarget) {
+    contextObj.addEventListener = vi.fn((type: string, cb: () => void) => {
+      if (type === "statechange") contextStateListeners.add(cb);
+    });
+    contextObj.removeEventListener = vi.fn((type: string, cb: () => void) => {
+      if (type === "statechange") contextStateListeners.delete(cb);
+    });
+  }
   return {
-    context: context as unknown as AudioContext,
+    context: contextObj as unknown as AudioContext,
     oscillators,
     gains,
     close,
     get buffers() {
       return buffers.count;
+    },
+    setState(next: AudioContextState) {
+      contextObj.state = next;
+      for (const cb of [...contextStateListeners]) {
+        cb();
+      }
     },
   };
 }
@@ -566,4 +601,156 @@ describe("CombatAudio", () => {
       }
     },
   );
+
+  describe("fermeture différée de l'AudioContext après fondu de sortie", () => {
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "attend ended puis la marge de vidange (20 ms) avant de fermer le contexte (%s)",
+      (weaponId) => {
+        vi.useFakeTimers();
+        const fake = createFakeContext({ withEventTarget: true });
+        const audio = createAudio(() => fake.context);
+
+        audio.playFire(weaponId);
+        audio.dispose();
+
+        expect(fake.close).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(30);
+        expect(fake.close).not.toHaveBeenCalled();
+
+        fake.oscillators[0]?.emitEnded?.();
+        expect(fake.close).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(19);
+        expect(fake.close).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(fake.close).toHaveBeenCalledOnce();
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "utilise le délai de repli (55 ms) si addEventListener('ended') est absent (%s)",
+      (weaponId) => {
+        vi.useFakeTimers();
+        const fake = createFakeContext({ withEventTarget: false });
+        const audio = createAudio(() => fake.context);
+
+        audio.playFire(weaponId);
+        audio.dispose();
+
+        expect(fake.close).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(54);
+        expect(fake.close).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(fake.close).toHaveBeenCalledOnce();
+      },
+    );
+
+    it("borne la fermeture à 120 ms si ended ne survient jamais sur un contexte actif", () => {
+      vi.useFakeTimers();
+      const fake = createFakeContext({ withEventTarget: true });
+      const audio = createAudio(() => fake.context);
+
+      audio.playFire("NUKE");
+      audio.dispose();
+
+      vi.advanceTimersByTime(119);
+      expect(fake.close).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(fake.close).toHaveBeenCalledOnce();
+    });
+
+    it("ferme immédiatement un contexte déjà suspendu ou qui devient suspendu pendant le fondu", () => {
+      vi.useFakeTimers();
+      const alreadySuspended = createFakeContext({
+        state: "suspended",
+        withEventTarget: true,
+      });
+      const audioSuspended = createAudio(() => alreadySuspended.context);
+      audioSuspended.playFire("NUKE");
+      audioSuspended.dispose();
+
+      for (const osc of alreadySuspended.oscillators) {
+        expect(osc.stop).toHaveBeenCalledOnce();
+      }
+      expect(alreadySuspended.close).toHaveBeenCalledOnce();
+
+      const transitionsToSuspended = createFakeContext({
+        state: "running",
+        withEventTarget: true,
+      });
+      const audioDynamic = createAudio(() => transitionsToSuspended.context);
+      audioDynamic.playFire("THERMONUCLEAR");
+      audioDynamic.dispose();
+      expect(transitionsToSuspended.close).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(10);
+      transitionsToSuspended.setState("suspended");
+      expect(transitionsToSuspended.close).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(200);
+      expect(transitionsToSuspended.close).toHaveBeenCalledOnce();
+    });
+
+    it("reste sécuritaire sur dispose() répété et n'interfère pas avec une nouvelle partie", () => {
+      vi.useFakeTimers();
+      const first = createFakeContext({ withEventTarget: true });
+      const second = createFakeContext({ withEventTarget: true });
+      const factory = vi.fn()
+        .mockReturnValueOnce(first.context)
+        .mockReturnValueOnce(second.context);
+      const audio = createAudio(factory);
+
+      audio.playFire("NUKE");
+      audio.dispose();
+      audio.dispose();
+
+      // Relance immédiate avant la fin du fondu de l'ancien contexte
+      audio.playFire("MISSILE");
+      expect(factory).toHaveBeenCalledTimes(2);
+      expect(second.oscillators.length).toBeGreaterThan(0);
+
+      vi.advanceTimersByTime(150);
+      expect(first.close).toHaveBeenCalledOnce();
+      expect(second.close).not.toHaveBeenCalled();
+    });
+
+    it("diffère si stopFlightAlert() vient juste d'être appelé, mais ferme tout de suite si le fondu est déjà terminé", () => {
+      vi.useFakeTimers();
+
+      // 1. stopFlightAlert() appelé 5 ms avant dispose() -> attend le reste du fondu
+      let nowA = 1_000;
+      const fakeA = createFakeContext({ withEventTarget: true });
+      const audioA = createAudio(() => fakeA.context, () => nowA);
+      audioA.playFire("NUKE");
+      audioA.stopFlightAlert();
+      nowA = 1_005;
+      audioA.dispose();
+      expect(fakeA.close).not.toHaveBeenCalled();
+      fakeA.oscillators[0]?.emitEnded?.();
+      vi.advanceTimersByTime(20);
+      expect(fakeA.close).toHaveBeenCalledOnce();
+
+      // 2. ended déjà émis avant dispose() -> ferme immédiatement
+      const fakeB = createFakeContext({ withEventTarget: true });
+      const audioB = createAudio(() => fakeB.context);
+      audioB.playFire("NUKE");
+      audioB.stopFlightAlert();
+      fakeB.oscillators[0]?.emitEnded?.();
+      audioB.dispose();
+      expect(fakeB.close).toHaveBeenCalledOnce();
+
+      // 3. >= 120 ms écoulés depuis stopFlightAlert() -> ferme immédiatement
+      let nowC = 2_000;
+      const fakeC = createFakeContext({ withEventTarget: false });
+      const audioC = createAudio(() => fakeC.context, () => nowC);
+      audioC.playFire("THERMONUCLEAR");
+      audioC.stopFlightAlert();
+      nowC = 2_120;
+      audioC.dispose();
+      expect(fakeC.close).toHaveBeenCalledOnce();
+    });
+  });
 });
