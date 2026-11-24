@@ -6,6 +6,7 @@ import type { WeaponId } from "../../../types/weapon";
 import { PhysicsEngine } from "../PhysicsEngine";
 import { TerrainManager } from "../Terrain";
 import { createZeusState } from "../../zeus/zeusDomain";
+import { TERRAIN_MATERIAL, type TerrainMaterial } from "../../../types/terrain";
 
 describe("deterministic v3 scene reconstruction", () => {
   beforeEach(() => vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() }));
@@ -118,4 +119,147 @@ describe("deterministic v3 scene reconstruction", () => {
     expect(engine.getCombatMap(1).heights).toEqual(makeRoundMap().heights);
     expect(tm.tryFire()).toBe(false);
   });
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "reconstructs online %s ROCK carving, falls, and inventory/economy cleanly across pre/mid/post-shot catch-up",
+    (weapon) => {
+      const rockMap = {
+        ...makeRoundMap(1, 300),
+        materials: new Array<TerrainMaterial>(800).fill(TERRAIN_MATERIAL.ROCK),
+      };
+      // Narrow tall ROCK wall at 320..324 between impact (~358) and target b (300)
+      for (let x = 320; x <= 324; x++) rockMap.heights[x] = 260;
+
+      const initialPlayers = [
+        makePlayer({
+          id: "a",
+          money: 400,
+          inventory: { MISSILE: 99, [weapon]: 1 },
+          tank: makeTank("a", 120, 300, { shield: 40, maxShield: 40 }),
+        }),
+        makePlayer({
+          id: "b",
+          money: 400,
+          tank: makeTank("b", 300, 300, { shield: 40, maxShield: 40 }),
+        }),
+      ];
+
+      const command = { angle: 35, power: 40, weaponId: weapon };
+
+      const runCatchUp = (interruptAtStep?: number) => {
+        const eng = new GameEngine(800, 480);
+        eng.setLocalMatch(false);
+        eng.setLocalPlayerId("a");
+        const resolved = vi.fn();
+        eng.onShotResolved = resolved;
+        eng.reconstructCombat(structuredClone(rockMap), structuredClone(initialPlayers));
+        const tm = eng.getTurnManager();
+        const update = Reflect.get(eng, "update") as (dt: number) => void;
+
+        if (interruptAtStep !== undefined) {
+          tm.executeRemoteFire(command, {
+            fromSlot: 0,
+            mode: "ACTIVE_RECOVERY",
+            identity: { shotId: 1, isFirstShotOfRound: true, physicsSeed: seedFromRoomShot("room", 1, 1) },
+          });
+          for (let step = 0; step < interruptAtStep; step++) update.call(eng, 1 / 120);
+          eng.reconstructCombat(structuredClone(rockMap), structuredClone(initialPlayers));
+        }
+
+        tm.executeRemoteFire(command, {
+          fromSlot: 0,
+          mode: "CATCH_UP",
+          identity: { shotId: 1, isFirstShotOfRound: true, physicsSeed: seedFromRoomShot("room", 1, 1) },
+        });
+
+        let settled = false;
+        tm.onAuthoritativeShotSettled = () => {
+          settled = true;
+        };
+        for (let step = 0; step < 120 * 20 && !settled; step++) update.call(eng, 1 / 120);
+        expect(settled).toBe(true);
+        expect(resolved).not.toHaveBeenCalled();
+
+        return {
+          map: eng.getCombatMap(1),
+          players: structuredClone(eng.getTankManager().getPlayers()),
+        };
+      };
+
+      const baseline = runCatchUp();
+      const midFlightRebuilt = runCatchUp(20);
+      expect(midFlightRebuilt).toEqual(baseline);
+      expect(baseline.map.heights[322]).toBeGreaterThan(260);
+      expect(baseline.map.materials.every((m) => m === TERRAIN_MATERIAL.ROCK)).toBe(true);
+      expect(baseline.players[0].inventory[weapon]).toBe(1);
+      expect(baseline.players[0].money).toBe(400);
+      expect(baseline.players[1].tank.health < 100 || baseline.players[1].tank.shield < 40).toBe(true);
+    },
+  );
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "converges across render cadences (0 Hz, 60 Hz, 120 Hz) for online %s on ROCK",
+    (weapon) => {
+      const rockMap = {
+        ...makeRoundMap(1, 300),
+        materials: new Array<TerrainMaterial>(800).fill(TERRAIN_MATERIAL.ROCK),
+      };
+      const initialPlayers = [
+        makePlayer({ id: "a", inventory: { MISSILE: 99, [weapon]: 1 }, tank: makeTank("a", 120, 300) }),
+        makePlayer({ id: "b", tank: makeTank("b", 220, 300, { shield: 40, maxShield: 40 }) }),
+      ];
+      const ctx = {
+        save: vi.fn(),
+        restore: vi.fn(),
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        beginPath: vi.fn(),
+        arc: vi.fn(),
+        fill: vi.fn(),
+        stroke: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        drawImage: vi.fn(),
+        fillText: vi.fn(),
+        strokeRect: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        scale: vi.fn(),
+        setTransform: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+
+      const runAtCadence = (renderEverySteps: number) => {
+        const eng = new GameEngine(800, 480);
+        eng.setLocalMatch(false);
+        eng.setLocalPlayerId("a");
+        eng.reconstructCombat(structuredClone(rockMap), structuredClone(initialPlayers));
+        const tm = eng.getTurnManager();
+        let settled = false;
+        tm.onAuthoritativeShotSettled = () => {
+          settled = true;
+        };
+        tm.executeRemoteFire({ angle: 35, power: 40, weaponId: weapon }, {
+          fromSlot: 0,
+          mode: "LIVE_LOCAL",
+          identity: { shotId: 1, isFirstShotOfRound: true, physicsSeed: seedFromRoomShot("room", 1, 1) },
+        });
+        const update = Reflect.get(eng, "update") as (dt: number) => void;
+        const render = Reflect.get(eng, "render") as (c: CanvasRenderingContext2D) => void;
+        for (let step = 1; step <= 120 * 20 && !settled; step++) {
+          update.call(eng, 1 / 120);
+          if (renderEverySteps > 0 && step % renderEverySteps === 0) render.call(eng, ctx);
+        }
+        expect(settled).toBe(true);
+        return {
+          map: eng.getCombatMap(1),
+          players: structuredClone(eng.getTankManager().getPlayers()),
+        };
+      };
+
+      const run0Hz = runAtCadence(0);
+      expect(runAtCadence(2)).toEqual(run0Hz);
+      expect(runAtCadence(1)).toEqual(run0Hz);
+    },
+  );
 });

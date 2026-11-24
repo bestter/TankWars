@@ -458,7 +458,7 @@ describe('Zeus v3 durable settlement', () => {
     const reconnecting = claim.call(room, 1, 'Reconnected', sockets[1]);
     const identifying = send(1, { type: 'IDENTIFY', name: 'Identified' });
     const catchingUp = send(1, {
-      type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+      type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     await Promise.resolve();
     const transactionsDuringFire = storage.transaction.mock.calls.length;
@@ -558,7 +558,7 @@ describe('Zeus v3 durable settlement', () => {
     const onceMore = await restart();
     const handle = (slot: number, message: object) => (Reflect.get(onceMore, 'handleClientMessage') as
       (slot: number, raw: string) => Promise<void>).call(onceMore, slot, JSON.stringify(message));
-    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     expect(messages()).toEqual([draw, draw]);
     expect(catchUpSnapshot(sockets[0])).toMatchObject({ activeShotId: null, abandonedShotId: pending.shotId });
     await handle(1, { ...report(pending.shotId, 100), authorityEpoch: onceMore.getRoster()!.authorityEpoch });
@@ -724,7 +724,7 @@ describe('Zeus v3 durable settlement', () => {
 
     const readying = send(1, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-1' });
     const identifying = send(1, { type: 'IDENTIFY', name: 'UpdatedBob' });
-    const catchingUp = send(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    const catchingUp = send(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     await Promise.resolve();
     const transactionsWhilePaused = storage.transaction.mock.calls.length;
 
@@ -857,7 +857,7 @@ describe('Zeus v3 durable settlement', () => {
         const state = room.getRoster()!;
         const token = state.tokens[slot];
         const response = await room.fetch(new Request(
-          `http://localhost/ws?room=${state.roomId}&slot=${slot}&token=${token}&protocolVersion=4`,
+          `http://localhost/ws?room=${state.roomId}&slot=${slot}&token=${token}&protocolVersion=5`,
           { headers: { Upgrade: 'websocket' } },
         ));
         expect(response.status).toBe(101);
@@ -890,7 +890,7 @@ describe('Zeus v3 durable settlement', () => {
     const earlyWs = await connectViaFetch(room, 0);
     earlyWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -912,7 +912,7 @@ describe('Zeus v3 durable settlement', () => {
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -921,7 +921,7 @@ describe('Zeus v3 durable settlement', () => {
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -1114,19 +1114,92 @@ describe('Zeus v3 durable settlement', () => {
     expect(room.getRoster()!.activeZeusStrike).not.toBeNull();
   });
 
-  it('requires a new match for an old schema even when its map and physical roster are complete', async () => {
+  it.each([3, 4])('requires a new match for an old schema (%i) even when its map and physical roster are complete', async (legacySchemaVersion) => {
     const { setup, restart, sockets } = await boot();
     const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
-    persisted.combatSchemaVersion = 3;
+    persisted.combatSchemaVersion = legacySchemaVersion;
     setup.mockStorage.storageData.set('state', persisted);
     const restored = await restart();
     const before = structuredClone(restored.getRoster());
     await (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored, 0,
-      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
+      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
     expect(sockets[0].getLastMessage()).toMatchObject({ type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED' });
     expect(restored.getRoster()).toEqual(before);
     expect(restored.getRoster()!.activeShot).toBeNull();
     expect(restored.getRoster()!.activeZeusStrike).toBeNull();
+  });
+
+  it.each([
+    { scenario: 'before deadline', advanceMs: 10_000, applyEarnings: false, disconnectPeer: false },
+    { scenario: 'relay at deadline', advanceMs: 20_000, applyEarnings: false, disconnectPeer: false },
+    { scenario: 'close round at deadline without peer', advanceMs: 20_000, applyEarnings: false, disconnectPeer: true },
+    { scenario: 'complete shot when earnings already applied', advanceMs: 20_000, applyEarnings: true, disconnectPeer: false },
+  ] as const)('ignores shot recovery alarm on persisted schema v4 without mutating state or broadcasting ($scenario)', async ({
+    advanceMs,
+    applyEarnings,
+    disconnectPeer,
+  }) => {
+    const { setup, sockets, send, fire, report, restart } = await boot(2);
+    const shot = await fire();
+    if (applyEarnings) {
+      await send(0, report(shot.shotId, 25));
+    }
+    await vi.advanceTimersByTimeAsync(advanceMs);
+
+    const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+    persisted.combatSchemaVersion = 4;
+    setup.mockStorage.storageData.set('state', persisted);
+
+    const restored = await restart(!disconnectPeer);
+    const beforeState = structuredClone(restored.getRoster());
+    const beforeStorage = structuredClone(setup.mockStorage.storageData);
+    const beforeAlarm = setup.mockStorage.alarmAt;
+    const storage = (setup.ctx as {
+      storage: { transaction: ReturnType<typeof vi.fn>; setAlarm: ReturnType<typeof vi.fn> };
+    }).storage;
+    storage.transaction.mockClear();
+    storage.setAlarm.mockClear();
+    sockets[0].sent.length = 0;
+    sockets[1].sent.length = 0;
+
+    await restored.alarm();
+
+    expect(storage.transaction).not.toHaveBeenCalled();
+    expect(storage.setAlarm).not.toHaveBeenCalled();
+    expect(restored.getRoster()).toEqual(beforeState);
+    expect(setup.mockStorage.storageData).toEqual(beforeStorage);
+    expect(setup.mockStorage.alarmAt).toBe(beforeAlarm);
+    expect(sockets[0].sent).toEqual([]);
+    expect(sockets[1].sent).toEqual([]);
+  });
+
+  it('still relays and closes a persisted schema v5 room via alarm', async () => {
+    const { setup, sockets, fire, restart } = await boot(2);
+    const shot = await fire();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const restored = await restart();
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({
+      earningsAuthoritySlot: 1,
+      roundEnded: false,
+    });
+    expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === 'AUTHORITY_CHANGED')).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({
+      activeShot: null,
+      roundEnded: true,
+      roundClosedWithoutReport: true,
+    });
+    expect(sockets[0].getLastMessage()).toMatchObject({
+      type: 'ROUND_END',
+      isDraw: true,
+      abandonedShotId: shot.shotId,
+    });
   });
 
   it('restores a strike result committed before broadcast without another victim, credit or turn', async () => {
@@ -1217,7 +1290,7 @@ describe('Authoritative safe round preparation', () => {
     expect(setup.mockStorage.storageData.get('state')).toMatchObject({ map: first.map, initialRoundPlayers: first.players });
     state.players[1].tank.health = 0;
     state.players[1].tank.isDead = true;
-    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     const retry = sockets[0].getAllMessages<GameStartMessage>().filter((m) => m.type === 'GAME_START').at(-1);
     expect(retry).toEqual(first); // initial combat baseline survives live damage
   });
@@ -1270,7 +1343,7 @@ describe('Authoritative safe round preparation', () => {
     const retrySend = (slot: number, value: object) => retryHandle.call(retryRoom, slot, JSON.stringify(value));
     const retryState = Reflect.get(retryRoom, 'state') as typeof state;
     if (retry === 'REQUEST_GAME_START') {
-      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 4, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     } else {
       const slot = retry === 'last READY' ? 1 : 0;
       await retrySend(slot, { type: 'SHOP_READY', shopEpoch: epoch, actionId: `ready-${slot}` });
@@ -1304,6 +1377,162 @@ describe('Authoritative safe round preparation', () => {
     expect(finish.players[0].tank.isDead).toBe(false);
   });
 
+  it('rejects a persisted schema v4 closing shop session with NEW_GAME_REQUIRED without advancing or broadcasting round 2, while v5 completes normally', async () => {
+    const setupClosingShop = async (schemaVersion: 4 | 5) => {
+      const { setup, room, state, send } = await startedRoom(true);
+      state.roundEnded = true;
+      await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
+      const epoch = state.shopSession!.shopEpoch;
+      await send(0, { type: 'SHOP_BUY_SELL', shopEpoch: epoch, actionId: 'buy-safe', weaponId: 'GRENADE', delta: 1 });
+
+      const original = Reflect.get(room, 'prepareRoomRound') as (players: Player[], roundNumber: number) => PreparedRound;
+      const prepare = vi.fn().mockReturnValueOnce({ ok: false, reason: 'ROUND_PREPARATION_FAILED' })
+        .mockImplementation((players: Player[], roundNumber: number) => original.call(room, players, roundNumber));
+      Reflect.set(room, 'prepareRoomRound', prepare);
+
+      await send(0, { type: 'SHOP_READY', shopEpoch: epoch, actionId: 'ready-0' });
+      await send(1, { type: 'SHOP_READY', shopEpoch: epoch, actionId: 'ready-1' });
+      expect(state.roundNumber).toBe(1);
+      expect(state.shopSession?.readySlots).toEqual([0, 1]);
+      expect(state.shopSession?.closingAction).toEqual({ slot: 1, actionId: 'ready-1' });
+
+      const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+      persisted.combatSchemaVersion = schemaVersion;
+      setup.mockStorage.storageData.set('state', persisted);
+
+      const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(restored, 'ctx', { value: setup.ctx, writable: true });
+      const context = setup.ctx as {
+        blockConcurrencyWhile: ReturnType<typeof vi.fn>;
+        storage: { transaction: ReturnType<typeof vi.fn> };
+      };
+      await context.blockConcurrencyWhile.mock.results.at(-1)?.value;
+      return { setup, restored, storage: context.storage };
+    };
+
+    // 1. Persisted v4 room: must refuse with NEW_GAME_REQUIRED before completeShopPhase / authority election / IDENTIFY
+    const v4 = await setupClosingShop(4);
+    const v4BeforeState = structuredClone(v4.restored.getRoster());
+    const v4BeforeStorage = structuredClone(v4.setup.mockStorage.storageData);
+    const ws0 = new MockWebSocket();
+    const ws1 = new MockWebSocket();
+    const connections = Reflect.get(v4.restored, 'sockets') as Map<number, WebSocket>;
+    connections.set(0, ws0 as unknown as WebSocket);
+    connections.set(1, ws1 as unknown as WebSocket);
+    v4.storage.transaction.mockClear();
+
+    const handleV4 = Reflect.get(v4.restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+    await handleV4.call(v4.restored, 0, JSON.stringify({
+      type: 'REQUEST_GAME_START',
+      protocolVersion: 5,
+      roundNumber: 1,
+      lastSeenShotId: 0,
+      lastAppliedShopEpoch: 0,
+    }));
+    await handleV4.call(v4.restored, 0, JSON.stringify({ type: 'IDENTIFY', name: 'RenamedV4' }));
+    const disconnectV4 = Reflect.get(v4.restored, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+    await disconnectV4.call(v4.restored, 0, ws0 as unknown as WebSocket);
+
+    expect(ws0.getAllMessages()).toEqual([
+      { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
+    ]);
+    expect(ws1.getAllMessages()).toEqual([]);
+    expect(v4.storage.transaction).not.toHaveBeenCalled();
+    expect(v4.restored.getRoster()).toEqual(v4BeforeState);
+    expect(v4.setup.mockStorage.storageData).toEqual(v4BeforeStorage);
+
+    // 1b. Also verify real WebSocket upgrade path (claimHumanSlotLocked + pendingClaimNames) on v4
+    class MockUpgradeWebSocket extends MockWebSocket {
+      private listeners = new Map<string, Array<(event: { data?: unknown }) => void>>();
+      public accept = vi.fn();
+      public addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+        const list = this.listeners.get(type) ?? [];
+        list.push(listener);
+        this.listeners.set(type, list);
+      }
+      public dispatch(type: string, event: { data?: unknown } = {}): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+    const OriginalResponse = globalThis.Response;
+    let upgradedWs!: MockUpgradeWebSocket;
+    class MockWebSocketPair {
+      public 0: MockUpgradeWebSocket;
+      public 1: MockUpgradeWebSocket;
+      constructor() {
+        this[0] = new MockUpgradeWebSocket();
+        this[1] = new MockUpgradeWebSocket();
+        upgradedWs = this[1];
+      }
+    }
+    const WrappedResponse = function (body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+      if (init?.status === 101) {
+        return { status: 101, webSocket: init.webSocket } as unknown as Response;
+      }
+      return new OriginalResponse(body, init);
+    } as unknown as typeof Response;
+    vi.stubGlobal('WebSocketPair', MockWebSocketPair);
+    vi.stubGlobal('Response', WrappedResponse);
+    try {
+      const stateV4 = v4.restored.getRoster()!;
+      const res = await v4.restored.fetch(new Request(
+        `http://localhost/ws?room=${stateV4.roomId}&slot=0&token=${stateV4.tokens[0]}&protocolVersion=5`,
+        { headers: { Upgrade: 'websocket' } },
+      ));
+      expect(res.status).toBe(101);
+      upgradedWs.dispatch('message', {
+        data: JSON.stringify({
+          type: 'REQUEST_GAME_START',
+          protocolVersion: 5,
+          roundNumber: 1,
+          lastSeenShotId: 0,
+          lastAppliedShopEpoch: 0,
+        }),
+      });
+      await (Reflect.get(v4.restored, 'shotOperation') as Promise<void>);
+      const waitUntilCalls = (v4.setup.ctx as { waitUntil: ReturnType<typeof vi.fn> }).waitUntil.mock.calls;
+      await waitUntilCalls.at(-1)?.[0];
+      await (Reflect.get(v4.restored, 'shotOperation') as Promise<void>);
+      expect(upgradedWs.getAllMessages()).toEqual([
+        { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
+      ]);
+      expect(v4.storage.transaction).not.toHaveBeenCalled();
+      expect(v4.restored.getRoster()).toEqual(v4BeforeState);
+      expect(v4.setup.mockStorage.storageData).toEqual(v4BeforeStorage);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // 2. Persisted v5 room with identical closing shop session: must still advance to round 2 normally
+    const v5 = await setupClosingShop(5);
+    const v5Ws0 = new MockWebSocket();
+    const v5Ws1 = new MockWebSocket();
+    const v5Connections = Reflect.get(v5.restored, 'sockets') as Map<number, WebSocket>;
+    v5Connections.set(0, v5Ws0 as unknown as WebSocket);
+    v5Connections.set(1, v5Ws1 as unknown as WebSocket);
+    const handleV5 = Reflect.get(v5.restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+
+    await handleV5.call(v5.restored, 0, JSON.stringify({
+      type: 'REQUEST_GAME_START',
+      protocolVersion: 5,
+      roundNumber: 1,
+      lastSeenShotId: 0,
+      lastAppliedShopEpoch: 0,
+    }));
+
+    expect(v5.restored.getRoster()).toMatchObject({
+      roundNumber: 2,
+      roundEnded: false,
+      shopSession: null,
+    });
+    expect(v5Ws0.getAllMessages<{ type: string }>().map((m) => m.type)).toEqual(
+      expect.arrayContaining(['SHOP_FINISH', 'STATE_UPDATE', 'GAME_START', 'COMBAT_CATCH_UP_BEGIN']),
+    );
+    expect(v5Ws1.getAllMessages<{ type: string }>().map((m) => m.type)).toEqual(
+      expect.arrayContaining(['SHOP_FINISH', 'STATE_UPDATE']),
+    );
+  });
+
   it.each(['ready-0', 'legacy-ready'] as const)('restores a legacy closing identity only via a valid READY (%s)', async (actionId) => {
     const { setup, room, state, send } = await startedRoom();
     state.roundEnded = true;
@@ -1323,7 +1552,7 @@ describe('Authoritative safe round preparation', () => {
     (Reflect.get(restored, 'sockets') as Map<number, WebSocket>).set(0, socket as unknown as WebSocket);
     const handle = Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
     const prepare = vi.spyOn(restored as unknown as { prepareRoomRound: (players: Player[], round: number) => PreparedRound }, 'prepareRoomRound');
-    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 4,
+    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 5,
       roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 }));
     expect(prepare).not.toHaveBeenCalled();
     expect(socket.getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_STATE')).toBe(true);
@@ -1948,22 +2177,26 @@ describe('GameRoom Durable Object', () => {
       expect(ws0.closeCode).toBeUndefined();
     });
 
-    it('closes only an unsupported numeric protocol version with 4402', async () => {
+    it.each([4, 99])('closes unsupported numeric protocol version %i with 4402', async (receivedVersion) => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 99,
+        protocolVersion: receivedVersion,
       }));
       expect(
-        ws0.getAllMessages<{ type: string }>().some((m) => m.type === 'PROTOCOL_MISMATCH'),
-      ).toBe(true);
+        ws0.getAllMessages<{ type: string; requiredVersion?: number; receivedVersion?: number | null }>(),
+      ).toContainEqual({
+        type: 'PROTOCOL_MISMATCH',
+        requiredVersion: 5,
+        receivedVersion,
+      });
       expect(ws0.closeCode).toBe(4402);
     });
 
-    it('accepts REQUEST_GAME_START with protocolVersion 4 and still sends catch-up', async () => {
+    it('accepts REQUEST_GAME_START with protocolVersion 5 and still sends catch-up', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -1974,7 +2207,7 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'REQUEST_GAME_START',
-          protocolVersion: 4,
+          protocolVersion: 5,
           roundNumber: 1,
           lastSeenShotId: 0,
           lastAppliedShopEpoch: 0,
@@ -2430,7 +2663,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 4,
+        protocolVersion: 5,
         roundNumber: 1,
         lastSeenShotId: shot?.shotId,
         lastAppliedShopEpoch: 0,
@@ -3303,7 +3536,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 4,
+        protocolVersion: 5,
         roundNumber: 2,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -3579,7 +3812,7 @@ describe('GameRoom Durable Object', () => {
       const before = structuredClone(state);
       for (const token of ['Synthetic-token', 'synthetic-Token', 'synthetic-tokeN', '', 'short', 'synthetic-token-long', 'é']) {
         const response = await room.fetch(new Request(
-          'http://localhost/ws?room=synthetic-room&slot=0&protocolVersion=4&token=' + encodeURIComponent(token),
+          'http://localhost/ws?room=synthetic-room&slot=0&protocolVersion=5&token=' + encodeURIComponent(token),
           { headers: { Upgrade: 'websocket' } },
         ));
         expect(response.status).toBe(403);
@@ -3588,6 +3821,55 @@ describe('GameRoom Durable Object', () => {
         expect(sockets.get(0)).toBe(legitimate);
         expect(legitimate.closeCode).toBeUndefined();
         expect(legitimate.sent).toEqual([]);
+      }
+    });
+
+    it.each([
+      ['protocolVersion=4', 4],
+      ['missing protocolVersion', null],
+    ] as const)('rejects WebSocket handshake with %s via PROTOCOL_MISMATCH and close 4402', async (_label, expectedReceived) => {
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST', body: JSON.stringify({ roomId: 'ws-mismatch-room', numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }], origin: 'http://localhost:5173' }),
+      }));
+      const state = Reflect.get(room, 'state') as { tokens: Record<number, string> };
+      const token = state.tokens[0];
+      class MismatchSocket extends MockWebSocket {
+        public accept = vi.fn();
+      }
+      let capturedServer!: MismatchSocket;
+      class MockWebSocketPair {
+        public 0: MismatchSocket;
+        public 1: MismatchSocket;
+        constructor() {
+          this[0] = new MismatchSocket();
+          this[1] = new MismatchSocket();
+          capturedServer = this[1];
+        }
+      }
+      const OriginalResponse = globalThis.Response;
+      const WrappedResponse = function (body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+        if (init?.status === 101) {
+          return { status: 101, webSocket: init.webSocket } as unknown as Response;
+        }
+        return new OriginalResponse(body, init);
+      } as unknown as typeof Response;
+      vi.stubGlobal('WebSocketPair', MockWebSocketPair);
+      vi.stubGlobal('Response', WrappedResponse);
+      try {
+        const versionQuery = expectedReceived === null ? '' : `&protocolVersion=${expectedReceived}`;
+        const response = await room.fetch(new Request(
+          `http://localhost/ws?room=ws-mismatch-room&slot=0${versionQuery}&token=${encodeURIComponent(token)}`,
+          { headers: { Upgrade: 'websocket' } },
+        ));
+        expect(response.status).toBe(101);
+        expect(capturedServer.accept).toHaveBeenCalledOnce();
+        expect(capturedServer.getAllMessages()).toEqual([
+          { type: 'PROTOCOL_MISMATCH', requiredVersion: 5, receivedVersion: expectedReceived },
+        ]);
+        expect(capturedServer.closeCode).toBe(4402);
+      } finally {
+        vi.unstubAllGlobals();
       }
     });
 
@@ -3889,7 +4171,7 @@ describe('GameRoom Durable Object', () => {
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 4,
+        protocolVersion: 5,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -3922,7 +4204,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 4,
+        protocolVersion: 5,
         roundNumber: 1,
         lastSeenShotId: 1,
         lastAppliedShopEpoch: 0,

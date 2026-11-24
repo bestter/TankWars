@@ -669,7 +669,7 @@ export class TankManager {
   }
 
   /**
-   * Contrat local NUKE / THERMONUCLEAR (#302), uniquement lorsque localMatch === true.
+   * Contrat unifié NUKE / THERMONUCLEAR en local et en multijoueur (#302, #303).
    * Qualifie d'abord le coup direct (hitbox 24×15), puis applique une seule fois
    * les dégâts de projectile sur le terrain déjà creusé, avant toute chute.
    * Les chutes viennent ensuite. Un tank déjà mort de l'explosion ne reçoit pas

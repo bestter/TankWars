@@ -917,7 +917,6 @@ describe("EXPERT own/adverse boundary and material fallback", () => {
       tanks.setPlayers(structuredClone(f.state.players));
       tanks.beginShotAttribution(1, "self", weapon);
       const engine = new PhysicsEngine(() => 0.5, false);
-      engine.setLocalMatch(true);
       const hits: ProjectileHitEvent[] = [];
       const damageEvents: CombatDamageEvent[] = [];
       const destruction: CombatDestructionEvent[] = [];

@@ -252,42 +252,7 @@ describe("PhysicsEngine weapon behavior", () => {
   });
 
   it.each(["NUKE", "THERMONUCLEAR"] as const)(
-    "keeps %s ROCK carving inactive by default (localMatch = false) and uses immediate explosion damage",
-    (weaponId) => {
-      const enemy = makePlayer({
-        id: "enemy",
-        tank: makeTank("t-enemy", 200, 200),
-      });
-      const tanks = new TankManager();
-      tanks.setPlayers([enemy]);
-      const apply = vi.spyOn(tanks, "applyExplosionDamage");
-      const beginNuclear = vi.spyOn(tanks, "beginLocalNuclearImpact");
-      const destroy = vi.fn();
-
-      const physics = new PhysicsEngine();
-      expect(physics.isLocalMatch()).toBe(false);
-      physics.launchProjectile(200, 195, 0, 20, weaponId, "owner");
-      physics.updateProjectiles(
-        1 / 120,
-        0,
-        0,
-        mockTerrain({
-          checkCollision: () => true,
-          destroyTerrain: destroy,
-          getMaterialAt: () => TERRAIN_MATERIAL.ROCK,
-        }),
-        tanks,
-      );
-
-      expect(destroy).toHaveBeenCalledTimes(1);
-      expect(destroy.mock.calls[0]?.[3]).toBeUndefined();
-      expect(beginNuclear).not.toHaveBeenCalled();
-      expect(apply).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(["NUKE", "THERMONUCLEAR"] as const)(
-    "enables ROCK carving and pre-fall blast for %s in local mode while reading pre-carve ROCK bonus",
+    "enables ROCK carving and pre-fall blast by default for %s while reading pre-carve ROCK bonus",
     (weaponId) => {
       const enemy = makePlayer({
         id: "enemy",
@@ -306,8 +271,6 @@ describe("PhysicsEngine weapon behavior", () => {
       });
 
       const physics = new PhysicsEngine();
-      physics.setLocalMatch(true);
-      expect(physics.isLocalMatch()).toBe(true);
       physics.launchProjectile(200, 195, 0, 20, weaponId, "owner");
       physics.updateProjectiles(1 / 120, 0, 0, terrain, tanks);
 
@@ -329,7 +292,7 @@ describe("PhysicsEngine weapon behavior", () => {
   );
 
   it.each(["MISSILE", "GRENADE", "CLUSTER", "BULLET"] as const)(
-    "never enables ROCK carving or the local nuclear impact for %s even when localMatch is true",
+    "never enables ROCK carving or the nuclear impact handler for %s",
     (weaponId) => {
       const enemy = makePlayer({
         id: "enemy",
@@ -341,7 +304,6 @@ describe("PhysicsEngine weapon behavior", () => {
       const destroy = vi.fn();
 
       const physics = new PhysicsEngine();
-      physics.setLocalMatch(true);
       physics.launchProjectile(200, 195, 0, 20, weaponId, "owner");
       physics.updateProjectiles(
         1 / 120,

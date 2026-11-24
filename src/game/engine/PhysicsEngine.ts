@@ -220,15 +220,6 @@ export class PhysicsEngine {
 
   private physicalRandom = (): number => (this.shotRandom ?? this.random)();
   private readonly logExplosions: boolean;
-  private localMatch = false;
-
-  public setLocalMatch(localMatch: boolean): void {
-    this.localMatch = localMatch;
-  }
-
-  public isLocalMatch(): boolean {
-    return this.localMatch;
-  }
 
   constructor(
     random: () => number = secureRandom,
@@ -486,7 +477,6 @@ export class PhysicsEngine {
     }
 
     const isNuclear = p.weaponId === "NUKE" || p.weaponId === "THERMONUCLEAR";
-    const isLocalNuclear = this.localMatch && isNuclear;
 
     // 1. Effet d'arme : poussée Bulldozer, puits DRILLER, ou cratère
     if (p.weaponId === "BULLDOZER") {
@@ -507,7 +497,7 @@ export class PhysicsEngine {
         p.x,
         p.y,
         blastRadius,
-        isLocalNuclear ? { canCarveRock: true } : undefined,
+        isNuclear ? { canCarveRock: true } : undefined,
       );
     }
 
@@ -528,7 +518,7 @@ export class PhysicsEngine {
           munitionId: p.munitionId,
           reportWithProjectileImpact: isNuclear,
         };
-        const destroyed = isLocalNuclear
+        const destroyed = isNuclear
           ? tankManager.beginLocalNuclearImpact(damage)
           : tankManager.applyExplosionDamage(damage);
         if (isNuclear) tankDestructions = destroyed;

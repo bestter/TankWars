@@ -953,6 +953,12 @@ export class GameRoom extends DurableObject {
           handledInitialCatchUp = hadStarted;
         }
         if (!this.state.started) await this.maybeAutoStart();
+        if (this.state.started && !this.buildGameStartMessage()) {
+          if (wsConn && !handledInitialCatchUp) {
+            this.sendGameStartToSocket(wsConn);
+          }
+          return;
+        }
         const session = this.state.shopSession;
         let shopCompleted = false;
         if (session?.closingAction && this.allHumansReady(session)) {
@@ -973,7 +979,8 @@ export class GameRoom extends DurableObject {
     if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
       const name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
       await this.runShotOperation(async () => {
-        const joined = this.state?.joinedHumans[slot];
+        if (!this.state || (this.state.started && !this.buildGameStartMessage())) return;
+        const joined = this.state.joinedHumans[slot];
         if (!joined || joined.name === name) return;
         joined.name = name;
         await this.saveState();
@@ -1128,6 +1135,7 @@ export class GameRoom extends DurableObject {
     await this.runShotOperation(async () => {
       if (!this.state || this.sockets.has(slot)) return;
       if (this.state.started) {
+        if (!this.buildGameStartMessage()) return;
         if (this.state.earningsAuthoritySlot !== slot) return;
         const active = this.state.activeShot;
         const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
@@ -1198,6 +1206,10 @@ export class GameRoom extends DurableObject {
     if (socket) this.pendingClaimNames.delete(socket);
     if (this.state?.slotConfigs[slot]?.type !== 'human' ||
         (socket && this.sockets.get(slot) !== socket)) return;
+    if (this.state.started && !this.buildGameStartMessage()) {
+      if (socket) this.sendGameStartToSocket(socket);
+      return;
+    }
 
     const existing = this.state.joinedHumans[slot];
     const normalizedName = name?.trim().slice(0, 16) || existing?.name || `Joueur-${slot + 1}`;
@@ -1596,6 +1608,7 @@ export class GameRoom extends DurableObject {
   }
 
   private async markShooterSettled(shotId: number): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
     const active = this.state?.activeShot;
     if (!active || active.shotId !== shotId || active.shooterSettled) return;
     active.shooterSettled = true;
@@ -1619,7 +1632,7 @@ export class GameRoom extends DurableObject {
 
   private async recoverShotReport(): Promise<void> {
     const active = this.state?.activeShot;
-    if (!this.state || !active) return;
+    if (!this.state || !active || !this.buildGameStartMessage()) return;
     if (active.earningsApplied && active.shooterSettled) {
       await this.maybeCompleteActiveShot();
       return;
@@ -1778,6 +1791,7 @@ export class GameRoom extends DurableObject {
   }
 
   private async maybeCompleteActiveShot(): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
     if (!this.state?.activeShot || !this.state.lastAppliedEarnings) return;
     const active = this.state.activeShot;
     if (!active.shooterSettled || !active.earningsApplied) return;
@@ -1871,7 +1885,7 @@ export class GameRoom extends DurableObject {
 
   private beginZeusStrike(): Promise<void> {
     return this.runShotOperation(async () => {
-      if (!this.state || this.state.roundEnded || this.state.activeZeusStrike) return;
+      if (!this.state || !this.buildGameStartMessage() || this.state.roundEnded || this.state.activeZeusStrike) return;
       const zeusId = this.state.zeusState.activeZeusId;
       const current = this.state.players[this.state.currentPlayerIndex];
       if (!zeusId || current?.id !== zeusId || current.tank.isDead) return;
@@ -2357,6 +2371,7 @@ export class GameRoom extends DurableObject {
   }
 
   private async completeShopPhase(): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
     const session = this.state?.shopSession;
     if (!this.state || !session?.closingAction || !this.allHumansReady(session)) return;
     const completedRoundNumber = session.roundNumber;

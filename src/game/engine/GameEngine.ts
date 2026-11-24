@@ -156,7 +156,6 @@ export class GameEngine {
 
   public setLocalMatch(local: boolean): void {
     this.localMatch = local;
-    this.physicsEngine.setLocalMatch(local);
   }
 
   public isRoundCombatActive(): boolean {
@@ -257,7 +256,6 @@ export class GameEngine {
     this.terrain = new TerrainManager(this.width, this.height);
 
     this.physicsEngine = new PhysicsEngine();
-    this.physicsEngine.setLocalMatch(this.localMatch);
     this.tankManager = new TankManager();
 
     // Wire debug death recorder and audio. L'économie passe par les événements structurés séparés.
