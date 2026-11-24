@@ -36,7 +36,7 @@ describe("#361 archived physical certificates (real physics)", () => {
 function runWitness(fixture: DecisionFixture) {
   const f = restore(fixture);
   if (!fixture.witness) throw new Error("Witness required");
-  return resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", fixture.witness, { localMatch: true });
+  return resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", fixture.witness);
 }
 
 describe("#361 real decision isolation and diagnostics", () => {
@@ -120,7 +120,7 @@ describe("#361 open-flight horizon for local EXPERT own shots", () => {
         f.state.windForce, f.state.gravity, f.terrain, BALLISTICS_MAX_STEPS);
       const extended = simulateShot(origin.x, origin.y, witness.angle, witness.power,
         f.state.windForce, f.state.gravity, f.terrain, EXPERT_OWN_OPEN_FLIGHT_MAX_STEPS);
-      const settled = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", witness, { localMatch: true });
+      const settled = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", witness);
 
       expect(truncated).toMatchObject({ complete: false, steps: BALLISTICS_MAX_STEPS });
       expect(extended.complete).toBe(true);
@@ -141,7 +141,7 @@ describe("#361 open-flight horizon for local EXPERT own shots", () => {
         { variant: "high", penalizeProximity: false, extendOpenFlight: true },
       );
       const command = { ...solution.command, weaponId: "MISSILE" as const };
-      const physics = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", command, { localMatch: true });
+      const physics = resolvePhysicalShot(f.state, f.terrain, f.shooter, "MISSILE", command);
 
       expect(solution.complete).toBe(true);
       expect(solution.command.power).toBeLessThanOrEqual(95);

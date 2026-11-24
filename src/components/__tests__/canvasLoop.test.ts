@@ -231,7 +231,7 @@ describe("isCanvasPhaseActive", () => {
       isCanvasPhaseActive(
         createPhaseState({
           gamePhase: "COMBAT",
-          protocolMismatch: { requiredVersion: 4, receivedVersion: 3 },
+          protocolMismatch: { requiredVersion: 5, receivedVersion: 4 },
         }),
       ),
     ).toBe(false);
@@ -951,14 +951,14 @@ describe("useGameSession canvasLoop integration", () => {
     await act(async () => {
       ws.receive({
         type: "PROTOCOL_MISMATCH",
-        requiredVersion: 4,
-        receivedVersion: 3,
+        requiredVersion: 5,
+        receivedVersion: 4,
       });
     });
 
     expect(sessionRef.current?.state.protocolMismatch).toEqual({
-      requiredVersion: 4,
-      receivedVersion: 3,
+      requiredVersion: 5,
+      receivedVersion: 4,
     });
     expect(renderSpy).toHaveBeenCalledTimes(2);
     expect(raf.pendingCount()).toBe(1);

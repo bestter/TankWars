@@ -337,7 +337,6 @@ describe('GameEngine terrain impact particles & #184 multi-Hz / forecast parity'
       fp1,
       'MISSILE',
       { angle: 48, power: 62 },
-      { localMatch: true },
     );
     expect(resolved.complete).toBe(true);
     expect(resolved.support.map((s) => s.after)).toEqual(run0Hz.supportAfter);

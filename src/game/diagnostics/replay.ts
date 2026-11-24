@@ -92,7 +92,6 @@ export function replayShot(value: unknown, shotKey: string, alternative?: FireCo
     if (drawIndex >= draws.length) throw new Error("PHYSICAL_TAPE_EXHAUSTED");
     return draws[drawIndex++];
   }, false);
-  physics.setLocalMatch(before.snapshot.localMatch);
   physics.onPhysicalObserved = (observation: PhysicalObservation) => {
     if (alternative) return;
     const expected = tape[observationIndex++];

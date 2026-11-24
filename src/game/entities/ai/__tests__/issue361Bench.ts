@@ -96,7 +96,7 @@ export function useful(result: PhysicalResolution, playerId: string): boolean {
 }
 function forecast(fixture: DecisionFixture, shot: FireCommand, wind: number) {
   const f = restore(fixture, wind);
-  return resolvePhysicalShot(f.state, f.terrain, f.shooter, shot.weaponId, shot, { localMatch: true });
+  return resolvePhysicalShot(f.state, f.terrain, f.shooter, shot.weaponId, shot);
 }
 
 /** Full real strategy, including real planner, offsets, reaction and gaffe. Only RNG is injected. */

@@ -36,7 +36,7 @@ if (!response.ok) throw new Error('Local room creation failed');
 const room = await response.json();
 const invitation = new URL(room.slots[0].url);
 const token = invitation.searchParams.get('token');
-const path = `${base}/api/rooms/${room.roomId}/ws?protocolVersion=4&slot=0&token=`;
+const path = `${base}/api/rooms/${room.roomId}/ws?protocolVersion=5&slot=0&token=`;
 const socket = new WebSocket(path.replace('http:', 'ws:') + encodeURIComponent(token) + '&name=Smoke');
 try {
   await new Promise((resolve, reject) => {

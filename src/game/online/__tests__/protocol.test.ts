@@ -393,7 +393,7 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "REQUEST_GAME_START",
-        protocolVersion: 3,
+        protocolVersion: 4,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -402,7 +402,7 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "REQUEST_GAME_START",
-        protocolVersion: 4,
+        protocolVersion: 5,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -418,14 +418,14 @@ describe("strict online protocol", () => {
     expect(
       isStrictOnlineMessage({
         type: "GAME_START",
-        protocolVersion: 4,
+        protocolVersion: 5,
         currentPlayerIndex: 0,
       }),
     ).toBe(false);
     expect(readProtocolVersion({ type: "GAME_START" })).toBeNull();
     expect(
-      readProtocolVersion({ type: "GAME_START", protocolVersion: 4 }),
-    ).toBe(4);
+      readProtocolVersion({ type: "GAME_START", protocolVersion: 5 }),
+    ).toBe(5);
   });
 
 
