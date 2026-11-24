@@ -3,6 +3,7 @@ import type { ExpertConsequences } from "./expertConsequences";
 type AdvisorOutcome = ExpertConsequences & {
   readonly profit: number;
   readonly shooterDestroyed: boolean;
+  /** Highest profile score among opponents actually harmed by the shot, including collateral damage. */
   readonly affectedProfileScore?: number;
 };
 
@@ -46,4 +47,5 @@ export function advisorSelectionReason(a: AdvisorOutcome, b: AdvisorOutcome, pol
     return "davantage d’adversaires détruits";
   }
   if (compareNeutralConsequences(a, b) !== 0) return "davantage de dégâts aux adversaires";
+  return undefined;
 }
