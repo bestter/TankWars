@@ -12,6 +12,7 @@ import {
 import type { EnsureAudioContext } from "./types";
 import type { WeaponId } from "../../../types/weapon";
 import {
+  ALERT_FADE_OUT_SECONDS,
   ALERT_STOP_OFFSET_SECONDS,
   isFlightAlertWeapon,
   playFireSound,
@@ -42,6 +43,7 @@ interface PendingFlightAlertFade {
   readonly alert: ActiveFlightAlert;
   readonly weaponId: FlightAlertWeaponId;
   readonly fadeEndTime: number;
+  readonly stopAtTime: number;
   readonly stoppedAtWallMs: number;
   cleanup: () => void;
 }
@@ -65,7 +67,7 @@ export interface CombatAudioOptions {
 export class CombatAudio {
   private audioContext: AudioContext | null = null;
   private activeFlightAlert: ActiveFlightAlert | null = null;
-  private fadingFlightAlert: PendingFlightAlertFade | null = null;
+  private readonly fadingFlightAlerts = new Set<PendingFlightAlertFade>();
   private pendingFlightAlertResume: PendingFlightAlertResume | null = null;
   private nextFlightAlertResumeId = 0;
   private readonly victoryOscillators: OscillatorNode[] = [];
@@ -90,40 +92,31 @@ export class CombatAudio {
     this.cancelPendingFlightAlertResume();
     const alert = this.activeFlightAlert;
     if (!alert) {
-      if (this.fadingFlightAlert && this.fadingFlightAlert.context.state !== "running") {
-        this.silenceAndClearFadingFlightAlert();
-      }
+      this.silenceNonRunningFadingFlightAlerts();
       return;
     }
     this.activeFlightAlert = null;
     const fadeEndTime = alert.stop();
-    if (this.fadingFlightAlert) {
-      if (this.fadingFlightAlert.context.state !== "running") {
-        this.silenceAndClearFadingFlightAlert();
-      } else {
-        this.clearFadingFlightAlert();
-      }
-    }
+    this.silenceNonRunningFadingFlightAlerts();
     const context = this.audioContext;
     if (!context || context.state !== "running" || fadeEndTime === null) return;
+    const stopAtTime = fadeEndTime - ALERT_FADE_OUT_SECONDS + ALERT_STOP_OFFSET_SECONDS;
     const entry: PendingFlightAlertFade = {
       context,
       alert,
       weaponId: alert.weaponId,
       fadeEndTime,
+      stopAtTime,
       stoppedAtWallMs: this.now(),
       cleanup: () => {},
     };
     const unsubscribeEnded =
       alert.onEnded?.(() => {
-        if (this.fadingFlightAlert === entry) {
-          this.clearFadingFlightAlert();
-        }
+        this.removeFadingFlightAlert(entry);
       }) ?? null;
     const onStateChange = (): void => {
-      if (this.fadingFlightAlert === entry && context.state !== "running") {
-        alert.silenceImmediately?.();
-        this.clearFadingFlightAlert();
+      if (context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
       }
     };
     if (typeof context.addEventListener === "function") {
@@ -135,7 +128,7 @@ export class CombatAudio {
         context.removeEventListener("statechange", onStateChange);
       }
     };
-    this.fadingFlightAlert = entry;
+    this.fadingFlightAlerts.add(entry);
   }
 
   /** Reprend uniquement l'alerte continue en vol (sans bruit de mise à feu), de façon idempotente. */
@@ -146,15 +139,21 @@ export class CombatAudio {
     if (!context || context.state === "closed") return;
 
     if (context.state === "running") {
-      this.cancelPendingFlightAlertResume();
-      if (this.fadingFlightAlert && this.fadingFlightAlert.context !== context) {
-        this.clearFadingFlightAlert();
+      this.clearFadingFlightAlertsOutsideContext(context);
+      if (this.activeFlightAlert?.weaponId === weaponId) {
+        this.cancelPendingFlightAlertResume();
+        return;
       }
-      if (this.activeFlightAlert?.weaponId === weaponId) return;
       if (this.activeFlightAlert) {
         this.stopFlightAlert();
       }
-      this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId);
+      const blockingFade = this.getBlockingFade(context);
+      if (!blockingFade) {
+        this.cancelPendingFlightAlertResume();
+        this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId);
+        return;
+      }
+      this.deferFlightAlertResume(context, weaponId, shouldResume, blockingFade);
       return;
     }
 
@@ -163,59 +162,8 @@ export class CombatAudio {
       this.activeFlightAlert = null;
       current.stop();
     }
-    this.silenceAndClearFadingFlightAlert();
-    this.cancelPendingFlightAlertResume();
-
-    const id = ++this.nextFlightAlertResumeId;
-    const onStateChange = (): void => {
-      tryStart();
-    };
-    const cleanup = (): void => {
-      if (typeof context.removeEventListener === "function") {
-        context.removeEventListener("statechange", onStateChange);
-      }
-    };
-    const tryStart = (): void => {
-      if (this.pendingFlightAlertResume?.id !== id) return;
-      if (this.audioContext !== context || context.state === "closed") {
-        this.cancelPendingFlightAlertResume();
-        return;
-      }
-      if (context.state !== "running") return;
-      this.cancelPendingFlightAlertResume();
-      if (shouldResume && !shouldResume()) return;
-      if (this.activeFlightAlert?.weaponId === weaponId) return;
-      if (this.activeFlightAlert) {
-        this.stopFlightAlert();
-      }
-      this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId);
-    };
-
-    const pending: PendingFlightAlertResume = {
-      id,
-      context,
-      weaponId,
-      cleanup,
-    };
-    if (typeof context.addEventListener === "function") {
-      context.addEventListener("statechange", onStateChange);
-    }
-    this.pendingFlightAlertResume = pending;
-
-    if (typeof context.resume === "function") {
-      try {
-        const result = context.resume();
-        if (result && typeof result.then === "function") {
-          void result.then(() => {
-            tryStart();
-          }, () => {
-            // La reprise peut rester en attente jusqu'au prochain geste ou changement d'état.
-          });
-        }
-      } catch {
-        // Ignore synchronous resume errors while statechange listener remains armed.
-      }
-    }
+    this.silenceAllFadingFlightAlerts();
+    this.deferFlightAlertResume(context, weaponId, shouldResume, null);
   }
 
   playImpact(weaponId: WeaponId): void {
@@ -223,9 +171,7 @@ export class CombatAudio {
     if (this.activeFlightAlert?.weaponId === weaponId) {
       this.stopFlightAlert();
     }
-    if (this.fadingFlightAlert && this.fadingFlightAlert.context.state !== "running") {
-      this.silenceAndClearFadingFlightAlert();
-    }
+    this.silenceNonRunningFadingFlightAlerts();
     const minStartTime = this.getImpactStartTime(weaponId);
     playImpactSound(this.ensureContext, weaponId, minStartTime);
   }
@@ -286,43 +232,213 @@ export class CombatAudio {
     this.stopVictoryMusic();
     const audioContext = this.audioContext;
     this.audioContext = null;
-    const fading = this.fadingFlightAlert;
-    this.fadingFlightAlert = null;
-    fading?.cleanup();
+    const contextFades = [...this.fadingFlightAlerts];
+    this.fadingFlightAlerts.clear();
+    for (const entry of contextFades) {
+      entry.cleanup();
+    }
     if (!audioContext || audioContext.state === "closed") return;
-    if (fading && fading.context === audioContext && audioContext.state === "running") {
-      const elapsedMs = Math.max(0, this.now() - fading.stoppedAtWallMs);
+    const latestFade = findLatestFadeForContext(contextFades, audioContext);
+    if (latestFade && audioContext.state === "running") {
+      const elapsedMs = Math.max(0, this.now() - latestFade.stoppedAtWallMs);
       const remainingFallbackMs = ALERT_CLOSE_FALLBACK_MS - elapsedMs;
       const remainingMaxWaitMs = ALERT_CLOSE_MAX_WAIT_MS - elapsedMs;
       if (remainingMaxWaitMs > 0) {
         closeAudioContextAfterFade(
           audioContext,
-          fading.alert,
+          latestFade.alert,
           Math.max(0, remainingFallbackMs),
           remainingMaxWaitMs,
         );
         return;
       }
     }
-    if (fading && fading.context === audioContext && audioContext.state !== "running") {
-      fading.alert.silenceImmediately?.();
+    if (audioContext.state !== "running") {
+      for (const entry of contextFades) {
+        if (entry.context === audioContext) {
+          entry.alert.silenceImmediately?.();
+        }
+      }
     }
     closeAudioContextSafely(audioContext);
   }
 
-  private clearFadingFlightAlert(): void {
-    const previous = this.fadingFlightAlert;
-    if (!previous) return;
-    this.fadingFlightAlert = null;
-    previous.cleanup();
+  private deferFlightAlertResume(
+    context: AudioContext,
+    weaponId: FlightAlertWeaponId,
+    shouldResume: (() => boolean) | undefined,
+    initialBlockingFade: PendingFlightAlertFade | null,
+  ): void {
+    this.cancelPendingFlightAlertResume();
+    const id = ++this.nextFlightAlertResumeId;
+    const completedFades = new Set<PendingFlightAlertFade>();
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribeFadeEnded: (() => void) | null = null;
+    let resumeRequested = false;
+    let targetMinStartTime = initialBlockingFade?.stopAtTime ?? 0;
+
+    const clearFadeWait = (): void => {
+      if (fadeTimer !== null) {
+        clearTimeout(fadeTimer);
+        fadeTimer = null;
+      }
+      unsubscribeFadeEnded?.();
+      unsubscribeFadeEnded = null;
+    };
+
+    const requestContextResume = (): void => {
+      if (resumeRequested) return;
+      resumeRequested = true;
+      if (typeof context.resume !== "function") return;
+      try {
+        const result = context.resume();
+        if (result && typeof result.then === "function") {
+          void result.then(() => {
+            tryStart();
+          }, () => {
+            // La reprise peut rester en attente jusqu'au prochain geste ou changement d'état.
+          });
+        }
+      } catch {
+        // Ignore synchronous resume errors while statechange listener remains armed.
+      }
+    };
+
+    const armFadeWait = (fade: PendingFlightAlertFade): void => {
+      clearFadeWait();
+      targetMinStartTime = Math.max(targetMinStartTime, fade.stopAtTime);
+      unsubscribeFadeEnded =
+        fade.alert.onEnded?.(() => {
+          tryStart(fade);
+        }) ?? null;
+      const remainingMs = Math.max(
+        1,
+        Math.ceil((fade.stopAtTime - context.currentTime) * 1000 - 1e-6),
+      );
+      fadeTimer = setTimeout(() => {
+        tryStart(fade);
+      }, remainingMs);
+    };
+
+    const onStateChange = (): void => {
+      tryStart();
+    };
+
+    const cleanup = (): void => {
+      clearFadeWait();
+      if (typeof context.removeEventListener === "function") {
+        context.removeEventListener("statechange", onStateChange);
+      }
+    };
+
+    const tryStart = (completedFade?: PendingFlightAlertFade): void => {
+      if (this.pendingFlightAlertResume?.id !== id) return;
+      if (completedFade) {
+        completedFades.add(completedFade);
+      }
+      if (this.audioContext !== context || context.state === "closed") {
+        this.cancelPendingFlightAlertResume();
+        return;
+      }
+      if (context.state !== "running") {
+        clearFadeWait();
+        this.silenceFadingFlightAlertsForContext(context);
+        targetMinStartTime = 0;
+        requestContextResume();
+        return;
+      }
+      const nextBlocking = this.getBlockingFade(context, completedFades);
+      if (nextBlocking) {
+        armFadeWait(nextBlocking);
+        return;
+      }
+      this.cancelPendingFlightAlertResume();
+      if (shouldResume && !shouldResume()) return;
+      if (this.activeFlightAlert?.weaponId === weaponId) return;
+      if (this.activeFlightAlert) {
+        this.stopFlightAlert();
+      }
+      const minStartTime =
+        targetMinStartTime > context.currentTime ? targetMinStartTime : undefined;
+      this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId, minStartTime);
+    };
+
+    const pending: PendingFlightAlertResume = {
+      id,
+      context,
+      weaponId,
+      cleanup,
+    };
+    if (typeof context.addEventListener === "function") {
+      context.addEventListener("statechange", onStateChange);
+    }
+    this.pendingFlightAlertResume = pending;
+
+    if (initialBlockingFade) {
+      armFadeWait(initialBlockingFade);
+      return;
+    }
+    requestContextResume();
   }
 
-  private silenceAndClearFadingFlightAlert(): void {
-    const previous = this.fadingFlightAlert;
-    if (!previous) return;
-    this.fadingFlightAlert = null;
-    previous.cleanup();
-    previous.alert.silenceImmediately?.();
+  private removeFadingFlightAlert(entry: PendingFlightAlertFade): void {
+    if (!this.fadingFlightAlerts.delete(entry)) return;
+    entry.cleanup();
+  }
+
+  private silenceAndRemoveFadingFlightAlert(entry: PendingFlightAlertFade): void {
+    this.removeFadingFlightAlert(entry);
+    entry.alert.silenceImmediately?.();
+  }
+
+  private silenceNonRunningFadingFlightAlerts(): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private silenceFadingFlightAlertsForContext(context: AudioContext): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context === context) {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private silenceAllFadingFlightAlerts(): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      this.silenceAndRemoveFadingFlightAlert(entry);
+    }
+  }
+
+  private clearFadingFlightAlertsOutsideContext(context: AudioContext): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context !== context) {
+        this.removeFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private getBlockingFade(
+    context: AudioContext,
+    excludedFades?: ReadonlySet<PendingFlightAlertFade>,
+  ): PendingFlightAlertFade | null {
+    let blocking: PendingFlightAlertFade | null = null;
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context !== context) continue;
+      if (context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+        continue;
+      }
+      if (excludedFades?.has(entry)) continue;
+      if (entry.stopAtTime <= context.currentTime) continue;
+      if (!blocking || entry.stopAtTime >= blocking.stopAtTime) {
+        blocking = entry;
+      }
+    }
+    return blocking;
   }
 
   private cancelPendingFlightAlertResume(): void {
@@ -334,13 +450,17 @@ export class CombatAudio {
 
   private getImpactStartTime(weaponId: WeaponId): number | undefined {
     if (!isFlightAlertWeapon(weaponId)) return undefined;
-    const fading = this.fadingFlightAlert;
     const context = this.audioContext;
-    if (!fading || !context) return undefined;
-    if (fading.weaponId !== weaponId || fading.context !== context) return undefined;
-    if (context.state !== "running") return undefined;
-    if (fading.fadeEndTime <= context.currentTime) return undefined;
-    return fading.fadeEndTime;
+    if (!context || context.state !== "running") return undefined;
+    let latestFadeEnd: number | undefined;
+    for (const entry of this.fadingFlightAlerts) {
+      if (entry.context !== context || entry.weaponId !== weaponId) continue;
+      if (entry.fadeEndTime <= context.currentTime) continue;
+      if (latestFadeEnd === undefined || entry.fadeEndTime > latestFadeEnd) {
+        latestFadeEnd = entry.fadeEndTime;
+      }
+    }
+    return latestFadeEnd;
   }
 
   private readonly ensureContext: EnsureAudioContext = () => {
@@ -354,6 +474,20 @@ export class CombatAudio {
       return null;
     }
   };
+}
+
+function findLatestFadeForContext(
+  fades: readonly PendingFlightAlertFade[],
+  audioContext: AudioContext,
+): PendingFlightAlertFade | null {
+  let latest: PendingFlightAlertFade | null = null;
+  for (const entry of fades) {
+    if (entry.context !== audioContext) continue;
+    if (!latest || entry.stopAtTime >= latest.stopAtTime) {
+      latest = entry;
+    }
+  }
+  return latest;
 }
 
 function closeAudioContextSafely(audioContext: AudioContext): void {

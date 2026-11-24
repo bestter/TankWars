@@ -565,7 +565,8 @@ describe("CombatAudio", () => {
   it.each(["NUKE", "THERMONUCLEAR"] as const)(
     "reprend l'alerte de vol pour %s sans bruit de mise à feu ni doublon",
     (weaponId) => {
-      const fake = createFakeContext();
+      vi.useFakeTimers();
+      const fake = createFakeContext({ withEventTarget: true });
       const audio = createAudio(() => fake.context);
 
       // Armes non nucléaires ignorées
@@ -581,15 +582,23 @@ describe("CombatAudio", () => {
       audio.resumeFlightAlert(weaponId);
       expect(fake.oscillators).toHaveLength(initialCount);
 
-      // Remplacement par l'autre arme nucléaire : coupe la précédente d'abord
+      // Remplacement par l'autre arme nucléaire : coupe la précédente puis attend la fin du fondu
       const otherWeapon = weaponId === "NUKE" ? "THERMONUCLEAR" : "NUKE";
       audio.resumeFlightAlert(otherWeapon);
       for (const osc of fake.oscillators.slice(0, initialCount)) {
         expect(osc.stop).toHaveBeenCalledOnce();
       }
+      expect(fake.oscillators).toHaveLength(initialCount);
+
+      vi.advanceTimersByTime(29);
+      expect(fake.oscillators).toHaveLength(initialCount);
+
+      fake.setCurrentTime(0.03);
+      vi.advanceTimersByTime(1);
       const secondOscs = fake.oscillators.slice(initialCount);
       expect(secondOscs.length).toBeGreaterThanOrEqual(3);
       for (const osc of secondOscs) {
+        expect(osc.start).toHaveBeenCalledExactlyOnceWith(0.03);
         expect(osc.stop).not.toHaveBeenCalled();
       }
 
@@ -1175,6 +1184,195 @@ describe("CombatAudio", () => {
         expect(
           fakeSuspended.bufferSources.slice(srcBeforeSusp).map((s) => s.start.mock.calls[0]?.[0]),
         ).toEqual(expectedNoiseOffsets.map((offset) => 2 + offset));
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "évite tout chevauchement lors d'un retour rapide sur contexte toujours running (%s)",
+      (weaponId) => {
+        vi.useFakeTimers();
+
+        // 1. Démarrage unique après la fin du fondu (timer à +20 ms depuis 3,010 -> >= 3,030 s)
+        const fakeTimer = createFakeContext({ withEventTarget: true });
+        const audioTimer = createAudio(() => fakeTimer.context);
+        audioTimer.playFire(weaponId);
+        const firstCountA = fakeTimer.oscillators.length;
+        fakeTimer.setCurrentTime(3);
+        audioTimer.stopFlightAlert();
+
+        fakeTimer.setCurrentTime(3.01);
+        audioTimer.resumeFlightAlert(weaponId, () => true);
+        expect(fakeTimer.resume).not.toHaveBeenCalled();
+        expect(fakeTimer.oscillators).toHaveLength(firstCountA);
+
+        vi.advanceTimersByTime(19);
+        expect(fakeTimer.oscillators).toHaveLength(firstCountA);
+
+        // Même si l'horloge audio a 2 ms de retard sur le timer JS, minStartTime verrouille >= 3,030
+        fakeTimer.setCurrentTime(3.028);
+        vi.advanceTimersByTime(1);
+        const resumedA = fakeTimer.oscillators.slice(firstCountA);
+        expect(resumedA.length).toBeGreaterThanOrEqual(3);
+        for (const osc of resumedA) {
+          expect(osc.start).toHaveBeenCalledExactlyOnceWith(3.03);
+        }
+
+        // 2. Déclenchement sur événement ended du premier oscillateur
+        const fakeEnded = createFakeContext({ withEventTarget: true });
+        const audioEnded = createAudio(() => fakeEnded.context);
+        audioEnded.playFire(weaponId);
+        const firstCountB = fakeEnded.oscillators.length;
+        fakeEnded.setCurrentTime(3);
+        audioEnded.stopFlightAlert();
+
+        fakeEnded.setCurrentTime(3.01);
+        audioEnded.resumeFlightAlert(weaponId, () => true);
+        expect(fakeEnded.oscillators).toHaveLength(firstCountB);
+
+        fakeEnded.setCurrentTime(3.03);
+        fakeEnded.oscillators[0]?.emitEnded?.();
+        const resumedB = fakeEnded.oscillators.slice(firstCountB);
+        expect(resumedB.length).toBeGreaterThanOrEqual(3);
+        for (const osc of resumedB) {
+          expect(osc.start).toHaveBeenCalledExactlyOnceWith(3.03);
+        }
+      },
+    );
+
+    it.each(["NUKE", "THERMONUCLEAR"] as const)(
+      "gère re-masquage, impact, dispose et suspension pendant l'attente du fondu sans perdre le suivi (%s)",
+      async (weaponId) => {
+        vi.useFakeTimers();
+
+        // 1. Re-masquage à 3,015 s puis statechange -> suspended à 3,018 s : annule la reprise et neutralise encore le 1er fondu
+        const fakeHideSusp = createFakeContext({ withEventTarget: true });
+        const audioHideSusp = createAudio(() => fakeHideSusp.context);
+        audioHideSusp.playFire(weaponId);
+        const firstStopGain = fakeHideSusp.gains.at(-1)!;
+        const firstCount = fakeHideSusp.oscillators.length;
+
+        fakeHideSusp.setCurrentTime(3);
+        audioHideSusp.stopFlightAlert();
+        fakeHideSusp.setCurrentTime(3.01);
+        audioHideSusp.resumeFlightAlert(weaponId, () => true);
+        fakeHideSusp.setCurrentTime(3.015);
+        audioHideSusp.stopFlightAlert();
+
+        fakeHideSusp.setCurrentTime(3.018);
+        fakeHideSusp.setState("suspended");
+        expect(firstStopGain.gain.cancelScheduledValues).toHaveBeenCalledWith(0);
+        expect(firstStopGain.gain.value).toBe(0);
+        expect(firstStopGain.disconnect).toHaveBeenCalledOnce();
+
+        vi.advanceTimersByTime(60);
+        expect(fakeHideSusp.oscillators).toHaveLength(firstCount);
+
+        // 2. Re-masquage à 3,015 s puis dispose() à 3,018 s : diffère close() jusqu'à la fin du 1er fondu
+        let nowMs = 3_000;
+        const fakeHideDispose = createFakeContext({ withEventTarget: true });
+        const audioHideDispose = createAudio(() => fakeHideDispose.context, () => nowMs);
+        audioHideDispose.playFire(weaponId);
+        fakeHideDispose.setCurrentTime(3);
+        audioHideDispose.stopFlightAlert();
+
+        fakeHideDispose.setCurrentTime(3.01);
+        nowMs = 3_010;
+        audioHideDispose.resumeFlightAlert(weaponId, () => true);
+
+        fakeHideDispose.setCurrentTime(3.015);
+        nowMs = 3_015;
+        audioHideDispose.stopFlightAlert();
+
+        fakeHideDispose.setCurrentTime(3.018);
+        nowMs = 3_018;
+        audioHideDispose.dispose();
+        expect(fakeHideDispose.close).not.toHaveBeenCalled();
+
+        fakeHideDispose.oscillators[0]?.emitEnded?.();
+        vi.advanceTimersByTime(20);
+        expect(fakeHideDispose.close).toHaveBeenCalledOnce();
+
+        // 3. Impact à 3,015 s pendant l'attente : annule la reprise et décale la détonation à 3,025 s
+        const fakeImpact = createFakeContext({ withEventTarget: true });
+        const audioImpact = createAudio(() => fakeImpact.context);
+        audioImpact.playFire(weaponId);
+        const countAfterFire = fakeImpact.oscillators.length;
+        const srcAfterFire = fakeImpact.bufferSources.length;
+
+        fakeImpact.setCurrentTime(3);
+        audioImpact.stopFlightAlert();
+        fakeImpact.setCurrentTime(3.01);
+        audioImpact.resumeFlightAlert(weaponId, () => true);
+
+        fakeImpact.setCurrentTime(3.015);
+        audioImpact.playImpact(weaponId);
+        const impactOscCount = fakeImpact.oscillators.length;
+        expect(
+          fakeImpact.oscillators
+            .slice(countAfterFire)
+            .map((o) => o.start.mock.calls[0]?.[0]),
+        ).toEqual(weaponId === "NUKE" ? [3.025, 3.025] : [3.025, 3.125]);
+        expect(
+          fakeImpact.bufferSources
+            .slice(srcAfterFire)
+            .map((s) => s.start.mock.calls[0]?.[0]),
+        ).toEqual(weaponId === "NUKE" ? [3.025, 3.185] : [3.025, 3.245, 3.545]);
+
+        vi.advanceTimersByTime(60);
+        expect(fakeImpact.oscillators).toHaveLength(impactOscCount);
+
+        // 4. dispose() directement à 3,015 s pendant l'attente : annule la reprise et attend le 1er fondu
+        const fakeDisposeDirect = createFakeContext({ withEventTarget: true });
+        const audioDisposeDirect = createAudio(() => fakeDisposeDirect.context);
+        audioDisposeDirect.playFire(weaponId);
+        const fireCountDirect = fakeDisposeDirect.oscillators.length;
+        fakeDisposeDirect.setCurrentTime(3);
+        audioDisposeDirect.stopFlightAlert();
+        fakeDisposeDirect.setCurrentTime(3.01);
+        audioDisposeDirect.resumeFlightAlert(weaponId, () => true);
+
+        fakeDisposeDirect.setCurrentTime(3.015);
+        audioDisposeDirect.dispose();
+        expect(fakeDisposeDirect.close).not.toHaveBeenCalled();
+        fakeDisposeDirect.oscillators[0]?.emitEnded?.();
+        vi.advanceTimersByTime(20);
+        expect(fakeDisposeDirect.close).toHaveBeenCalledOnce();
+        expect(fakeDisposeDirect.oscillators).toHaveLength(fireCountDirect);
+
+        // 5. statechange -> suspended pendant l'attente à 3,015 s : neutralise le 1er fondu et bascule sur resume()
+        let resolveResume!: () => void;
+        const fakeSusp = createFakeContext({
+          withEventTarget: true,
+          resumeImplementation: (ctx) =>
+            new Promise<void>((resolve) => {
+              resolveResume = () => {
+                ctx.setState("running");
+                resolve();
+              };
+            }),
+        });
+        const audioSusp = createAudio(() => fakeSusp.context);
+        audioSusp.playFire(weaponId);
+        const stopGainSusp = fakeSusp.gains.at(-1)!;
+        const fireCountSusp = fakeSusp.oscillators.length;
+
+        fakeSusp.setCurrentTime(3);
+        audioSusp.stopFlightAlert();
+        fakeSusp.setCurrentTime(3.01);
+        audioSusp.resumeFlightAlert(weaponId, () => true);
+
+        fakeSusp.setCurrentTime(3.015);
+        fakeSusp.setState("suspended");
+        expect(stopGainSusp.disconnect).toHaveBeenCalledOnce();
+        expect(fakeSusp.resume).toHaveBeenCalledOnce();
+
+        vi.advanceTimersByTime(50);
+        expect(fakeSusp.oscillators).toHaveLength(fireCountSusp);
+
+        resolveResume();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(fakeSusp.oscillators.length).toBeGreaterThan(fireCountSusp);
       },
     );
   });

@@ -1175,6 +1175,146 @@ describe("GameEngine audio", () => {
           withoutAlert.integratedEngine.stop();
         },
       );
+
+      it.each(["NUKE", "THERMONUCLEAR"] as const)(
+        "attend la fin du fondu sur retour rapide (contexte toujours running) et revalide visibilité et projectile (%s)",
+        (weaponId) => {
+          vi.useFakeTimers();
+
+          // 1. Retour rapide 3,000 s -> 3,010 s : pas de doublon ni chevauchement, reprise à >= 3,030 s
+          const harnessA = createWebAudioEngineHarness("visible");
+          harnessA.integratedEngine.start();
+          expect(
+            harnessA.integratedEngine.fireProjectile(
+              harnessA.shooter.tank.position,
+              { angle: 45, power: 50, weaponId },
+              harnessA.shooter.id,
+            ),
+          ).toBe(true);
+          const countAfterFireA = harnessA.fakeAudio.oscillators.length;
+
+          harnessA.fakeAudio.currentTime = 3;
+          harnessA.setVisibility("hidden");
+          harnessA.fakeAudio.currentTime = 3.01;
+          harnessA.setVisibility("visible");
+
+          expect(harnessA.resumeMock).not.toHaveBeenCalled();
+          expect(harnessA.fakeAudio.oscillators).toHaveLength(countAfterFireA);
+
+          vi.advanceTimersByTime(19);
+          expect(harnessA.fakeAudio.oscillators).toHaveLength(countAfterFireA);
+
+          harnessA.fakeAudio.currentTime = 3.03;
+          vi.advanceTimersByTime(1);
+          const resumedOscs = harnessA.fakeAudio.oscillators.slice(countAfterFireA);
+          expect(resumedOscs.length).toBeGreaterThanOrEqual(3);
+          for (const osc of resumedOscs) {
+            expect(osc.start).toHaveBeenCalledExactlyOnceWith(3.03);
+          }
+          harnessA.integratedEngine.stop();
+
+          // 2. Bascule rapide hidden (3,000) -> visible (3,010) -> hidden (3,015) sur contexte running :
+          // annule la reprise et conserve le suivi du premier fondu
+          const harnessB = createWebAudioEngineHarness("visible");
+          harnessB.integratedEngine.start();
+          harnessB.integratedEngine.fireProjectile(
+            harnessB.shooter.tank.position,
+            { angle: 45, power: 50, weaponId },
+            harnessB.shooter.id,
+          );
+          const firstStopGainB = harnessB.fakeAudio.gains.at(-1)!;
+          const countAfterFireB = harnessB.fakeAudio.oscillators.length;
+
+          harnessB.fakeAudio.currentTime = 3;
+          harnessB.setVisibility("hidden");
+          harnessB.fakeAudio.currentTime = 3.01;
+          harnessB.setVisibility("visible");
+          harnessB.fakeAudio.currentTime = 3.015;
+          harnessB.setVisibility("hidden");
+
+          harnessB.fakeAudio.currentTime = 3.018;
+          harnessB.fakeAudio.setState("suspended");
+          expect(firstStopGainB.disconnect).toHaveBeenCalledOnce();
+          expect(firstStopGainB.gain.value).toBe(0);
+
+          vi.advanceTimersByTime(60);
+          expect(harnessB.fakeAudio.oscillators).toHaveLength(countAfterFireB);
+          harnessB.integratedEngine.stop();
+
+          // 3. Impact pendant l'attente à 3,015 s : pas de reprise tardive, détonation à 3,025 s
+          const harnessC = createWebAudioEngineHarness("visible");
+          harnessC.integratedEngine.start();
+          harnessC.integratedEngine.fireProjectile(
+            harnessC.shooter.tank.position,
+            { angle: 45, power: 25, weaponId },
+            harnessC.shooter.id,
+          );
+          const countAfterFireC = harnessC.fakeAudio.oscillators.length;
+          const srcAfterFireC = harnessC.fakeAudio.bufferSources.length;
+
+          harnessC.fakeAudio.currentTime = 3;
+          harnessC.setVisibility("hidden");
+          harnessC.fakeAudio.currentTime = 3.01;
+          harnessC.setVisibility("visible");
+
+          harnessC.fakeAudio.currentTime = 3.015;
+          const shellC = harnessC.integratedEngine.getActiveProjectiles()[0]!;
+          shellC.x = 300;
+          shellC.y = 360;
+          shellC.vy = 20;
+          getUpdateFn(harnessC.integratedEngine).call(harnessC.integratedEngine, 1 / 120);
+
+          expect(harnessC.integratedEngine.getActiveProjectiles()).toHaveLength(0);
+          const countAtImpactC = harnessC.fakeAudio.oscillators.length;
+          expect(
+            harnessC.fakeAudio.oscillators
+              .slice(countAfterFireC)
+              .map((o) => o.start.mock.calls[0]?.[0]),
+          ).toEqual(weaponId === "NUKE" ? [3.025, 3.025] : [3.025, 3.125]);
+          expect(
+            harnessC.fakeAudio.bufferSources
+              .slice(srcAfterFireC)
+              .map((s) => s.start.mock.calls[0]?.[0]),
+          ).toEqual(weaponId === "NUKE" ? [3.025, 3.185] : [3.025, 3.245, 3.545]);
+
+          harnessC.fakeAudio.currentTime = 3.04;
+          vi.advanceTimersByTime(60);
+          expect(harnessC.fakeAudio.oscillators).toHaveLength(countAtImpactC);
+          harnessC.integratedEngine.stop();
+
+          // 4. Sortie hors limites, transition de manche et stop() pendant l'attente : zéro reprise tardive
+          const removals: Array<(harness: ReturnType<typeof createWebAudioEngineHarness>) => void> = [
+            (h) => {
+              const shell = h.integratedEngine.getActiveProjectiles()[0]!;
+              shell.x = 5000;
+              getUpdateFn(h.integratedEngine).call(h.integratedEngine, 1 / 120);
+            },
+            (h) => h.integratedEngine.enterInterRoundPhase(),
+            (h) => h.integratedEngine.stop(),
+          ];
+          for (const removeProjectile of removals) {
+            const harnessR = createWebAudioEngineHarness("visible");
+            harnessR.integratedEngine.start();
+            harnessR.integratedEngine.fireProjectile(
+              harnessR.shooter.tank.position,
+              { angle: 45, power: 50, weaponId },
+              harnessR.shooter.id,
+            );
+            const countAfterFireR = harnessR.fakeAudio.oscillators.length;
+            harnessR.fakeAudio.currentTime = 3;
+            harnessR.setVisibility("hidden");
+            harnessR.fakeAudio.currentTime = 3.01;
+            harnessR.setVisibility("visible");
+            harnessR.fakeAudio.currentTime = 3.015;
+            removeProjectile(harnessR);
+
+            harnessR.fakeAudio.currentTime = 3.05;
+            vi.advanceTimersByTime(60);
+            expect(harnessR.fakeAudio.oscillators).toHaveLength(countAfterFireR);
+            harnessR.integratedEngine.stop();
+          }
+        },
+      );
     });
   });
 });

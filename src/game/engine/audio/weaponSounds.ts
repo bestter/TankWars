@@ -390,11 +390,16 @@ const FLIGHT_ALERT_SOUNDS = {
 export function playFlightAlertSound(
   ensure: EnsureAudioContext,
   weaponId: FlightAlertWeaponId,
+  minStartTime?: number,
 ): ActiveFlightAlert | null {
   const ctx = ensure();
   if (!ctx) return null;
   try {
-    return FLIGHT_ALERT_SOUNDS[weaponId](ctx, ctx.currentTime);
+    const now =
+      minStartTime !== undefined && Number.isFinite(minStartTime)
+        ? Math.max(ctx.currentTime, minStartTime)
+        : ctx.currentTime;
+    return FLIGHT_ALERT_SOUNDS[weaponId](ctx, now);
   } catch {
     /* silent */
     return null;

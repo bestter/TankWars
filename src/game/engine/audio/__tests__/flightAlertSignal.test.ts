@@ -857,4 +857,115 @@ describe("signal rendu à l'arrêt de l'alerte nucléaire", () => {
       expect(Math.min(...noAlertStarts)).toBe(impactTime);
     },
   );
+
+  it.each([
+    { weaponId: "NUKE" as FlightAlertWeaponId, expectedTargetPeak: 0.14 },
+    { weaponId: "THERMONUCLEAR" as FlightAlertWeaponId, expectedTargetPeak: 0.15 },
+  ])(
+    "supprime tout chevauchement d'enveloppe à 48 000 Hz sur retour rapide (3,000 s -> 3,010 s) en contexte running (%s)",
+    ({ weaponId, expectedTargetPeak }) => {
+      vi.useFakeTimers();
+      const sampleRate = 48_000;
+      const hideAt = 3;
+      const returnAt = 3.01;
+      const fadeEndAt = 3.025;
+      const endAt = 3.1;
+      const startIndex = Math.round(2.99 * sampleRate);
+      const totalSamples = Math.ceil(endAt * sampleRate);
+
+      const sim = createSimulatedAudioContext({ sampleRate });
+      const audio = new CombatAudio({
+        getWidth: () => 200,
+        createContext: () => sim.context,
+      });
+
+      audio.playFire(weaponId);
+      const oldChain = findMasterGainChain(sim);
+      const oldOscs = [...sim.oscillators];
+      const oldGainCount = sim.gains.length;
+      const oldFilterCount = sim.filters.length;
+
+      sim.currentTime = hideAt;
+      audio.stopFlightAlert();
+
+      const oldEnvelope = new Float32Array(totalSamples);
+      const newEnvelope = new Float32Array(totalSamples);
+
+      const sampleChain = (
+        chainNodes: readonly SimGainNode[],
+        oscNodes: readonly SimOscillatorNode[],
+        t: number,
+      ): number => {
+        if (chainNodes.some((node) => node.disconnected)) return 0;
+        const active = oscNodes.some((osc) => t >= osc.startTime && t < osc.stopTime);
+        if (!active) return 0;
+        return chainNodes.reduce((acc, node) => acc * node.gain.valueAt(t), 1);
+      };
+
+      let cursorIdx = startIndex;
+      let resumedTriggered = false;
+      let newChain: SimGainNode[] | null = null;
+      let newOscs: SimOscillatorNode[] = [];
+
+      while (cursorIdx < totalSamples) {
+        const currentTime = cursorIdx / sampleRate;
+        if (!resumedTriggered && currentTime >= returnAt) {
+          resumedTriggered = true;
+          sim.currentTime = returnAt;
+          audio.resumeFlightAlert(weaponId, () => true);
+          // Aucune nouvelle sirène active dès 3,010 s
+          expect(sim.oscillators).toHaveLength(oldOscs.length);
+        }
+
+        const nextIdx = Math.min(totalSamples, cursorIdx + Math.round(sampleRate * 0.001));
+        renderSampleRange(oldEnvelope, cursorIdx, nextIdx, sampleRate, (t) =>
+          sampleChain(oldChain, oldOscs, t),
+        );
+        if (newChain) {
+          renderSampleRange(newEnvelope, cursorIdx, nextIdx, sampleRate, (t) =>
+            sampleChain(newChain!, newOscs, t),
+          );
+        }
+
+        cursorIdx = nextIdx;
+        sim.currentTime = cursorIdx / sampleRate;
+        for (const osc of oldOscs) {
+          osc.emitEndedIfReached(sim.currentTime);
+        }
+        if (resumedTriggered) {
+          vi.advanceTimersByTime(1);
+        }
+
+        if (!newChain && sim.oscillators.length > oldOscs.length) {
+          newOscs = sim.oscillators.slice(oldOscs.length);
+          const newFilter = sim.filters.slice(oldFilterCount).at(-1)!;
+          const addedGains = sim.gains.slice(oldGainCount);
+          const chain: SimGainNode[] = [];
+          let cursor: SimNode | undefined = addedGains.find((g) => g.incoming.includes(newFilter));
+          while (cursor instanceof SimGainNode) {
+            chain.push(cursor);
+            cursor = addedGains.find((g) => g.incoming.includes(cursor!));
+          }
+          expect(chain).toHaveLength(2);
+          newChain = chain;
+        }
+      }
+
+      expect(newChain).not.toBeNull();
+      expect(newOscs.length).toBeGreaterThanOrEqual(3);
+      for (const osc of newOscs) {
+        expect(osc.startTime).toBeGreaterThanOrEqual(3.03);
+      }
+
+      // L'ancienne sirène descend à 0 à 3,025 s et la nouvelle ne démarre jamais tant qu'oldEnvelope > 0
+      const fadeEndIndex = Math.round(fadeEndAt * sampleRate);
+      expect(oldEnvelope[fadeEndIndex]).toBe(0);
+      for (let i = startIndex; i < totalSamples; i++) {
+        expect((oldEnvelope[i] ?? 0) > 0 && (newEnvelope[i] ?? 0) > 0).toBe(false);
+      }
+
+      // La nouvelle sirène atteint son palier normal avant 3,100 s
+      expect(newEnvelope[totalSamples - 1]).toBeCloseTo(expectedTargetPeak, 4);
+    },
+  );
 });
