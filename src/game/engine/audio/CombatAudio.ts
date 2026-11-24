@@ -23,6 +23,8 @@ import {
 } from "./weaponSounds";
 import { playZeusAppointmentSound, playZeusStrikeSound } from "./zeusSounds";
 
+export { isFlightAlertWeapon, type FlightAlertWeaponId } from "./weaponSounds";
+
 /**
  * Audio de combat, extrait de GameEngine (#413).
  *
@@ -92,12 +94,12 @@ export class CombatAudio {
     this.cancelPendingFlightAlertResume();
     const alert = this.activeFlightAlert;
     if (!alert) {
-      this.silenceNonRunningFadingFlightAlerts();
+      this.pruneInactiveFadingFlightAlerts();
       return;
     }
     this.activeFlightAlert = null;
     const fadeEndTime = alert.stop();
-    this.silenceNonRunningFadingFlightAlerts();
+    this.pruneInactiveFadingFlightAlerts();
     const context = this.audioContext;
     if (!context || context.state !== "running" || fadeEndTime === null) return;
     const stopAtTime = fadeEndTime - ALERT_FADE_OUT_SECONDS + ALERT_STOP_OFFSET_SECONDS;
@@ -110,25 +112,37 @@ export class CombatAudio {
       stoppedAtWallMs: this.now(),
       cleanup: () => {},
     };
-    const unsubscribeEnded =
-      alert.onEnded?.(() => {
-        this.removeFadingFlightAlert(entry);
-      }) ?? null;
+    let endedSynchronously = false;
     const onStateChange = (): void => {
       if (context.state !== "running") {
         this.silenceAndRemoveFadingFlightAlert(entry);
       }
     };
-    if (typeof context.addEventListener === "function") {
-      context.addEventListener("statechange", onStateChange);
-    }
     entry.cleanup = () => {
-      unsubscribeEnded?.();
       if (typeof context.removeEventListener === "function") {
         context.removeEventListener("statechange", onStateChange);
       }
     };
     this.fadingFlightAlerts.add(entry);
+    if (typeof context.addEventListener === "function") {
+      context.addEventListener("statechange", onStateChange);
+    }
+    const unsubscribeEnded =
+      alert.onEnded?.(() => {
+        endedSynchronously = true;
+        this.removeFadingFlightAlert(entry);
+      }) ?? null;
+    if (endedSynchronously) {
+      unsubscribeEnded?.();
+      return;
+    }
+    if (unsubscribeEnded) {
+      const baseCleanup = entry.cleanup;
+      entry.cleanup = () => {
+        unsubscribeEnded();
+        baseCleanup();
+      };
+    }
   }
 
   /** Reprend uniquement l'alerte continue en vol (sans bruit de mise à feu), de façon idempotente. */
@@ -171,7 +185,7 @@ export class CombatAudio {
     if (this.activeFlightAlert?.weaponId === weaponId) {
       this.stopFlightAlert();
     }
-    this.silenceNonRunningFadingFlightAlerts();
+    this.pruneInactiveFadingFlightAlerts();
     const minStartTime = this.getImpactStartTime(weaponId);
     playImpactSound(this.ensureContext, weaponId, minStartTime);
   }
@@ -391,10 +405,12 @@ export class CombatAudio {
     entry.alert.silenceImmediately?.();
   }
 
-  private silenceNonRunningFadingFlightAlerts(): void {
+  private pruneInactiveFadingFlightAlerts(): void {
     for (const entry of [...this.fadingFlightAlerts]) {
       if (entry.context.state !== "running") {
         this.silenceAndRemoveFadingFlightAlert(entry);
+      } else if (entry.stopAtTime <= entry.context.currentTime) {
+        this.removeFadingFlightAlert(entry);
       }
     }
   }
@@ -433,7 +449,10 @@ export class CombatAudio {
         continue;
       }
       if (excludedFades?.has(entry)) continue;
-      if (entry.stopAtTime <= context.currentTime) continue;
+      if (entry.stopAtTime <= context.currentTime) {
+        this.removeFadingFlightAlert(entry);
+        continue;
+      }
       if (!blocking || entry.stopAtTime >= blocking.stopAtTime) {
         blocking = entry;
       }
@@ -514,6 +533,7 @@ function closeAudioContextAfterFade(
 
   const onStateChange = (): void => {
     if (audioContext.state !== "running") {
+      alert.silenceImmediately?.();
       finish();
     }
   };
@@ -550,6 +570,7 @@ function closeAudioContextAfterFade(
     alert.onEnded?.(() => {
       if (finished) return;
       if (audioContext.state !== "running") {
+        alert.silenceImmediately?.();
         finish();
         return;
       }
@@ -557,6 +578,12 @@ function closeAudioContextAfterFade(
         drainTimer = setTimeout(finish, ALERT_CLOSE_DRAIN_MS);
       }
     }) ?? null;
+
+  if (finished) {
+    unsubscribeEnded?.();
+    unsubscribeEnded = null;
+    return;
+  }
 
   if (unsubscribeEnded) {
     maxTimer = setTimeout(finish, maxWaitMs);

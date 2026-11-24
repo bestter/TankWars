@@ -660,7 +660,6 @@ describe("GameEngine audio", () => {
         "ne reprend pas l'alerte après fin de manche, fin de partie ou arrêt pendant hidden (%s)",
         (weaponId) => {
           const vis = stubVisibilityEnvironment("visible");
-          const stepUpdate = getUpdateFn(engine);
 
           const transitions: Array<() => void> = [
             () => engine.enterInterRoundPhase(),
@@ -687,7 +686,6 @@ describe("GameEngine audio", () => {
             finish();
             vis.setVisibility("visible");
             expect(resumeFlightAlert).not.toHaveBeenCalled();
-            void stepUpdate;
           }
 
           // Arrêt complet du moteur pendant hidden : retire aussi l'écouteur

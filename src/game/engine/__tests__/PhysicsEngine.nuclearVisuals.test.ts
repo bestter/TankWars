@@ -372,4 +372,20 @@ describe("PhysicsEngine nuclear projectile visuals & grazing collisions (#435)",
       expect(physics.count).toBe(0);
     },
   );
+
+  it.each(["NUKE", "THERMONUCLEAR"] as const)(
+    "handles non-finite timestamps cleanly when drawing %s without invalid hex colors",
+    (weaponId) => {
+      const physics = new PhysicsEngine();
+      physics.launchProjectile(200, 140, 45, 50, weaponId, "p1", VGA_PALETTE.ELECTRIC_CYAN);
+
+      for (const badNow of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        const recorder = createProjectileCanvasRecorder();
+        physics.draw(recorder.ctx, badNow);
+        const body = findOpaqueBodyArc(recorder.arcs);
+        expect(body.fillStyle).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(recorder.getGlobalAlpha()).toBe(1);
+      }
+    },
+  );
 });

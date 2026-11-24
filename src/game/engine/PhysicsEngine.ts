@@ -150,7 +150,8 @@ function drawNuclearProjectile(
   nowMs: number,
 ): void {
   const style = NUCLEAR_PROJECTILE_VISUALS[weaponId];
-  const pulse = 0.5 + 0.5 * Math.sin((nowMs / style.pulsePeriodMs) * Math.PI * 2);
+  const safeNowMs = Number.isFinite(nowMs) ? nowMs : 0;
+  const pulse = 0.5 + 0.5 * Math.sin((safeNowMs / style.pulsePeriodMs) * Math.PI * 2);
   const bodyColor = interpolateHexColor(style.lowRgb, style.highRgb, pulse);
 
   ctx.save();

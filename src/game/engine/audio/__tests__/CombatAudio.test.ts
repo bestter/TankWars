@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ALL_WEAPON_IDS } from "../../../../types/weapon";
 import * as random from "../../../../utils/random";
 import { CombatAudio, defaultAudioContext } from "../CombatAudio";
+import { playImpactSound } from "../weaponSounds";
 
 interface FakeOscillator {
   type: OscillatorType;
@@ -1375,5 +1376,108 @@ describe("CombatAudio", () => {
         expect(fakeSusp.oscillators.length).toBeGreaterThan(fireCountSusp);
       },
     );
+
+    it("nettoie immédiatement l'écouteur statechange si onEnded déclenche de façon synchrone et purge les fondus expirés sans onEnded", () => {
+      // 1. onEnded synchrone lors de stopFlightAlert()
+      const fakeSync = createFakeContext({ withEventTarget: true });
+      const syncAdd = fakeSync.context.addEventListener as ReturnType<typeof vi.fn>;
+      const syncRemove = fakeSync.context.removeEventListener as ReturnType<typeof vi.fn>;
+      const audioSync = createAudio(() => fakeSync.context);
+      audioSync.playFire("NUKE");
+      const primaryOsc = fakeSync.oscillators[0]!;
+      primaryOsc.addEventListener = vi.fn((type: string, cb: EventListenerOrEventListenerObject) => {
+        if (type === "ended" && typeof cb === "function") {
+          cb(new Event("ended"));
+        }
+      });
+
+      audioSync.stopFlightAlert();
+      expect(syncAdd).toHaveBeenCalledTimes(1);
+      expect(syncRemove).toHaveBeenCalledTimes(1);
+      // L'alerte déjà terminée de façon synchrone ne bloque pas resumeFlightAlert ni dispose()
+      audioSync.resumeFlightAlert("NUKE", () => true);
+      expect(fakeSync.oscillators.length).toBeGreaterThan(3);
+      audioSync.stopFlightAlert();
+      fakeSync.setCurrentTime(5);
+      audioSync.dispose();
+      expect(fakeSync.close).toHaveBeenCalledOnce();
+
+      // 2. Fondus expirés sans support d'événement ended (onEnded === null) purgés au contrôle suivant
+      const fakeNoEnded = createFakeContext({ withEventTarget: true });
+      const noEndedAdd = fakeNoEnded.context.addEventListener as ReturnType<typeof vi.fn>;
+      const noEndedRemove = fakeNoEnded.context.removeEventListener as ReturnType<typeof vi.fn>;
+      const origCreateOsc = fakeNoEnded.context.createOscillator.bind(fakeNoEnded.context);
+      fakeNoEnded.context.createOscillator = vi.fn(() => {
+        const oscNode = origCreateOsc();
+        const osc = fakeNoEnded.oscillators.at(-1)!;
+        delete osc.addEventListener;
+        delete osc.removeEventListener;
+        return oscNode;
+      });
+      const audioNoEnded = createAudio(() => fakeNoEnded.context);
+      audioNoEnded.playFire("NUKE");
+      fakeNoEnded.setCurrentTime(1);
+      audioNoEnded.stopFlightAlert();
+      expect(noEndedAdd).toHaveBeenCalledTimes(1);
+      expect(noEndedRemove).not.toHaveBeenCalled();
+
+      // Une fois stopAtTime (1,030 s) dépassé, resumeFlightAlert purge l'entrée expirée et son écouteur
+      fakeNoEnded.setCurrentTime(1.05);
+      audioNoEnded.resumeFlightAlert("NUKE", () => true);
+      expect(noEndedRemove).toHaveBeenCalledTimes(1);
+    });
+
+    it("neutralise l'alerte si le contexte suspend pendant closeAudioContextAfterFade et si stop() échoue à planifier la rampe", () => {
+      // 1. Suspension pendant l'attente de dispose()
+      vi.useFakeTimers();
+      const fakeSuspDispose = createFakeContext({ withEventTarget: true });
+      const audioSuspDispose = createAudio(() => fakeSuspDispose.context);
+      audioSuspDispose.playFire("THERMONUCLEAR");
+      const stopGain = fakeSuspDispose.gains.at(-1)!;
+      fakeSuspDispose.setCurrentTime(2);
+      audioSuspDispose.stopFlightAlert();
+      audioSuspDispose.dispose();
+      expect(fakeSuspDispose.close).not.toHaveBeenCalled();
+
+      fakeSuspDispose.setState("suspended");
+      expect(stopGain.disconnect).toHaveBeenCalled();
+      expect(stopGain.gain.value).toBe(0);
+      expect(fakeSuspDispose.close).toHaveBeenCalledOnce();
+      vi.useRealTimers();
+
+      // 2. Erreur d'automation dans stop() : coupure immédiate à currentTime plutôt qu'à +0,03 s
+      const fakeBroken = createFakeContext({ withEventTarget: true });
+      const audioBroken = createAudio(() => fakeBroken.context);
+      audioBroken.playFire("NUKE");
+      const brokenStopGain = fakeBroken.gains.at(-1)!;
+      (brokenStopGain.gain.linearRampToValueAtTime as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => {
+          throw new Error("automation error");
+        },
+      );
+      fakeBroken.setCurrentTime(4.25);
+      audioBroken.stopFlightAlert();
+
+      expect(brokenStopGain.gain.value).toBe(0);
+      expect(brokenStopGain.disconnect).toHaveBeenCalledOnce();
+      for (const osc of fakeBroken.oscillators) {
+        expect(osc.stop).toHaveBeenCalledExactlyOnceWith(4.25);
+      }
+    });
+
+    it("applique minStartTime à toutes les couches de MISSILE et CLUSTER dans playImpactSound", () => {
+      const fakeMissile = createFakeContext({ currentTime: 1 });
+      playImpactSound(() => fakeMissile.context, "MISSILE", 1.5);
+      expect(fakeMissile.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([1.5]);
+      expect(fakeMissile.oscillators.map((o) => o.start.mock.calls[0]?.[0])).toEqual([1.5]);
+
+      const fakeCluster = createFakeContext({ currentTime: 1 });
+      playImpactSound(() => fakeCluster.context, "CLUSTER", 1.75);
+      expect(fakeCluster.bufferSources.map((s) => s.start.mock.calls[0]?.[0])).toEqual([
+        1.75,
+        1.75,
+        1.75,
+      ]);
+    });
   });
 });

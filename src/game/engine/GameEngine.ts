@@ -1,11 +1,11 @@
 import { prepareRound, isRoundMap, hasValidSpawnRoster, type RoundMap, type PreparedRound } from "../round/prepareRound";
 import type { DiagnosticInput, DiagnosticState } from "../diagnostics/types";
 import { secureRandom } from "../../utils/random";
-import { CombatAudio } from "./audio/CombatAudio";
 import {
+  CombatAudio,
   isFlightAlertWeapon,
   type FlightAlertWeaponId,
-} from "./audio/weaponSounds";
+} from "./audio/CombatAudio";
 import { CelebrationFireworks } from "./vfx/celebrationFireworks";
 import { ImpactExplosions, type ImpactExplosion } from "./vfx/impactExplosions";
 import {

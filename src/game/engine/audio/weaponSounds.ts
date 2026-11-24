@@ -121,7 +121,9 @@ function createFlightAlertHandle(
         stopGain.gain.setValueAtTime(1, stopTime);
         stopGain.gain.linearRampToValueAtTime(0, fadeEndTime);
       } catch {
-        fadeEndTime = null;
+        silenceOutput();
+        stopOscillatorsAt(readCurrentTime());
+        return null;
       }
       stopOscillatorsAt(stopAt);
       return fadeEndTime !== null && Number.isFinite(fadeEndTime) ? fadeEndTime : null;
@@ -510,10 +512,10 @@ function playNukeImpact(ctx: AudioContext, ensure: EnsureAudioContext, now: numb
   osc2.stop(now + 0.64);
 }
 
-function playClusterImpact(_ctx: AudioContext, ensure: EnsureAudioContext): void {
+function playClusterImpact(_ctx: AudioContext, ensure: EnsureAudioContext, now: number): void {
   // Several small noisy secondary blasts
   for (let k = 0; k < 3; k++) {
-    playNoiseBurst(ensure, 0.13, 0.18, 2800, 420);
+    playNoiseBurst(ensure, 0.13, 0.18, 2800, 420, 0, now);
   }
 }
 
@@ -525,7 +527,7 @@ function playStandardImpact(
   endCut: number,
 ): void {
   // Standard missile/grenade/driller/bullet/bulldozer hit
-  playNoiseBurst(ensure, 0.22, 0.26, startCut, endCut);
+  playNoiseBurst(ensure, 0.22, 0.26, startCut, endCut, 0, now);
 
   // light low body
   const osc = ctx.createOscillator();
