@@ -1,4 +1,4 @@
-import type { EnsureAudioContext } from "./types";
+import type { EnsureAudioContext, ScheduleAudioSource } from "./types";
 
 /**
  * Bruit LFSR 16 bits (graine `0xace1`, prises 0, 2, 3 et 5), passe-bas,
@@ -15,6 +15,18 @@ export function playNoiseBurst(
 ): void {
   const ctx = ensure();
   if (!ctx) return;
+  prepareNoiseBurst(ctx, (start) => start(ctx.currentTime), duration, volume, cutoff, sweepTo, startOffset);
+}
+
+export function prepareNoiseBurst(
+  ctx: AudioContext,
+  schedule: ScheduleAudioSource,
+  duration: number,
+  volume: number,
+  cutoff: number,
+  sweepTo?: number,
+  startOffset = 0,
+): void {
   try {
     const len = Math.max(1, Math.floor(ctx.sampleRate * duration));
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -40,20 +52,21 @@ export function playNoiseBurst(
     const gain = ctx.createGain();
     gain.gain.value = volume;
 
-    const t = ctx.currentTime + Math.max(0, startOffset);
-    gain.gain.setValueAtTime(volume, t);
-    gain.gain.linearRampToValueAtTime(0.0004, t + duration);
+    schedule((time) => {
+      const t = time + Math.max(0, startOffset);
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.linearRampToValueAtTime(0.0004, t + duration);
 
-    // Optional downward sweep on the filter for that classic "explosion blooming then settling" feel
-    if (sweepTo !== undefined && sweepTo > 0) {
-      filter.frequency.setValueAtTime(cutoff, t);
-      filter.frequency.linearRampToValueAtTime(sweepTo, t + duration * 0.9);
-    }
-
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    src.start(t);
+      // Optional downward sweep for an explosion that blooms, then settles.
+      if (sweepTo !== undefined && sweepTo > 0) {
+        filter.frequency.setValueAtTime(cutoff, t);
+        filter.frequency.linearRampToValueAtTime(sweepTo, t + duration * 0.9);
+      }
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(t);
+    });
   } catch {
     /* silent */
   }

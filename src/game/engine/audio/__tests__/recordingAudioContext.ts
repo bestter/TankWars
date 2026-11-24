@@ -139,12 +139,14 @@ function recordedId(target: object): string {
 }
 
 class RecordedParam {
+  readonly id: string;
   private current = 0;
   private readonly lines: string[];
   private readonly label: string;
   private readonly now: () => number;
 
   constructor(state: RecordingState, label: string) {
+    this.id = label;
     this.lines = state.lines;
     this.label = label;
     this.now = () => state.facade.currentTime;
@@ -177,6 +179,18 @@ class RecordedParam {
     this.current = value;
     this.lines.push(
       `${this.label}.exponentialRampToValueAtTime value=${formatNumber(value)} time=${formatRelative(time, this.now())}`,
+    );
+  }
+
+  cancelScheduledValues(time: number): void {
+    this.lines.push(
+      `${this.label}.cancelScheduledValues time=${formatRelative(time, this.now())}`,
+    );
+  }
+
+  cancelAndHoldAtTime(time: number): void {
+    this.lines.push(
+      `${this.label}.cancelAndHoldAtTime time=${formatRelative(time, this.now())}`,
     );
   }
 }

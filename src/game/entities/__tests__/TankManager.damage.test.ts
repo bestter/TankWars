@@ -275,7 +275,7 @@ describe("TankManager.applyExplosionDamage", () => {
     expect(target.tank.health).toBe(0);
     expect(target.tank.isDead).toBe(true);
     expect(kills).toBe(1);
-    expect(died).toHaveBeenCalledWith("victim", "explosion", expect.any(String), "killer");
+    expect(died).toHaveBeenCalledWith("victim", "explosion", expect.any(String), "killer", undefined);
   });
 
   it("deals BULLET 3x damage on a direct hitbox hit", () => {

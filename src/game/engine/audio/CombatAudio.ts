@@ -5,14 +5,25 @@ import {
 } from "./celebrationSounds";
 import { playNoiseBurst } from "./noiseBurst";
 import {
-  playTankDestroyedByExplosionSound,
   playTankSadBurialSound,
   playTankTouchLowestFloorSound,
+  prepareTankDestroyedByExplosionSound,
 } from "./tankSounds";
-import type { EnsureAudioContext } from "./types";
+import type { EnsureAudioContext, ScheduleAudioSource } from "./types";
 import type { WeaponId } from "../../../types/weapon";
-import { playFireSound, playImpactSound } from "./weaponSounds";
+import {
+  ALERT_FADE_OUT_SECONDS,
+  ALERT_STOP_OFFSET_SECONDS,
+  isFlightAlertWeapon,
+  playFireSound,
+  playFlightAlertSound,
+  prepareImpactSound,
+  type ActiveFlightAlert,
+  type FlightAlertWeaponId,
+} from "./weaponSounds";
 import { playZeusAppointmentSound, playZeusStrikeSound } from "./zeusSounds";
+
+export { isFlightAlertWeapon, type FlightAlertWeaponId } from "./weaponSounds";
 
 /**
  * Audio de combat, extrait de GameEngine (#413).
@@ -24,6 +35,30 @@ import { playZeusAppointmentSound, playZeusStrikeSound } from "./zeusSounds";
  */
 
 const SLIDE_INTERVAL_MS = 82;
+const ALERT_CLOSE_DRAIN_MS = 20;
+const ALERT_CLOSE_FALLBACK_MS =
+  Math.ceil(ALERT_STOP_OFFSET_SECONDS * 1000) + ALERT_CLOSE_DRAIN_MS + 5;
+const ALERT_CLOSE_MAX_WAIT_MS = 120;
+// Leave several render blocks for submitting the prepared impact sources together.
+const IMPACT_SCHEDULING_LEAD_SECONDS = 0.01;
+const NUCLEAR_TANK_DESTRUCTION_LEVEL = 0.5;
+
+interface PendingFlightAlertFade {
+  readonly context: AudioContext;
+  readonly alert: ActiveFlightAlert;
+  readonly weaponId: FlightAlertWeaponId;
+  readonly fadeEndTime: number;
+  readonly stopAtTime: number;
+  readonly stoppedAtWallMs: number;
+  cleanup: () => void;
+}
+
+interface PendingFlightAlertResume {
+  readonly id: number;
+  readonly context: AudioContext;
+  readonly weaponId: FlightAlertWeaponId;
+  cleanup: () => void;
+}
 
 export interface CombatAudioOptions {
   /** Largeur utilisée pour le panoramique stéréo des pops (même valeur que GameEngine.width). */
@@ -36,6 +71,10 @@ export interface CombatAudioOptions {
 
 export class CombatAudio {
   private audioContext: AudioContext | null = null;
+  private activeFlightAlert: ActiveFlightAlert | null = null;
+  private readonly fadingFlightAlerts = new Set<PendingFlightAlertFade>();
+  private pendingFlightAlertResume: PendingFlightAlertResume | null = null;
+  private nextFlightAlertResumeId = 0;
   private readonly victoryOscillators: OscillatorNode[] = [];
   private cancelFinalChord: (() => void) | null = null;
   private readonly lastSlideTimes = new Map<string, number>();
@@ -50,11 +89,130 @@ export class CombatAudio {
   }
 
   playFire(weaponId: WeaponId): void {
-    playFireSound(this.ensureContext, weaponId);
+    this.stopFlightAlert();
+    this.activeFlightAlert = playFireSound(this.ensureContext, weaponId);
   }
 
-  playImpact(weaponId: WeaponId): void {
-    playImpactSound(this.ensureContext, weaponId);
+  stopFlightAlert(): void {
+    this.cancelPendingFlightAlertResume();
+    const alert = this.activeFlightAlert;
+    if (!alert) {
+      this.pruneInactiveFadingFlightAlerts();
+      return;
+    }
+    this.activeFlightAlert = null;
+    const fadeEndTime = alert.stop();
+    this.pruneInactiveFadingFlightAlerts();
+    const context = this.audioContext;
+    if (!context || context.state !== "running" || fadeEndTime === null) return;
+    const stopAtTime = fadeEndTime - ALERT_FADE_OUT_SECONDS + ALERT_STOP_OFFSET_SECONDS;
+    const entry: PendingFlightAlertFade = {
+      context,
+      alert,
+      weaponId: alert.weaponId,
+      fadeEndTime,
+      stopAtTime,
+      stoppedAtWallMs: this.now(),
+      cleanup: () => {},
+    };
+    let endedSynchronously = false;
+    const onStateChange = (): void => {
+      if (context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+      }
+    };
+    entry.cleanup = () => {
+      if (typeof context.removeEventListener === "function") {
+        context.removeEventListener("statechange", onStateChange);
+      }
+    };
+    this.fadingFlightAlerts.add(entry);
+    if (typeof context.addEventListener === "function") {
+      context.addEventListener("statechange", onStateChange);
+    }
+    const unsubscribeEnded =
+      alert.onEnded?.(() => {
+        endedSynchronously = true;
+        this.removeFadingFlightAlert(entry);
+      }) ?? null;
+    if (endedSynchronously) {
+      unsubscribeEnded?.();
+      return;
+    }
+    if (unsubscribeEnded) {
+      const baseCleanup = entry.cleanup;
+      entry.cleanup = () => {
+        unsubscribeEnded();
+        baseCleanup();
+      };
+    }
+  }
+
+  /** Reprend uniquement l'alerte continue en vol (sans bruit de mise à feu), de façon idempotente. */
+  resumeFlightAlert(weaponId: WeaponId, shouldResume?: () => boolean): void {
+    if (!isFlightAlertWeapon(weaponId)) return;
+    if (shouldResume && !shouldResume()) return;
+    const context = this.ensureContext();
+    if (!context || context.state === "closed") return;
+
+    if (context.state === "running") {
+      this.clearFadingFlightAlertsOutsideContext(context);
+      if (this.activeFlightAlert?.weaponId === weaponId) {
+        this.cancelPendingFlightAlertResume();
+        return;
+      }
+      if (this.activeFlightAlert) {
+        this.stopFlightAlert();
+      }
+      const blockingFade = this.getBlockingFade(context);
+      if (!blockingFade) {
+        this.cancelPendingFlightAlertResume();
+        this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId);
+        return;
+      }
+      this.deferFlightAlertResume(context, weaponId, shouldResume, blockingFade);
+      return;
+    }
+
+    if (this.activeFlightAlert) {
+      const current = this.activeFlightAlert;
+      this.activeFlightAlert = null;
+      current.stop();
+    }
+    this.silenceAllFadingFlightAlerts();
+    this.deferFlightAlertResume(context, weaponId, shouldResume, null);
+  }
+
+  playImpact(weaponId: WeaponId, tankDestructions = 0): void {
+    const fadeEndTime = this.prepareImpactStartTime(weaponId);
+    const context = this.ensureContext();
+    if (!context) return;
+    const hasTankDestruction = tankDestructions > 0;
+    if (!hasTankDestruction && fadeEndTime === undefined) {
+      const startTime = context.currentTime;
+      prepareImpactSound(context, weaponId, (start) => start(startTime));
+      return;
+    }
+
+    const sources: Array<(time: number) => void> = [];
+    const schedule: ScheduleAudioSource = (start) => { sources.push(start); };
+    if (hasTankDestruction) {
+      // Les morts simultanées produiraient des voix identiques et en phase.
+      // Une seule voix atténuée laisse de la place à la détonation.
+      prepareTankDestroyedByExplosionSound(context, schedule, NUCLEAR_TANK_DESTRUCTION_LEVEL);
+    }
+    prepareImpactSound(context, weaponId, schedule);
+
+    const lead = context.state === "running" ? IMPACT_SCHEDULING_LEAD_SECONDS : 0;
+    const earliestStart = context.currentTime + lead;
+    const startTime = Math.max(earliestStart, fadeEndTime ?? 0);
+    for (const start of sources) {
+      try {
+        start(startTime);
+      } catch {
+        // A failed source must not suppress the rest of the impact.
+      }
+    }
   }
 
   playZeusAppointment(): void {
@@ -66,7 +224,10 @@ export class CombatAudio {
   }
 
   playTankDestroyedByExplosion(): void {
-    playTankDestroyedByExplosionSound(this.ensureContext);
+    const context = this.ensureContext();
+    if (!context) return;
+    const startTime = context.currentTime;
+    prepareTankDestroyedByExplosionSound(context, (start) => start(startTime));
   }
 
   playTankSadBurial(): void {
@@ -107,16 +268,251 @@ export class CombatAudio {
     this.lastSlideTimes.clear();
   }
 
-  /** Arrête la musique puis ferme l'AudioContext (best effort). */
+  /** Arrête l'alerte de vol et la musique puis ferme l'AudioContext après le fondu éventuel (best effort). */
   dispose(): void {
+    this.stopFlightAlert();
     this.stopVictoryMusic();
     const audioContext = this.audioContext;
     this.audioContext = null;
-    if (audioContext && audioContext.state !== "closed") {
-      void audioContext.close().catch(() => {
-        // Audio teardown is best-effort during React unmount.
-      });
+    const contextFades = [...this.fadingFlightAlerts];
+    this.fadingFlightAlerts.clear();
+    for (const entry of contextFades) {
+      entry.cleanup();
     }
+    if (!audioContext || audioContext.state === "closed") return;
+    const latestFade = findLatestFadeForContext(contextFades, audioContext);
+    if (latestFade && audioContext.state === "running") {
+      const elapsedMs = Math.max(0, this.now() - latestFade.stoppedAtWallMs);
+      const remainingFallbackMs = ALERT_CLOSE_FALLBACK_MS - elapsedMs;
+      const remainingMaxWaitMs = ALERT_CLOSE_MAX_WAIT_MS - elapsedMs;
+      if (remainingMaxWaitMs > 0) {
+        closeAudioContextAfterFade(
+          audioContext,
+          latestFade.alert,
+          Math.max(0, remainingFallbackMs),
+          remainingMaxWaitMs,
+        );
+        return;
+      }
+    }
+    if (audioContext.state !== "running") {
+      for (const entry of contextFades) {
+        if (entry.context === audioContext) {
+          entry.alert.silenceImmediately?.();
+        }
+      }
+    }
+    closeAudioContextSafely(audioContext);
+  }
+
+  private deferFlightAlertResume(
+    context: AudioContext,
+    weaponId: FlightAlertWeaponId,
+    shouldResume: (() => boolean) | undefined,
+    initialBlockingFade: PendingFlightAlertFade | null,
+  ): void {
+    this.cancelPendingFlightAlertResume();
+    const id = ++this.nextFlightAlertResumeId;
+    const completedFades = new Set<PendingFlightAlertFade>();
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribeFadeEnded: (() => void) | null = null;
+    let resumeRequested = false;
+    let targetMinStartTime = initialBlockingFade?.stopAtTime ?? 0;
+
+    const clearFadeWait = (): void => {
+      if (fadeTimer !== null) {
+        clearTimeout(fadeTimer);
+        fadeTimer = null;
+      }
+      unsubscribeFadeEnded?.();
+      unsubscribeFadeEnded = null;
+    };
+
+    const requestContextResume = (): void => {
+      if (resumeRequested) return;
+      resumeRequested = true;
+      if (typeof context.resume !== "function") return;
+      try {
+        const result = context.resume();
+        if (result && typeof result.then === "function") {
+          void result.then(() => {
+            tryStart();
+          }, () => {
+            // La reprise peut rester en attente jusqu'au prochain geste ou changement d'état.
+          });
+        }
+      } catch {
+        // Ignore synchronous resume errors while statechange listener remains armed.
+      }
+    };
+
+    const armFadeWait = (fade: PendingFlightAlertFade): void => {
+      clearFadeWait();
+      targetMinStartTime = Math.max(targetMinStartTime, fade.stopAtTime);
+      unsubscribeFadeEnded =
+        fade.alert.onEnded?.(() => {
+          tryStart(fade);
+        }) ?? null;
+      const remainingMs = Math.max(
+        1,
+        Math.ceil((fade.stopAtTime - context.currentTime) * 1000 - 1e-6),
+      );
+      fadeTimer = setTimeout(() => {
+        tryStart(fade);
+      }, remainingMs);
+    };
+
+    const onStateChange = (): void => {
+      tryStart();
+    };
+
+    const cleanup = (): void => {
+      clearFadeWait();
+      if (typeof context.removeEventListener === "function") {
+        context.removeEventListener("statechange", onStateChange);
+      }
+    };
+
+    const tryStart = (completedFade?: PendingFlightAlertFade): void => {
+      if (this.pendingFlightAlertResume?.id !== id) return;
+      if (completedFade) {
+        completedFades.add(completedFade);
+      }
+      if (this.audioContext !== context || context.state === "closed") {
+        this.cancelPendingFlightAlertResume();
+        return;
+      }
+      if (context.state !== "running") {
+        clearFadeWait();
+        this.silenceFadingFlightAlertsForContext(context);
+        targetMinStartTime = 0;
+        requestContextResume();
+        return;
+      }
+      const nextBlocking = this.getBlockingFade(context, completedFades);
+      if (nextBlocking) {
+        armFadeWait(nextBlocking);
+        return;
+      }
+      this.cancelPendingFlightAlertResume();
+      if (shouldResume && !shouldResume()) return;
+      if (this.activeFlightAlert?.weaponId === weaponId) return;
+      if (this.activeFlightAlert) {
+        this.stopFlightAlert();
+      }
+      const minStartTime =
+        targetMinStartTime > context.currentTime ? targetMinStartTime : undefined;
+      this.activeFlightAlert = playFlightAlertSound(this.ensureContext, weaponId, minStartTime);
+    };
+
+    const pending: PendingFlightAlertResume = {
+      id,
+      context,
+      weaponId,
+      cleanup,
+    };
+    if (typeof context.addEventListener === "function") {
+      context.addEventListener("statechange", onStateChange);
+    }
+    this.pendingFlightAlertResume = pending;
+
+    if (initialBlockingFade) {
+      armFadeWait(initialBlockingFade);
+      return;
+    }
+    requestContextResume();
+  }
+
+  private removeFadingFlightAlert(entry: PendingFlightAlertFade): void {
+    if (!this.fadingFlightAlerts.delete(entry)) return;
+    entry.cleanup();
+  }
+
+  private silenceAndRemoveFadingFlightAlert(entry: PendingFlightAlertFade): void {
+    this.removeFadingFlightAlert(entry);
+    entry.alert.silenceImmediately?.();
+  }
+
+  private pruneInactiveFadingFlightAlerts(): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+      } else if (entry.stopAtTime <= entry.context.currentTime) {
+        this.removeFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private silenceFadingFlightAlertsForContext(context: AudioContext): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context === context) {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private silenceAllFadingFlightAlerts(): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      this.silenceAndRemoveFadingFlightAlert(entry);
+    }
+  }
+
+  private clearFadingFlightAlertsOutsideContext(context: AudioContext): void {
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context !== context) {
+        this.removeFadingFlightAlert(entry);
+      }
+    }
+  }
+
+  private getBlockingFade(
+    context: AudioContext,
+    excludedFades?: ReadonlySet<PendingFlightAlertFade>,
+  ): PendingFlightAlertFade | null {
+    let blocking: PendingFlightAlertFade | null = null;
+    for (const entry of [...this.fadingFlightAlerts]) {
+      if (entry.context !== context) continue;
+      if (context.state !== "running") {
+        this.silenceAndRemoveFadingFlightAlert(entry);
+        continue;
+      }
+      if (excludedFades?.has(entry)) continue;
+      if (entry.stopAtTime <= context.currentTime) {
+        this.removeFadingFlightAlert(entry);
+        continue;
+      }
+      if (!blocking || entry.stopAtTime >= blocking.stopAtTime) {
+        blocking = entry;
+      }
+    }
+    return blocking;
+  }
+
+  private cancelPendingFlightAlertResume(): void {
+    const pending = this.pendingFlightAlertResume;
+    if (!pending) return;
+    this.pendingFlightAlertResume = null;
+    pending.cleanup();
+  }
+
+  private prepareImpactStartTime(weaponId: WeaponId): number | undefined {
+    this.cancelPendingFlightAlertResume();
+    if (this.activeFlightAlert?.weaponId === weaponId) {
+      this.stopFlightAlert();
+    }
+    this.pruneInactiveFadingFlightAlerts();
+    if (!isFlightAlertWeapon(weaponId)) return undefined;
+    const context = this.audioContext;
+    if (!context || context.state !== "running") return undefined;
+    let latestFadeEnd: number | undefined;
+    for (const entry of this.fadingFlightAlerts) {
+      if (entry.context !== context || entry.weaponId !== weaponId) continue;
+      if (entry.fadeEndTime <= context.currentTime) continue;
+      if (latestFadeEnd === undefined || entry.fadeEndTime > latestFadeEnd) {
+        latestFadeEnd = entry.fadeEndTime;
+      }
+    }
+    return latestFadeEnd;
   }
 
   private readonly ensureContext: EnsureAudioContext = () => {
@@ -130,6 +526,108 @@ export class CombatAudio {
       return null;
     }
   };
+}
+
+function findLatestFadeForContext(
+  fades: readonly PendingFlightAlertFade[],
+  audioContext: AudioContext,
+): PendingFlightAlertFade | null {
+  let latest: PendingFlightAlertFade | null = null;
+  for (const entry of fades) {
+    if (entry.context !== audioContext) continue;
+    if (!latest || entry.stopAtTime >= latest.stopAtTime) {
+      latest = entry;
+    }
+  }
+  return latest;
+}
+
+function closeAudioContextSafely(audioContext: AudioContext): void {
+  if (audioContext.state === "closed") return;
+  try {
+    void audioContext.close().catch(() => {
+      // Audio teardown is best-effort during React unmount.
+    });
+  } catch {
+    // Ignore synchronous close errors on torn-down contexts.
+  }
+}
+
+function closeAudioContextAfterFade(
+  audioContext: AudioContext,
+  alert: ActiveFlightAlert,
+  fallbackMs: number,
+  maxWaitMs: number,
+): void {
+  let finished = false;
+  let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  let maxTimer: ReturnType<typeof setTimeout> | null = null;
+  let unsubscribeEnded: (() => void) | null = null;
+
+  const onStateChange = (): void => {
+    if (audioContext.state !== "running") {
+      alert.silenceImmediately?.();
+      finish();
+    }
+  };
+
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    if (drainTimer !== null) {
+      clearTimeout(drainTimer);
+      drainTimer = null;
+    }
+    if (maxTimer !== null) {
+      clearTimeout(maxTimer);
+      maxTimer = null;
+    }
+    unsubscribeEnded?.();
+    unsubscribeEnded = null;
+    if (typeof audioContext.removeEventListener === "function") {
+      audioContext.removeEventListener("statechange", onStateChange);
+    }
+    closeAudioContextSafely(audioContext);
+  };
+
+  if (audioContext.state !== "running") {
+    finish();
+    return;
+  }
+
+  if (typeof audioContext.addEventListener === "function") {
+    audioContext.addEventListener("statechange", onStateChange);
+  }
+
+  unsubscribeEnded =
+    alert.onEnded?.(() => {
+      if (finished) return;
+      if (audioContext.state !== "running") {
+        alert.silenceImmediately?.();
+        finish();
+        return;
+      }
+      if (drainTimer === null) {
+        drainTimer = setTimeout(finish, ALERT_CLOSE_DRAIN_MS);
+      }
+    }) ?? null;
+
+  if (finished) {
+    unsubscribeEnded?.();
+    unsubscribeEnded = null;
+    return;
+  }
+
+  if (unsubscribeEnded) {
+    maxTimer = setTimeout(finish, maxWaitMs);
+    return;
+  }
+
+  if (fallbackMs <= 0) {
+    finish();
+    return;
+  }
+  maxTimer = setTimeout(finish, Math.min(fallbackMs, maxWaitMs));
 }
 
 export function defaultAudioContext(): AudioContext | null {
