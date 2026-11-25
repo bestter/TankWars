@@ -7,6 +7,8 @@ import { getShopPolicy } from "../../shop/shopPolicy";
 import { getAiFreeWeaponsTargets } from "../../shop/freeWeapons";
 import {
   applyShopTransaction,
+  REINFORCED_SHIELD,
+  REINFORCED_SHIELD_PRICE,
   type ShopVisitCounters,
 } from "../../shop/shopTransaction";
 
@@ -330,9 +332,27 @@ export function autoBuyForAI(
     }
   }
 
-  return {
+  const reinforcement = applyShopTransaction({
     player: state.player,
     counters: state.counters,
+    equipmentId: REINFORCED_SHIELD,
+    delta: 1,
+  });
+  if (reinforcement.ok && observe) {
+    state.purchases.push({
+      playerId: state.player.id,
+      profile: state.player.aiProfile,
+      equipmentId: REINFORCED_SHIELD,
+      quantity: 1,
+      price: REINFORCED_SHIELD_PRICE,
+      moneyBefore: state.player.money,
+      moneyAfter: reinforcement.player.money,
+    });
+  }
+
+  return {
+    player: reinforcement.player,
+    counters: reinforcement.counters,
     ...(observe ? { purchases: state.purchases } : {}),
   };
 }

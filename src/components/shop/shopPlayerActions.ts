@@ -1,6 +1,5 @@
-import type { WeaponId } from "../../types/weapon";
 import { randomUUID } from "../../utils/randomUUID";
-import { applyShopTransaction } from "../../game/shop/shopTransaction";
+import { applyShopTransaction, shopPurchaseTarget, type ShopItemId } from "../../game/shop/shopTransaction";
 import type {
   ShopBuySellMessage,
   ShopReadyMessage,
@@ -14,10 +13,10 @@ import {
 
 export function shopBuySell(
   host: CompleteShopRoundHost,
-  weaponId: WeaponId,
+  item: ShopItemId,
   delta: 1 | -1,
 ): void {
-  if (host.shopPlayersRef.current.length === 0) return;
+  if (host.gamePhaseRef.current !== "SHOP" || host.shopPlayersRef.current.length === 0) return;
   if (host.gameMode === "online" && host.localShopDoneRef.current) return;
 
   const engine = host.engineRef.current;
@@ -53,10 +52,11 @@ export function shopBuySell(
     return;
   }
 
+  const target = shopPurchaseTarget(item);
   const transaction = applyShopTransaction({
     player: currentPlayer,
     counters: host.shopSessionRef.current.counters,
-    weaponId,
+    ...target,
     delta,
   });
   if (!transaction.ok) {
@@ -78,7 +78,7 @@ export function shopBuySell(
       kind: "BUY_SELL",
       actionId,
       shopEpoch,
-      weaponId,
+      ...target,
       delta,
     };
     host.shopSessionRef.current = {
@@ -91,7 +91,7 @@ export function shopBuySell(
       type: "SHOP_BUY_SELL",
       shopEpoch,
       actionId,
-      weaponId,
+      ...target,
       delta,
     };
     host.sendCombatMessage(message);

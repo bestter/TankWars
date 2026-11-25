@@ -13,6 +13,18 @@ import { EnduranceSession } from "../session";
 const previous = getRNG();
 afterEach(() => { setRNG(previous); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("custom endurance scenario", () => {
+  it("activates paid reinforcement once on a fixed custom map", () => {
+    const scenario = validateScenario(reference);
+    const players = fixture().players;
+    players[0].tank.maxShield = 40;
+    players[0].tank.shield = 40;
+    players[0].reinforcedShieldPending = true;
+    const next = prepareScenarioRound(scenario, players, 2);
+    expect(next.players[0].tank.shield).toBe(160);
+    expect(next.players[0]).not.toHaveProperty("reinforcedShieldPending");
+    next.players[0].tank.shield = 75;
+    expect(prepareScenarioRound(scenario, next.players, 3).players[0].tank.shield).toBe(75);
+  });
   it.each(["", "\n..\ndd", "{\n..\ndd", "{invalid}\n..\ndd"])("standardizes malformed sketch headers: %j", text => {
     expect(() => convertScenarioSketch(text)).toThrow("INVALID_SCENARIO: header must be valid JSON metadata");
   });

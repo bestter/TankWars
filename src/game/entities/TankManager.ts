@@ -10,7 +10,7 @@ import { secureRandom } from "../../utils/random";
 import { FALL_DISTANCE_MAX_PX, type Player } from "../../types/player";
 import type { TerrainManager } from "../engine/Terrain";
 import { VGA_PALETTE } from "../../types/game";
-import { BULLDOZER_MAX_CLIMB_SLOPE, type WeaponId } from "../../types/weapon";
+import { BULLDOZER_MAX_CLIMB_SLOPE, WEAPON_REGISTRY, type WeaponId } from "../../types/weapon";
 import {
   normalizeDamageToMilli,
 } from "../economy/fixedPoint";
@@ -20,6 +20,7 @@ import type {
   DestructionCause,
   HitClassification,
 } from "../economy/shotRewards";
+import { displayedShieldCapacity, hasReinforcedShield, standardShieldCapacity } from "../round/shield";
 import { drawTankSprite } from "../rendering/tankSprite";
 import { selectSpawnPositions } from "../round/spawnPlacement";
 
@@ -88,6 +89,13 @@ export const TANK_GAUGE_BAR_HEIGHT = 3;
 export const TANK_GAUGE_BORDER_WIDTH = 0.5;
 
 export class TankManager {
+  /** Older diagnostic archives replay the shield rules captured with the shot. */
+  private readonly legacyShieldRules: boolean;
+
+  public constructor(legacyShieldRules = false) {
+    this.legacyShieldRules = legacyShieldRules;
+  }
+
   public capturePhysicsState(): TankPhysicsState {
     return structuredClone({ velocities: [...this.velocities], fallenDistances: [...this.fallenDistances],
       isVoidFall: [...this.isVoidFall], fallAttributions: [...this.fallAttributions] });
@@ -218,6 +226,7 @@ export class TankManager {
    * Place les tanks avec positions X aléatoires biaisées vers les creux (distance minimale garantie).
    * Local : humains 25 % moins souvent sur le sable. IA : 25 % moins souvent sur la roche (tous modes).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
+   * Placement initial au bouclier standard. Les transitions de manche passent par resetPlayersForSpawn.
    * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
   public spawnTanks(
@@ -241,8 +250,8 @@ export class TankManager {
 
       // Réinitialisation complète de l'état de combat pour le début de manche
       tank.health = tank.maxHealth;
-      tank.shield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
-      tank.maxShield = tank.maxShield ?? Math.floor(tank.maxHealth * 0.4);
+      tank.maxShield = standardShieldCapacity(tank);
+      tank.shield = tank.maxShield;
       tank.isDead = false;
       this.invalidateAliveCache();
 
@@ -428,6 +437,7 @@ export class TankManager {
         const lavaY = terrain.lavaTop;
         if (pos.y >= lavaY && !tank.isDead) {
           tank.isDead = true;
+          if (!this.legacyShieldRules) tank.shield = 0;
           this.invalidateAliveCache();
           const details = `touched lava (y=${pos.y.toFixed(1)} >= lavaTop=${lavaY})`;
           this.onPlayerDied?.(player.id, "burial", details);
@@ -455,7 +465,7 @@ export class TankManager {
 
           const levelsCrossed = Math.floor(fallen / damageLevelHeight);
           if (levelsCrossed > 0) {
-            const dmg = levelsCrossed; // 1 per level
+            const dmg = levelsCrossed * (!this.legacyShieldRules && hasReinforcedShield(tank) ? 0.5 : 1);
             const healthBefore = tank.health;
             tank.health = Math.max(0, tank.health - dmg);
             const healthDamage = healthBefore - tank.health;
@@ -467,6 +477,7 @@ export class TankManager {
 
             if (healthBefore > 0 && tank.health <= 0) {
               tank.isDead = true;
+              if (!this.legacyShieldRules) tank.shield = 0;
               this.invalidateAliveCache();
               const totalFallen = (
                 fallen +
@@ -534,6 +545,7 @@ export class TankManager {
 
       if (outOfBoundsX || unsupported || fallenThrough || touchedLava) {
         tank.isDead = true;
+        if (!this.legacyShieldRules) tank.shield = 0;
         this.invalidateAliveCache();
         let details: string;
         if (outOfBoundsX) {
@@ -885,6 +897,7 @@ export class TankManager {
 
       if (healthBefore > 0 && tank.health <= 0) {
         tank.isDead = true;
+        if (!this.legacyShieldRules) tank.shield = 0;
         this.invalidateAliveCache();
         const details = `explosion by ${shooterId ?? "unknown"} (damage=${(shieldAbsorbed + healthDamage).toFixed(1)})`;
         this.onPlayerDied?.(player.id, "explosion", details, shooterId, reportWithProjectileImpact);
@@ -973,6 +986,8 @@ export class TankManager {
         hullAngle,
         -tank.angle,
         color,
+        tank.shield <= 0 ? 0 : hasReinforcedShield(tank) ? 4
+          : tank.shield > WEAPON_REGISTRY.MISSILE.damage ? 2 : 1,
       );
 
       // === Jauge de vie / bouclier miniature ===
@@ -992,7 +1007,7 @@ export class TankManager {
         nameY = y - TANK_NAME_DOUBLE_GAUGE_Y_OFFSET;
 
         // 1. Barre de bouclier (en haut)
-        const maxS = tank.maxShield ?? 40;
+        const maxS = displayedShieldCapacity(tank);
         const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
         ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
         ctx.fillRect(barX, shieldBarY, barWidth, barHeight);
@@ -1022,7 +1037,7 @@ export class TankManager {
 
         if (showShield) {
           // Uniquement le bouclier (vie encore à 100%)
-          const maxS = tank.maxShield ?? 40;
+          const maxS = displayedShieldCapacity(tank);
           const shieldRatio = Math.max(0, Math.min(1, tank.shield / maxS));
           ctx.fillStyle = VGA_PALETTE.DARK_CYAN;
           ctx.fillRect(barX, barY, barWidth * shieldRatio, barHeight);

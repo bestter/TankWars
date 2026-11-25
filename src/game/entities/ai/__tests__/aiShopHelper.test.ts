@@ -7,7 +7,7 @@ import {
 } from "../../../../types/weapon";
 import * as randomModule from "../../../../utils/random";
 import { getRNG, setRNG, type RNG } from "../../../../utils/random";
-import { makePlayer } from "../../../__tests__/helpers";
+import { makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { ShopVisitCounters } from "../../../shop/shopTransaction";
 import {
   autoBuyForAI,
@@ -75,6 +75,7 @@ function makeAiPlayer(
   overrides: Partial<Player> = {},
 ): Player {
   return makePlayer({
+    tank: makeTank("tank-1", 120, 300, { maxShield: 40 }),
     isHuman: false,
     aiProfile,
     money: 20_000,
@@ -122,6 +123,25 @@ function fullOrdinaryInventory(
   };
 }
 
+describe("reinforced shield purchase", () => {
+  it.each(["v1-random", "v2-heuristic", "v3-sniper", "v4-smart"] as const)(
+    "%s uses only the balance left after weapon offers", (profile) => {
+      const atStrategicCap = RICH_PROFILE_CASES.find(entry => entry.profile === profile && entry.initialPlayerCount === 2);
+      const inventory = { ...atStrategicCap?.expectedInventory, NUKE: 2, THERMONUCLEAR: 1 };
+      for (const [money, shield, expected] of [[419, 40, false], [420, 40, true], [420, 41, false]] as const) {
+        const rng = installFixedSequenceRng([0.99]);
+        const player = makeAiPlayer(profile, { money, inventory });
+        Object.assign(player.tank, { shield, maxShield: 40 });
+        const result = autoBuyForAI(player, 2, {}, true);
+        expect(result.player.reinforcedShieldPending === true).toBe(expected);
+        expect(result.player.money).toBe(money - (expected ? 420 : 0));
+        expect(result.player.inventory).toEqual(inventory);
+        expect(rng.getDrawCount()).toBe(0);
+      }
+    },
+  );
+});
+
 describe("autoBuyForAI", () => {
   let previousRng: RNG;
 
@@ -150,6 +170,12 @@ describe("autoBuyForAI", () => {
     let money = player.money;
     const inventory = { ...player.inventory };
     for (const purchase of observed.purchases ?? []) {
+      if (purchase.weaponId === undefined) {
+        expect(purchase).toMatchObject({ equipmentId: "REINFORCED_SHIELD", price: 420, moneyBefore: money });
+        money -= purchase.price;
+        expect(purchase.moneyAfter).toBe(money);
+        continue;
+      }
       expect(purchase).toMatchObject({
         playerId: player.id,
         profile,
@@ -188,10 +214,10 @@ describe("autoBuyForAI", () => {
     const losingRng = installFixedSequenceRng([0.1, 0.05]);
     const first = autoBuyForAI(player, 2, {}, true);
     expect(losingRng.getDrawCount()).toBe(2);
-    expect(first.purchases).toEqual([]);
+    expect(first.purchases).toMatchObject([{ equipmentId: "REINFORCED_SHIELD", price: 420 }]);
     expect(first.player.inventory.NUKE).toBeUndefined();
     expect(first.player.inventory.THERMONUCLEAR).toBeUndefined();
-    expect(first.counters).toEqual({});
+    expect(first.counters).toEqual({ [player.id]: { REINFORCED_SHIELD: 1 } });
 
     // Appel isolé distinct après échec des jets : les compteurs ne mémorisent pas les échecs
     const winningRng = installFixedSequenceRng([0.09, 0.04]);
@@ -237,9 +263,9 @@ describe("autoBuyForAI", () => {
 
       expect(result.player.inventory).toEqual(expectedInventory);
       expect(result.player.money).toBe(
-        player.money - expectedCost(expectedInventory),
+        player.money - expectedCost(expectedInventory) - 420,
       );
-      expect(result.counters[result.player.id]).toEqual(expectedInventory);
+      expect(result.counters[result.player.id]).toEqual({ ...expectedInventory, REINFORCED_SHIELD: 1 });
       expect(player.inventory).toEqual({});
     },
   );
@@ -490,10 +516,10 @@ describe("autoBuyForAI", () => {
         const result = autoBuyForAI(player, 2, {}, true);
 
         expect(rng.getDrawCount()).toBe(1);
-        expect(result.player.money).toBe(2_080);
+        expect(result.player.money).toBe(1_660);
         expect(result.player.inventory.NUKE).toBe(1);
         expect(result.player.inventory.THERMONUCLEAR).toBeUndefined();
-        expect(result.purchases?.map((p) => p.weaponId)).toEqual(["NUKE"]);
+        expect(result.purchases?.map((p) => p.weaponId ?? p.equipmentId)).toEqual(["NUKE", "REINFORCED_SHIELD"]);
       },
     );
 
@@ -617,7 +643,7 @@ describe("autoBuyForAI", () => {
         expect(fullRng.getDrawCount()).toBe(2);
         expect(withBoth.player.inventory).toEqual(expectedAll);
         expect(withBoth.player.money).toBe(
-          20_000 - expectedCost(expectedAll),
+          20_000 - expectedCost(expectedAll) - 420,
         );
       },
     );
@@ -652,9 +678,9 @@ describe("autoBuyForAI", () => {
         expect(rng.getDrawCount()).toBe(1);
         expect(result.player.inventory.NUKE).toBe(nukeStock);
         expect(result.player.inventory.THERMONUCLEAR).toBe(1);
-        expect(result.player.money).toBe(500);
-        expect(result.purchases?.map((p) => p.weaponId)).toEqual([
-          "THERMONUCLEAR",
+        expect(result.player.money).toBe(80);
+        expect(result.purchases?.map((p) => p.weaponId ?? p.equipmentId)).toEqual([
+          "THERMONUCLEAR", "REINFORCED_SHIELD",
         ]);
       }
     });
@@ -723,8 +749,8 @@ describe("autoBuyForAI", () => {
           expect(result.player.inventory.NUKE).toBe(badNuke);
         }
         expect(result.player.inventory.THERMONUCLEAR).toBe(1);
-        expect(result.purchases?.map((p) => p.weaponId)).toEqual([
-          "THERMONUCLEAR",
+        expect(result.purchases?.map((p) => p.weaponId ?? p.equipmentId)).toEqual([
+          "THERMONUCLEAR", "REINFORCED_SHIELD",
         ]);
       }
 

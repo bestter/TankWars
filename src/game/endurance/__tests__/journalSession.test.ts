@@ -99,7 +99,8 @@ describe("session journal lifecycle and reconciliation", () => {
         expect(player.money).toBe(origin.money + 2000 - purchases.reduce((sum, p) => sum + p.price, 0));
         for (const purchase of purchases) {
           expect(purchase.moneyAfter).toBe(purchase.moneyBefore - purchase.price);
-          expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
+          if (purchase.weaponId !== undefined) expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
+          else expect(purchase).toMatchObject({ equipmentId: "REINFORCED_SHIELD", price: 420 });
         }
         for (const [weapon, stock] of Object.entries(player.inventory)) {
           expect(stock).toBe((origin.inventory[weapon as keyof typeof origin.inventory] ?? 0) + purchases.filter(p => p.weaponId === weapon).length);

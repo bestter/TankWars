@@ -6,6 +6,19 @@ import {
   type WeaponId,
 } from "../../types/weapon";
 import { getShopPolicy } from "./shopPolicy";
+import { hasReinforcedShield, standardShieldCapacity } from "../round/shield";
+
+export const REINFORCED_SHIELD = "REINFORCED_SHIELD" as const;
+export const REINFORCED_SHIELD_PRICE = 420;
+
+export type ShopItemId = WeaponId | typeof REINFORCED_SHIELD;
+export type ShopPurchaseTarget =
+  | { readonly weaponId: WeaponId; readonly equipmentId?: never }
+  | { readonly equipmentId: typeof REINFORCED_SHIELD; readonly weaponId?: never };
+
+export function shopPurchaseTarget(item: ShopItemId): ShopPurchaseTarget {
+  return item === REINFORCED_SHIELD ? { equipmentId: item } : { weaponId: item };
+}
 
 export type ShopBuyDenial =
   | "STOCK_CAP"
@@ -18,6 +31,7 @@ export type ShopEconomyDenial =
   | ShopBuyDenial
   | ShopSellDenial
   | "ILLEGAL_INVENTORY"
+  | "SHIELD_ALREADY_REINFORCED"
   | "MALFORMED";
 
 export type ShopSessionDenial =
@@ -30,18 +44,19 @@ export type ShopSessionDenial =
 
 export type ShopDenial = ShopEconomyDenial | ShopSessionDenial;
 
+export type ShopPlayerCounters = Readonly<Partial<Record<ShopItemId, number>>>;
+
 export type ShopVisitCounters = Readonly<
   Partial<
-    Record<string, Readonly<Partial<Record<WeaponId, number>>>>
+    Record<string, ShopPlayerCounters>
   >
 >;
 
-export interface ShopTransactionInput {
+type ShopTransactionInput = ShopPurchaseTarget & {
   readonly player: Player;
   readonly counters: ShopVisitCounters;
-  readonly weaponId: WeaponId;
   readonly delta: 1 | -1;
-}
+};
 
 export type ShopTransactionResult =
   | {
@@ -98,14 +113,14 @@ function readPurchaseCount(
 function withPurchaseCount(
   counters: ShopVisitCounters,
   playerId: string,
-  weaponId: WeaponId,
+  item: ShopItemId,
   count: number,
 ): ShopVisitCounters {
   return {
     ...counters,
     [playerId]: {
       ...counters[playerId],
-      [weaponId]: count,
+      [item]: count,
     },
   };
 }
@@ -122,12 +137,44 @@ function reject(
   };
 }
 
+function applyShieldTransaction(input: ShopTransactionInput): ShopTransactionResult {
+  const { player, counters, delta } = input;
+  if (!Number.isSafeInteger(player.money) || player.money < 0) return reject(input, "MALFORMED");
+
+  if (delta === -1) {
+    if (!player.reinforcedShieldPending) return reject(input, "NO_STOCK");
+    const money = player.money + REINFORCED_SHIELD_PRICE;
+    if (!Number.isSafeInteger(money)) return reject(input, "MALFORMED");
+    const refunded = { ...player, money };
+    delete refunded.reinforcedShieldPending;
+    return { ok: true, player: refunded, counters };
+  }
+
+  if (!player.tank) return reject(input, "MALFORMED");
+  const standard = standardShieldCapacity(player.tank);
+  if (!Number.isFinite(standard) || standard < 0) return reject(input, "MALFORMED");
+  if (standard === 0) return reject(input, "NOT_SOLD");
+  const count = counters[player.id]?.[REINFORCED_SHIELD] ?? 0;
+  if (count !== 0 && count !== 1) return reject(input, "MALFORMED");
+  if (count === 1 || player.reinforcedShieldPending) return reject(input, "PURCHASE_LIMIT");
+  if (!player.tank.isDead && player.tank.health > 0 && hasReinforcedShield(player.tank)) {
+    return reject(input, "SHIELD_ALREADY_REINFORCED");
+  }
+  if (player.money < REINFORCED_SHIELD_PRICE) return reject(input, "INSUFFICIENT_FUNDS");
+  return {
+    ok: true,
+    player: { ...player, money: player.money - REINFORCED_SHIELD_PRICE, reinforcedShieldPending: true },
+    counters: withPurchaseCount(counters, player.id, REINFORCED_SHIELD, 1),
+  };
+}
+
 export function applyShopTransaction(
   input: ShopTransactionInput,
 ): ShopTransactionResult {
   const { player, counters, weaponId, delta } = input;
   if (delta !== 1 && delta !== -1) return reject(input, "MALFORMED");
-  if (!isShopWeapon(weaponId)) return reject(input, "NOT_SOLD");
+  if (input.equipmentId === REINFORCED_SHIELD) return applyShieldTransaction(input);
+  if (weaponId === undefined || !isShopWeapon(weaponId)) return reject(input, "NOT_SOLD");
 
   const stockResult = readLegalStock(player, weaponId);
   if (!stockResult.legal) return reject(input, "ILLEGAL_INVENTORY");

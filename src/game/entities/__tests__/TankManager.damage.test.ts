@@ -563,8 +563,23 @@ describe("TankManager.applyGravity and burial", () => {
       .toBe(Math.round((100 - tank.health) * 1000));
   });
 
-  it("kills tank when fall damage reduces health to 0 even if shield is intact", () => {
-    const tank = makeTank("t-v", 50, 80, { health: 1, shield: 40, maxShield: 40 });
+  it.each([[40, 5], [41, 2.5]])("loses the correct health across a five-level fall at %i shield", (shield, loss) => {
+    const tank = makeTank("t-v", 50, 170, { health: 100, shield, maxShield: 40 });
+    const tm = managerWith(makePlayer({ id: "victim", tank }));
+    const terrain = flatTerrain(200, 200, 0.9);
+    const applied = vi.fn();
+    tm.onDamageApplied = applied;
+    tm.beginShotAttribution(13, "killer", "MISSILE");
+    tm.updateTankPositions(terrain);
+    for (let i = 0; i < 80; i++) tm.applyGravity(1 / 120, terrain);
+    expect(tank.shield).toBe(shield);
+    expect(tank.health).toBe(100 - loss);
+    expect(applied.mock.calls.reduce((total, [event]) => total + event.healthDamageMilli, 0)).toBe(loss * 1000);
+    expect(applied.mock.calls.every(([event]) => event.shieldLostMilli === 0)).toBe(true);
+  });
+
+  it("kills tank when fall damage reduces health to 0 and discards its remaining shield", () => {
+    const tank = makeTank("t-v", 50, 80, { health: 1, shield: 75, maxShield: 40 });
     const player = makePlayer({ id: "victim", tank });
     const tm = managerWith(player);
     const died = vi.fn();
@@ -577,7 +592,7 @@ describe("TankManager.applyGravity and burial", () => {
     }
 
     expect(tank.health).toBe(0);
-    expect(tank.shield).toBe(40);
+    expect(tank.shield).toBe(0);
     expect(tank.isDead).toBe(true);
     expect(died).toHaveBeenCalledWith("victim", "burial", expect.stringContaining("fall damage"));
   });

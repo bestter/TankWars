@@ -7,14 +7,20 @@ import {
   SHOP_WEAPON_IDS,
 } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+import { SHIELD_METAL_COLOR } from "../game/round/shield";
 import { getShopPolicy } from "../game/shop/shopPolicy";
 import {
   applyShopTransaction,
+  REINFORCED_SHIELD,
+  REINFORCED_SHIELD_PRICE,
+  type ShopItemId,
+  type ShopPlayerCounters,
   type ShopDenial,
 } from "../game/shop/shopTransaction";
 import { openModalDialog, useModalDialog } from "./modalDialog";
 
 const SHOP_DENIAL_KEYS = {
+  SHIELD_ALREADY_REINFORCED: "shop_shield_already_reinforced",
   STOCK_CAP: "shop_reason_stock_cap",
   PURCHASE_LIMIT: "shop_reason_purchase_limit",
   INSUFFICIENT_FUNDS: "shop_reason_insufficient_funds",
@@ -59,11 +65,11 @@ export interface WeaponShopProps {
   /** Nombre total de joueurs vivants qui font leurs achats */
   totalShoppers: number;
   /** Callback pour acheter (+1) ou vendre (-1) */
-  onBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
+  onBuySell: (item: ShopItemId, delta: 1 | -1) => void;
   /** Le joueur a fini ses achats → passer au suivant (humain ou IA) */
   onReady: () => void;
   /** Compteurs autoritaires de cette visite pour le joueur affiché. */
-  purchaseCounters?: Readonly<Partial<Record<WeaponId, number>>>;
+  purchaseCounters?: ShopPlayerCounters;
   /** Désactive toute intention pendant une requête en vol. */
   controlsDisabled?: boolean;
   /** Dernier refus métier ou de session à afficher. */
@@ -267,6 +273,43 @@ function WeaponShopRow({
   );
 }
 
+function ReinforcedShieldRow({ player, purchaseCounters, controlsDisabled, onBuySell }: Pick<WeaponShopRowProps, "player" | "controlsDisabled"> & {
+  purchaseCounters: ShopPlayerCounters;
+  onBuySell: WeaponShopProps["onBuySell"];
+}) {
+  const { t } = useTranslation();
+  const descriptionId = useId();
+  const pending = player.reinforcedShieldPending === true;
+  const purchase = applyShopTransaction({
+    player,
+    counters: { [player.id]: purchaseCounters },
+    equipmentId: REINFORCED_SHIELD,
+    delta: 1,
+  });
+  const canAct = !controlsDisabled && (pending || purchase.ok);
+  return (
+    <div className="weapon-shop-shield-row">
+      <div id={descriptionId}>
+        <strong style={{ color: SHIELD_METAL_COLOR }}>{t("shop_shield_name")}</strong>
+        <span> · {REINFORCED_SHIELD_PRICE} $</span>
+        <div>{t("shop_shield_description")}</div>
+        <div role="status">
+          {pending ? t("shop_shield_pending") : !purchase.ok && t(SHOP_DENIAL_KEYS[purchase.reason])}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="retro-btn"
+        disabled={!canAct}
+        aria-describedby={descriptionId}
+        onClick={() => onBuySell(REINFORCED_SHIELD, pending ? -1 : 1)}
+      >
+        {t(pending ? "shop_shield_cancel" : "shop_shield_buy")}
+      </button>
+    </div>
+  );
+}
+
 export function WeaponShop({
   player,
   shopIndex,
@@ -410,6 +453,12 @@ export function WeaponShop({
           paddingRight: 4,
         }}
       >
+        <ReinforcedShieldRow
+          player={player}
+          purchaseCounters={purchaseCounters}
+          controlsDisabled={controlsDisabled}
+          onBuySell={onBuySell}
+        />
         {SHOP_WEAPON_IDS.map((wid) => (
           <WeaponShopRow
             key={wid}

@@ -1,3 +1,4 @@
+import { displayedShieldCapacity } from "../game/round/shield";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import type { GamePhase } from "../types/game";
 import type { AiProfile, Player } from "../types/player";
@@ -77,7 +78,7 @@ export function copyLivingPlayerStatus(players: readonly Player[]): PlayerStatus
       health: player.tank.health,
       maxHealth: player.tank.maxHealth,
       shield: player.tank.shield,
-      maxShield: player.tank.maxShield,
+      maxShield: displayedShieldCapacity(player.tank),
       inventory,
     });
   }

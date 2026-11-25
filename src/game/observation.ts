@@ -1,6 +1,7 @@
 import type { FireCommand } from "../types/game";
 import type { Player } from "../types/player";
 import type { RewardComponent } from "./economy/shotRewards";
+import type { REINFORCED_SHIELD } from "./shop/shopTransaction";
 import type { WeaponId } from "../types/weapon";
 
 export type Aim = Pick<FireCommand, "angle" | "power">;
@@ -22,10 +23,13 @@ export interface CreditObservation {
   source: "shot" | "zeus"; causalId: number; playerId: string;
   amount: number; before: number; after: number; components: readonly RewardComponent[];
 }
-export interface PurchaseObservation {
-  playerId: string; profile: Player["aiProfile"]; weaponId: WeaponId; quantity: 1; price: number;
-  moneyBefore: number; moneyAfter: number; stockBefore: number; stockAfter: number;
-}
+export type PurchaseObservation = {
+  playerId: string; profile: Player["aiProfile"]; quantity: 1; price: number;
+  moneyBefore: number; moneyAfter: number;
+} & (
+  | { weaponId: WeaponId; stockBefore: number; stockAfter: number; equipmentId?: never }
+  | { equipmentId: typeof REINFORCED_SHIELD; weaponId?: never }
+);
 export interface PhysicalObservation {
   kind: "cluster" | "grenade"; shotId: number; munitionId: number;
   draws: number[]; parameters: Record<string, unknown>;

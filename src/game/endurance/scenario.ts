@@ -62,7 +62,7 @@ export function validateScenario(value: unknown): EnduranceScenario {
 export function prepareScenarioRound(scenario: EnduranceScenario, players: readonly Player[], roundNumber: number): { map: RoundMap; players: Player[] } {
   requireScenario(players.length === scenario.spawnXs.length, "profile count differs from spawn count");
   const map: RoundMap = { width: 800, height: 480, heights: [...scenario.heights], materials: [...scenario.materials], wind: scenario.wind, roundNumber };
-  return { map, players: resetPlayersForSpawn(players, scenario.spawnXs, spawnTerrain(800, map)) };
+  return { map, players: resetPlayersForSpawn(players, scenario.spawnXs, spawnTerrain(800, map), roundNumber > 1) };
 }
 
 export function scenarioProvenance(scenario?: EnduranceScenario | null) {

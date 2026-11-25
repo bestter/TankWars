@@ -7,7 +7,7 @@ import { consumeWeaponForFire } from "../shop/shopTransaction";
 import type { PhysicalObservation } from "../observation";
 import type { FireCommand } from "../../types/game";
 import { ALL_WEAPON_IDS } from "../../types/weapon";
-import { canonical } from "./archive";
+import { canonical, LEGACY_SHIELD_RULES_ID } from "./archive";
 import { validateArchive } from "./validate";
 import type { ArchiveRecord } from "./types";
 
@@ -80,7 +80,7 @@ export function replayShot(value: unknown, shotKey: string, alternative?: FireCo
   const terrainData = archive.terrains.find(t => t.id === before.snapshot.terrainId)!;
   const terrain = new TerrainManager(terrainData.width, terrainData.height);
   terrain.loadHeights([...terrainData.heights], [...terrainData.materials]);
-  const tanks = new TankManager(); tanks.setPlayers(players); tanks.restorePhysicsState(before.snapshot.motion);
+  const tanks = new TankManager(archive.rules === LEGACY_SHIELD_RULES_ID); tanks.setPlayers(players); tanks.restorePhysicsState(before.snapshot.motion);
   const shotId = before.shot.shotId;
   tanks.beginShotAttribution(shotId, actor.id, command.weaponId);
   // Consumption follows accepted launch in the real engine, before the first physical step.

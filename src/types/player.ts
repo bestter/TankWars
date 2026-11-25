@@ -28,6 +28,7 @@ export interface Tank {
   maxHealth: number;
   /** Shield (absorbs damage before health). */
   shield: number;
+  /** Standard capacity. Reinforced shield points can temporarily exceed this value. */
   maxShield: number;
   /** True when the tank is destroyed. */
   isDead: boolean;
@@ -67,6 +68,8 @@ export interface Player {
   tank: Tank;
   /** Spend in SHOP phase. Earned by surviving + dealing damage. */
   money: number;
+  /** Paid equipment waiting to activate at the start of the next round. */
+  reinforcedShieldPending?: true;
   /** Ammo remaining per weapon type. Keys absent or <=0 mean unavailable. */
   inventory: Partial<Record<WeaponId, number>>;
   /** Strategy identifier used by AIEngine when !isHuman. Phase 1 = 'v1-random' (simple), 'v2-heuristic' = smarter "OK" AI (see AIHeuristicStrategy). */

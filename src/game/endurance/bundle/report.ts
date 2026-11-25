@@ -115,6 +115,9 @@ export async function indexEntry(disk: BundleDisk, entry: JournalEntry, location
     await view(disk, `Manche / Round ${entry.blockId}/${entry.round}`, row);
     if (role.playerId) await view(disk, `Joueur / Player ${role.playerId}`, row);
     await view(disk, `Profil / Profile ${row.profile}`, row);
+    if (event.kind === "purchase" && event.purchase.equipmentId) {
+      await view(disk, `Équipement / Equipment ${event.purchase.equipmentId}`, row);
+    }
     if (row.weapon) await view(disk, `Arme / Weapon ${row.weapon}`, row);
     await Promise.all(reasons.map(reason => view(disk, `Examen / Review ${reason}`, row)));
     if (role.playerId) {

@@ -20,6 +20,7 @@ import type { FireRejectedReason } from "../game/online/protocol";
 import { GameShopOverlay } from "./GameShopOverlay";
 import type { GameCanvasState } from "./gameCanvasReducer";
 import type { WeaponId } from "../types/weapon";
+import type { ShopItemId } from "../game/shop/shopTransaction";
 import { CombatStatusAnnouncer } from "./CombatStatusAnnouncer";
 import { getTerrainCursor, isAdvisorOpenForTurn } from "./combatWaitStatus";
 import { ProtocolMismatchDialog, SessionErrorDialog } from "./RecoveryDialogs";
@@ -221,7 +222,7 @@ function RoundPhaseOverlay({
   readonly freeWeapons?: boolean;
   readonly onNextRound: () => void;
   readonly onNewGameFromSummary: () => void;
-  readonly onShopBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
+  readonly onShopBuySell: (item: ShopItemId, delta: 1 | -1) => void;
   readonly onShopReady: () => void;
   readonly onRetry: () => void;
   readonly onReturnToMenu?: () => void;

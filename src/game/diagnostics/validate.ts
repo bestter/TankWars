@@ -1,6 +1,6 @@
 import { isPlayers } from "../online/protocol";
 import { ALL_WEAPON_IDS } from "../../types/weapon";
-import { canonical, fingerprint, RULES_ID, sealArchive } from "./archive";
+import { canonical, fingerprint, LEGACY_SHIELD_RULES_ID, RULES_ID, sealArchive } from "./archive";
 import type { ShotArchive, StoredState } from "./types";
 
 const PROJECTILE_KEYS = new Set(["shotId", "munitionId", "x", "y", "vx", "vy", "weaponId", "ownerId", "ownerColor", "isSubmunition", "lastVy", "initialAngle", "initialPower", "bounceCount", "hasLeftOwnerHitbox"]);
@@ -63,7 +63,7 @@ function state(v: unknown): asserts v is StoredState {
 /** Validate all dependencies before any TerrainManager is constructed. */
 export function validateArchive(value: unknown): ShotArchive {
   requireValue(object(value) && value.format === "tankwars-shot-archive" && value.schemaVersion === 1, "UNSUPPORTED_ARCHIVE_SCHEMA");
-  requireValue(value.rules === RULES_ID, "INCOMPATIBLE_PHYSICS_RULES");
+  requireValue(value.rules === RULES_ID || value.rules === LEGACY_SHIELD_RULES_ID, "INCOMPATIBLE_PHYSICS_RULES");
   requireValue(typeof value.gameVersion === "string" && typeof value.build === "string" && typeof value.sessionId === "string" &&
     integer(value.firstSequence) && integer(value.lastSequence) && integer(value.evicted) && typeof value.complete === "boolean" &&
     (value.error === null || typeof value.error === "string") && Array.isArray(value.records) && Array.isArray(value.terrains) && finiteTree(value), "INVALID_ARCHIVE_MANIFEST");

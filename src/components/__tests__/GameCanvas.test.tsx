@@ -6,6 +6,7 @@ import { useGameSession } from "../useGameSession";
 import { makePlayer, makeTank } from "../../game/__tests__/helpers";
 import type { Color, GamePhase, RoundResult } from "../../types/game";
 import type { Player } from "../../types/player";
+import type { ShopItemId } from "../../game/shop/shopTransaction";
 import type { WeaponId } from "../../types/weapon";
 import type { CurrentTurnInfo } from "../../game/engine/TurnManager";
 import { createEmptyShopSession } from "../gameCanvasReducer";
@@ -111,7 +112,7 @@ describe("GameCanvas component", () => {
   let mockHandlers: {
     handleCanvasClick: Mock<() => void>;
     handleWeaponSelect: Mock<(weaponId: WeaponId) => void>;
-    handleShopBuySell: Mock<(weaponId: WeaponId, delta: number) => void>;
+    handleShopBuySell: Mock<(item: ShopItemId, delta: number) => void>;
     handleShopReady: Mock<() => void>;
     handleNextRound: Mock<() => void>;
     retryRoundPreparation: Mock<() => void>;

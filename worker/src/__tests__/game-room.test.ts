@@ -458,7 +458,7 @@ describe('Zeus v3 durable settlement', () => {
     const reconnecting = claim.call(room, 1, 'Reconnected', sockets[1]);
     const identifying = send(1, { type: 'IDENTIFY', name: 'Identified' });
     const catchingUp = send(1, {
-      type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+      type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
     });
     await Promise.resolve();
     const transactionsDuringFire = storage.transaction.mock.calls.length;
@@ -558,7 +558,7 @@ describe('Zeus v3 durable settlement', () => {
     const onceMore = await restart();
     const handle = (slot: number, message: object) => (Reflect.get(onceMore, 'handleClientMessage') as
       (slot: number, raw: string) => Promise<void>).call(onceMore, slot, JSON.stringify(message));
-    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await handle(0, { type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     expect(messages()).toEqual([draw, draw]);
     expect(catchUpSnapshot(sockets[0])).toMatchObject({ activeShotId: null, abandonedShotId: pending.shotId });
     await handle(1, { ...report(pending.shotId, 100), authorityEpoch: onceMore.getRoster()!.authorityEpoch });
@@ -724,7 +724,7 @@ describe('Zeus v3 durable settlement', () => {
 
     const readying = send(1, { type: 'SHOP_READY', shopEpoch, actionId: 'ready-1' });
     const identifying = send(1, { type: 'IDENTIFY', name: 'UpdatedBob' });
-    const catchingUp = send(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    const catchingUp = send(0, { type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     await Promise.resolve();
     const transactionsWhilePaused = storage.transaction.mock.calls.length;
 
@@ -857,7 +857,7 @@ describe('Zeus v3 durable settlement', () => {
         const state = room.getRoster()!;
         const token = state.tokens[slot];
         const response = await room.fetch(new Request(
-          `http://localhost/ws?room=${state.roomId}&slot=${slot}&token=${token}&protocolVersion=5`,
+          `http://localhost/ws?room=${state.roomId}&slot=${slot}&token=${token}&protocolVersion=6`,
           { headers: { Upgrade: 'websocket' } },
         ));
         expect(response.status).toBe(101);
@@ -890,7 +890,7 @@ describe('Zeus v3 durable settlement', () => {
     const earlyWs = await connectViaFetch(room, 0);
     earlyWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -912,7 +912,7 @@ describe('Zeus v3 durable settlement', () => {
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -921,7 +921,7 @@ describe('Zeus v3 durable settlement', () => {
 
     lateWs.dispatch('message', {
       data: JSON.stringify({
-        type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
+        type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0,
       }),
     });
     await (Reflect.get(room, 'shotOperation') as Promise<void>);
@@ -1122,7 +1122,7 @@ describe('Zeus v3 durable settlement', () => {
     const restored = await restart();
     const before = structuredClone(restored.getRoster());
     await (Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>).call(restored, 0,
-      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
+      JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 999, lastAppliedShopEpoch: 0 }));
     expect(sockets[0].getLastMessage()).toMatchObject({ type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED' });
     expect(restored.getRoster()).toEqual(before);
     expect(restored.getRoster()!.activeShot).toBeNull();
@@ -1173,7 +1173,7 @@ describe('Zeus v3 durable settlement', () => {
     expect(sockets[1].sent).toEqual([]);
   });
 
-  it('still relays and closes a persisted schema v5 room via alarm', async () => {
+  it('still relays and closes a persisted schema v6 room via alarm', async () => {
     const { setup, sockets, fire, restart } = await boot(2);
     const shot = await fire();
     await vi.advanceTimersByTimeAsync(20_000);
@@ -1290,7 +1290,7 @@ describe('Authoritative safe round preparation', () => {
     expect(setup.mockStorage.storageData.get('state')).toMatchObject({ map: first.map, initialRoundPlayers: first.players });
     state.players[1].tank.health = 0;
     state.players[1].tank.isDead = true;
-    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+    await send(0, { type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     const retry = sockets[0].getAllMessages<GameStartMessage>().filter((m) => m.type === 'GAME_START').at(-1);
     expect(retry).toEqual(first); // initial combat baseline survives live damage
   });
@@ -1343,7 +1343,7 @@ describe('Authoritative safe round preparation', () => {
     const retrySend = (slot: number, value: object) => retryHandle.call(retryRoom, slot, JSON.stringify(value));
     const retryState = Reflect.get(retryRoom, 'state') as typeof state;
     if (retry === 'REQUEST_GAME_START') {
-      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 5, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
+      await retrySend(0, { type: 'REQUEST_GAME_START', protocolVersion: 6, roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 });
     } else {
       const slot = retry === 'last READY' ? 1 : 0;
       await retrySend(slot, { type: 'SHOP_READY', shopEpoch: epoch, actionId: `ready-${slot}` });
@@ -1377,8 +1377,8 @@ describe('Authoritative safe round preparation', () => {
     expect(finish.players[0].tank.isDead).toBe(false);
   });
 
-  it('rejects a persisted schema v4 closing shop session with NEW_GAME_REQUIRED without advancing or broadcasting round 2, while v5 completes normally', async () => {
-    const setupClosingShop = async (schemaVersion: 4 | 5) => {
+  it('rejects a persisted schema v5 closing shop session with NEW_GAME_REQUIRED without advancing or broadcasting round 2, while v6 completes normally', async () => {
+    const setupClosingShop = async (schemaVersion: 5 | 6) => {
       const { setup, room, state, send } = await startedRoom(true);
       state.roundEnded = true;
       await send(0, { type: 'SHOP_ENTER', roundNumber: 1 });
@@ -1411,7 +1411,7 @@ describe('Authoritative safe round preparation', () => {
     };
 
     // 1. Persisted v4 room: must refuse with NEW_GAME_REQUIRED before completeShopPhase / authority election / IDENTIFY
-    const v4 = await setupClosingShop(4);
+    const v4 = await setupClosingShop(5);
     const v4BeforeState = structuredClone(v4.restored.getRoster());
     const v4BeforeStorage = structuredClone(v4.setup.mockStorage.storageData);
     const ws0 = new MockWebSocket();
@@ -1424,16 +1424,19 @@ describe('Authoritative safe round preparation', () => {
     const handleV4 = Reflect.get(v4.restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
     await handleV4.call(v4.restored, 0, JSON.stringify({
       type: 'REQUEST_GAME_START',
-      protocolVersion: 5,
+      protocolVersion: 6,
       roundNumber: 1,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
     }));
     await handleV4.call(v4.restored, 0, JSON.stringify({ type: 'IDENTIFY', name: 'RenamedV4' }));
+    expect(ws0.getAllMessages()).toHaveLength(1);
+    await handleV4.call(v4.restored, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
     const disconnectV4 = Reflect.get(v4.restored, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
     await disconnectV4.call(v4.restored, 0, ws0 as unknown as WebSocket);
 
     expect(ws0.getAllMessages()).toEqual([
+      { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
       { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
     ]);
     expect(ws1.getAllMessages()).toEqual([]);
@@ -1476,14 +1479,14 @@ describe('Authoritative safe round preparation', () => {
     try {
       const stateV4 = v4.restored.getRoster()!;
       const res = await v4.restored.fetch(new Request(
-        `http://localhost/ws?room=${stateV4.roomId}&slot=0&token=${stateV4.tokens[0]}&protocolVersion=5`,
+        `http://localhost/ws?room=${stateV4.roomId}&slot=0&token=${stateV4.tokens[0]}&protocolVersion=6`,
         { headers: { Upgrade: 'websocket' } },
       ));
       expect(res.status).toBe(101);
       upgradedWs.dispatch('message', {
         data: JSON.stringify({
           type: 'REQUEST_GAME_START',
-          protocolVersion: 5,
+          protocolVersion: 6,
           roundNumber: 1,
           lastSeenShotId: 0,
           lastAppliedShopEpoch: 0,
@@ -1504,7 +1507,7 @@ describe('Authoritative safe round preparation', () => {
     }
 
     // 2. Persisted v5 room with identical closing shop session: must still advance to round 2 normally
-    const v5 = await setupClosingShop(5);
+    const v5 = await setupClosingShop(6);
     const v5Ws0 = new MockWebSocket();
     const v5Ws1 = new MockWebSocket();
     const v5Connections = Reflect.get(v5.restored, 'sockets') as Map<number, WebSocket>;
@@ -1514,7 +1517,7 @@ describe('Authoritative safe round preparation', () => {
 
     await handleV5.call(v5.restored, 0, JSON.stringify({
       type: 'REQUEST_GAME_START',
-      protocolVersion: 5,
+      protocolVersion: 6,
       roundNumber: 1,
       lastSeenShotId: 0,
       lastAppliedShopEpoch: 0,
@@ -1552,7 +1555,7 @@ describe('Authoritative safe round preparation', () => {
     (Reflect.get(restored, 'sockets') as Map<number, WebSocket>).set(0, socket as unknown as WebSocket);
     const handle = Reflect.get(restored, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
     const prepare = vi.spyOn(restored as unknown as { prepareRoomRound: (players: Player[], round: number) => PreparedRound }, 'prepareRoomRound');
-    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 5,
+    await handle.call(restored, 0, JSON.stringify({ type: 'REQUEST_GAME_START', protocolVersion: 6,
       roundNumber: 1, lastSeenShotId: 0, lastAppliedShopEpoch: 0 }));
     expect(prepare).not.toHaveBeenCalled();
     expect(socket.getAllMessages<{ type: string }>().some((m) => m.type === 'SHOP_STATE')).toBe(true);
@@ -2177,7 +2180,7 @@ describe('GameRoom Durable Object', () => {
       expect(ws0.closeCode).toBeUndefined();
     });
 
-    it.each([4, 99])('closes unsupported numeric protocol version %i with 4402', async (receivedVersion) => {
+    it.each([4, 5, 99])('closes unsupported numeric protocol version %i with 4402', async (receivedVersion) => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -2190,13 +2193,13 @@ describe('GameRoom Durable Object', () => {
         ws0.getAllMessages<{ type: string; requiredVersion?: number; receivedVersion?: number | null }>(),
       ).toContainEqual({
         type: 'PROTOCOL_MISMATCH',
-        requiredVersion: 5,
+        requiredVersion: 6,
         receivedVersion,
       });
       expect(ws0.closeCode).toBe(4402);
     });
 
-    it('accepts REQUEST_GAME_START with protocolVersion 5 and still sends catch-up', async () => {
+    it('accepts REQUEST_GAME_START with protocolVersion 6 and still sends catch-up', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
         raw: string
@@ -2207,7 +2210,7 @@ describe('GameRoom Durable Object', () => {
         0,
         JSON.stringify({
           type: 'REQUEST_GAME_START',
-          protocolVersion: 5,
+          protocolVersion: 6,
           roundNumber: 1,
           lastSeenShotId: 0,
           lastAppliedShopEpoch: 0,
@@ -2663,7 +2666,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 5,
+        protocolVersion: 6,
         roundNumber: 1,
         lastSeenShotId: shot?.shotId,
         lastAppliedShopEpoch: 0,
@@ -2862,6 +2865,41 @@ describe('GameRoom Durable Object', () => {
         type: 'SHOP_ENTER',
         roundNumber: 1,
       }));
+    });
+
+    it('keeps reinforcement isolated by slot and honors duplicate, cancelled and stale actions', async () => {
+      const state = Reflect.get(room, 'state') as { players: Player[] };
+      state.players[0].money = 420;
+      state.players[1].money = 420;
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+      const buy = { type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'shield-buy', equipmentId: 'REINFORCED_SHIELD', delta: 1 };
+      const send = (slot: number, msg: object) => handle.call(room, slot, JSON.stringify(msg));
+      await send(0, { ...buy, shopEpoch: 0, actionId: 'shield-stale' });
+      expect(ws0.getLastMessage()).toMatchObject({ reason: 'STALE_SHOP_EPOCH' });
+      await send(0, buy);
+      await send(0, buy);
+      const purchase = { type: 'SHOP_STATE', purchasesByPlayerId: { 'player-1': { REINFORCED_SHIELD: 1 } }, players: [
+        expect.objectContaining({ money: 0, reinforcedShieldPending: true, tank: expect.objectContaining({ shield: 40 }) }),
+        expect.objectContaining({ money: 420 }),
+      ] };
+      expect(ws0.getLastMessage()).toMatchObject(purchase);
+      expect(ws1.getLastMessage()).toMatchObject(purchase);
+      const cancel = { ...buy, delta: -1, actionId: 'shield-cancel' };
+      await send(0, cancel);
+      await send(0, cancel);
+      await send(0, { ...buy, actionId: 'shield-rebuy' });
+      expect(ws0.getLastMessage()).toMatchObject({ reason: 'PURCHASE_LIMIT' });
+      await send(1, buy);
+      await send(0, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'shield-ready-0' });
+      await send(1, { type: 'SHOP_READY', shopEpoch: 1, actionId: 'shield-ready-1' });
+      for (const socket of [ws0, ws1]) {
+        const finish = socket.getAllMessages<{ type: string }>().find(msg => msg.type === 'SHOP_FINISH');
+        expect(finish).toMatchObject({ nextRoundNumber: 2, players: [
+          expect.objectContaining({ money: 420, tank: expect.objectContaining({ shield: 40, maxShield: 40 }) }),
+          expect.objectContaining({ money: 0, tank: expect.objectContaining({ shield: 160, maxShield: 40 }) }),
+        ] });
+      }
+      expect(state.players.every(player => player.reinforcedShieldPending === undefined)).toBe(true);
     });
 
     it('synchronizes SHOP_BUY_SELL without clobbering other players', async () => {
@@ -3334,8 +3372,8 @@ describe('GameRoom Durable Object', () => {
               : { GRENADE: 6, CLUSTER: 6, DRILLER: 2, BULLDOZER: 2 };
           const expectedMoneyAfter =
             aiProfile === 'v1-random'
-              ? 5_000 - (75 + 135)
-              : 5_000 - (6 * 75 + 6 * 135 + 2 * 90 + 2 * 150);
+              ? 5_000 - (75 + 135 + 420)
+              : 5_000 - (6 * 75 + 6 * 135 + 2 * 90 + 2 * 150 + 420);
           expect(state.players[1].inventory).toEqual(expectedOrdinaryInventory);
           expect(state.players[1].money).toBe(expectedMoneyAfter);
           expect(state.players[1].tank.currentWeapon).toBe('MISSILE');
@@ -3462,7 +3500,7 @@ describe('GameRoom Durable Object', () => {
                 };
           const expectedMoneyAfter =
             aiProfile === 'v1-random'
-              ? 5_000 - (75 + 135 + 420 + 2_500)
+              ? 5_000 - (75 + 135 + 420 + 2_500 + 420)
               : 5_000 - (6 * 75 + 6 * 135 + 2 * 90 + 2 * 150 + 420 + 2_500);
 
           expect(drawCount).toBe(2);
@@ -3471,7 +3509,7 @@ describe('GameRoom Durable Object', () => {
           expect(state.players[1].tank.currentWeapon).toBe('MISSILE');
           expect(
             state.shopSession?.purchasesByPlayerId[state.players[1].id],
-          ).toEqual(expectedInventory);
+          ).toEqual(aiProfile === 'v1-random' ? { ...expectedInventory, REINFORCED_SHIELD: 1 } : expectedInventory);
 
           const shopStateMsg = socket
             .getAllMessages<ShopStateMessage>()
@@ -3536,7 +3574,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 5,
+        protocolVersion: 6,
         roundNumber: 2,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -3812,7 +3850,7 @@ describe('GameRoom Durable Object', () => {
       const before = structuredClone(state);
       for (const token of ['Synthetic-token', 'synthetic-Token', 'synthetic-tokeN', '', 'short', 'synthetic-token-long', 'é']) {
         const response = await room.fetch(new Request(
-          'http://localhost/ws?room=synthetic-room&slot=0&protocolVersion=5&token=' + encodeURIComponent(token),
+          'http://localhost/ws?room=synthetic-room&slot=0&protocolVersion=6&token=' + encodeURIComponent(token),
           { headers: { Upgrade: 'websocket' } },
         ));
         expect(response.status).toBe(403);
@@ -3865,7 +3903,7 @@ describe('GameRoom Durable Object', () => {
         expect(response.status).toBe(101);
         expect(capturedServer.accept).toHaveBeenCalledOnce();
         expect(capturedServer.getAllMessages()).toEqual([
-          { type: 'PROTOCOL_MISMATCH', requiredVersion: 5, receivedVersion: expectedReceived },
+          { type: 'PROTOCOL_MISMATCH', requiredVersion: 6, receivedVersion: expectedReceived },
         ]);
         expect(capturedServer.closeCode).toBe(4402);
       } finally {
@@ -4171,7 +4209,7 @@ describe('GameRoom Durable Object', () => {
       ) => Promise<void>;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 5,
+        protocolVersion: 6,
         roundNumber: 1,
         lastSeenShotId: 0,
         lastAppliedShopEpoch: 0,
@@ -4204,7 +4242,7 @@ describe('GameRoom Durable Object', () => {
       ws0.sent.length = 0;
       await handleClientMessage.call(room, 0, JSON.stringify({
         type: 'REQUEST_GAME_START',
-        protocolVersion: 5,
+        protocolVersion: 6,
         roundNumber: 1,
         lastSeenShotId: 1,
         lastAppliedShopEpoch: 0,
@@ -4516,7 +4554,7 @@ describe('GameRoom Durable Object', () => {
       expect(stateAfterShop.shotHistory).toEqual([]);
     });
 
-    it('restores active shopSession across Durable Object cold start and processes subsequent shop messages', async () => {
+    it('restores pending reinforcement across Durable Object cold start and activates it once', async () => {
       const setup = createMockCtx();
       const initialRoom = new GameRoom(setup.ctx as DurableObjectState, {});
       Object.defineProperty(initialRoom, 'ctx', { value: setup.ctx, writable: true });
@@ -4547,19 +4585,20 @@ describe('GameRoom Durable Object', () => {
         raw: string,
       ) => Promise<void>;
 
-      // 1. End round and open shop
-      (Reflect.get(initialRoom, 'state') as { roundEnded: boolean }).roundEnded = true;
+      const initialState = Reflect.get(initialRoom, 'state') as { roundEnded: boolean; players: Player[] };
+      initialState.roundEnded = true;
+      initialState.players[0].money = 420;
       await handleInitial.call(initialRoom, 0, JSON.stringify({
         type: 'SHOP_ENTER',
         roundNumber: 1,
       }));
 
-      // 2. Slot 0 buys a GRENADE and readies up
+      // Slot 0 purchases the reinforcement and confirms the visit.
       await handleInitial.call(initialRoom, 0, JSON.stringify({
         type: 'SHOP_BUY_SELL',
         shopEpoch: 1,
         actionId: 'pre-cold-buy-0',
-        weaponId: 'GRENADE',
+        equipmentId: 'REINFORCED_SHIELD',
         delta: 1,
       }));
       await handleInitial.call(initialRoom, 0, JSON.stringify({
@@ -4591,7 +4630,8 @@ describe('GameRoom Durable Object', () => {
       expect(restoredState.shopSession).not.toBeNull();
       expect(restoredState.shopSession?.shopEpoch).toBe(1);
       expect(restoredState.shopSession?.readySlots).toContain(0);
-      expect(restoredState.players[0].inventory.GRENADE).toBe(3);
+      expect(restoredState.players[0]).toMatchObject({ money: 0, reinforcedShieldPending: true, tank: { shield: 40 } });
+      expect(restoredState.shopSession?.purchasesByPlayerId['player-1']).toMatchObject({ REINFORCED_SHIELD: 1 });
 
       // 4. Attach new WebSockets and complete the shop on the restored instance
       const restoredWs0 = new MockWebSocket();
@@ -4630,7 +4670,8 @@ describe('GameRoom Durable Object', () => {
       };
       expect(finalState.roundNumber).toBe(2);
       expect(finalState.shopSession).toBeNull();
-      expect(finalState.players[0].inventory.GRENADE).toBe(3);
+      expect(finalState.players[0]).toMatchObject({ money: 0, tank: { shield: 160, maxShield: 40 } });
+      expect(finalState.players[0]).not.toHaveProperty('reinforcedShieldPending');
       expect(finalState.players[1].inventory.DRILLER).toBe(1);
     });
   });

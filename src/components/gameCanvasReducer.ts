@@ -1,7 +1,7 @@
 import type { FireCommand, GamePhase, RoundResult } from "../types/game";
 import type { Player } from "../types/player";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
-import type { WeaponId } from "../types/weapon";
+import type { ShopPurchaseTarget } from "../game/shop/shopTransaction";
 import { playerStatusEqual, type PlayerStatusCard } from "./playerStatus";
 import type {
   ShopDenial,
@@ -37,13 +37,12 @@ export interface PendingFireIntent {
 }
 
 export type PendingShopIntent =
-  | {
+  | (ShopPurchaseTarget & {
       readonly kind: "BUY_SELL";
       readonly actionId: string;
       readonly shopEpoch: number;
-      readonly weaponId: WeaponId;
       readonly delta: 1 | -1;
-    }
+    })
   | {
       readonly kind: "READY";
       readonly actionId: string;

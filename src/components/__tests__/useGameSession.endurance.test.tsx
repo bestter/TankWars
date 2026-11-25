@@ -55,19 +55,20 @@ describe("real local endurance session integration", () => {
         expect(engine.getCombatMap(round)).toMatchObject({ heights: reference.heights, materials: reference.materials, wind: 48.2 });
         const roster = engine.getTankManager().getPlayers();
         expect(roster.map(p => p.tank.position)).toEqual([{ x: 126.483, y: 412 }, { x: 695.675, y: 339 }]);
-        expect(roster.every(p => p.tank.health === 100 && p.tank.shield === 40)).toBe(true);
+        expect(roster.every(p => p.tank.health === 100 && p.tank.maxShield === 40)).toBe(true);
+        expect(roster.map(p => p.tank.shield)).toEqual([!freeWeapons && round === 2 ? 160 : 40, 40]);
         // A live recovery retains deformation; the next actual round restores the initial map.
         const damaged = engine.getCombatMap(round); damaged.heights[126] = 460;
         engine.restoreRoundTerrain(damaged, engine.getInitialRoundMap()!);
         expect(engine.getCombatMap(round).heights[126]).toBe(460);
-        roster[0].money = 777; roster[1].tank.isDead = true;
+        roster[0].money = 1_000; roster[1].tank.isDead = true;
         await act(async () => { engine.onRoundEnded?.({ survivors: [roster[0]], roundWinner: roster[0], isDraw: false }); });
         await act(async () => { vi.advanceTimersByTime(10000); });
         await act(async () => { vi.advanceTimersByTime(3000); });
         if (round === 1) {
           if (!freeWeapons) await act(async () => { vi.advanceTimersByTime(600); });
           expect(ref.current?.state.gamePhase).toBe("COMBAT");
-          if (freeWeapons) expect(engine.getTankManager().getPlayers()[0].money).toBe(777);
+          if (freeWeapons) expect(engine.getTankManager().getPlayers()[0].money).toBe(1_000);
         }
       }
       view.unmount();
@@ -189,11 +190,16 @@ describe("real local endurance session integration", () => {
       if (event.kind === "purchase") {
         const purchase = event.purchase, account = ledger.get(purchase.playerId)!;
         expect(account.money).toBe(purchase.moneyBefore);
-        expect(account.inventory[purchase.weaponId] ?? 0).toBe(purchase.stockBefore);
         expect(purchase.moneyAfter).toBe(purchase.moneyBefore - purchase.price);
-        expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
         account.money = purchase.moneyAfter;
-        account.inventory[purchase.weaponId] = purchase.stockAfter;
+        if (purchase.weaponId !== undefined) {
+          expect(account.inventory[purchase.weaponId] ?? 0).toBe(purchase.stockBefore);
+          expect(purchase.stockAfter).toBe(purchase.stockBefore + 1);
+          account.inventory[purchase.weaponId] = purchase.stockAfter;
+        } else {
+          expect(purchase.equipmentId).toBe("REINFORCED_SHIELD");
+          expect(purchase.price).toBe(420);
+        }
       }
       const snapshots = event.kind === "shop-start" || event.kind === "shop-end"
         ? [event.player] : row.context?.players ?? [];

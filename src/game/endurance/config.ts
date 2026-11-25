@@ -1,4 +1,5 @@
 import { DEFAULT_LIMITS, type EnduranceConfig } from "./types";
+import { reinforcedShieldCapacity } from "../round/shield";
 import { ALL_WEAPON_IDS } from "../../types/weapon";
 import type { Player } from "../../types/player";
 
@@ -43,7 +44,7 @@ export function assertRoster(players: readonly Player[]): void {
     const t = p.tank;
     if (!p.id || !t.id || !p.name.trim() || !Number.isSafeInteger(p.money) || p.money < 0 ||
       ![t.health, t.maxHealth, t.shield, t.maxShield, t.position.x, t.position.y, t.angle, t.power].every(Number.isFinite) ||
-      t.health < 0 || t.health > t.maxHealth || t.maxHealth <= 0 || t.shield < 0 || t.shield > t.maxShield || t.maxShield < 0 ||
+      t.health < 0 || t.health > t.maxHealth || t.maxHealth <= 0 || t.shield < 0 || t.shield > reinforcedShieldCapacity(t.maxShield) || t.maxShield < 0 ||
       Object.entries(p.inventory).some(([id, n]) => !ALL_WEAPON_IDS.includes(id as typeof ALL_WEAPON_IDS[number]) || !Number.isSafeInteger(n) || n < 0)) {
       throw new Error("INVALID_PLAYER_STATE");
     }

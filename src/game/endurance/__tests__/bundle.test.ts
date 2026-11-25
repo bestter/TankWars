@@ -90,6 +90,17 @@ describe("progressive endurance bundle", () => {
     expect(manifest.complete).toBe(true); expect(manifest.reportComplete).toBe(false); expect(manifest.reportError).toContain("rapport incomplet");
     expect(await validateBundle(disk)).toMatchObject({ complete: true });
   });
+  it("indexes a reinforced shield purchase as equipment and counts it once", async () => {
+    const disk = new MemoryDisk();
+    const row = entry(1, { kind: "purchase", visitId: "visit", purchase: {
+      playerId: "buyer", profile: "v2-heuristic", equipmentId: "REINFORCED_SHIELD", quantity: 1,
+      price: 420, moneyBefore: 500, moneyAfter: 80,
+    } });
+    await indexEntry(disk, row, { path: "journal/part-000001.jsonl", offset: 0, length: 100 }, undefined, 1000);
+    const label = "Équipement / Equipment REINFORCED_SHIELD";
+    expect(await disk.get("views", await identity(label))).toMatchObject({ label });
+    expect(await disk.get("player-totals", "buyer")).toMatchObject({ purchases: 1 });
+  });
   it("does not conflate canceled decisions, launches, roles or captured duplicates", async () => {
     const disk = new MemoryDisk(), f = fixture(), player = f.players[0];
     const decision = entry(1, { kind: "combat", event: { kind: "decision", playerId: player.id, durationMs: 1000, command: { weaponId: "MISSILE", angle: 45, power: 50 } } });

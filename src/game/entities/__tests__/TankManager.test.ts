@@ -343,6 +343,7 @@ describe("TankManager", () => {
 
   describe("draw gauge rendering", () => {
     function mockContext() {
+      const shieldOutlineWidths: number[] = [];
       const fillRectCalls: { x: number; y: number; w: number; h: number; fillStyle: string }[] = [];
       const ctx: Partial<CanvasRenderingContext2D> = {
         fillStyle: "",
@@ -351,7 +352,9 @@ describe("TankManager", () => {
         fillRect(this: Partial<CanvasRenderingContext2D>, x: number, y: number, w: number, h: number) {
           fillRectCalls.push({ x, y, w, h, fillStyle: String(this.fillStyle ?? "") });
         },
-        strokeRect: () => {},
+        strokeRect(this: Partial<CanvasRenderingContext2D>) {
+          if (this.strokeStyle === "#B8BCC4") shieldOutlineWidths.push((this.lineWidth ?? 0) / 2);
+        },
         beginPath: () => {},
         arc: () => {},
         fill: () => {},
@@ -365,8 +368,29 @@ describe("TankManager", () => {
         rotate: () => {},
         fillText: () => {},
       };
-      return { ctx: ctx as CanvasRenderingContext2D, fillRectCalls };
+      return { ctx: ctx as CanvasRenderingContext2D, fillRectCalls, shieldOutlineWidths };
     }
+
+    it.each([
+      [0, 0], [1, 1], [35, 1], [35.5, 2], [40, 2], [40.5, 4], [75, 4],
+    ])("draws the correct outline and shield fill at %s points", (shield, outline) => {
+      const manager = new TankManager();
+      const player = createDummyPlayer("1", false);
+      Object.assign(player.tank, { position: { x: 100, y: 100 }, shield, maxShield: 40 });
+      manager.setPlayers([player]);
+      const { ctx, fillRectCalls, shieldOutlineWidths } = mockContext();
+      manager.draw(ctx, false);
+      expect(shieldOutlineWidths).toEqual(outline > 0 ? [outline] : []);
+      const bar = fillRectCalls.find(call => call.fillStyle === VGA_PALETTE.DARK_CYAN);
+      const background = fillRectCalls.find(call => call.y === bar?.y && call.fillStyle === VGA_PALETTE.DARK_GRAY);
+      if (shield > 0) expect(bar?.w).toBeCloseTo((background?.w ?? 0) * shield / (shield > 40 ? 160 : 40));
+      else expect(bar).toBeUndefined();
+      player.tank.isDead = true;
+      manager.setPlayers([player]);
+      const dead = mockContext();
+      manager.draw(dead.ctx, false);
+      expect(dead.shieldOutlineWidths).toEqual([]);
+    });
 
     it("draws two bars when shield > 0 and health < maxHealth", () => {
       const tankManager = new TankManager();

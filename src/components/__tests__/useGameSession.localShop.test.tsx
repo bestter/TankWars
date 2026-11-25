@@ -500,7 +500,7 @@ describe("useGameSession local shop AI advance", () => {
             aiProfile: profile,
             money: 5_000,
             inventory: {},
-            tank: makeTank("tank-2", 620, 300),
+            tank: makeTank("tank-2", 620, 300, { maxShield: 40 }),
           }),
         ];
 
@@ -548,7 +548,7 @@ describe("useGameSession local shop AI advance", () => {
         NUKE: 1,
         THERMONUCLEAR: 1,
       });
-      expect(won.aiPlayer?.money).toBe(5_000 - ordinaryCost - 420 - 2_500);
+      expect(won.aiPlayer?.money).toBe(5_000 - ordinaryCost - 420 - 2_500 - (profile === "v1-random" ? 420 : 0));
       expect(won.aiPlayer?.tank.currentWeapon).toBe("MISSILE");
       expect(won.tankManagerAi?.inventory).toEqual(won.aiPlayer?.inventory);
       expect(won.tankManagerAi?.money).toBe(won.aiPlayer?.money);
@@ -558,7 +558,7 @@ describe("useGameSession local shop AI advance", () => {
       expect(lost.autoBuyCalls).toBe(1);
       expect(lost.drawCount).toBe(2);
       expect(lost.aiPlayer?.inventory).toEqual(ordinaryExpected);
-      expect(lost.aiPlayer?.money).toBe(5_000 - ordinaryCost);
+      expect(lost.aiPlayer?.money).toBe(5_000 - ordinaryCost - 420);
       expect(lost.aiPlayer?.tank.currentWeapon).toBe("MISSILE");
     },
   );
