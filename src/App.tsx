@@ -149,7 +149,8 @@ function collectReturnToMenuMessages(): OnlineEntryMessage[] {
 
 function App() {
   const [showEndurance, setShowEndurance] = useState(false);
-  const [showOnlineQuitConfirm, setShowOnlineQuitConfirm] = useState(false);
+  const [onlineQuitConfirmRequestId, setOnlineQuitConfirmRequestId] = useState<number | null>(null);
+  const nextOnlineQuitConfirmRequestIdRef = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
@@ -205,7 +206,7 @@ function App() {
   };
 
   const handleReturnToMenu = (): void => {
-    setShowOnlineQuitConfirm(false);
+    setOnlineQuitConfirmRequestId(null);
     dispatch({ type: "RETURN_TO_MENU" });
     setParticipation(null);
     setMessages({ type: 'replace', messages: collectReturnToMenuMessages() });
@@ -213,7 +214,8 @@ function App() {
 
   const handleReturnToLobbyOrMenu = (): void => {
     if (state.onlineMeta) {
-      setShowOnlineQuitConfirm(true);
+      nextOnlineQuitConfirmRequestIdRef.current += 1;
+      setOnlineQuitConfirmRequestId(nextOnlineQuitConfirmRequestIdRef.current);
       return;
     }
     handleReturnToMenu();
@@ -289,9 +291,10 @@ function App() {
             onPersistenceWarning={handlePersistenceWarning}
           />
         )}
-        {showOnlineQuitConfirm && state.onlineMeta && (
+        {onlineQuitConfirmRequestId !== null && state.onlineMeta && (
           <OnlineQuitConfirmDialog
-            onCancel={() => setShowOnlineQuitConfirm(false)}
+            key={onlineQuitConfirmRequestId}
+            onCancel={() => setOnlineQuitConfirmRequestId(null)}
             onConfirm={handleReturnToMenu}
           />
         )}

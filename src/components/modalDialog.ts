@@ -32,6 +32,21 @@ export interface UseModalDialogOptions {
   readonly onDismiss?: () => void;
 }
 
+interface DismissibleModalEntry {
+  readonly dialog: HTMLDialogElement;
+  readonly dismiss: () => void;
+}
+
+const activeDismissibleModals = new Set<DismissibleModalEntry>();
+
+function removeDismissibleEntriesFor(dialog: HTMLDialogElement): void {
+  for (const entry of activeDismissibleModals) {
+    if (entry.dialog === dialog) {
+      activeDismissibleModals.delete(entry);
+    }
+  }
+}
+
 export function useModalDialog(options?: UseModalDialogOptions) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const isUnmountingRef = useRef(false);
@@ -48,8 +63,31 @@ export function useModalDialog(options?: UseModalDialogOptions) {
     isUnmountingRef.current = false;
     isClosingProgrammaticallyRef.current = false;
     dialog.returnValue = "";
+
+    let entry: DismissibleModalEntry | null = null;
+    if (onDismissRef.current) {
+      entry = {
+        dialog,
+        dismiss: () => {
+          isClosingProgrammaticallyRef.current = true;
+          closeModalDialog(dialog);
+          onDismissRef.current?.();
+        },
+      };
+      activeDismissibleModals.add(entry);
+    } else {
+      for (const activeEntry of [...activeDismissibleModals]) {
+        if (activeEntry.dialog === dialog) continue;
+        activeDismissibleModals.delete(activeEntry);
+        activeEntry.dismiss();
+      }
+    }
+
     openModalDialog(dialog);
     return () => {
+      if (entry) {
+        activeDismissibleModals.delete(entry);
+      }
       isUnmountingRef.current = true;
       closeModalDialog(dialog);
     };
@@ -58,6 +96,7 @@ export function useModalDialog(options?: UseModalDialogOptions) {
   const closeDialog = useCallback((returnValue?: string) => {
     const dialog = dialogRef.current;
     if (!dialog) return;
+    removeDismissibleEntriesFor(dialog);
     isClosingProgrammaticallyRef.current = true;
     closeModalDialog(dialog, returnValue);
   }, []);
@@ -69,6 +108,7 @@ export function useModalDialog(options?: UseModalDialogOptions) {
     const dialog = dialogRef.current;
     if (!dialog?.isConnected || dialog.open) return;
     if (onDismissRef.current) {
+      removeDismissibleEntriesFor(dialog);
       dialog.returnValue = "";
       onDismissRef.current();
       return;
