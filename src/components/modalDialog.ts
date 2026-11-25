@@ -30,6 +30,7 @@ export function closeModalDialog(
 
 export interface UseModalDialogOptions {
   readonly onDismiss?: () => void;
+  readonly dismissActiveModals?: boolean;
 }
 
 interface DismissibleModalEntry {
@@ -47,15 +48,15 @@ function removeDismissibleEntriesFor(dialog: HTMLDialogElement): void {
   }
 }
 
-export function useModalDialog(options?: UseModalDialogOptions) {
+export function useModalDialog({ onDismiss, dismissActiveModals = false }: UseModalDialogOptions = {}) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const isUnmountingRef = useRef(false);
   const isClosingProgrammaticallyRef = useRef(false);
-  const onDismissRef = useRef(options?.onDismiss);
+  const onDismissRef = useRef(onDismiss);
 
   useEffect(() => {
-    onDismissRef.current = options?.onDismiss;
-  }, [options?.onDismiss]);
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -75,7 +76,7 @@ export function useModalDialog(options?: UseModalDialogOptions) {
         },
       };
       activeDismissibleModals.add(entry);
-    } else {
+    } else if (dismissActiveModals) {
       for (const activeEntry of [...activeDismissibleModals]) {
         if (activeEntry.dialog === dialog) continue;
         activeDismissibleModals.delete(activeEntry);
@@ -91,7 +92,7 @@ export function useModalDialog(options?: UseModalDialogOptions) {
       isUnmountingRef.current = true;
       closeModalDialog(dialog);
     };
-  }, []);
+  }, [dismissActiveModals]);
 
   const closeDialog = useCallback((returnValue?: string) => {
     const dialog = dialogRef.current;

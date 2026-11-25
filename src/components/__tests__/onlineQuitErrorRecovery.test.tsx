@@ -37,7 +37,7 @@ interface TopLayerEntry {
   invoker: HTMLElement | null;
 }
 
-describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
+describe("Online quit confirmation during round transitions", () => {
   const topLayerStack: TopLayerEntry[] = [];
   let originalShowModal: (() => void) | undefined;
   let originalClose: ((returnValue?: string) => void) | undefined;
@@ -60,7 +60,7 @@ describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
     setItem: (key, value) => sessionStorageData.set(key, value),
   };
 
-  function seedShopSession(): void {
+  function seedSession(gamePhase: "COMBAT" | "SHOP" = "SHOP") {
     const p1 = makePlayer({ id: "player-1", name: "Host" });
     const p2 = makePlayer({
       id: "player-2",
@@ -78,7 +78,7 @@ describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
       players: [p1, p2],
       canvas: {
         map: makeRoundMap(),
-        gamePhase: "SHOP",
+        gamePhase,
         currentManche: 1,
         uiPlayers: [p1, p2],
         shopPlayers: [p1, p2],
@@ -104,6 +104,7 @@ describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
       "tankwars-online-session-v2",
       JSON.stringify(session),
     );
+    return session.players;
   }
 
   function installTopLayerDialogDouble(): void {
@@ -250,8 +251,53 @@ describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["COMBAT", "SHOP"] as const)("keeps an open confirmation through a normal transition from %s", (phase) => {
+    const players = seedSession(phase);
+    render(
+      <StrictMode>
+        <HelmetProvider>
+          <App />
+        </HelmetProvider>
+      </StrictMode>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(latestCombatWs).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "btn_menu" }));
+    const confirmDialog = screen.getByRole("dialog", { name: "online_quit_confirm" });
+    act(() => {
+      if (phase === "COMBAT") {
+        latestCombatWs?.emitMessage({
+          type: "ROUND_END", players, roundNumber: 1, roundWinnerId: null, isDraw: true,
+        });
+      } else {
+        latestCombatWs?.emitMessage({
+          type: "SHOP_STATE", players, shopEpoch: 1, roundNumber: 1,
+          readySlots: [], purchasesByPlayerId: {}, aiShopApplied: true,
+        });
+      }
+    });
+    if (phase === "COMBAT") {
+      expect(screen.getByText("celebration_banner")).toBeDefined();
+      act(() => vi.advanceTimersByTime(10000));
+    }
+
+    expect(topLayerStack.map(({ dialog }) => dialog)).toEqual([confirmDialog]);
+    const cancel = screen.getByRole("button", { name: "online_quit_cancel" });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.click(cancel);
+
+    const nextDialog = screen.getByRole("dialog", {
+      name: phase === "COMBAT" ? "round_summary_title" : "shop_header",
+    });
+    expect(topLayerStack.map(({ dialog }) => dialog)).toEqual([nextDialog]);
+    expect(nextDialog.contains(document.activeElement)).toBe(true);
+  });
+
   it("lets the player open quit confirmation and exit after ROUND_PREPARATION_FAILED (NEW_GAME_REQUIRED) arrives while confirm dialog is open", () => {
-    seedShopSession();
+    seedSession();
     render(
       <StrictMode>
         <HelmetProvider>
@@ -342,7 +388,7 @@ describe("Online quit confirmation vs SessionErrorDialog stacking", () => {
   });
 
   it("preserves Retry on EXHAUSTED without leaving a stale confirmation dialog behind", () => {
-    seedShopSession();
+    seedSession();
     render(
       <StrictMode>
         <HelmetProvider>

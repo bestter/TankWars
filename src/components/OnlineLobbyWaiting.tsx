@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useCallback, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { VGA_PALETTE } from '../types/game';
 import type { CopySlotFeedback, JoinedInfo, LobbyView, SlotUI } from './onlineLobbyTypes';
@@ -29,6 +29,78 @@ export interface OnlineLobbyWaitingProps {
   onLeaveRoom: () => void;
 }
 
+function InviteActions({
+  slot,
+  slotLabel,
+  url,
+  feedback,
+  onCopyLink,
+  onDismissCopyFeedback,
+}: Pick<OnlineLobbyWaitingProps, 'onCopyLink' | 'onDismissCopyFeedback'> & {
+  slot: number;
+  slotLabel: string;
+  url: string;
+  feedback: CopySlotFeedback | undefined;
+}) {
+  const { t } = useTranslation();
+  const copyButtonRef = useRef<HTMLButtonElement>(null);
+  const fallbackRef = useCallback((fallback: HTMLDivElement | null) => {
+    if (!fallback) return;
+    return () => {
+      // Move focus before React removes the focused control from the DOM.
+      if (fallback.contains(fallback.ownerDocument.activeElement)) {
+        copyButtonRef.current?.focus();
+      }
+    };
+  }, []);
+
+  return (
+    <div className="lobby-wait-slot-actions">
+      <button
+        ref={copyButtonRef}
+        type="button"
+        className="lobby-action-btn"
+        data-copied={feedback?.status === 'copied' ? '' : undefined}
+        data-failed={feedback?.status === 'failed' ? '' : undefined}
+        onClick={() => onCopyLink(url, slot)}
+      >
+        {t('copy_link')}{' '}
+        <span className="visually-hidden">— {slotLabel}</span>
+      </button>
+      <span role="status" className="lobby-copy-status" data-status={feedback?.status}>
+        {feedback?.message ?? ''}
+      </span>
+      <a href={url} target="_blank" rel="noopener noreferrer" className="lobby-action-link" style={{ color: VGA_PALETTE.ELECTRIC_CYAN }}>
+        {t('open_link')}{' '}
+        <span className="visually-hidden">— {slotLabel}</span>
+      </a>
+      {feedback?.status === 'failed' && (
+        <div ref={fallbackRef} className="lobby-copy-fallback">
+          <input
+            type="text"
+            readOnly
+            value={url}
+            aria-label={t('invite_url_label', { num: slot + 1 })}
+            className="lobby-copy-fallback-url"
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button
+            type="button"
+            className="lobby-action-btn lobby-copy-fallback-close"
+            onClick={() => {
+              onDismissCopyFeedback(slot);
+              copyButtonRef.current?.focus();
+            }}
+          >
+            {t('copy_fallback_close')}{' '}
+            <span className="visually-hidden">— {slotLabel}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function OnlineLobbyWaiting({
   view,
   roomId,
@@ -49,7 +121,6 @@ export function OnlineLobbyWaiting({
 }: OnlineLobbyWaitingProps) {
   const { t } = useTranslation();
   const joinNameId = useId();
-  const copyButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
 
   const formatSlotRole = (slot: SlotUI): string => {
     if (slot.type === 'human') {
@@ -110,70 +181,22 @@ export function OnlineLobbyWaiting({
           <h2 className="lobby-section-heading">{t('room_created')}</h2>
           <ul className="lobby-list" role="list">
             {slotsInfo.map((s) => {
-              const feedback = copyFeedback[s.slot];
               const slotLabel = t('slot_label', { num: s.slot + 1 });
               return (
                 <li key={s.slot} className="lobby-wait-slot-row">
                   <span className="lobby-wait-slot-label" style={{ color: s.type === 'human' ? VGA_PALETTE.FLASH_GREEN : '#AAAAAA' }}>
                     {slotLabel} — {formatSlotRole(s)}
                   </span>
-                  {s.url && (
-                    <span className="lobby-wait-slot-actions">
-                      <button
-                        ref={(el) => {
-                          if (el) {
-                            copyButtonRefs.current.set(s.slot, el);
-                          } else {
-                            copyButtonRefs.current.delete(s.slot);
-                          }
-                        }}
-                        type="button"
-                        className="lobby-action-btn"
-                        data-copied={feedback?.status === 'copied' ? '' : undefined}
-                        data-failed={feedback?.status === 'failed' ? '' : undefined}
-                        onClick={() => onCopyLink(s.url, s.slot)}
-                      >
-                        {t('copy_link')}{' '}
-                        <span className="visually-hidden">— {slotLabel}</span>
-                      </button>
-                      <span
-                        role="status"
-                        className="lobby-copy-status"
-                        data-status={feedback?.status}
-                      >
-                        {feedback?.message ?? ''}
-                      </span>
-                      {/* Security: Prevent reverse tabnabbing on external links */}
-                      <a href={s.url} target="_blank" rel="noopener noreferrer" className="lobby-action-link" style={{ color: VGA_PALETTE.ELECTRIC_CYAN }}>
-                        {t('open_link')}{' '}
-                        <span className="visually-hidden">— {slotLabel}</span>
-                      </a>
-                      {feedback?.status === 'failed' && (
-                        <div className="lobby-copy-fallback">
-                          <input
-                            type="text"
-                            readOnly
-                            value={s.url}
-                            aria-label={t('invite_url_label', { num: s.slot + 1 })}
-                            className="lobby-copy-fallback-url"
-                            onFocus={(e) => e.currentTarget.select()}
-                          />
-                          <button
-                            type="button"
-                            className="lobby-action-btn lobby-copy-fallback-close"
-                            onClick={() => {
-                              onDismissCopyFeedback(s.slot);
-                              copyButtonRefs.current.get(s.slot)?.focus();
-                            }}
-                          >
-                            {t('copy_fallback_close')}{' '}
-                            <span className="visually-hidden">— {slotLabel}</span>
-                          </button>
-                        </div>
-                      )}
-                    </span>
-                  )}
-                  {!s.url && <span style={{ color: '#AAAAAA' }}>{t('lobby_ai_no_link')}</span>}
+                  {s.url ? (
+                    <InviteActions
+                      slot={s.slot}
+                      slotLabel={slotLabel}
+                      url={s.url}
+                      feedback={copyFeedback[s.slot]}
+                      onCopyLink={onCopyLink}
+                      onDismissCopyFeedback={onDismissCopyFeedback}
+                    />
+                  ) : <span style={{ color: '#AAAAAA' }}>{t('lobby_ai_no_link')}</span>}
                 </li>
               );
             })}

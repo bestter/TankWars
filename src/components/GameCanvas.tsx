@@ -41,6 +41,7 @@ export interface GameCanvasProps {
   initialPlayers?: Player[];
   /** Permet de retourner à l'écran titre (démontage engine + ressources). */
   onReturnToMenu?: () => void;
+  quitConfirmationOpen?: boolean;
   /** Online multiplayer info (passed from lobby start) */
   gameMode?: "local" | "online";
   localPlayerId?: string;
@@ -207,6 +208,7 @@ function RoundPhaseOverlay({
   shopDisplayPlayer,
   localShopDone,
   freeWeapons,
+  quitConfirmationOpen,
   onNextRound,
   onNewGameFromSummary,
   onShopBuySell,
@@ -220,6 +222,7 @@ function RoundPhaseOverlay({
   readonly shopDisplayPlayer: Player | null;
   readonly localShopDone: boolean;
   readonly freeWeapons?: boolean;
+  readonly quitConfirmationOpen: boolean;
   readonly onNextRound: () => void;
   readonly onNewGameFromSummary: () => void;
   readonly onShopBuySell: (item: ShopItemId, delta: 1 | -1) => void;
@@ -244,7 +247,7 @@ function RoundPhaseOverlay({
   }
   switch (state.gamePhase) {
     case "SUMMARY":
-      return (
+      return quitConfirmationOpen ? null : (
         <RoundSummary
           round={state.currentManche}
           players={state.uiPlayers}
@@ -256,7 +259,7 @@ function RoundPhaseOverlay({
         />
       );
     case "SHOP":
-      return state.shopPlayers.length > 0 ? (
+      return !quitConfirmationOpen && state.shopPlayers.length > 0 ? (
         <GameShopOverlay
           gameMode={gameMode}
           shopPlayers={state.shopPlayers}
@@ -381,6 +384,7 @@ export function GameCanvas({
   endurance,
   initialPlayers,
   onReturnToMenu,
+  quitConfirmationOpen = false,
   gameMode,
   localPlayerId,
   roomId,
@@ -513,6 +517,7 @@ export function GameCanvas({
             shopDisplayPlayer={shopDisplayPlayer}
             localShopDone={localShopDone}
             freeWeapons={freeWeapons}
+            quitConfirmationOpen={quitConfirmationOpen}
             onNextRound={endurance ? noop : handleNextRound}
             onNewGameFromSummary={endurance ? noop : handleNewGameFromSummary}
             onShopBuySell={handleShopBuySell}

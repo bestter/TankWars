@@ -37,6 +37,7 @@ interface AppScreenProps {
   readonly onlineMeta: OnlineMeta | null;
   readonly resumeCanvas: ReturnType<typeof createInitialAppState>["resumeCanvas"];
   readonly freeWeapons: boolean;
+  readonly quitConfirmationOpen: boolean;
   readonly onStartLocalGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
   readonly onStartOnlineGame: (
     players: Player[],
@@ -57,6 +58,7 @@ function AppScreen({
   onlineMeta,
   resumeCanvas,
   freeWeapons,
+  quitConfirmationOpen,
   onStartLocalGame,
   onStartOnlineGame,
   onHideOnlineLobby,
@@ -80,6 +82,7 @@ function AppScreen({
           token={onlineMeta?.token}
           ws={onlineMeta?.ws}
           freeWeapons={freeWeapons}
+          quitConfirmationOpen={quitConfirmationOpen}
         />
       </div>
     );
@@ -284,6 +287,7 @@ function App() {
             onlineMeta={onlineMeta}
             resumeCanvas={resumeCanvas}
             freeWeapons={state.freeWeapons}
+            quitConfirmationOpen={onlineQuitConfirmRequestId !== null}
             onStartLocalGame={handleStartGame}
             onStartOnlineGame={handleStartOnlineGame}
             onHideOnlineLobby={handleOnlineMenuToggle}

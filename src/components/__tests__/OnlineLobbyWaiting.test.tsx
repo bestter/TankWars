@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { OnlineLobbyWaiting } from '../OnlineLobbyWaiting';
+import { OnlineLobbyWaiting, type OnlineLobbyWaitingProps } from '../OnlineLobbyWaiting';
 import type { JoinedInfo, SlotUI } from '../onlineLobbyTypes';
 
 // Mock react-i18next
@@ -266,6 +267,38 @@ describe('OnlineLobbyWaiting component', () => {
     expect(mockOnDismissCopyFeedback).toHaveBeenCalledWith(1);
     expect(document.activeElement).toBe(copyBtn1);
   });
+
+  it.each(['fallback field', 'fallback close button', 'another invitation'] as const)(
+    'preserves a usable focus target after a successful retry from %s',
+    (focusedControl) => {
+      const props = {
+        view: 'waiting', roomId: 'ROOM-WAIT', numPlayers: 3,
+        myName: 'Alice', setMyName: mockSetMyName,
+        slotsInfo: defaultSlotsInfo, roster: defaultRoster,
+        isJoining: false, serverGameLive: false, connected: true,
+        onJoin: mockOnJoin, onCopyLink: mockOnCopyLink,
+        onDismissCopyFeedback: mockOnDismissCopyFeedback, onLeaveRoom: mockOnLeaveRoom,
+      } satisfies Omit<OnlineLobbyWaitingProps, 'copyFeedback'>;
+      const renderLobby = (copyFeedback: OnlineLobbyWaitingProps['copyFeedback']) => (
+        <StrictMode>
+          <OnlineLobbyWaiting {...props} copyFeedback={copyFeedback} />
+        </StrictMode>
+      );
+      const { rerender } = render(renderLobby({ 1: { status: 'failed', message: 'link_copy_failed' } }));
+      const field = screen.getByRole('textbox', { name: 'invite_url_label_2' });
+      const close = screen.getByRole('button', { name: 'copy_fallback_close — slot_label_2' });
+      const otherCopy = screen.getByRole('button', { name: 'copy_link — slot_label_1' });
+      const retry = screen.getByRole('button', { name: 'copy_link — slot_label_2' });
+      const controls = { 'fallback field': field, 'fallback close button': close, 'another invitation': otherCopy };
+      fireEvent.click(retry);
+      controls[focusedControl].focus();
+
+      rerender(renderLobby({ 1: { status: 'copied', message: 'link_copied' } }));
+
+      expect(screen.queryByRole('textbox', { name: 'invite_url_label_2' })).toBeNull();
+      expect(document.activeElement).toBe(focusedControl === 'another invitation' ? otherCopy : retry);
+    },
+  );
 
   it('renders live roster with connected count and server live message', () => {
     const fullRoster: JoinedInfo[] = [

@@ -6,7 +6,7 @@ import { useModalDialog } from "./modalDialog";
 export function ProtocolMismatchDialog() {
   const { t } = useTranslation();
   const titleId = useId();
-  const { dialogRef, handleClose } = useModalDialog();
+  const { dialogRef, handleClose } = useModalDialog({ dismissActiveModals: true });
   const refreshBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export function SessionErrorDialog({
 }: SessionErrorDialogProps) {
   const { t } = useTranslation();
   const titleId = useId();
-  const { dialogRef, handleClose } = useModalDialog();
+  const { dialogRef, handleClose } = useModalDialog({ dismissActiveModals: true });
   const retryBtnRef = useRef<HTMLButtonElement | null>(null);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
 
