@@ -34,6 +34,7 @@ export const TankPreview = memo(function TankPreview({ color }: TankPreviewProps
     >
       <canvas
         ref={canvasRef}
+        aria-hidden="true"
         width={40}
         height={22}
         style={{

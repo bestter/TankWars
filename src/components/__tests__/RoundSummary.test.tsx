@@ -267,4 +267,26 @@ describe('RoundSummary', () => {
     expect(primaryBtn.classList.contains('round-summary-next-btn')).toBe(true);
     expect(primaryBtn.style.minWidth).toBe('');
   });
+
+  it('uses a semantic list with decorative swatches and accessible contrast for low-contrast winner colors', () => {
+    const blueWinner = makePlayer({
+      id: 'p-blue',
+      name: 'Blue Leader',
+      money: 500,
+      tank: makeTank('tb', 0, 0, { isDead: false, color: '#5555FF' }),
+    });
+    render(
+      <RoundSummary
+        {...defaultProps}
+        players={[blueWinner, player2]}
+        roundOutcome={{ isDraw: false, winner: blueWinner }}
+      />
+    );
+    const list = screen.getByRole('list');
+    expect(list.tagName).toBe('UL');
+    expect(list.classList.contains('round-summary-list')).toBe(true);
+    expect(document.querySelectorAll('.round-summary-row [aria-hidden="true"]').length).toBe(2);
+    expect(screen.getByText('outcome_winner Blue Leader').style.color).toBe('rgb(127, 127, 255)');
+    expect(screen.getByText('Blue Leader').style.color).toBe('rgb(127, 127, 255)');
+  });
 });

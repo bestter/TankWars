@@ -31,6 +31,7 @@ import {
 } from "./playerControllerUi";
 import { getUniqueAiName } from "./playerNameUi";
 import { usePlayerNameValidation } from "./usePlayerNameValidation";
+import { TANK_COLOR_POOL } from "./accessibleColor";
 
 export interface MainMenuProps {
   onEndurance?: () => void;
@@ -49,20 +50,6 @@ export interface PlayerConfig {
   /** Only meaningful when !isHuman. Defaults to v1 for "IA SIMPLE". */
   aiProfile?: AiProfile;
 }
-
-/** Couleurs tanks jouables (palette VGA rétro classique + extensions néon haute visibilité)
- *  Chaque couleur est distincte et offre un excellent contraste sur fond sombre.
- */
-const TANK_COLOR_POOL: readonly Color[] = [
-  VGA_PALETTE.BLUE, // #5555FF - Joueur 1 (Bleu par défaut)
-  VGA_PALETTE.RED, // #FF5555 - Joueur 2 (Rouge par défaut)
-  VGA_PALETTE.ELECTRIC_CYAN, // #00F7FF
-  VGA_PALETTE.FLASH_GREEN, // #00FF7F
-  VGA_PALETTE.NEON_PINK, // #FF1A8C
-  VGA_PALETTE.CYBER_YELLOW, // #D7FF00
-  VGA_PALETTE.FLUO_ORANGE, // #FF8C00
-  VGA_PALETTE.VOLT_PURPLE, // #B300FF
-] as const;
 
 export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuProps) {
   const { t } = useTranslation();

@@ -206,7 +206,7 @@ function nextDelay(state: GameState, player: Player): number {
 }
 
 export function primaryTarget(targets: readonly Player[], roster: readonly Player[]): Player {
-  return [...targets].sort((a, b) =>
+  return targets.toSorted((a, b) =>
     a.tank.health + a.tank.shield - b.tank.health - b.tank.shield ||
     playerProfileScore(b) - playerProfileScore(a) ||
     roster.indexOf(a) - roster.indexOf(b))[0];
@@ -220,7 +220,7 @@ export function ordinaryExpertTarget(
 ): Player | undefined {
   const enemies = players.filter((player) => player.id !== self.id && !player.tank.isDead);
   return (!neutral && enemies.find((player) => player.id === memory.currentTargetId)) ||
-    [...enemies].sort((a, b) =>
+    enemies.toSorted((a, b) =>
       (neutral ? 0 : Number(a.isHuman) - Number(b.isHuman)) ||
       a.tank.health - b.tank.health ||
       players.indexOf(a) - players.indexOf(b))[0];
@@ -443,7 +443,7 @@ export function chooseExpertPlan(
   let order = 0;
   for (const group of groups) {
     const targetAim = aim.forTarget(primaryTarget(group, state.players).id);
-    const earliest = [...group].sort((a, b) =>
+    const earliest = group.toSorted((a, b) =>
       nextDelay(state, a) - nextDelay(state, b) ||
       state.players.indexOf(a) - state.players.indexOf(b))[0];
     for (const weapon of shooterWeapons) {

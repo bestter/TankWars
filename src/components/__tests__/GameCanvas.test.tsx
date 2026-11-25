@@ -180,11 +180,19 @@ describe("GameCanvas component", () => {
   it("renders canvas element with proper attributes and accessibility roles", () => {
     render(<GameCanvas />);
 
+    const heading = screen.getByRole("heading", { level: 1, name: "combat_heading" });
+    expect(heading.classList.contains("visually-hidden")).toBe(true);
+
     const canvas = screen.getByRole("img");
     expect(canvas).toBeDefined();
     expect(canvas.classList.contains("game-canvas")).toBe(true);
     expect(canvas.getAttribute("aria-label")).toBe("canvas_game_aria_label");
     expect(canvas.tabIndex).toBe(0);
+  });
+
+  it("omits the combat h1 heading when mounted inside EnduranceScreen", () => {
+    render(<GameCanvas endurance={{} as never} />);
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 
   it("updates the stage's height budget when the touch controls wrap or disappear", () => {

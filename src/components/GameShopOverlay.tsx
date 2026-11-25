@@ -3,6 +3,7 @@ import type { ShopClientSessionState } from "./gameCanvasReducer";
 import type { Player } from "../types/player";
 import type { ShopItemId } from "../game/shop/shopTransaction";
 import { WeaponShop } from "./WeaponShop";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 
 interface GameShopOverlayProps {
   readonly gameMode: "local" | "online" | undefined;
@@ -110,7 +111,7 @@ function LocalShopView(props: ShopViewProps) {
         values={{ name: currentPlayer?.name ?? "" }}
         components={{
           strong: (
-            <strong style={{ color: currentPlayer?.tank.color ?? "#fff" }} />
+            <strong style={{ color: currentPlayer ? getAccessibleTankTextColor(currentPlayer.tank.color) : "#fff" }} />
           ),
         }}
       />

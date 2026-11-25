@@ -1,13 +1,25 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MobileControls } from '../MobileControls';
 import type { CurrentTurnInfo } from '../../game/engine/TurnManager';
+import fr from '../../locales/fr.json';
+import en from '../../locales/en.json';
+
+const localeMode = vi.hoisted(() => ({ current: 'key' as 'key' | 'fr' | 'en' }));
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string) => {
+      if (localeMode.current !== 'key') {
+        const dict = (localeMode.current === 'fr' ? fr : en) as Record<string, unknown>;
+        const raw = dict[key];
+        if (typeof raw === 'string') return raw;
+      }
+      return key;
+    },
   }),
 }));
 
@@ -52,6 +64,7 @@ describe('MobileControls', () => {
   };
 
   beforeEach(() => {
+    localeMode.current = 'key';
     vi.clearAllMocks();
     cleanup();
 
@@ -85,10 +98,25 @@ describe('MobileControls', () => {
 
   it('renders correctly on touch devices', () => {
     render(<MobileControls {...defaultProps} />);
-    expect(screen.getByText('ANGLE')).toBeDefined();
-    expect(screen.getByText('POWER')).toBeDefined();
-    expect(screen.getByText('mobile_weapon_btn')).toBeDefined();
-    expect(screen.getByText('mobile_fire_btn')).toBeDefined();
+    expect(screen.getByText('mobile_angle_label')).toBeDefined();
+    expect(screen.getByText('mobile_power_label')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'mobile_weapon_btn' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'mobile_fire_btn' })).toBeDefined();
+  });
+
+  it.each(['fr', 'en'] as const)('renders localized labels and aria-labels in %s without hardcoded French', (locale) => {
+    localeMode.current = locale;
+    const dict = locale === 'fr' ? fr : en;
+    render(<MobileControls {...defaultProps} />);
+
+    expect(screen.getByText(dict.mobile_angle_label)).toBeDefined();
+    expect(screen.getByText(dict.mobile_power_label)).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_angle_decrease })).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_angle_increase })).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_power_decrease })).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_power_increase })).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_weapon_btn })).toBeDefined();
+    expect(screen.getByRole('button', { name: dict.mobile_fire_btn })).toBeDefined();
   });
 
   it('does not render on non-touch devices', () => {
@@ -133,8 +161,8 @@ describe('MobileControls', () => {
       const powerButtons = screen.getAllByText(/▼|▲/);
       powerButtons.forEach((btn) => expect((btn as HTMLButtonElement).disabled).toBe(true));
 
-      expect((screen.getByText('mobile_weapon_btn') as HTMLButtonElement).disabled).toBe(true);
-      expect((screen.getByText('mobile_fire_btn') as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'mobile_weapon_btn' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'mobile_fire_btn' }) as HTMLButtonElement).disabled).toBe(true);
     });
 
     it('disables buttons when input is locked', () => {
@@ -151,8 +179,8 @@ describe('MobileControls', () => {
       const powerButtons = screen.getAllByText(/▼|▲/);
       powerButtons.forEach((btn) => expect((btn as HTMLButtonElement).disabled).toBe(true));
 
-      expect((screen.getByText('mobile_weapon_btn') as HTMLButtonElement).disabled).toBe(true);
-      expect((screen.getByText('mobile_fire_btn') as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'mobile_weapon_btn' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'mobile_fire_btn' }) as HTMLButtonElement).disabled).toBe(true);
     });
 
     it('enables buttons when human turn and input not locked', () => {
@@ -164,22 +192,40 @@ describe('MobileControls', () => {
       const powerButtons = screen.getAllByText(/▼|▲/);
       powerButtons.forEach((btn) => expect((btn as HTMLButtonElement).disabled).toBe(false));
 
-      expect((screen.getByText('mobile_weapon_btn') as HTMLButtonElement).disabled).toBe(false);
-      expect((screen.getByText('mobile_fire_btn') as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole('button', { name: 'mobile_weapon_btn' }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole('button', { name: 'mobile_fire_btn' }) as HTMLButtonElement).disabled).toBe(false);
     });
   });
 
   describe('Interactions', () => {
     it('calls onCycleWeapon correctly', () => {
       render(<MobileControls {...defaultProps} />);
-      fireEvent.click(screen.getByText('mobile_weapon_btn'));
+      fireEvent.click(screen.getByRole('button', { name: 'mobile_weapon_btn' }));
       expect(defaultProps.onCycleWeapon).toHaveBeenCalledWith(1);
     });
 
     it('calls onFire correctly', () => {
       render(<MobileControls {...defaultProps} />);
-      fireEvent.click(screen.getByText('mobile_fire_btn'));
+      fireEvent.click(screen.getByRole('button', { name: 'mobile_fire_btn' }));
       expect(defaultProps.onFire).toHaveBeenCalled();
+    });
+
+    it('supports keyboard Enter and Space on adjust buttons with exactly one step per activation', async () => {
+      const user = userEvent.setup();
+      render(<MobileControls {...defaultProps} />);
+
+      const decAngle = screen.getByRole('button', { name: 'mobile_angle_decrease' });
+      const incPower = screen.getByRole('button', { name: 'mobile_power_increase' });
+
+      decAngle.focus();
+      await user.keyboard('{Enter}');
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(1);
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledWith(-1);
+
+      incPower.focus();
+      await user.keyboard(' ');
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(1);
     });
 
   });
@@ -445,10 +491,10 @@ describe('MobileControls', () => {
       fireEvent.touchStart(btn);
       expect(defaultProps.onAdjustPower).not.toHaveBeenCalled();
 
-      fireEvent.pointerDown(screen.getByText('mobile_fire_btn'), { pointerId: 1, button: 0, buttons: 1 });
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'mobile_fire_btn' }), { pointerId: 1, button: 0, buttons: 1 });
       expect(defaultProps.onFire).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByText('mobile_fire_btn'));
-      fireEvent.click(screen.getByText('mobile_weapon_btn'));
+      fireEvent.click(screen.getByRole('button', { name: 'mobile_fire_btn' }));
+      fireEvent.click(screen.getByRole('button', { name: 'mobile_weapon_btn' }));
       expect(defaultProps.onFire).toHaveBeenCalledTimes(1);
       expect(defaultProps.onCycleWeapon).toHaveBeenCalledTimes(1);
     });
@@ -458,8 +504,8 @@ describe('MobileControls', () => {
       for (const [label] of ADJUST_BUTTONS) {
         expect(screen.getByText(label).classList.contains('retro-mobile-adjust-btn')).toBe(true);
       }
-      expect(screen.getByText('mobile_fire_btn').classList.contains('retro-mobile-adjust-btn')).toBe(false);
-      expect(screen.getByText('mobile_weapon_btn').classList.contains('retro-mobile-adjust-btn')).toBe(false);
+      expect(screen.getByRole('button', { name: 'mobile_fire_btn' }).classList.contains('retro-mobile-adjust-btn')).toBe(false);
+      expect(screen.getByRole('button', { name: 'mobile_weapon_btn' }).classList.contains('retro-mobile-adjust-btn')).toBe(false);
     });
   });
 

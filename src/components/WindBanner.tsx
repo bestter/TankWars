@@ -18,11 +18,13 @@ export function WindBanner({ windForce }: WindBannerProps) {
 
   return (
     <div
+      role="group"
       aria-label={t("wind_aria_label", { label: directionLabel, strength: info.strength })}
       className="wind-banner"
     >
       <span style={{ color: VGA_PALETTE.CYAN }}>{t("wind_title")}</span>
       <span
+        aria-hidden="true"
         style={{
           color:
             info.direction === "CALM" ? VGA_PALETTE.GRAY : VGA_PALETTE.YELLOW,
@@ -38,6 +40,7 @@ export function WindBanner({ windForce }: WindBannerProps) {
         <>
           <span style={{ color: VGA_PALETTE.GREEN }}>{info.strength}</span>
           <div
+            aria-hidden="true"
             className="wind-banner-gauge"
             style={{
               width: 120,

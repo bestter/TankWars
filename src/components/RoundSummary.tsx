@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
 import type { RoundResult } from "../types/game";
 import { VGA_PALETTE } from "../types/game";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 import { useModalDialog } from "./modalDialog";
 
 export interface RoundEndOutcome {
@@ -95,7 +96,7 @@ export function RoundSummary({
         style={{
           fontSize: "13px",
           color: roundOutcome?.winner
-            ? roundOutcome.winner.tank.color
+            ? getAccessibleTankTextColor(roundOutcome.winner.tank.color)
             : VGA_PALETTE.YELLOW,
           marginBottom: 8,
         }}
@@ -110,12 +111,12 @@ export function RoundSummary({
           : t("round_survivors", { alive: alivePlayers.length, total: players.length })}
       </div>
 
-      <div style={{ marginBottom: 14, textAlign: "left" }}>
+      <ul className="round-summary-list" role="list">
         {sorted.map(({ player: p }) => {
           const roundEarnings = result?.earningsByPlayer[p.id] ?? 0;
           const eliminated = p.tank.isDead;
           return (
-            <div
+            <li
               key={p.id}
               className="round-summary-row"
               style={{
@@ -123,6 +124,7 @@ export function RoundSummary({
               }}
             >
               <span
+                aria-hidden="true"
                 style={{
                   display: "inline-block",
                   width: 12,
@@ -135,7 +137,7 @@ export function RoundSummary({
               <span
                 className="round-summary-name"
                 style={{
-                  color: p.tank.color,
+                  color: getAccessibleTankTextColor(p.tank.color),
                   fontWeight: "bold",
                 }}
               >
@@ -158,10 +160,10 @@ export function RoundSummary({
                   </span>
                 )}
               </span>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
       <div
         style={{
@@ -204,7 +206,7 @@ export function RoundSummary({
       </button>
 
       <div
-        style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 8 }}
+        style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginTop: 8 }}
       >
         {t("next_round_note")}
       </div>

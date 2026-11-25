@@ -42,7 +42,19 @@ describe('MainMenu (Hotseat configuration)', () => {
     render(<MainMenu onStartGame={onStartGame} />);
 
     expect(screen.getByText('main_title')).toBeDefined();
-    expect(screen.getByText('battle_configuration')).toBeDefined();
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'battle_configuration' }),
+    ).toBeDefined();
+
+    const numGroup = screen.getByRole('group', { name: 'num_players' });
+    expect(numGroup).toBeDefined();
+    const btn2 = screen.getByRole('button', { name: '2' });
+    const btn3 = screen.getByRole('button', { name: '3' });
+    const btn4 = screen.getByRole('button', { name: '4' });
+    expect(numGroup.contains(btn2)).toBe(true);
+    expect(btn2.getAttribute('aria-pressed')).toBe('true');
+    expect(btn3.getAttribute('aria-pressed')).toBe('false');
+    expect(btn4.getAttribute('aria-pressed')).toBe('false');
 
     // 2 player inputs by default
     const inputs = screen.getAllByRole('textbox');
@@ -62,6 +74,9 @@ describe('MainMenu (Hotseat configuration)', () => {
     // Click 3 players
     const btn3 = screen.getByRole('button', { name: '3' });
     fireEvent.click(btn3);
+    expect(btn3.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '2' }).getAttribute('aria-pressed')).toBe('false');
+    expect(onStartGame).not.toHaveBeenCalled();
 
     let inputs = screen.getAllByRole('textbox');
     expect(inputs.length).toBe(3);
@@ -69,6 +84,9 @@ describe('MainMenu (Hotseat configuration)', () => {
     // Click 4 players
     const btn4 = screen.getByRole('button', { name: '4' });
     fireEvent.click(btn4);
+    expect(btn4.getAttribute('aria-pressed')).toBe('true');
+    expect(btn3.getAttribute('aria-pressed')).toBe('false');
+    expect(onStartGame).not.toHaveBeenCalled();
 
     inputs = screen.getAllByRole('textbox');
     expect(inputs.length).toBe(4);

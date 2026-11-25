@@ -24,15 +24,24 @@ describe("LanguageSwitcher", () => {
         language: "en",
         changeLanguage: changeLanguageMock,
       },
-      t: vi.fn(),
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
       ready: true,
     } as unknown as ReturnType<typeof reactI18next.useTranslation>);
   });
 
-  it("renders both language buttons", () => {
+  it("renders both language buttons in a named group with lang and aria-pressed", () => {
     render(<LanguageSwitcher />);
-    expect(screen.getByRole("button", { name: "EN" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "FR" })).toBeInTheDocument();
+    const group = screen.getByRole("group", { name: "language_switcher_label" });
+    const enButton = screen.getByRole("button", { name: "EN" });
+    const frButton = screen.getByRole("button", { name: "FR" });
+    expect(group).toContainElement(enButton);
+    expect(group).toContainElement(frButton);
+    expect(frButton).toHaveAttribute("lang", "fr");
+    expect(enButton).toHaveAttribute("lang", "en");
+    expect(enButton).toHaveAttribute("aria-pressed", "true");
+    expect(frButton).toHaveAttribute("aria-pressed", "false");
+    expect(enButton).toHaveClass("active");
+    expect(frButton).not.toHaveClass("active");
   });
 
   it("highlights the current language button (EN)", () => {
@@ -44,6 +53,8 @@ describe("LanguageSwitcher", () => {
     // In testing-library/jest-dom/vitest, hex codes may be converted to rgb.
     // The test framework may evaluate style matches in different formats.
     expect(enButton).toHaveStyle(`background: ${VGA_PALETTE.GREEN}`);
+    expect(enButton).toHaveAttribute("aria-pressed", "true");
+    expect(frButton).toHaveAttribute("aria-pressed", "false");
 
     // #111 might be converted to rgb(17, 17, 17) or remain as #111 depending on jsdom.
     expect(frButton.style.background).toContain("rgb(17, 17, 17)"); // or "#111"
@@ -55,7 +66,7 @@ describe("LanguageSwitcher", () => {
         language: "fr",
         changeLanguage: changeLanguageMock,
       },
-      t: vi.fn(),
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
       ready: true,
     } as unknown as ReturnType<typeof reactI18next.useTranslation>);
 
@@ -65,6 +76,9 @@ describe("LanguageSwitcher", () => {
     const frButton = screen.getByRole("button", { name: "FR" });
 
     expect(frButton).toHaveStyle(`background: ${VGA_PALETTE.GREEN}`);
+    expect(frButton).toHaveAttribute("aria-pressed", "true");
+    expect(frButton).toHaveClass("active");
+    expect(enButton).toHaveAttribute("aria-pressed", "false");
     expect(enButton.style.background).toContain("rgb(17, 17, 17)"); // "#111"
   });
 
@@ -88,7 +102,7 @@ describe("LanguageSwitcher", () => {
         language: "fr-FR", // Testing startsWith
         changeLanguage: changeLanguageMock,
       },
-      t: vi.fn(),
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
       ready: true,
     } as unknown as ReturnType<typeof reactI18next.useTranslation>);
 
@@ -101,13 +115,23 @@ describe("LanguageSwitcher", () => {
     expect(changeLanguageMock).toHaveBeenCalledWith("en");
   });
 
+  it("supports keyboard activation with Enter and Space", async () => {
+    const user = userEvent.setup();
+    render(<LanguageSwitcher />);
+
+    const frButton = screen.getByRole("button", { name: "FR" });
+    frButton.focus();
+    await user.keyboard("{Enter}");
+    expect(changeLanguageMock).toHaveBeenCalledWith("fr");
+  });
+
   it("falls back to 'en' if i18n.language is undefined", () => {
     vi.mocked(reactI18next.useTranslation).mockReturnValue({
       i18n: {
         language: undefined,
         changeLanguage: changeLanguageMock,
       },
-      t: vi.fn(),
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
       ready: true,
     } as unknown as ReturnType<typeof reactI18next.useTranslation>);
 

@@ -4,6 +4,8 @@ import {
   useRef,
   useEffect,
   useState,
+  type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -59,6 +61,8 @@ export const MobileControls = memo(function MobileControls({
   const activeHoldRef = useRef<number | null>(null);
   // Pointeur dont la capture implicite a été libérée volontairement.
   const releasedCapturePointerRef = useRef<number | null>(null);
+  // Évite un second pas sur l'événement click synthétisé après pointerDown.
+  const suppressNextClickTargetRef = useRef<HTMLButtonElement | null>(null);
 
   const stopAction = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -93,6 +97,7 @@ export const MobileControls = memo(function MobileControls({
   // ordinaires du HUD ne modifient pas ces dépendances.
   useEffect(() => {
     return () => {
+      suppressNextClickTargetRef.current = null;
       stopAction();
     };
   }, [controlsActive, playerId, stopAction]);
@@ -121,6 +126,7 @@ export const MobileControls = memo(function MobileControls({
       if (!canInteract || activeHoldRef.current !== null) return;
       const target = e.currentTarget;
       startAction(e.pointerId, action);
+      suppressNextClickTargetRef.current = target;
       // Libère la capture implicite (tactile) pour recevoir pointerleave.
       if (target.hasPointerCapture?.(e.pointerId)) {
         releasedCapturePointerRef.current = e.pointerId;
@@ -132,8 +138,18 @@ export const MobileControls = memo(function MobileControls({
       }
     },
     onPointerUp: stopIfOwner,
-    onPointerCancel: stopIfOwner,
-    onPointerLeave: stopIfOwner,
+    onPointerCancel: (e: ButtonPointerEvent) => {
+      if (suppressNextClickTargetRef.current === e.currentTarget) {
+        suppressNextClickTargetRef.current = null;
+      }
+      stopIfOwner(e);
+    },
+    onPointerLeave: (e: ButtonPointerEvent) => {
+      if (suppressNextClickTargetRef.current === e.currentTarget) {
+        suppressNextClickTargetRef.current = null;
+      }
+      stopIfOwner(e);
+    },
     onPointerMove: (e: ButtonPointerEvent) => {
       if (activeHoldRef.current !== e.pointerId) return;
       // Avec un appui combiné, pointerup n'arrive qu'au relâchement du dernier
@@ -160,6 +176,25 @@ export const MobileControls = memo(function MobileControls({
       }
       stopIfOwner(e);
     },
+    onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
+      if (e.key === "Enter" || e.key === " ") {
+        suppressNextClickTargetRef.current = null;
+      }
+    },
+    onBlur: (e: { currentTarget: HTMLButtonElement }) => {
+      if (suppressNextClickTargetRef.current === e.currentTarget) {
+        suppressNextClickTargetRef.current = null;
+      }
+    },
+    onClick: (e: MouseEvent<HTMLButtonElement>) => {
+      if (suppressNextClickTargetRef.current === e.currentTarget) {
+        suppressNextClickTargetRef.current = null;
+        return;
+      }
+      suppressNextClickTargetRef.current = null;
+      if (!canInteract) return;
+      action();
+    },
   });
 
   if (!isTouch) return null;
@@ -169,13 +204,13 @@ export const MobileControls = memo(function MobileControls({
       {/* Colonne Gauche: Angle */}
       <div className="mobile-control-group">
         <span className="mobile-group-label" style={{ color: VGA_PALETTE.CYAN }}>
-          ANGLE
+          {t("mobile_angle_label")}
         </span>
         <div className="mobile-button-row">
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
-            aria-label="Réduire l'angle"
+            aria-label={t("mobile_angle_decrease")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustAngle(-1))}
           >
@@ -184,7 +219,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
-            aria-label="Augmenter l'angle"
+            aria-label={t("mobile_angle_increase")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustAngle(1))}
           >
@@ -196,13 +231,13 @@ export const MobileControls = memo(function MobileControls({
       {/* Colonne Milieu: Puissance */}
       <div className="mobile-control-group">
         <span className="mobile-group-label" style={{ color: VGA_PALETTE.YELLOW }}>
-          POWER
+          {t("mobile_power_label")}
         </span>
         <div className="mobile-button-row">
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
-            aria-label="Réduire la puissance"
+            aria-label={t("mobile_power_decrease")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustPower(-1))}
           >
@@ -211,7 +246,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
-            aria-label="Augmenter la puissance"
+            aria-label={t("mobile_power_increase")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustPower(1))}
           >
@@ -228,7 +263,8 @@ export const MobileControls = memo(function MobileControls({
           disabled={!canInteract}
           onClick={() => onCycleWeapon(1)}
         >
-          {t("mobile_weapon_btn", "WEAPON 🔄")}
+          <span>{t("mobile_weapon_btn")}</span>{" "}
+          <span aria-hidden="true">🔄</span>
         </button>
         <button
           type="button"
@@ -241,7 +277,8 @@ export const MobileControls = memo(function MobileControls({
             color: canInteract ? VGA_PALETTE.WHITE : VGA_PALETTE.GRAY,
           }}
         >
-          {t("mobile_fire_btn", "FIRE ! 💥")}
+          <span>{t("mobile_fire_btn")}</span>{" "}
+          <span aria-hidden="true">💥</span>
         </button>
       </div>
     </div>

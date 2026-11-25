@@ -276,4 +276,91 @@ describe('useOnlineLobby', () => {
     // WebSocket close must have been called on unmount
     expect(mockWs.close).toHaveBeenCalled();
   });
+
+  it('announces copy success without prompt, deduplicates repeated messages, cancels prior timer, and clears on unmount', async () => {
+    vi.useFakeTimers();
+    const promptSpy = vi.fn();
+    vi.stubGlobal('prompt', promptSpy);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+
+    expect(writeText).toHaveBeenCalledWith('https://tankwars.pages.dev/?room=R1&slot=1&token=T1');
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(result.current.copyFeedback[1]).toBeDefined();
+
+    // Repeat click before expiry cancels prior timer and appends \u00A0 for VoiceOver
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied\u00A0' });
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current.copyFeedback[1]).toBeDefined();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Unmount with an active timer cleans up cleanly
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    unmount();
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('reports copy failure via copyFeedback without calling window.prompt', async () => {
+    vi.useFakeTimers();
+    const promptSpy = vi.fn();
+    vi.stubGlobal('prompt', promptSpy);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 });

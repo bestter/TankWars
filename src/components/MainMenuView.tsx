@@ -1,4 +1,4 @@
-import type { MouseEventHandler } from "react";
+import { useId, type MouseEventHandler } from "react";
 import { useTranslation } from "react-i18next";
 import { version } from "../../package.json";
 import type { Color } from "../types/game";
@@ -53,6 +53,7 @@ export function MainMenuView({
   onEndurance,
 }: MainMenuViewProps) {
   const { t } = useTranslation();
+  const numPlayersLabelId = useId();
 
   return (
     <div className="retro-menu-container" onClickCapture={onMenuClickCapture}>
@@ -63,15 +64,16 @@ export function MainMenuView({
             {t("retro_subtitle")}
           </p>
 
-          <div className="retro-section">{t("battle_configuration")}</div>
-          <div className="retro-num-row">
-            <span style={{ color: "#AAAAAA", fontSize: 12 }}>
+          <h2 className="retro-section">{t("battle_configuration")}</h2>
+          <div className="retro-num-row" role="group" aria-labelledby={numPlayersLabelId}>
+            <span id={numPlayersLabelId} style={{ color: "#AAAAAA", fontSize: 12 }}>
               {t("num_players")}
             </span>
             {[2, 3, 4].map((count) => (
               <button
                 key={count}
                 type="button"
+                aria-pressed={count === numPlayers}
                 className={`retro-num-btn ${count === numPlayers ? "active" : ""}`}
                 onClick={() => onNumPlayersChange(count as 2 | 3 | 4)}
               >

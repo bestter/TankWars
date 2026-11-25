@@ -81,8 +81,28 @@ describe('OnlineLobby', () => {
     // Empty name disables join button
     expect(joinBtn.hasAttribute('disabled')).toBe(true);
 
-    const nameInput = screen.getByPlaceholderText('enter_name_placeholder');
+    const nameInput = screen.getByLabelText('join_name_label');
     fireEvent.change(nameInput, { target: { value: 'Pilot X' } });
     expect(joinBtn.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('announces lobby errors via role="alert"', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'unavailable',
+    }) as unknown as typeof fetch;
+
+    try {
+      render(<OnlineLobby onStartGame={() => {}} onExitToLocalMenu={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'create_room_btn' }));
+      const alert = await screen.findByText('room_error_generic');
+      expect(alert.getAttribute('role')).toBe('alert');
+    } finally {
+      globalThis.fetch = originalFetch;
+      consoleSpy.mockRestore();
+    }
   });
 });

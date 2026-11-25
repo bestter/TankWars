@@ -55,13 +55,21 @@ describe('OnlineLobbyCreate component', () => {
       />
     );
 
+    const group = screen.getByRole('group', { name: 'num_players_label' });
     const btn2 = screen.getByRole('button', { name: '2' });
     const btn3 = screen.getByRole('button', { name: '3' });
     const btn4 = screen.getByRole('button', { name: '4' });
 
+    expect(group.contains(btn2)).toBe(true);
     expect(btn2.className).toContain('active');
+    expect(btn2.getAttribute('aria-pressed')).toBe('true');
     expect(btn3.className).not.toContain('active');
+    expect(btn3.getAttribute('aria-pressed')).toBe('false');
     expect(btn4.className).not.toContain('active');
+    expect(btn4.getAttribute('aria-pressed')).toBe('false');
+    expect(
+      screen.getByRole('heading', { level: 2, name: /battle_configuration/ }),
+    ).toBeDefined();
 
     fireEvent.click(btn3);
     expect(mockOnChangeNumPlayers).toHaveBeenCalledWith(3);

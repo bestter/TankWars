@@ -136,3 +136,58 @@ export function SessionErrorDialog({
     </dialog>
   );
 }
+
+export interface OnlineQuitConfirmDialogProps {
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}
+
+export function OnlineQuitConfirmDialog({
+  onCancel,
+  onConfirm,
+}: OnlineQuitConfirmDialogProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const { dialogRef, handleClose } = useModalDialog();
+  const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    cancelBtnRef.current?.focus();
+  }, []);
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+    onCancel();
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="retro-modal retro-modal-confirm"
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      onClose={handleClose}
+    >
+      <h2 id={titleId} className="retro-modal-confirm-title">
+        {t("online_quit_confirm")}
+      </h2>
+      <div className="retro-modal-confirm-actions">
+        <button
+          ref={cancelBtnRef}
+          type="button"
+          className="retro-btn"
+          onClick={onCancel}
+        >
+          {t("online_quit_cancel")}
+        </button>
+        <button
+          type="button"
+          className="round-summary-menu-btn"
+          onClick={onConfirm}
+        >
+          {t("online_quit_confirm_btn")}
+        </button>
+      </div>
+    </dialog>
+  );
+}

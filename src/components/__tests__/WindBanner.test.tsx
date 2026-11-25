@@ -23,7 +23,9 @@ describe("WindBanner", () => {
     const result = WindBanner({ windForce: 0 });
 
     expect(result.props.className).toBe("wind-banner");
+    expect(result.props.role).toBe("group");
     expect(result.props["aria-label"]).toBe("wind_aria_label wind_dir_calm 0");
+    expect(result.props.children[1].props["aria-hidden"]).toBe("true");
     expect(result.props.children[1].props.children).toBe("—");
     expect(result.props.children[4].props.children).toBe("wind_no_drift");
   });
@@ -31,10 +33,13 @@ describe("WindBanner", () => {
   it("renders a mid-strength EAST bar from formatWindDisplay", () => {
     const result = WindBanner({ windForce: 25 });
     const children = result.props.children;
+    expect(children[1].props["aria-hidden"]).toBe("true");
     expect(children[1].props.children).toBe("→");
     expect(children[2].props.children).toBe("wind_dir_east");
 
-    const innerBar = children[3].props.children[1].props.children;
+    const gauge = children[3].props.children[1];
+    expect(gauge.props["aria-hidden"]).toBe("true");
+    const innerBar = gauge.props.children;
     expect(innerBar.props.style.background).toBe(VGA_PALETTE.YELLOW);
     expect(innerBar.props.style.width).toBe(58);
   });

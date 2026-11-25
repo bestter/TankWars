@@ -8,6 +8,7 @@ import {
 } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
 import { SHIELD_METAL_COLOR } from "../game/round/shield";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 import { getShopPolicy } from "../game/shop/shopPolicy";
 import {
   applyShopTransaction,
@@ -92,8 +93,8 @@ function getIncButtonStyle(
 ) {
   return {
     background: enabled ? activeBackground : "#222",
-    color: enabled ? activeColor : "#555",
-    borderColor: enabled ? activeColor : VGA_PALETTE.DARK_GRAY,
+    color: enabled ? activeColor : "#999999",
+    borderColor: enabled ? activeColor : "#777777",
     cursor: enabled ? "pointer" : "not-allowed",
   } as const;
 }
@@ -162,6 +163,7 @@ function WeaponShopRow({
   onBuySell,
 }: WeaponShopRowProps) {
   const { t } = useTranslation();
+  const weaponName = t(WEAPON_KEYS[weaponId]);
   const row = computeWeaponRowState({
     weaponId,
     player,
@@ -178,7 +180,7 @@ function WeaponShopRow({
           style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 6 }}
         >
           <span style={{ color: row.def.color, fontWeight: "bold", overflowWrap: "break-word" }}>
-            {t(WEAPON_KEYS[weaponId])}
+            {weaponName}
           </span>
           <span style={{ color: VGA_PALETTE.YELLOW }}>
             {row.def.price}$
@@ -250,6 +252,7 @@ function WeaponShopRow({
           type="button"
           onClick={() => onBuySell(weaponId, 1)}
           disabled={!row.canBuy}
+          aria-label={t("shop_buy_weapon_label", { weapon: weaponName })}
           aria-describedby={row.buyDescribedBy}
           className="retro-inc-btn"
           style={row.buyButtonStyle}
@@ -261,6 +264,7 @@ function WeaponShopRow({
           type="button"
           onClick={() => onBuySell(weaponId, -1)}
           disabled={!row.canSell}
+          aria-label={t("shop_sell_weapon_label", { weapon: weaponName })}
           aria-describedby={row.sellDescribedBy}
           className="retro-inc-btn"
           style={row.sellButtonStyle}
@@ -387,6 +391,7 @@ export function WeaponShop({
         }}
       >
         <span
+          aria-hidden="true"
           style={{
             display: "inline-block",
             width: 14,
@@ -399,7 +404,7 @@ export function WeaponShop({
         />
         <span
           style={{
-            color: player.tank.color,
+            color: getAccessibleTankTextColor(player.tank.color),
             fontWeight: "bold",
             fontSize: "18px",
             overflowWrap: "anywhere",
@@ -485,7 +490,7 @@ export function WeaponShop({
         </button>
 
         <div
-          style={{ fontSize: "12px", color: VGA_PALETTE.DARK_GRAY, marginTop: 6 }}
+          style={{ fontSize: "12px", color: VGA_PALETTE.GRAY, marginTop: 6 }}
         >
           {t("ai_auto_buy_note")}
         </div>

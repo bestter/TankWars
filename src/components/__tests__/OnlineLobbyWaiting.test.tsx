@@ -114,8 +114,10 @@ describe('OnlineLobbyWaiting component', () => {
 
     expect(screen.getByText('you_are_player_2')).toBeDefined();
 
-    const input = screen.getByRole('textbox');
+    const input = screen.getByLabelText('join_name_label') as HTMLInputElement;
     expect(input.getAttribute('maxLength')).toBe('16');
+    expect(input.getAttribute('autocomplete')).toBe('nickname');
+    expect(input.getAttribute('enterkeyhint')).toBe('done');
 
     // Type a name
     fireEvent.change(input, { target: { value: 'Bob Player' } });
@@ -124,6 +126,7 @@ describe('OnlineLobbyWaiting component', () => {
     // Join button disabled because myName is empty
     const joinBtn = screen.getByRole('button', { name: 'join_room_btn' });
     expect(joinBtn.hasAttribute('disabled')).toBe(true);
+    expect(joinBtn.getAttribute('type')).toBe('submit');
 
     // Re-render with valid myName
     rerender(
@@ -149,8 +152,11 @@ describe('OnlineLobbyWaiting component', () => {
     const activeJoinBtn = screen.getByRole('button', { name: 'join_room_btn' });
     expect(activeJoinBtn.hasAttribute('disabled')).toBe(false);
 
-    fireEvent.click(activeJoinBtn);
+    fireEvent.submit(input.closest('form')!);
     expect(mockOnJoin).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(activeJoinBtn);
+    expect(mockOnJoin).toHaveBeenCalledTimes(2);
 
     // When isJoining is true
     rerender(
@@ -176,8 +182,8 @@ describe('OnlineLobbyWaiting component', () => {
     expect(screen.getByRole('button', { name: 'joining' }).hasAttribute('disabled')).toBe(true);
   });
 
-  it('renders waiting view with slot links, copy link buttons, and AI indicators', () => {
-    render(
+  it('renders waiting view with disambiguated slot links, external status regions, failure URL fallback, and localized AI indicators', () => {
+    const { rerender } = render(
       <OnlineLobbyWaiting
         view="waiting"
         roomId="ROOM-WAIT"
@@ -187,7 +193,7 @@ describe('OnlineLobbyWaiting component', () => {
         slotsInfo={defaultSlotsInfo}
         roster={defaultRoster}
         isJoining={false}
-        copyFeedback={{ 1: true }}
+        copyFeedback={{ 1: { status: 'copied', message: 'link_copied' } }}
         serverGameLive={false}
         connected={true}
         onJoin={mockOnJoin}
@@ -196,19 +202,55 @@ describe('OnlineLobbyWaiting component', () => {
       />
     );
 
-    expect(screen.getByText('room_created')).toBeDefined();
+    expect(screen.getByRole('heading', { level: 2, name: 'room_created' })).toBeDefined();
 
-    // Slot 0 (copy_link), Slot 1 (link_copied because copyFeedback[1] === true)
-    expect(screen.getByText('copy_link')).toBeDefined();
-    expect(screen.getByText('link_copied')).toBeDefined();
+    // Disambiguated Copy buttons and Open links per slot
+    const copyBtn0 = screen.getByRole('button', { name: 'copy_link — slot_label_1' });
+    const copyBtn1 = screen.getByRole('button', { name: 'copy_link — slot_label_2' });
+    expect(copyBtn0).not.toBe(copyBtn1);
+    expect(copyBtn1.hasAttribute('data-copied')).toBe(true);
+
+    const openLink0 = screen.getByRole('link', { name: 'open_link — slot_label_1' });
+    const openLink1 = screen.getByRole('link', { name: 'open_link — slot_label_2' });
+    expect(openLink0).not.toBe(openLink1);
+
+    // Status live region lives outside the button
+    const statuses = screen.getAllByRole('status');
+    expect(statuses.some((el) => el.textContent === 'link_copied' && !copyBtn1.contains(el))).toBe(true);
 
     // Click copy link for Slot 0
-    const copyBtn0 = screen.getByText('copy_link');
     fireEvent.click(copyBtn0);
     expect(mockOnCopyLink).toHaveBeenCalledWith(defaultSlotsInfo[0].url, 0);
 
-    // AI slot indicator
-    expect(screen.getByText('(IA — pas de lien)')).toBeDefined();
+    // Localized role and AI slot indicator (no hardcoded French)
+    expect(screen.getByText(/slot_label_2 — controller_human/)).toBeDefined();
+    expect(screen.getByText(/slot_label_3 — slot_ai_expert/)).toBeDefined();
+    expect(screen.getByText('lobby_ai_no_link')).toBeDefined();
+
+    // Copy failure shows external status and non-blocking selectable fallback URL
+    rerender(
+      <OnlineLobbyWaiting
+        view="waiting"
+        roomId="ROOM-WAIT"
+        numPlayers={3}
+        myName="Alice"
+        setMyName={mockSetMyName}
+        slotsInfo={defaultSlotsInfo}
+        roster={defaultRoster}
+        isJoining={false}
+        copyFeedback={{ 1: { status: 'failed', message: 'link_copy_failed' } }}
+        serverGameLive={false}
+        connected={true}
+        onJoin={mockOnJoin}
+        onCopyLink={mockOnCopyLink}
+        onLeaveRoom={mockOnLeaveRoom}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'copy_link — slot_label_2' }).hasAttribute('data-failed')).toBe(true);
+    expect(screen.getAllByRole('status').some((el) => el.textContent === 'link_copy_failed')).toBe(true);
+    const fallbackInput = screen.getByRole('textbox', { name: 'invite_url_label_2' }) as HTMLInputElement;
+    expect(fallbackInput.readOnly).toBe(true);
+    expect(fallbackInput.value).toBe(defaultSlotsInfo[1].url);
   });
 
   it('renders live roster with connected count and server live message', () => {
@@ -270,6 +312,7 @@ describe('OnlineLobbyWaiting component', () => {
     fireEvent.click(leaveBtn);
     expect(mockOnLeaveRoom).toHaveBeenCalledTimes(1);
 
-    expect(screen.getByText('● Connecté')).toBeDefined();
+    expect(screen.getByText('lobby_connected')).toBeDefined();
+    expect(document.querySelector('[aria-hidden="true"]')?.textContent).toContain('●');
   });
 });

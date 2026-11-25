@@ -156,7 +156,7 @@ export class AuthoritativeShotQueue {
       | ((message: ShotMessage) => AuthoritativeReplayMode),
   ): void {
     let shouldLockForCatchUp = false;
-    for (const message of [...shots].sort((a, b) => a.shotId - b.shotId)) {
+    for (const message of shots.toSorted((a, b) => a.shotId - b.shotId)) {
       const resolvedMode = typeof mode === "function" ? mode(message) : mode;
       this.host.acknowledgePendingFire(message);
       if (

@@ -5,7 +5,7 @@ import type { RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../t
 import type { Player } from '../types/player';
 import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
 import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
-import type { JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
+import type { CopySlotFeedback, CopySlotStatus, JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
 
 export function useOnlineLobby({
   initialParticipation,
@@ -40,7 +40,9 @@ export function useOnlineLobby({
   const [storageWarning, setStorageWarning] = useState<OnlineEntryMessage | null>(null);
   const participationRef = useRef(initialParticipation);
   const [error, setError] = useState<string | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
+  const [copyFeedback, setCopyFeedback] = useState<Record<number, CopySlotFeedback | undefined>>({});
+  const copyTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const lastCopyAnnouncementRef = useRef<string>('');
 
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(false);
@@ -322,13 +324,18 @@ export function useOnlineLobby({
     return () => clearInterval(retryId);
   }, [view]);
 
-  // Cleanup WS on unmount
+  // Cleanup WS and copy feedback timers on unmount
   useEffect(() => {
     const currentWsRef = wsRef;
+    const copyTimers = copyTimersRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearReconnectTimer();
+      for (const timer of copyTimers.values()) {
+        clearTimeout(timer);
+      }
+      copyTimers.clear();
       connectionRef.current = null;
       if (currentWsRef.current && !gameStartedRef.current) {
         currentWsRef.current.onclose = null;
@@ -436,16 +443,44 @@ export function useOnlineLobby({
   // --- Copy helper ---
   const copyLink = async (url: string | null, slot: number) => {
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopyFeedback((prev) => ({ ...prev, [slot]: true }));
-      setTimeout(() => {
-        setCopyFeedback((prev) => ({ ...prev, [slot]: false }));
-      }, 1400);
-    } catch {
-      // Fallback: prompt
-      prompt('Copiez ce lien :', url);
+    const previousTimer = copyTimersRef.current.get(slot);
+    if (previousTimer !== undefined) {
+      clearTimeout(previousTimer);
+      copyTimersRef.current.delete(slot);
     }
+
+    let status: CopySlotStatus = 'copied';
+    try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(url);
+    } catch {
+      status = 'failed';
+    }
+
+    if (!mountedRef.current) return;
+
+    const baseMessage = t(status === 'copied' ? 'link_copied' : 'link_copy_failed');
+    const announcement =
+      baseMessage === lastCopyAnnouncementRef.current ? `${baseMessage}\u00A0` : baseMessage;
+    lastCopyAnnouncementRef.current = announcement;
+
+    setCopyFeedback((prev) => ({
+      ...prev,
+      [slot]: { status, message: announcement },
+    }));
+
+    const timer = setTimeout(() => {
+      copyTimersRef.current.delete(slot);
+      if (!mountedRef.current) return;
+      setCopyFeedback((prev) => {
+        const next = { ...prev };
+        delete next[slot];
+        return next;
+      });
+    }, 2000);
+    copyTimersRef.current.set(slot, timer);
   };
 
   // --- Change a slot type (host only, before create) ---

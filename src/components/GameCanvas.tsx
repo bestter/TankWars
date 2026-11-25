@@ -343,6 +343,40 @@ function isBlockingModalErrorActive(state: GameCanvasState): boolean {
   );
 }
 
+function noop(): void {}
+
+function resolveAdvisorLockedTargetId(
+  advisor: ReturnType<typeof useGameSession>["advisor"],
+  playerId: string | undefined,
+): string | undefined {
+  if (advisor.lockFor) return advisor.lockFor(playerId);
+  return advisor.view.playerId === playerId ? advisor.view.lockedTargetId : undefined;
+}
+
+function CombatAuxiliaryHeader({
+  endurance,
+  gameMode,
+  diagnostics,
+}: {
+  readonly endurance?: EnduranceSession;
+  readonly gameMode?: "local" | "online";
+  readonly diagnostics: ReturnType<typeof useGameSession>["diagnostics"];
+}) {
+  const { t } = useTranslation();
+  if (endurance) return null;
+  const showDiagnostics = gameMode === "local" && Boolean(diagnostics) && Boolean(DiagnosticPanel);
+  return (
+    <>
+      <h1 className="visually-hidden">{t("combat_heading")}</h1>
+      {showDiagnostics && diagnostics && DiagnosticPanel && (
+        <Suspense fallback={null}>
+          <DiagnosticPanel source={diagnostics} />
+        </Suspense>
+      )}
+    </>
+  );
+}
+
 export function GameCanvas({
   endurance,
   initialPlayers,
@@ -420,10 +454,17 @@ export function GameCanvas({
     winner: state.winner,
     hasBlockingError: hasBlockingModalError,
   });
+  const lockedTargetId = resolveAdvisorLockedTargetId(advisor, turnInfo?.playerId);
+  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>): void => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleCanvasClick();
+    }
+  };
 
   return (
     <div className="combat-shell" ref={combatShellRef}>
-      {!endurance && gameMode === "local" && diagnostics && DiagnosticPanel && <Suspense fallback={null}><DiagnosticPanel source={diagnostics} /></Suspense>}
+      <CombatAuxiliaryHeader endurance={endurance} gameMode={gameMode} diagnostics={diagnostics} />
       <InlineSessionErrors
         suppressed={hasBlockingModalError}
         networkError={state.networkError}
@@ -458,12 +499,7 @@ export function GameCanvas({
             ref={canvasRef}
             className="game-canvas"
             onClick={handleCanvasClick}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleCanvasClick();
-              }
-            }}
+            onKeyDown={handleCanvasKeyDown}
             tabIndex={0}
             role="img"
             aria-label={t("canvas_game_aria_label")}
@@ -477,8 +513,8 @@ export function GameCanvas({
             shopDisplayPlayer={shopDisplayPlayer}
             localShopDone={localShopDone}
             freeWeapons={freeWeapons}
-            onNextRound={endurance ? () => {} : handleNextRound}
-            onNewGameFromSummary={endurance ? () => {} : handleNewGameFromSummary}
+            onNextRound={endurance ? noop : handleNextRound}
+            onNewGameFromSummary={endurance ? noop : handleNewGameFromSummary}
             onShopBuySell={handleShopBuySell}
             onShopReady={handleShopReady}
             onRetry={retryRoundPreparation}
@@ -504,7 +540,7 @@ export function GameCanvas({
         gamePhase={gamePhase}
         turnInfo={turnInfo}
         gameMode={gameMode}
-        lockedTargetId={advisor.lockFor ? advisor.lockFor(turnInfo?.playerId) : (advisor.view.playerId === turnInfo?.playerId ? advisor.view.lockedTargetId : undefined)}
+        lockedTargetId={lockedTargetId}
         onToggleLock={advisor.toggleLock}
       />
 

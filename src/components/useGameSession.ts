@@ -727,6 +727,7 @@ export function useGameSession({
   // Global SPACE to skip round celebration fireworks
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (typeof document !== "undefined" && document.querySelector("dialog[open]") !== null) return;
       if (
         gamePhaseRef.current === "CELEBRATION" &&
         (e.key === " " ||

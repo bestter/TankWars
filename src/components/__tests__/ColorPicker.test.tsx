@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ColorPicker } from '../ColorPicker';
 import type { Color } from '../../types/game';
 
@@ -35,8 +36,13 @@ describe('ColorPicker', () => {
       />
     );
 
+    const group = screen.getByRole('group', { name: 'color_picker_group_label' });
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(3);
+    expect(group.contains(buttons[0])).toBe(true);
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    expect(buttons[1].getAttribute('aria-pressed')).toBe('false');
+    expect(buttons[2].getAttribute('aria-pressed')).toBe('false');
 
     // Check titles
     expect(buttons[0].title).toBe('color_select_title_#ff0000');
@@ -78,8 +84,9 @@ describe('ColorPicker', () => {
     expect(buttons[2].className).toContain('unavailable');
     expect(buttons[2].title).toBe('color_unavailable_title');
 
-    // Should have an X mark
+    // Should have an X mark hidden from assistive technologies
     expect(buttons[2].textContent).toBe('✕');
+    expect(buttons[2].querySelector('span')?.getAttribute('aria-hidden')).toBe('true');
 
     // Others should be enabled
     expect(buttons[0].hasAttribute('disabled')).toBe(false);
@@ -143,5 +150,26 @@ describe('ColorPicker', () => {
     expect(buttons[2].hasAttribute('disabled')).toBe(true);
     expect(buttons[2].className).toContain('unavailable');
     expect(buttons[2].textContent).toBe('✕');
+  });
+
+  it('supports custom group label and keyboard selection', async () => {
+    const user = userEvent.setup();
+    render(
+      <ColorPicker
+        selectedColor={mockColorPool[0]}
+        onColorSelect={mockOnColorSelect}
+        unavailableColors={new Set()}
+        colorPool={mockColorPool}
+        groupLabel="Player 1 color"
+      />
+    );
+
+    const group = screen.getByRole('group', { name: 'Player 1 color' });
+    expect(group).toBeDefined();
+
+    const buttons = screen.getAllByRole('button');
+    buttons[1].focus();
+    await user.keyboard('{Enter}');
+    expect(mockOnColorSelect).toHaveBeenCalledWith(mockColorPool[1]);
   });
 });

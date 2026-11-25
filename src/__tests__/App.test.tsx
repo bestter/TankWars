@@ -236,7 +236,7 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.queryByRole('button', { name: 'join_room_btn' })).toBeNull();
   });
 
-  it('confirms before returning from a restored online game', () => {
+  it('confirms via a native dialog focusing Cancel before returning from a restored online game, without window.confirm', () => {
     const players = [
       makePlayer({ id: 'player-1', name: 'Host' }),
       makePlayer({ id: 'player-2', name: 'Guest', tank: makeTank('tank-2', 620, 300) }),
@@ -278,18 +278,49 @@ describe('App component (State and Lifecycle integration)', () => {
       'tankwars-online-session-v2',
       JSON.stringify(session),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm')
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
+    persistParticipation({
+      version: 1,
+      room: 'room-abc',
+      slot: 0,
+      token: 'TOKEN1',
+      name: 'Host',
+      engaged: true,
+      mode: 'host',
+      slots: [],
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     render(<App />);
     const returnButton = screen.getByRole('button', { name: 'Mock Return To Menu' });
     fireEvent.click(returnButton);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('dialog', { name: 'online_quit_confirm' }) as HTMLDialogElement;
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog.getAttribute('role')).toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBeNull();
+    const cancelBtn = screen.getByRole('button', { name: 'online_quit_cancel' });
+    expect(document.activeElement).toBe(cancelBtn);
+
+    // Canceling by button keeps match open
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
 
+    // Canceling by Esc keeps match open
     fireEvent.click(returnButton);
+    const dialogForEsc = screen.getByRole('dialog', { name: 'online_quit_confirm' });
+    fireEvent(dialogForEsc, new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
+
+    // Confirming clears online storage + participation and returns to menu
+    fireEvent.click(returnButton);
+    fireEvent.click(screen.getByRole('button', { name: 'online_quit_confirm_btn' }));
     expect(screen.getByText('main_title')).toBeDefined();
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    expect(window.sessionStorage.getItem('tankwars-online-session-v2')).toBeNull();
+    expect(readParticipation()).toBeNull();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it('keeps staging hotseat-only even with an invitation URL and a saved online session', () => {
