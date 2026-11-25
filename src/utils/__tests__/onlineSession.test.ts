@@ -457,6 +457,25 @@ describe('onlineSession', () => {
     expect(read?.canvas.fireRejection).toBe('NO_AMMO');
   });
 
+  it('restores reinforcement counters, an in-flight cancellation and a partially used shield', () => {
+    const session = makeSession();
+    Object.assign(session.players[0].tank, { maxShield: 40, shield: 75 });
+    session.canvas.shopPlayers = structuredClone(session.players);
+    session.canvas.shopPlayers[1].reinforcedShieldPending = true;
+    session.canvas.shopSession = {
+      ...session.canvas.shopSession,
+      epoch: 2,
+      counters: { [session.players[1].id]: { REINFORCED_SHIELD: 1 } },
+      pendingIntent: { kind: 'BUY_SELL', actionId: 'recover-shield', shopEpoch: 2,
+        equipmentId: 'REINFORCED_SHIELD', delta: -1 },
+      denial: 'SHIELD_ALREADY_REINFORCED',
+    };
+    expect(persistOnlineSession(session)).toBe(true);
+    expect(readOnlineSession()).toMatchObject({ players: session.players, canvas: {
+      shopPlayers: session.canvas.shopPlayers, shopSession: session.canvas.shopSession,
+    } });
+  });
+
   it('accepts and restores ZEUS_TURN as a valid FireRejectedReason', () => {
     expect(isFireRejectedReason('ZEUS_TURN')).toBe(true);
     const rawSession = makeSession();

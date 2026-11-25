@@ -25,7 +25,8 @@ export function fingerprint(value: unknown): string {
   for (let i = 0; i < data.length; i++) { a = Math.imul(a ^ data.charCodeAt(i), 16777619); b = Math.imul(b, 33) ^ data.charCodeAt(i); }
   return `${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}`;
 }
-export const RULES_ID = `local-physics-0.13.3/${fingerprint(WEAPON_REGISTRY)}`;
+export const LEGACY_SHIELD_RULES_ID = `local-physics-0.13.3/${fingerprint(WEAPON_REGISTRY)}`;
+export const RULES_ID = LEGACY_SHIELD_RULES_ID + "/reinforced-shield";
 
 export function sealArchive(archive: ShotArchive): ShotArchive {
   return { ...archive, integrity: fingerprint({ ...archive, integrity: undefined,

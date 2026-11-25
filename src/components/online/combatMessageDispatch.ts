@@ -177,6 +177,7 @@ export function dispatchCombatMessage(
         player.tank.health = 0;
         player.tank.shield = 0;
         player.tank.isDead = true;
+        player.tank.shield = 0;
       }
     }
     if (ctx.gamePhaseRef.current === "COMBAT" && !isReplayingShots) {

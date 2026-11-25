@@ -975,6 +975,8 @@ export class GameRoom extends DurableObject {
       return;
     }
 
+    if (this.state.started && this.state.combatSchemaVersion !== ONLINE_PROTOCOL_VERSION) return;
+
     // Handle name identification / update (sent by client after WS open)
     if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
       const name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;
@@ -2192,6 +2194,7 @@ export class GameRoom extends DurableObject {
     message: ShopBuySellMessage,
   ): Promise<void> {
     if (!this.state) return;
+    const target = message.equipmentId ? { equipmentId: message.equipmentId } : { weaponId: message.weaponId };
     const actionKey = makeShopActionKey('BUY_SELL', slot, message.actionId);
     const previous = this.state.processedShopActions[actionKey];
     if (previous) {
@@ -2199,7 +2202,7 @@ export class GameRoom extends DurableObject {
         if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
           await this.rejectShopAction(slot, {
             type: 'SHOP_REJECTED', shopEpoch: previous.result.shopEpoch,
-            actionId: message.actionId, weaponId: message.weaponId, delta: message.delta,
+            actionId: message.actionId, ...target, delta: message.delta,
             reason: 'STALE_SHOP_EPOCH',
           }, 'BUY_SELL');
           return;
@@ -2215,7 +2218,7 @@ export class GameRoom extends DurableObject {
           type: 'SHOP_REJECTED',
           shopEpoch: this.state.shopSession?.shopEpoch ?? null,
           actionId: message.actionId,
-          weaponId: message.weaponId,
+          ...target,
           delta: message.delta,
           reason: 'MALFORMED',
         } satisfies ShopRejectedMessage);
@@ -2241,7 +2244,7 @@ export class GameRoom extends DurableObject {
         type: 'SHOP_REJECTED',
         shopEpoch: session?.shopEpoch ?? null,
         actionId: message.actionId,
-        weaponId: message.weaponId,
+        ...target,
         delta: message.delta,
         reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
       }, 'BUY_SELL');
@@ -2253,7 +2256,7 @@ export class GameRoom extends DurableObject {
         type: 'SHOP_REJECTED',
         shopEpoch: session.shopEpoch,
         actionId: message.actionId,
-        weaponId: message.weaponId,
+        ...target,
         delta: message.delta,
         reason: 'MALFORMED',
       }, 'BUY_SELL');
@@ -2262,7 +2265,7 @@ export class GameRoom extends DurableObject {
     const result = applyShopTransaction({
       player,
       counters: session.purchasesByPlayerId,
-      weaponId: message.weaponId,
+      ...target,
       delta: message.delta,
     });
     if (!result.ok) {
@@ -2270,7 +2273,7 @@ export class GameRoom extends DurableObject {
         type: 'SHOP_REJECTED',
         shopEpoch: session.shopEpoch,
         actionId: message.actionId,
-        weaponId: message.weaponId,
+        ...target,
         delta: message.delta,
         reason: result.reason,
       }, 'BUY_SELL');

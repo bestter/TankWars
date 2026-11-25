@@ -74,6 +74,7 @@ describe("processNextShopperIfAI", () => {
       CLUSTER: 12,
       DRILLER: 4,
       BULLDOZER: 4,
+      REINFORCED_SHIELD: 1,
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: "APPLY_LOCAL_SHOP_TRANSACTION" }),
@@ -114,10 +115,10 @@ describe("processNextShopperIfAI", () => {
       clearShopAiTimeout: vi.fn(),
       finishShopPhase,
     };
-    const recordedWeapons: string[] = [];
+    const recordedItems: string[] = [];
     vi.spyOn(host.endurance!, "beginShopVisit").mockReturnValue("visit-2");
     vi.spyOn(host.endurance!, "endShopVisit").mockImplementation((_id, _player, purchases) => {
-      recordedWeapons.push(...purchases.map((p) => p.weaponId));
+      recordedItems.push(...purchases.map((p) => p.weaponId ?? p.equipmentId));
     });
 
     processNextShopperIfAI(host);
@@ -129,8 +130,8 @@ describe("processNextShopperIfAI", () => {
       NUKE: 1,
       THERMONUCLEAR: 1,
     });
-    expect(host.shopPlayersRef.current[0].money).toBe(5_000 - 75 - 135 - 420 - 2_500);
+    expect(host.shopPlayersRef.current[0].money).toBe(5_000 - 75 - 135 - 420 - 2_500 - 420);
     expect(host.shopPlayersRef.current[0].tank.currentWeapon).toBe("MISSILE");
-    expect(recordedWeapons).toEqual(["GRENADE", "CLUSTER", "NUKE", "THERMONUCLEAR"]);
+    expect(recordedItems).toEqual(["GRENADE", "CLUSTER", "NUKE", "THERMONUCLEAR", "REINFORCED_SHIELD"]);
   });
 });

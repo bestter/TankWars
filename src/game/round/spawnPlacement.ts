@@ -1,4 +1,5 @@
 import { TANK_HITBOX_WIDTH } from "../combatConstants";
+import { shieldAtRoundStart, standardShieldCapacity } from "./shield";
 import type { Player } from "../../types/player";
 import {
   TERRAIN_MATERIAL, spawnAcceptsMaterial,
@@ -107,17 +108,19 @@ export function selectSpawnPositions(
 }
 
 /** Produces a fresh round roster; identities, money and inventory are preserved. */
-export function resetPlayersForSpawn(players: readonly Player[], xs: readonly number[], terrain: SpawnTerrain): Player[] {
+export function resetPlayersForSpawn(players: readonly Player[], xs: readonly number[], terrain: SpawnTerrain, carryShield = true): Player[] {
   return players.map((player, index) => {
     const x = xs[index];
-    const maxShield = player.tank.maxShield ?? Math.floor(player.tank.maxHealth * 0.4);
+    const { reinforcedShieldPending, ...rosterPlayer } = player;
+    const maxShield = standardShieldCapacity(player.tank);
+    const shield = shieldAtRoundStart(player.tank, reinforcedShieldPending === true, carryShield);
     return {
-      ...player,
+      ...rosterPlayer,
       inventory: { ...player.inventory },
       tank: {
         ...player.tank,
         position: { x, y: terrain.getHeightAt(x) },
-        health: player.tank.maxHealth, shield: maxShield, maxShield, isDead: false,
+        health: player.tank.maxHealth, shield, maxShield, isDead: false,
         angle: x < terrain.width / 2 ? 45 : 135, power: 50, currentWeapon: "MISSILE",
         lastHitBy: undefined, lastDirectAttackerId: undefined, hitReaction: undefined,
       },

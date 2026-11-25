@@ -33,6 +33,37 @@ function createPlayer(overrides: Partial<Player> = {}): Player {
   };
 }
 
+describe("reinforced shield transactions", () => {
+  const equipmentId = "REINFORCED_SHIELD" as const;
+  const player = createPlayer({ money: 420 });
+
+  it("reserves 420 without equipping and refunds exactly once without restoring the quota", () => {
+    const buy = applyShopTransaction({ player, counters: {}, equipmentId, delta: 1 });
+    expect(buy).toMatchObject({ ok: true, player: { money: 0, reinforcedShieldPending: true, tank: { shield: 40 } },
+      counters: { [player.id]: { REINFORCED_SHIELD: 1 } } });
+    expect(buy.player.inventory).toEqual(player.inventory);
+    const cancel = applyShopTransaction({ player: buy.player, counters: buy.counters, equipmentId, delta: -1 });
+    expect(cancel).toEqual({ ok: true, player, counters: buy.counters });
+    expect(applyShopTransaction({ player: cancel.player, counters: cancel.counters, equipmentId, delta: -1 }))
+      .toMatchObject({ ok: false, reason: "NO_STOCK", player: { money: 420 } });
+    expect(applyShopTransaction({ player: cancel.player, counters: cancel.counters, equipmentId, delta: 1 }))
+      .toMatchObject({ ok: false, reason: "PURCHASE_LIMIT" });
+    const other = { ...player, id: "another-player" };
+    expect(applyShopTransaction({ player: other, counters: cancel.counters, equipmentId, delta: 1 }).ok).toBe(true);
+  });
+
+  it("checks the exact balance and standard, and allows a destroyed tank with old shield", () => {
+    expect(applyShopTransaction({ player: { ...player, money: 419 }, counters: {}, equipmentId, delta: 1 }))
+      .toMatchObject({ ok: false, reason: "INSUFFICIENT_FUNDS" });
+    const reinforced = { ...player, tank: { ...player.tank, shield: 41 } };
+    expect(applyShopTransaction({ player: reinforced, counters: {}, equipmentId, delta: 1 }))
+      .toMatchObject({ ok: false, reason: "SHIELD_ALREADY_REINFORCED" });
+    expect(applyShopTransaction({ player: reinforced, counters: {}, equipmentId, delta: -1 }).ok).toBe(false);
+    const destroyed = { ...reinforced, tank: { ...reinforced.tank, isDead: true } };
+    expect(applyShopTransaction({ player: destroyed, counters: {}, equipmentId, delta: 1 }).ok).toBe(true);
+  });
+});
+
 describe("politique boutique", () => {
   it("définit les plafonds globaux sans vendre MISSILE", () => {
     expect(getShopPolicy("NUKE")).toEqual({

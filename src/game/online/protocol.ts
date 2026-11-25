@@ -11,15 +11,18 @@ import {
 } from "../../types/game";
 import type { Player } from "../../types/player";
 import { ALL_WEAPON_IDS, type WeaponId } from "../../types/weapon";
-import type {
-  FireInventoryDenial,
-  ShopDenial,
-  ShopVisitCounters,
+import {
+  REINFORCED_SHIELD,
+  type FireInventoryDenial,
+  type ShopDenial,
+  type ShopPurchaseTarget,
+  type ShopVisitCounters,
 } from "../shop/shopTransaction";
+import { reinforcedShieldCapacity } from "../round/shield";
 import { isValidActionId } from "./actionId";
 
-export const ONLINE_PROTOCOL_VERSION = 5 as const;
-export const MINIMUM_CLIENT_PROTOCOL_VERSION = 5 as const;
+export const ONLINE_PROTOCOL_VERSION = 6 as const;
+export const MINIMUM_CLIENT_PROTOCOL_VERSION = 6 as const;
 export const PROTOCOL_MISMATCH_CLOSE_CODE = 4402 as const;
 
 export interface RequestGameStartMessage {
@@ -55,13 +58,24 @@ export interface ShopEnterMessage {
   roundNumber: number;
 }
 
-export interface ShopBuySellMessage {
+interface ShopBuySellIntent {
   type: "SHOP_BUY_SELL";
   shopEpoch: number;
   actionId: string;
-  weaponId: WeaponId;
   delta: 1 | -1;
 }
+
+interface ShopWeaponBuySellMessage extends ShopBuySellIntent {
+  weaponId: WeaponId;
+  equipmentId?: never;
+}
+
+interface ShopEquipmentBuySellMessage extends ShopBuySellIntent {
+  equipmentId: typeof REINFORCED_SHIELD;
+  weaponId?: never;
+}
+
+export type ShopBuySellMessage = ShopWeaponBuySellMessage | ShopEquipmentBuySellMessage;
 
 export interface ShopReadyMessage {
   type: "SHOP_READY";
@@ -110,6 +124,7 @@ export interface ShopRejectedMessage {
   shopEpoch: number | null;
   actionId?: string;
   weaponId?: WeaponId;
+  equipmentId?: typeof REINFORCED_SHIELD;
   delta?: 1 | -1;
   reason: ShopDenial;
 }
@@ -343,8 +358,9 @@ function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   for (const playerId in value) {
     const playerCounters = value[playerId];
     if (!isRecord(playerCounters)) return false;
-    for (const weaponId in playerCounters) {
-      if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(playerCounters[weaponId])) {
+    for (const item in playerCounters) {
+      const count = playerCounters[item];
+      if (item === REINFORCED_SHIELD ? count !== 1 : !isWeaponId(item) || !isSafeNonNegativeInteger(count)) {
         return false;
       }
     }
@@ -354,6 +370,7 @@ function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
 
 const SHOP_DENIALS: readonly ShopDenial[] = [
   "STOCK_CAP",
+  "SHIELD_ALREADY_REINFORCED",
   "PURCHASE_LIMIT",
   "INSUFFICIENT_FUNDS",
   "NO_STOCK",
@@ -367,7 +384,7 @@ const SHOP_DENIALS: readonly ShopDenial[] = [
   "STALE_SHOP_EPOCH",
 ];
 
-function isShopDenial(value: unknown): value is ShopDenial {
+export function isShopDenial(value: unknown): value is ShopDenial {
   return (
     typeof value === "string" &&
     SHOP_DENIALS.includes(value as ShopDenial)
@@ -515,7 +532,8 @@ export function isPlayers(value: unknown, earnings = false): value is Player[] {
           Number.isFinite(tank.shield) &&
           typeof tank.maxShield === "number" &&
           Number.isFinite(tank.maxShield) &&
-          tank.maxShield >= 0 && (earnings || (tank.shield >= 0 && tank.shield <= tank.maxShield)) &&
+          tank.maxShield >= 0 && (earnings || (tank.shield >= 0 && tank.shield <= reinforcedShieldCapacity(tank.maxShield))) &&
+          (entry.reinforcedShieldPending === undefined || entry.reinforcedShieldPending === true) &&
           typeof tank.isDead === "boolean" &&
           typeof tank.color === "string" &&
           Object.values(VGA_PALETTE).some((color) => color === tank.color) &&
@@ -584,7 +602,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
       return (
         isSafeNonNegativeInteger(value.shopEpoch) &&
         isValidActionId(value.actionId) &&
-        isWeaponId(value.weaponId) &&
+        readShopPurchaseTarget(value) !== null &&
         (value.delta === 1 || value.delta === -1)
       );
     case "SHOP_READY":
@@ -661,6 +679,7 @@ export function isStrictOnlineMessage(value: unknown): value is StrictOnlineMess
           isSafeNonNegativeInteger(value.shopEpoch)) &&
         (value.actionId === undefined || isValidActionId(value.actionId)) &&
         (value.weaponId === undefined || isWeaponId(value.weaponId)) &&
+        (value.equipmentId === undefined || (value.weaponId === undefined && value.equipmentId === REINFORCED_SHIELD)) &&
         (value.delta === undefined || value.delta === 1 || value.delta === -1) &&
         isShopDenial(value.reason)
       );
@@ -729,14 +748,21 @@ export type ShopBuySellDecodeResult =
   | { readonly ok: true; readonly message: ShopBuySellMessage }
   | { readonly ok: false; readonly rejection: ShopRejectedMessage };
 
+export function readShopPurchaseTarget(value: Record<string, unknown>): ShopPurchaseTarget | null {
+  if (value.equipmentId === undefined && isWeaponId(value.weaponId)) return { weaponId: value.weaponId };
+  if (value.weaponId === undefined && value.equipmentId === REINFORCED_SHIELD) return { equipmentId: REINFORCED_SHIELD };
+  return null;
+}
+
 export function decodeShopBuySellMessage(
   value: unknown,
 ): ShopBuySellDecodeResult {
   if (isRecord(value) && value.type === "SHOP_BUY_SELL") {
+    const target = readShopPurchaseTarget(value);
     if (
       isSafeNonNegativeInteger(value.shopEpoch) &&
       isValidActionId(value.actionId) &&
-      isWeaponId(value.weaponId) &&
+      target !== null &&
       (value.delta === 1 || value.delta === -1)
     ) {
       return {
@@ -745,7 +771,7 @@ export function decodeShopBuySellMessage(
           type: "SHOP_BUY_SELL",
           shopEpoch: value.shopEpoch,
           actionId: value.actionId,
-          weaponId: value.weaponId,
+          ...target,
           delta: value.delta,
         },
       };
@@ -758,7 +784,7 @@ export function decodeShopBuySellMessage(
           ? value.shopEpoch
           : null,
         ...(isValidActionId(value.actionId) ? { actionId: value.actionId } : {}),
-        ...(isWeaponId(value.weaponId) ? { weaponId: value.weaponId } : {}),
+        ...target,
         ...(value.delta === 1 || value.delta === -1
           ? { delta: value.delta }
           : {}),

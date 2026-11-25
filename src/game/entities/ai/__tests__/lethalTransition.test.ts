@@ -35,6 +35,18 @@ function searched(status: ThreatSearchResult["status"]): ThreatSearchResult {
 }
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
+it.each([[40, 5], [41, 2.5]])("forecasts the same five-level fall at %i shield", (shield, loss) => {
+  const f = fixture(100);
+  f.target.tank.position.y -= 10;
+  Object.assign(f.target.tank, { maxShield: 40, shield });
+  const before = structuredClone(f.target.tank);
+  const result = resolvePhysicalShot(f.state, f.terrain, f.self, "MISSILE", { angle: 135, power: 50 }, { captureAfterState: true });
+  expect(result.complete).toBe(true);
+  const after = getForecastAfterState(result)?.state.players.find(player => player.id === f.target.id);
+  expect(after?.tank).toMatchObject({ health: before.health - loss, shield });
+  expect(f.target.tank).toEqual(before);
+});
+
 describe("new lethal transition #352", () => {
   it("retains the stabilized state when profit reuses a failed survival forecast without another simulation", () => {
     const f = fixture(100), cache = createExpertForecastCache();

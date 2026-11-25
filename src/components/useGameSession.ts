@@ -31,6 +31,7 @@ import {
 } from "../game/entities/ai/aiShopHelper";
 import type { Player } from "../types/player";
 import type { WeaponId } from "../types/weapon";
+import type { ShopItemId } from "../game/shop/shopTransaction";
 import type { GamePhase } from "../types/game";
 import {
   gameCanvasReducer,
@@ -831,9 +832,9 @@ export function useGameSession({
     }
   };
 
-  const handleShopBuySell = (weaponId: WeaponId, delta: 1 | -1): void => {
+  const handleShopBuySell = (item: ShopItemId, delta: 1 | -1): void => {
     if (isFreeWeapons) return;
-    shopBuySell(shopRoundHost, weaponId, delta);
+    shopBuySell(shopRoundHost, item, delta);
   };
 
   const handleShopReady = (): void => {

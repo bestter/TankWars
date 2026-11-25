@@ -39,7 +39,7 @@ export function prepareRound(
     return {
       ok: true,
       map: { ...data, width, height, roundNumber, wind: rollRoundWind(rng) },
-      players: resetPlayersForSpawn(players, xs, terrain),
+      players: resetPlayersForSpawn(players, xs, terrain, roundNumber > 1),
     };
   }
   return { ok: false, reason: "ROUND_PREPARATION_FAILED" };

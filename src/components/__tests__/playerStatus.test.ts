@@ -29,6 +29,16 @@ function turn(overrides: Partial<CurrentTurnInfo> = {}): CurrentTurnInfo {
   };
 }
 
+describe("reinforced shield status", () => {
+  it("shows the enhanced gauge at 75 points and returns to the standard gauge at 40", () => {
+    const player = makePlayer();
+    Object.assign(player.tank, { shield: 75, maxShield: 40 });
+    expect(copyLivingPlayerStatus([player])[0]).toMatchObject({ shield: 75, maxShield: 160 });
+    player.tank.shield = 40;
+    expect(copyLivingPlayerStatus([player])[0]).toMatchObject({ shield: 40, maxShield: 40 });
+  });
+});
+
 describe("player status copy and format", () => {
   it("opens only for an unlocked human aim during combat", () => {
     expect(isAimingInspectionVisible({ gamePhase: "COMBAT", turnInfo: turn() })).toBe(true);

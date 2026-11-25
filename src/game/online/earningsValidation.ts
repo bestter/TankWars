@@ -1,11 +1,16 @@
 import { FALL_DISTANCE_MAX_PX, type Player } from "../../types/player";
+import { reinforcedShieldCapacity } from "../round/shield";
 import { ALL_WEAPON_IDS } from "../../types/weapon";
 import type { EarningsRejectedReason, RoundOutcomeWire, ShotEarningsMessage } from "./protocol";
 
 /** Snapshot only after rewards have been calculated; never alter simulation deaths. */
 export function earningsPlayers(players: readonly Player[]): Player[] {
   const copy = structuredClone([...players]);
-  for (const player of copy) if (player.tank.isDead) player.tank.health = 0;
+  for (const player of copy) {
+    if (!player.tank.isDead) continue;
+    player.tank.health = 0;
+    player.tank.shield = 0;
+  }
   return copy;
 }
 
@@ -35,11 +40,11 @@ export function validateEarnings(
     if (ALL_WEAPON_IDS.some((id) => (p.inventory[id] ?? 0) !== (original.inventory[id] ?? 0)) || t.currentWeapon !== before.currentWeapon) return fail("INVENTORY_MISMATCH");
     if (before.isDead && !t.isDead) return fail("RESURRECTION");
     if ((!t.isDead && t.health <= 0) || (t.isDead && t.health > 0) || report.deadSlots[index] !== t.isDead) return fail("DEATH_INCONSISTENT");
-    if (t.maxHealth !== before.maxHealth || t.maxShield !== before.maxShield || t.health < 0 || t.health > before.maxHealth || t.shield < 0 || t.shield > before.maxShield) return fail("CAP_MISMATCH");
+    if (t.maxHealth !== before.maxHealth || t.maxShield !== before.maxShield || t.health < 0 || t.health > before.maxHealth || t.shield < 0 || t.shield > reinforcedShieldCapacity(before.maxShield)) return fail("CAP_MISMATCH");
     if (t.health > before.health || t.shield > before.shield) return fail("CAP_MISMATCH");
     players.push({ ...original, inventory: { ...original.inventory }, tank: {
       ...before, position: { ...t.position }, angle: t.angle, power: t.power,
-      health: t.health, shield: t.shield, isDead: t.isDead,
+      health: t.health, shield: t.isDead ? 0 : t.shield, isDead: t.isDead,
       hitReaction: t.hitReaction ? { wasDirectHit: t.hitReaction.wasDirectHit,
         fallDistance: Math.min(FALL_DISTANCE_MAX_PX, t.hitReaction.fallDistance) } : undefined,
     } });

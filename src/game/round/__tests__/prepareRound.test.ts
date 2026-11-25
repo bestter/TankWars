@@ -15,6 +15,29 @@ function roster(count = 4, profile: AiProfile = "v1-random") {
 
 
 describe("complete bounded round preparation", () => {
+  it("keeps paid reinforcement through a failed preparation and consumes it once on success", () => {
+    const [buyer, survivor, destroyed, standard] = roster();
+    for (const player of [buyer, survivor, destroyed, standard]) player.tank.maxShield = 40;
+    buyer.reinforcedShieldPending = true;
+    buyer.tank.isDead = true;
+    buyer.tank.shield = 75;
+    survivor.tank.shield = 75;
+    destroyed.tank.shield = 75;
+    destroyed.tank.isDead = true;
+    standard.tank.shield = 25;
+    const players = [buyer, survivor, destroyed, standard];
+    const impossible = makeRoundMap();
+    impossible.materials = impossible.materials.map((_, x) => x % 2 === 0 ? "ROCK" : "DIRT");
+    expect(prepareRound(players, 800, 480, 2, true, () => 0.5, () => impossible).ok).toBe(false);
+    expect(buyer.reinforcedShieldPending).toBe(true);
+    const ready = prepareRound(players, 800, 480, 2, true, () => 0.5, () => makeRoundMap());
+    if (!ready.ok) throw new Error(ready.reason);
+    expect(ready.players.map(({ tank }) => [tank.shield, tank.maxShield])).toEqual([[160, 40], [75, 40], [40, 40], [40, 40]]);
+    expect(ready.players[0]).not.toHaveProperty("reinforcedShieldPending");
+    ready.players[0].tank.shield = 75;
+    const next = prepareRound(ready.players, 800, 480, 3, true, () => 0.5, () => makeRoundMap());
+    expect(next.ok && next.players[0].tank.shield).toBe(75);
+  });
   it("preserves the extracted generator's values and draw order", () => {
     const rng = createSeededRNG(18);
     const next = vi.fn(() => rng.next());

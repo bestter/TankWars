@@ -43,8 +43,8 @@ describe('Worker Entrypoint', () => {
       };
       expect(data.ok).toBe(true);
       expect(data.service).toBe('tankwars-api');
-      expect(data.protocolVersion).toBe(5);
-      expect(data.minimumClientProtocolVersion).toBe(5);
+      expect(data.protocolVersion).toBe(6);
+      expect(data.minimumClientProtocolVersion).toBe(6);
       expectSecurityHeaders(response);
     });
   });

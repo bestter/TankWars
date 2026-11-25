@@ -3,6 +3,16 @@ from ledger import Ledger
 
 
 class LedgerTests(unittest.TestCase):
+    def test_reinforcement_purchase_debits_money_without_ammunition(self):
+        ledger = Ledger()
+        player = dict(id="p", money=420, inventory={"GRENADE": 3})
+        ledger(dict(event=dict(kind="block-start", players=[player])))
+        purchase = dict(playerId="p", equipmentId="REINFORCED_SHIELD", quantity=1, price=420,
+                        moneyBefore=420, moneyAfter=0)
+        ledger(dict(event=dict(kind="purchase", purchase=purchase)))
+        ledger(dict(event=dict(kind="shop-end", player={**player, "money": 0})))
+        self.assertEqual(ledger.ledger["p"], dict(money=0, inventory={"GRENADE": 3}))
+
     def test_free_round_opening_stocks_and_later_consumption(self):
         ledger = Ledger()
         ledger(dict(event=dict(kind="session-start", metadata=dict(config=dict(freeWeapons=True)))))

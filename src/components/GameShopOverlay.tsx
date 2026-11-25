@@ -1,7 +1,7 @@
 import { Trans, useTranslation } from "react-i18next";
 import type { ShopClientSessionState } from "./gameCanvasReducer";
 import type { Player } from "../types/player";
-import type { WeaponId } from "../types/weapon";
+import type { ShopItemId } from "../game/shop/shopTransaction";
 import { WeaponShop } from "./WeaponShop";
 
 interface GameShopOverlayProps {
@@ -12,7 +12,7 @@ interface GameShopOverlayProps {
   readonly isLocalShopTurn: boolean;
   readonly localShopDone: boolean;
   readonly shopSession: ShopClientSessionState;
-  readonly onBuySell: (weaponId: WeaponId, delta: 1 | -1) => void;
+  readonly onBuySell: (item: ShopItemId, delta: 1 | -1) => void;
   readonly onReady: () => void;
 }
 

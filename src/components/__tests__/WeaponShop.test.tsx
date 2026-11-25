@@ -72,6 +72,28 @@ describe('WeaponShop', () => {
     cleanup();
   });
 
+  it('puts reinforcement first and exposes purchase, cancellation and the spent quota', () => {
+    const player = makePlayer({ money: 420, inventory: {}, tank: makeTank('shielded', 100, 300, { maxShield: 40, shield: 40 }) });
+    const onBuySell = vi.fn();
+    const props = { player, shopIndex: 0, totalShoppers: 2, onBuySell, onReady: vi.fn() };
+    const { rerender } = render(<WeaponShop {...props} />);
+    const buy = screen.getByRole('button', { name: 'shop_shield_buy' });
+    const description = document.getElementById(buy.getAttribute('aria-describedby') ?? '');
+    expect(description?.textContent).toContain('420 $');
+    expect(description?.parentElement).toBe(description?.parentElement?.parentElement?.firstElementChild);
+    fireEvent.click(buy);
+    expect(onBuySell).toHaveBeenLastCalledWith('REINFORCED_SHIELD', 1);
+    const purchaseCounters = { REINFORCED_SHIELD: 1 };
+    rerender(<WeaponShop {...props} player={{ ...player, money: 0, reinforcedShieldPending: true }} purchaseCounters={purchaseCounters} />);
+    fireEvent.click(screen.getByRole('button', { name: 'shop_shield_cancel' }));
+    expect(onBuySell).toHaveBeenLastCalledWith('REINFORCED_SHIELD', -1);
+    rerender(<WeaponShop {...props} purchaseCounters={purchaseCounters} />);
+    expect(screen.getByRole('button', { name: 'shop_shield_buy' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('status').textContent).toContain('shop_reason_purchase_limit');
+    rerender(<WeaponShop {...props} player={{ ...player, id: 'next', money: 419 }} />);
+    expect(screen.getByRole('status').textContent).toContain('shop_reason_insufficient_funds');
+  });
+
   it('renders player name, funds and weapon catalog', () => {
     const player = makePlayer({
       id: 'p-1',

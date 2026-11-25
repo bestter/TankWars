@@ -14,6 +14,7 @@
  */
 
 import { VGA_PALETTE } from "../../types/game";
+import { SHIELD_METAL_COLOR } from "../round/shield";
 
 /**
  * Draws a detailed procedural tank sprite.
@@ -36,6 +37,7 @@ export function drawTankSprite(
   angle: number,
   turretAngle: number,
   primaryColor: string,
+  shieldOutline = 0,
 ): void {
   const hullRad = (angle * Math.PI) / 180;
   const turretRad = (turretAngle * Math.PI) / 180;
@@ -55,6 +57,14 @@ export function drawTankSprite(
   // ============================================
   const trackWidth = width * 0.96;
   const trackY = chassisTop + chassisHeight - 1.0; // overlaps chassis bottom slightly for solid contact look
+
+  // Paint the exposed half of each metallic stroke behind the sprite.
+  if (shieldOutline > 0) {
+    ctx.strokeStyle = SHIELD_METAL_COLOR;
+    ctx.lineWidth = shieldOutline * 2;
+    ctx.lineJoin = "round";
+    ctx.strokeRect(-trackWidth / 2, trackY, trackWidth, trackHeight);
+  }
 
   // Main track body (dark base)
   ctx.fillStyle = VGA_PALETTE.DARK_GRAY;
@@ -108,6 +118,13 @@ export function drawTankSprite(
   ctx.lineTo(-hw + bevel, chassisTop + bevel);
   ctx.lineTo(-hw + bevel, chBottom - bevel * 0.9);
   ctx.closePath();
+  if (shieldOutline > 0) {
+    ctx.save();
+    ctx.strokeStyle = SHIELD_METAL_COLOR;
+    ctx.lineWidth = shieldOutline * 2;
+    ctx.stroke();
+    ctx.restore();
+  }
   ctx.fill();
   ctx.stroke();
 
@@ -142,6 +159,11 @@ export function drawTankSprite(
   // Main dome (arc/circle) - classic rounded turret silhouette
   ctx.beginPath();
   ctx.arc(0, -turretRadius * 0.28, turretRadius * 0.92, 0, Math.PI * 2);
+  if (shieldOutline > 0) {
+    ctx.strokeStyle = SHIELD_METAL_COLOR;
+    ctx.lineWidth = shieldOutline * 2;
+    ctx.stroke();
+  }
   ctx.fill();
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;
   ctx.lineWidth = Math.max(0.7, width * 0.04);
@@ -159,6 +181,16 @@ export function drawTankSprite(
   const barrelLength = width * 0.83;
   const barrelThickness = width * 0.12;
   const shadowThickness = barrelThickness + width * 0.08;
+
+  if (shieldOutline > 0) {
+    ctx.strokeStyle = SHIELD_METAL_COLOR;
+    ctx.lineWidth = shadowThickness + shieldOutline * 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(barrelLength + width * 0.04, 0);
+    ctx.stroke();
+  }
 
   // Shadow/outline pass (slightly behind for retro volume)
   ctx.strokeStyle = VGA_PALETTE.DARK_GRAY;

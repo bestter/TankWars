@@ -29,11 +29,15 @@ class Ledger:
             account = ledger[purchase['playerId']]
             require(account['money'] == purchase['moneyBefore'], 'ECONOMIC_RECONCILIATION_FAILED')
             require(purchase['moneyAfter'] == purchase['moneyBefore'] - purchase['price'], 'ECONOMIC_RECONCILIATION_FAILED')
-            weapon = purchase['weaponId']
-            require(account['inventory'].get(weapon, 0) == purchase['stockBefore'], 'ECONOMIC_RECONCILIATION_FAILED')
-            require(purchase['stockAfter'] == purchase['stockBefore'] + purchase['quantity'], 'ECONOMIC_RECONCILIATION_FAILED')
+            if 'equipmentId' in purchase:
+                require(purchase['equipmentId'] == 'REINFORCED_SHIELD' and purchase['quantity'] == 1 and purchase['price'] == 420,
+                        'ECONOMIC_RECONCILIATION_FAILED')
+            else:
+                weapon = purchase['weaponId']
+                require(account['inventory'].get(weapon, 0) == purchase['stockBefore'], 'ECONOMIC_RECONCILIATION_FAILED')
+                require(purchase['stockAfter'] == purchase['stockBefore'] + purchase['quantity'], 'ECONOMIC_RECONCILIATION_FAILED')
+                account['inventory'][weapon] = purchase['stockAfter']
             account['money'] = purchase['moneyAfter']
-            account['inventory'][weapon] = purchase['stockAfter']
         elif kind == 'combat':
             combat = event.get('event', {})
             c_kind = combat.get('kind')

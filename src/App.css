@@ -444,6 +444,36 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   box-sizing: border-box;
 }
 
+.weapon-shop-shield-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  margin-block-end: 8px;
+  background: #111;
+  border-block-end: 1px solid #555;
+}
+
+.weapon-shop-shield-row > div {
+  flex: 1 1 15rem;
+  font-size: 12px;
+}
+
+.weapon-shop-shield-row > div > strong {
+  font-size: 13px;
+}
+
+.weapon-shop-shield-row .retro-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.weapon-shop-shield-row .retro-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .weapon-shop-actions {
   display: flex;
   flex-direction: column;

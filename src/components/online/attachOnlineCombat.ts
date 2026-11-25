@@ -420,14 +420,12 @@ export function attachOnlineCombat(
       const livePlayer = liveById.get(authoritativePlayer.id);
       if (!livePlayer) return authoritativePlayer;
       return {
-        ...livePlayer,
-        name: authoritativePlayer.name,
-        isHuman: authoritativePlayer.isHuman,
-        aiProfile: authoritativePlayer.aiProfile,
-        money: authoritativePlayer.money,
+        ...authoritativePlayer,
         inventory: { ...authoritativePlayer.inventory },
         tank: {
           ...livePlayer.tank,
+          shield: authoritativePlayer.tank.shield,
+          maxShield: authoritativePlayer.tank.maxShield,
           currentWeapon: authoritativePlayer.tank.currentWeapon,
         },
       };
@@ -635,7 +633,7 @@ export function attachOnlineCombat(
         type: "SHOP_BUY_SELL",
         shopEpoch: pendingShop.shopEpoch,
         actionId: pendingShop.actionId,
-        weaponId: pendingShop.weaponId,
+        ...(pendingShop.equipmentId ? { equipmentId: pendingShop.equipmentId } : { weaponId: pendingShop.weaponId }),
         delta: pendingShop.delta,
       };
       send(retry);

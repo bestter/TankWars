@@ -13,13 +13,13 @@ function fixture(): { roster: ReturnType<typeof makePlayer>[]; report: ShotEarni
 }
 
 describe("v3 earnings authority", () => {
-  it("normalizes only network death health and preserves calculated awards and engine objects", () => {
+  it("normalizes network death health and shield and preserves calculated awards and engine objects", () => {
     const { roster, report } = fixture();
     roster[1].tank.isDead = true;
     roster[1].tank.health = 37;
     roster[1].tank.position.x = -100;
     const copy = earningsPlayers(roster);
-    expect(copy[1].tank).toMatchObject({ health: 0, shield: 20, position: { x: -100, y: 300 } });
+    expect(copy[1].tank).toMatchObject({ health: 0, shield: 0, position: { x: -100, y: 300 } });
     copy[1].inventory.GRENADE = 0;
     expect(roster[1].inventory.GRENADE).toBe(3);
     expect(roster[1].tank.health).toBe(37);
@@ -28,6 +28,18 @@ describe("v3 earnings authority", () => {
     report.roundOutcome = { isRoundEnd: true, isDraw: false, roundWinnerId: "a" };
     expect(validateEarnings(report, roster, "a", "BULLDOZER").ok).toBe(true);
     expect(report.awards).toEqual([{ playerId: "a", amount: 5 }]);
+  });
+
+  it("allows reinforced shield to decrease above standard but refuses new points and a changed standard", () => {
+    const { roster, report } = fixture();
+    roster[1].tank.shield = 75;
+    report.players[1].tank.shield = 73.5;
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toMatchObject({ ok: true });
+    report.players[1].tank.shield = 76;
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "CAP_MISMATCH" });
+    report.players[1].tank.shield = 73.5;
+    report.players[1].tank.maxShield = 200;
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "CAP_MISMATCH" });
   });
 
   it("matches identities by id, ignores money and attribution, copies only physical fields", () => {

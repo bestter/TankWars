@@ -22,9 +22,12 @@ import {
   type PendingShopIntent,
   type ShopClientSessionState,
 } from '../components/gameCanvasReducer';
-import type { ShopDenial, ShopVisitCounters } from '../game/shop/shopTransaction';
+import { REINFORCED_SHIELD, type ShopVisitCounters } from '../game/shop/shopTransaction';
+import { reinforcedShieldCapacity } from '../game/round/shield';
 import {
   isFireRejectedReason as isProtocolFireRejectedReason,
+  isShopDenial,
+  readShopPurchaseTarget,
   type FireRejectedReason,
 } from '../game/online/protocol';
 import { isValidActionId } from '../game/online/actionId';
@@ -93,26 +96,9 @@ const VALID_AI_PROFILES: ReadonlySet<string> = new Set<AiProfile>([
 
 const VALID_WEAPON_IDS: ReadonlySet<string> = new Set(ALL_WEAPON_IDS);
 
-const VALID_SHOP_DENIALS: ReadonlySet<string> = new Set<ShopDenial>([
-  'STOCK_CAP',
-  'PURCHASE_LIMIT',
-  'INSUFFICIENT_FUNDS',
-  'NO_STOCK',
-  'NOT_SOLD',
-  'ILLEGAL_INVENTORY',
-  'MALFORMED',
-  'NOT_YOUR_SLOT',
-  'ALREADY_READY',
-  'SHOP_CLOSED',
-  'SHOP_NOT_AVAILABLE',
-  'STALE_SHOP_EPOCH',
-]);
-
 export const isFireRejectedReason = isProtocolFireRejectedReason;
 
-export function isShopDenial(value: unknown): value is ShopDenial {
-  return typeof value === 'string' && VALID_SHOP_DENIALS.has(value);
-}
+export { isShopDenial };
 
 function isWeaponId(value: unknown): value is WeaponId {
   return typeof value === 'string' && VALID_WEAPON_IDS.has(value);
@@ -146,7 +132,7 @@ function isPendingShopIntent(value: unknown): value is PendingShopIntent {
   }
   if (value.kind === 'BUY_SELL') {
     return (
-      isWeaponId(value.weaponId) &&
+      readShopPurchaseTarget(value) !== null &&
       (value.delta === 1 || value.delta === -1)
     );
   }
@@ -159,7 +145,7 @@ function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
     if (!isNonEmptyString(playerId)) return false;
     if (!isRecord(playerCounters)) return false;
     for (const [weaponKey, count] of Object.entries(playerCounters)) {
-      if (!isWeaponId(weaponKey) || !isSafeNonNegativeInteger(count)) {
+      if (weaponKey === REINFORCED_SHIELD ? count !== 1 : !isWeaponId(weaponKey) || !isSafeNonNegativeInteger(count)) {
         return false;
       }
     }
@@ -402,6 +388,9 @@ function isPlayer(value: unknown): value is Player {
     isFiniteNumber(tank.shield) &&
     isFiniteNumber(tank.maxShield) &&
     tank.maxShield >= 0 &&
+    tank.shield >= 0 &&
+    tank.shield <= reinforcedShieldCapacity(tank.maxShield) &&
+    (value.reinforcedShieldPending === undefined || value.reinforcedShieldPending === true) &&
     typeof tank.isDead === 'boolean' &&
     typeof tank.color === 'string' &&
     VALID_COLORS.has(tank.color) &&
