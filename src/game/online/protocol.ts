@@ -353,9 +353,10 @@ function isInventory(
 
 // for...in avoids allocating arrays at both levels; the same plain JSON,
 // unpolluted-prototype assumption as isInventory applies to both levels.
-function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
+export function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
   for (const playerId in value) {
+    if (!playerId.trim()) return false;
     const playerCounters = value[playerId];
     if (!isRecord(playerCounters)) return false;
     for (const item in playerCounters) {
@@ -784,7 +785,7 @@ export function decodeShopBuySellMessage(
           ? value.shopEpoch
           : null,
         ...(isValidActionId(value.actionId) ? { actionId: value.actionId } : {}),
-        ...target,
+        ...(target ?? {}),
         ...(value.delta === 1 || value.delta === -1
           ? { delta: value.delta }
           : {}),

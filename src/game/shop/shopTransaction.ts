@@ -6,7 +6,7 @@ import {
   type WeaponId,
 } from "../../types/weapon";
 import { getShopPolicy } from "./shopPolicy";
-import { hasReinforcedShield } from "../round/shield";
+import { hasReinforcedShield, standardShieldCapacity } from "../round/shield";
 
 export const REINFORCED_SHIELD = "REINFORCED_SHIELD" as const;
 export const REINFORCED_SHIELD_PRICE = 420;
@@ -150,6 +150,10 @@ function applyShieldTransaction(input: ShopTransactionInput): ShopTransactionRes
     return { ok: true, player: refunded, counters };
   }
 
+  if (!player.tank) return reject(input, "MALFORMED");
+  const standard = standardShieldCapacity(player.tank);
+  if (!Number.isFinite(standard) || standard < 0) return reject(input, "MALFORMED");
+  if (standard === 0) return reject(input, "NOT_SOLD");
   const count = counters[player.id]?.[REINFORCED_SHIELD] ?? 0;
   if (count !== 0 && count !== 1) return reject(input, "MALFORMED");
   if (count === 1 || player.reinforcedShieldPending) return reject(input, "PURCHASE_LIMIT");

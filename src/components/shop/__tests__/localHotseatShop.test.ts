@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makePlayer } from "../../../game/__tests__/helpers";
+import { makePlayer, makeTank } from "../../../game/__tests__/helpers";
 import { createEmptyShopSession } from "../../gameCanvasReducer";
 import { fixture } from "../../../game/endurance/__tests__/helpers";
 import { getRNG, setRNG, type RNG } from "../../../utils/random";
@@ -29,6 +29,7 @@ describe("processNextShopperIfAI", () => {
       },
     });
     const aiPlayer = makePlayer({
+      tank: makeTank("tank-1", 120, 300, { maxShield: 40 }),
       id: "ai-player",
       isHuman: false,
       aiProfile: "v2-heuristic",
@@ -92,6 +93,7 @@ describe("processNextShopperIfAI", () => {
       },
     });
     const aiPlayer = makePlayer({
+      tank: makeTank("tank-1", 120, 300, { maxShield: 40 }),
       id: "ai-simple",
       isHuman: false,
       aiProfile: "v1-random",

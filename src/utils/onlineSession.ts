@@ -22,11 +22,11 @@ import {
   type PendingShopIntent,
   type ShopClientSessionState,
 } from '../components/gameCanvasReducer';
-import { REINFORCED_SHIELD, type ShopVisitCounters } from '../game/shop/shopTransaction';
 import { reinforcedShieldCapacity } from '../game/round/shield';
 import {
   isFireRejectedReason as isProtocolFireRejectedReason,
   isShopDenial,
+  isShopVisitCounters,
   readShopPurchaseTarget,
   type FireRejectedReason,
 } from '../game/online/protocol';
@@ -139,19 +139,6 @@ function isPendingShopIntent(value: unknown): value is PendingShopIntent {
   return false;
 }
 
-function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
-  if (!isRecord(value)) return false;
-  for (const [playerId, playerCounters] of Object.entries(value)) {
-    if (!isNonEmptyString(playerId)) return false;
-    if (!isRecord(playerCounters)) return false;
-    for (const [weaponKey, count] of Object.entries(playerCounters)) {
-      if (weaponKey === REINFORCED_SHIELD ? count !== 1 : !isWeaponId(weaponKey) || !isSafeNonNegativeInteger(count)) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
 
 export function isShopClientSessionState(value: unknown): value is ShopClientSessionState {
   if (!isRecord(value)) return false;

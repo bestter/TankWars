@@ -975,8 +975,6 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    if (this.state.started && this.state.combatSchemaVersion !== ONLINE_PROTOCOL_VERSION) return;
-
     // Handle name identification / update (sent by client after WS open)
     if (msg && msg.type === 'IDENTIFY' && msg.name && typeof msg.name === 'string') {
       const name = msg.name.trim().slice(0, 16) || `Joueur-${slot + 1}`;

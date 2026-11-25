@@ -1430,10 +1430,13 @@ describe('Authoritative safe round preparation', () => {
       lastAppliedShopEpoch: 0,
     }));
     await handleV4.call(v4.restored, 0, JSON.stringify({ type: 'IDENTIFY', name: 'RenamedV4' }));
+    expect(ws0.getAllMessages()).toHaveLength(1);
+    await handleV4.call(v4.restored, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
     const disconnectV4 = Reflect.get(v4.restored, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
     await disconnectV4.call(v4.restored, 0, ws0 as unknown as WebSocket);
 
     expect(ws0.getAllMessages()).toEqual([
+      { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
       { type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: 1 },
     ]);
     expect(ws1.getAllMessages()).toEqual([]);

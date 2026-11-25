@@ -52,6 +52,21 @@ describe("reinforced shield transactions", () => {
     expect(applyShopTransaction({ player: other, counters: cancel.counters, equipmentId, delta: 1 }).ok).toBe(true);
   });
 
+  it("refuses an unusable reinforcement without charging or consuming the quota", () => {
+    const missingTank = structuredClone(player);
+    Reflect.deleteProperty(missingTank, "tank");
+    for (const [buyer, reason] of [
+      [missingTank, "MALFORMED"],
+      [{ ...player, tank: { ...player.tank, maxShield: 0 } }, "NOT_SOLD"],
+    ] as const) {
+      const counters = {};
+      expect(applyShopTransaction({ player: buyer, counters, equipmentId, delta: 1 }))
+        .toEqual({ ok: false, reason, player: buyer, counters });
+      expect(buyer.money).toBe(420);
+      expect(counters).toEqual({});
+    }
+  });
+
   it("checks the exact balance and standard, and allows a destroyed tank with old shield", () => {
     expect(applyShopTransaction({ player: { ...player, money: 419 }, counters: {}, equipmentId, delta: 1 }))
       .toMatchObject({ ok: false, reason: "INSUFFICIENT_FUNDS" });

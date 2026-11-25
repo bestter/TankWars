@@ -226,6 +226,7 @@ export class TankManager {
    * Place les tanks avec positions X aléatoires biaisées vers les creux (distance minimale garantie).
    * Local : humains 25 % moins souvent sur le sable. IA : 25 % moins souvent sur la roche (tous modes).
    * Ajuste précisément la position Y pour qu'ils reposent sur le sol.
+   * Placement initial au bouclier standard. Les transitions de manche passent par resetPlayersForSpawn.
    * Tous les joueurs sont réinitialisés (health=100, isDead=false) et repositionnés.
    */
   public spawnTanks(

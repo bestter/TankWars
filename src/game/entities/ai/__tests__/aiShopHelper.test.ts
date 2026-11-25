@@ -7,7 +7,7 @@ import {
 } from "../../../../types/weapon";
 import * as randomModule from "../../../../utils/random";
 import { getRNG, setRNG, type RNG } from "../../../../utils/random";
-import { makePlayer } from "../../../__tests__/helpers";
+import { makePlayer, makeTank } from "../../../__tests__/helpers";
 import type { ShopVisitCounters } from "../../../shop/shopTransaction";
 import {
   autoBuyForAI,
@@ -75,6 +75,7 @@ function makeAiPlayer(
   overrides: Partial<Player> = {},
 ): Player {
   return makePlayer({
+    tank: makeTank("tank-1", 120, 300, { maxShield: 40 }),
     isHuman: false,
     aiProfile,
     money: 20_000,

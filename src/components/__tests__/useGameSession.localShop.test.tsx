@@ -500,7 +500,7 @@ describe("useGameSession local shop AI advance", () => {
             aiProfile: profile,
             money: 5_000,
             inventory: {},
-            tank: makeTank("tank-2", 620, 300),
+            tank: makeTank("tank-2", 620, 300, { maxShield: 40 }),
           }),
         ];
 
