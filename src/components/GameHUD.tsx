@@ -95,6 +95,7 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnIn
         const isCurrent = currentWeapon === weaponId;
         const hasAmmo = weaponId === "MISSILE" || ammo > 0;
         const selectable = canInteract && hasAmmo;
+        const shortLabel = weaponShortLabel(weaponId);
         const weaponName = t(WEAPON_I18N_KEYS[weaponId]);
         const backgroundColor = isCurrent ? "#002200" : hasAmmo ? "#111111" : "#0a0a0a";
         const borderColor = isCurrent
@@ -125,12 +126,22 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnIn
             }}
             title={weaponName}
           >
-            <span aria-hidden="true">
-              {weaponShortLabel(weaponId)}:{weaponId === "MISSILE" ? "∞" : ammo}
-            </span>
-            <span className="visually-hidden">
-              {weaponName} {weaponId === "MISSILE" ? t("hud_ammo_unlimited") : ammo}
-            </span>
+            {weaponId === "MISSILE" ? (
+              <>
+                <span>{shortLabel}</span>
+                <span aria-hidden="true">:∞</span>{" "}
+                <span className="visually-hidden">
+                  — {weaponName} {t("hud_ammo_unlimited")}
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  {shortLabel}:{ammo}
+                </span>{" "}
+                <span className="visually-hidden">— {weaponName}</span>
+              </>
+            )}
           </button>
         );
       })}

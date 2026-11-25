@@ -401,4 +401,164 @@ describe('useOnlineLobby', () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
+
+  it('prevents stale overlapping copy attempts and timers from clearing or overwriting newer failure state', async () => {
+    vi.useFakeTimers();
+    const createDeferred = () => {
+      let resolve!: () => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    const deferredQueue: ReturnType<typeof createDeferred>[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn(() => {
+          const d = createDeferred();
+          deferredQueue.push(d);
+          return d.promise;
+        }),
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+        onExitToLocalMenu: vi.fn(),
+      })
+    );
+
+    const url = 'https://tankwars.pages.dev/?room=R1&slot=1&token=T1';
+
+    // Order A: attempt 1 resolves (success) after attempt 2 started, then attempt 2 rejects (failure)
+    let p1!: Promise<void>;
+    let p2!: Promise<void>;
+    act(() => {
+      p1 = result.current.copyLink(url, 1);
+      p2 = result.current.copyLink(url, 1);
+    });
+    expect(deferredQueue).toHaveLength(2);
+
+    await act(async () => {
+      deferredQueue[0].resolve();
+      await p1;
+    });
+    // Attempt 1 is stale: must not set 'copied' or schedule a timer
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    await act(async () => {
+      deferredQueue[1].reject(new Error('denied'));
+      await p2;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+
+    // Reverse order: attempt 4 rejects first (current), then stale attempt 3 resolves
+    let p3!: Promise<void>;
+    let p4!: Promise<void>;
+    act(() => {
+      p3 = result.current.copyLink(url, 1);
+      p4 = result.current.copyLink(url, 1);
+    });
+    expect(deferredQueue).toHaveLength(4);
+
+    await act(async () => {
+      deferredQueue[3].reject(new Error('denied'));
+      await p4;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+
+    await act(async () => {
+      deferredQueue[2].resolve();
+      await p3;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+
+    // Invalidate in-flight attempt via dismissCopyFeedback
+    let p5!: Promise<void>;
+    act(() => {
+      p5 = result.current.copyLink(url, 1);
+      result.current.dismissCopyFeedback(1);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+    await act(async () => {
+      deferredQueue[4].resolve();
+      await p5;
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Invalidate in-flight attempt via leaveRoom
+    let p6!: Promise<void>;
+    act(() => {
+      p6 = result.current.copyLink(url, 1);
+      result.current.leaveRoom();
+    });
+    await act(async () => {
+      deferredQueue[5].reject(new Error('denied'));
+      await p6;
+    });
+    expect(result.current.copyFeedback).toEqual({});
+
+    vi.useRealTimers();
+  });
+
+  it('tracks copy announcements per slot so A -> B -> A always changes slot A status text', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    const urlA = 'https://tankwars.pages.dev/?room=R1&slot=0&token=T0';
+    const urlB = 'https://tankwars.pages.dev/?room=R1&slot=1&token=T1';
+
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied' });
+
+    await act(async () => {
+      await result.current.copyLink(urlB, 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+
+    // Returning to A before 2000ms must produce a distinct announcement for slot 0
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied\u00A0' });
+
+    // Repeating A again alternates back cleanly even after expiry
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(result.current.copyFeedback[0]).toBeUndefined();
+
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied' });
+
+    vi.useRealTimers();
+  });
 });

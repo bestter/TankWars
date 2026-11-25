@@ -42,7 +42,9 @@ export function useOnlineLobby({
   const [error, setError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<Record<number, CopySlotFeedback | undefined>>({});
   const copyTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  const lastCopyAnnouncementRef = useRef<string>('');
+  const lastCopyAnnouncementBySlotRef = useRef<Map<number, string>>(new Map());
+  const nextCopyAttemptIdRef = useRef(0);
+  const activeCopyAttemptBySlotRef = useRef<Map<number, number>>(new Map());
 
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(false);
@@ -328,6 +330,8 @@ export function useOnlineLobby({
   useEffect(() => {
     const currentWsRef = wsRef;
     const copyTimers = copyTimersRef.current;
+    const activeCopyAttempts = activeCopyAttemptBySlotRef.current;
+    const lastCopyAnnouncements = lastCopyAnnouncementBySlotRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -336,6 +340,8 @@ export function useOnlineLobby({
         clearTimeout(timer);
       }
       copyTimers.clear();
+      activeCopyAttempts.clear();
+      lastCopyAnnouncements.clear();
       connectionRef.current = null;
       if (currentWsRef.current && !gameStartedRef.current) {
         currentWsRef.current.onclose = null;
@@ -441,27 +447,31 @@ export function useOnlineLobby({
   };
 
   // --- Copy helper ---
-  const dismissCopyFeedback = useCallback((slot: number) => {
+  const invalidateSlotCopyAttempt = useCallback((slot: number): number => {
+    nextCopyAttemptIdRef.current += 1;
+    const attemptId = nextCopyAttemptIdRef.current;
+    activeCopyAttemptBySlotRef.current.set(slot, attemptId);
     const previousTimer = copyTimersRef.current.get(slot);
     if (previousTimer !== undefined) {
       clearTimeout(previousTimer);
       copyTimersRef.current.delete(slot);
     }
+    return attemptId;
+  }, []);
+
+  const dismissCopyFeedback = useCallback((slot: number) => {
+    invalidateSlotCopyAttempt(slot);
     setCopyFeedback((prev) => {
       if (!(slot in prev)) return prev;
       const next = { ...prev };
       delete next[slot];
       return next;
     });
-  }, []);
+  }, [invalidateSlotCopyAttempt]);
 
   const copyLink = async (url: string | null, slot: number) => {
     if (!url) return;
-    const previousTimer = copyTimersRef.current.get(slot);
-    if (previousTimer !== undefined) {
-      clearTimeout(previousTimer);
-      copyTimersRef.current.delete(slot);
-    }
+    const attemptId = invalidateSlotCopyAttempt(slot);
 
     let status: CopySlotStatus = 'copied';
     try {
@@ -473,12 +483,15 @@ export function useOnlineLobby({
       status = 'failed';
     }
 
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || activeCopyAttemptBySlotRef.current.get(slot) !== attemptId) {
+      return;
+    }
 
     const baseMessage = t(status === 'copied' ? 'link_copied' : 'link_copy_failed');
+    const previousAnnouncement = lastCopyAnnouncementBySlotRef.current.get(slot);
     const announcement =
-      baseMessage === lastCopyAnnouncementRef.current ? `${baseMessage}\u00A0` : baseMessage;
-    lastCopyAnnouncementRef.current = announcement;
+      baseMessage === previousAnnouncement ? `${baseMessage}\u00A0` : baseMessage;
+    lastCopyAnnouncementBySlotRef.current.set(slot, announcement);
 
     setCopyFeedback((prev) => ({
       ...prev,
@@ -487,8 +500,12 @@ export function useOnlineLobby({
 
     if (status === 'copied') {
       const timer = setTimeout(() => {
-        copyTimersRef.current.delete(slot);
-        if (!mountedRef.current) return;
+        if (copyTimersRef.current.get(slot) === timer) {
+          copyTimersRef.current.delete(slot);
+        }
+        if (!mountedRef.current || activeCopyAttemptBySlotRef.current.get(slot) !== attemptId) {
+          return;
+        }
         setCopyFeedback((prev) => {
           const next = { ...prev };
           delete next[slot];
@@ -511,6 +528,8 @@ export function useOnlineLobby({
       clearTimeout(timer);
     }
     copyTimersRef.current.clear();
+    activeCopyAttemptBySlotRef.current.clear();
+    lastCopyAnnouncementBySlotRef.current.clear();
     setCopyFeedback({});
     if (wsRef.current) {
       wsRef.current.onclose = null;

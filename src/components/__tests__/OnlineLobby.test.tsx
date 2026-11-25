@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { OnlineLobby } from '../OnlineLobby';
 
 // Mock react-i18next
@@ -103,6 +103,69 @@ describe('OnlineLobby', () => {
     } finally {
       globalThis.fetch = originalFetch;
       consoleSpy.mockRestore();
+    }
+  });
+
+  it('mutates slot A live status region when alternating A -> B -> A copies before timer expiry', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const mockWs = {
+      send: vi.fn(),
+      close: vi.fn(),
+      readyState: 1,
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+    };
+    vi.stubGlobal('WebSocket', vi.fn().mockImplementation(function () { return mockWs; }));
+
+    try {
+      render(
+        <OnlineLobby
+          initialParticipation={{
+            version: 1,
+            room: 'ROOM-ABA',
+            slot: 0,
+            token: 'TOK0',
+            name: 'Host',
+            engaged: true,
+            mode: 'host',
+            slots: [
+              { slot: 0, type: 'human', url: 'https://tankwars.pages.dev/?room=ROOM-ABA&slot=0&token=TOK0' },
+              { slot: 1, type: 'human', url: 'https://tankwars.pages.dev/?room=ROOM-ABA&slot=1&token=TOK1' },
+            ],
+          }}
+          onStartGame={() => {}}
+          onExitToLocalMenu={() => {}}
+        />
+      );
+
+      const copyBtnA = screen.getByRole('button', { name: 'copy_link — slot_label_1' });
+      const copyBtnB = screen.getByRole('button', { name: 'copy_link — slot_label_2' });
+      const statusRegions = screen.getAllByRole('status');
+      const statusA = statusRegions[0];
+
+      await act(async () => {
+        fireEvent.click(copyBtnA);
+      });
+      expect(statusA.textContent).toBe('link_copied');
+
+      await act(async () => {
+        fireEvent.click(copyBtnB);
+      });
+      expect(statusRegions[1].textContent).toBe('link_copied');
+
+      await act(async () => {
+        fireEvent.click(copyBtnA);
+      });
+      expect(statusA.textContent).toBe('link_copied\u00A0');
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
