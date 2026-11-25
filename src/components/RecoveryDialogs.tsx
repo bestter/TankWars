@@ -148,7 +148,9 @@ export function OnlineQuitConfirmDialog({
 }: OnlineQuitConfirmDialogProps) {
   const { t } = useTranslation();
   const titleId = useId();
-  const { dialogRef, handleClose } = useModalDialog();
+  const { dialogRef, closeDialog, handleClose } = useModalDialog({
+    onDismiss: onCancel,
+  });
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -157,7 +159,18 @@ export function OnlineQuitConfirmDialog({
 
   const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
     event.preventDefault();
+    closeDialog();
     onCancel();
+  };
+
+  const handleCancelClick = () => {
+    closeDialog("cancel");
+    onCancel();
+  };
+
+  const handleConfirmClick = () => {
+    closeDialog("confirm");
+    onConfirm();
   };
 
   return (
@@ -176,14 +189,14 @@ export function OnlineQuitConfirmDialog({
           ref={cancelBtnRef}
           type="button"
           className="retro-btn"
-          onClick={onCancel}
+          onClick={handleCancelClick}
         >
           {t("online_quit_cancel")}
         </button>
         <button
           type="button"
           className="round-summary-menu-btn"
-          onClick={onConfirm}
+          onClick={handleConfirmClick}
         >
           {t("online_quit_confirm_btn")}
         </button>

@@ -73,6 +73,7 @@ export function OnlineLobby(props: OnlineLobbyProps) {
               initialSlot={props.initialSlot}
               onJoin={lobby.handleJoin}
               onCopyLink={lobby.copyLink}
+              onDismissCopyFeedback={lobby.dismissCopyFeedback}
               onLeaveRoom={lobby.leaveRoom}
             />
           )}

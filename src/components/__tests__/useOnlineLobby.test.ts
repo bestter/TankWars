@@ -334,18 +334,21 @@ describe('useOnlineLobby', () => {
     vi.useRealTimers();
   });
 
-  it('reports copy failure via copyFeedback without calling window.prompt', async () => {
+  it('keeps copy failure feedback until dismissed, overwritten by success, or leaving the room', async () => {
     vi.useFakeTimers();
     const promptSpy = vi.fn();
     vi.stubGlobal('prompt', promptSpy);
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
-      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      value: { writeText },
     });
+    const onExitToLocalMenu = vi.fn();
 
     const { result } = renderHook(() =>
       useOnlineLobby({
         onStartGame: vi.fn(),
+        onExitToLocalMenu,
       })
     );
 
@@ -357,9 +360,44 @@ describe('useOnlineLobby', () => {
     expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
 
     act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+
+    // Explicit dismiss clears failure immediately
+    act(() => {
+      result.current.dismissCopyFeedback(1);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Retry failing then succeeding replaces failure and auto-clears after 2000ms
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+
+    writeText.mockResolvedValueOnce(undefined);
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+
+    act(() => {
       vi.advanceTimersByTime(2000);
     });
     expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Leaving room clears failure state and timers
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]?.status).toBe('failed');
+    act(() => {
+      result.current.leaveRoom();
+    });
+    expect(result.current.copyFeedback).toEqual({});
+    expect(onExitToLocalMenu).toHaveBeenCalledTimes(1);
+
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });

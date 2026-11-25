@@ -271,9 +271,45 @@ describe('MobileControls', () => {
       const btn = screen.getByText('▲');
       down(btn, 1, { pointerType });
       fireEvent.pointerUp(btn, { pointerId: 1, pointerType });
-      fireEvent.click(btn);
+      fireEvent.click(btn, { detail: 1 });
       act(() => { vi.advanceTimersByTime(1000); });
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(ADJUST_BUTTONS)('%s : séquence tactile Chromium (pointerdown → pointerup → pointerout → pointerleave → click) applique un seul pas', (label, cb, delta) => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText(label);
+      down(btn, 2, { pointerType: 'touch' });
+      fireEvent.pointerUp(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.pointerOut(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.pointerLeave(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.click(btn, { detail: 1 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(defaultProps[cb]).toHaveBeenCalledTimes(1);
+      expect(defaultProps[cb]).toHaveBeenCalledWith(delta);
+    });
+
+    it('un appui prolongé tactile suivi de pointerleave puis click n’ajoute pas de pas au relâchement', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('◀');
+      down(btn, 2, { pointerType: 'touch' });
+      act(() => { vi.advanceTimersByTime(450); });
+      const callsBeforeRelease = defaultProps.onAdjustAngle.mock.calls.length;
+      expect(callsBeforeRelease).toBeGreaterThanOrEqual(2);
+      fireEvent.pointerUp(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.pointerOut(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.pointerLeave(btn, { pointerId: 2, pointerType: 'touch' });
+      fireEvent.click(btn, { detail: 1 });
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(defaultProps.onAdjustAngle).toHaveBeenCalledTimes(callsBeforeRelease);
+    });
+
+    it('accepte un clic programmatique sans pointeur (detail: 0) sur les boutons d’ajustement', () => {
+      render(<MobileControls {...defaultProps} />);
+      const btn = screen.getByText('▼');
+      fireEvent.click(btn, { detail: 0 });
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(1);
+      expect(defaultProps.onAdjustPower).toHaveBeenCalledWith(-1);
     });
 
     it('ignore clic droit, bouton central et boutons auxiliaires', () => {
@@ -402,6 +438,7 @@ describe('MobileControls', () => {
       fireEvent.pointerLeave(first, { pointerId: 2 });
       fireEvent.pointerCancel(first, { pointerId: 2 });
       fireEvent.pointerUp(other, { pointerId: 2 });
+      fireEvent.click(other, { detail: 1 });
       fireEvent.lostPointerCapture(first, { pointerId: 2 });
       act(() => { vi.advanceTimersByTime(330); });
       expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(2);

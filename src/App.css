@@ -1500,6 +1500,16 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   color: #ff5555;
 }
 
+.lobby-copy-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 100%;
+  max-width: 100%;
+  min-inline-size: 0;
+}
+
 .lobby-copy-fallback-url {
   flex: 1 1 200px;
   min-inline-size: 140px;

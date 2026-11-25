@@ -31,6 +31,7 @@ describe('OnlineLobbyWaiting component', () => {
   let mockSetMyName: Mock<(name: string) => void>;
   let mockOnJoin: Mock<() => void>;
   let mockOnCopyLink: Mock<(url: string | null, slot: number) => void>;
+  let mockOnDismissCopyFeedback: Mock<(slot: number) => void>;
   let mockOnLeaveRoom: Mock<() => void>;
 
   beforeEach(() => {
@@ -40,6 +41,7 @@ describe('OnlineLobbyWaiting component', () => {
     mockSetMyName = vi.fn();
     mockOnJoin = vi.fn();
     mockOnCopyLink = vi.fn();
+    mockOnDismissCopyFeedback = vi.fn();
     mockOnLeaveRoom = vi.fn();
   });
 
@@ -63,6 +65,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -84,6 +87,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -108,6 +112,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -145,6 +150,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -175,6 +181,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -198,6 +205,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -243,6 +251,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -251,6 +260,11 @@ describe('OnlineLobbyWaiting component', () => {
     const fallbackInput = screen.getByRole('textbox', { name: 'invite_url_label_2' }) as HTMLInputElement;
     expect(fallbackInput.readOnly).toBe(true);
     expect(fallbackInput.value).toBe(defaultSlotsInfo[1].url);
+
+    const closeFallbackBtn = screen.getByRole('button', { name: 'copy_fallback_close — slot_label_2' });
+    fireEvent.click(closeFallbackBtn);
+    expect(mockOnDismissCopyFeedback).toHaveBeenCalledWith(1);
+    expect(document.activeElement).toBe(copyBtn1);
   });
 
   it('renders live roster with connected count and server live message', () => {
@@ -275,6 +289,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );
@@ -304,6 +319,7 @@ describe('OnlineLobbyWaiting component', () => {
         connected={true}
         onJoin={mockOnJoin}
         onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
         onLeaveRoom={mockOnLeaveRoom}
       />
     );

@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { VGA_PALETTE } from '../types/game';
 import type { CopySlotFeedback, JoinedInfo, LobbyView, SlotUI } from './onlineLobbyTypes';
@@ -25,6 +25,7 @@ export interface OnlineLobbyWaitingProps {
   initialSlot?: number;
   onJoin: () => void;
   onCopyLink: (url: string | null, slot: number) => void;
+  onDismissCopyFeedback: (slot: number) => void;
   onLeaveRoom: () => void;
 }
 
@@ -43,10 +44,12 @@ export function OnlineLobbyWaiting({
   initialSlot,
   onJoin,
   onCopyLink,
+  onDismissCopyFeedback,
   onLeaveRoom,
 }: OnlineLobbyWaitingProps) {
   const { t } = useTranslation();
   const joinNameId = useId();
+  const copyButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
 
   const formatSlotRole = (slot: SlotUI): string => {
     if (slot.type === 'human') {
@@ -117,6 +120,13 @@ export function OnlineLobbyWaiting({
                   {s.url && (
                     <span className="lobby-wait-slot-actions">
                       <button
+                        ref={(el) => {
+                          if (el) {
+                            copyButtonRefs.current.set(s.slot, el);
+                          } else {
+                            copyButtonRefs.current.delete(s.slot);
+                          }
+                        }}
                         type="button"
                         className="lobby-action-btn"
                         data-copied={feedback?.status === 'copied' ? '' : undefined}
@@ -139,14 +149,27 @@ export function OnlineLobbyWaiting({
                         <span className="visually-hidden">— {slotLabel}</span>
                       </a>
                       {feedback?.status === 'failed' && (
-                        <input
-                          type="text"
-                          readOnly
-                          value={s.url}
-                          aria-label={t('invite_url_label', { num: s.slot + 1 })}
-                          className="lobby-copy-fallback-url"
-                          onFocus={(e) => e.currentTarget.select()}
-                        />
+                        <div className="lobby-copy-fallback">
+                          <input
+                            type="text"
+                            readOnly
+                            value={s.url}
+                            aria-label={t('invite_url_label', { num: s.slot + 1 })}
+                            className="lobby-copy-fallback-url"
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                          <button
+                            type="button"
+                            className="lobby-action-btn lobby-copy-fallback-close"
+                            onClick={() => {
+                              onDismissCopyFeedback(s.slot);
+                              copyButtonRefs.current.get(s.slot)?.focus();
+                            }}
+                          >
+                            {t('copy_fallback_close')}{' '}
+                            <span className="visually-hidden">— {slotLabel}</span>
+                          </button>
+                        </div>
                       )}
                     </span>
                   )}

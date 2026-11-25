@@ -256,6 +256,7 @@
   "shop_sell_weapon_label": "Vendre 1 {{weapon}}",
   "link_copy_failed": "Échec de la copie",
   "invite_url_label": "Lien d’invitation pour l’emplacement {{num}}",
+  "copy_fallback_close": "Fermer",
   "join_name_label": "Votre nom",
   "lobby_slot_ai": "IA {{profile}}",
   "lobby_ai_no_link": "(IA — pas de lien)",

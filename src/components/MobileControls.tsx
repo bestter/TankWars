@@ -4,7 +4,6 @@ import {
   useRef,
   useEffect,
   useState,
-  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
 } from "react";
@@ -21,6 +20,16 @@ export interface MobileControlsProps {
 }
 
 type ButtonPointerEvent = PointerEvent<HTMLButtonElement>;
+
+function isPointerClick(event: MouseEvent<HTMLButtonElement>): boolean {
+  if (event.detail !== 0) return true;
+  const native = event.nativeEvent;
+  return (
+    "pointerType" in native &&
+    typeof native.pointerType === "string" &&
+    native.pointerType !== ""
+  );
+}
 
 export const MobileControls = memo(function MobileControls({
   turnInfo,
@@ -61,8 +70,6 @@ export const MobileControls = memo(function MobileControls({
   const activeHoldRef = useRef<number | null>(null);
   // Pointeur dont la capture implicite a été libérée volontairement.
   const releasedCapturePointerRef = useRef<number | null>(null);
-  // Évite un second pas sur l'événement click synthétisé après pointerDown.
-  const suppressNextClickTargetRef = useRef<HTMLButtonElement | null>(null);
 
   const stopAction = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -97,7 +104,6 @@ export const MobileControls = memo(function MobileControls({
   // ordinaires du HUD ne modifient pas ces dépendances.
   useEffect(() => {
     return () => {
-      suppressNextClickTargetRef.current = null;
       stopAction();
     };
   }, [controlsActive, playerId, stopAction]);
@@ -126,7 +132,6 @@ export const MobileControls = memo(function MobileControls({
       if (!canInteract || activeHoldRef.current !== null) return;
       const target = e.currentTarget;
       startAction(e.pointerId, action);
-      suppressNextClickTargetRef.current = target;
       // Libère la capture implicite (tactile) pour recevoir pointerleave.
       if (target.hasPointerCapture?.(e.pointerId)) {
         releasedCapturePointerRef.current = e.pointerId;
@@ -138,18 +143,8 @@ export const MobileControls = memo(function MobileControls({
       }
     },
     onPointerUp: stopIfOwner,
-    onPointerCancel: (e: ButtonPointerEvent) => {
-      if (suppressNextClickTargetRef.current === e.currentTarget) {
-        suppressNextClickTargetRef.current = null;
-      }
-      stopIfOwner(e);
-    },
-    onPointerLeave: (e: ButtonPointerEvent) => {
-      if (suppressNextClickTargetRef.current === e.currentTarget) {
-        suppressNextClickTargetRef.current = null;
-      }
-      stopIfOwner(e);
-    },
+    onPointerCancel: stopIfOwner,
+    onPointerLeave: stopIfOwner,
     onPointerMove: (e: ButtonPointerEvent) => {
       if (activeHoldRef.current !== e.pointerId) return;
       // Avec un appui combiné, pointerup n'arrive qu'au relâchement du dernier
@@ -176,23 +171,8 @@ export const MobileControls = memo(function MobileControls({
       }
       stopIfOwner(e);
     },
-    onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
-      if (e.key === "Enter" || e.key === " ") {
-        suppressNextClickTargetRef.current = null;
-      }
-    },
-    onBlur: (e: { currentTarget: HTMLButtonElement }) => {
-      if (suppressNextClickTargetRef.current === e.currentTarget) {
-        suppressNextClickTargetRef.current = null;
-      }
-    },
     onClick: (e: MouseEvent<HTMLButtonElement>) => {
-      if (suppressNextClickTargetRef.current === e.currentTarget) {
-        suppressNextClickTargetRef.current = null;
-        return;
-      }
-      suppressNextClickTargetRef.current = null;
-      if (!canInteract) return;
+      if (isPointerClick(e) || !canInteract) return;
       action();
     },
   });

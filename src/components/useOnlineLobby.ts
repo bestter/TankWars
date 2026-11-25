@@ -441,6 +441,20 @@ export function useOnlineLobby({
   };
 
   // --- Copy helper ---
+  const dismissCopyFeedback = useCallback((slot: number) => {
+    const previousTimer = copyTimersRef.current.get(slot);
+    if (previousTimer !== undefined) {
+      clearTimeout(previousTimer);
+      copyTimersRef.current.delete(slot);
+    }
+    setCopyFeedback((prev) => {
+      if (!(slot in prev)) return prev;
+      const next = { ...prev };
+      delete next[slot];
+      return next;
+    });
+  }, []);
+
   const copyLink = async (url: string | null, slot: number) => {
     if (!url) return;
     const previousTimer = copyTimersRef.current.get(slot);
@@ -471,16 +485,18 @@ export function useOnlineLobby({
       [slot]: { status, message: announcement },
     }));
 
-    const timer = setTimeout(() => {
-      copyTimersRef.current.delete(slot);
-      if (!mountedRef.current) return;
-      setCopyFeedback((prev) => {
-        const next = { ...prev };
-        delete next[slot];
-        return next;
-      });
-    }, 2000);
-    copyTimersRef.current.set(slot, timer);
+    if (status === 'copied') {
+      const timer = setTimeout(() => {
+        copyTimersRef.current.delete(slot);
+        if (!mountedRef.current) return;
+        setCopyFeedback((prev) => {
+          const next = { ...prev };
+          delete next[slot];
+          return next;
+        });
+      }, 2000);
+      copyTimersRef.current.set(slot, timer);
+    }
   };
 
   // --- Change a slot type (host only, before create) ---
@@ -491,6 +507,11 @@ export function useOnlineLobby({
   const leaveRoom = () => {
     connectionRef.current = null;
     clearReconnectTimer();
+    for (const timer of copyTimersRef.current.values()) {
+      clearTimeout(timer);
+    }
+    copyTimersRef.current.clear();
+    setCopyFeedback({});
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
@@ -532,6 +553,7 @@ export function useOnlineLobby({
     handleCreateRoom,
     handleJoin,
     copyLink,
+    dismissCopyFeedback,
     updateSlot,
     leaveRoom,
     onExitToLocalMenu,
