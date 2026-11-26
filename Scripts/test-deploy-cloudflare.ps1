@@ -46,6 +46,223 @@ public sealed class DeploymentProbeHandler : HttpClientHandler {
 '@
 }
 
+if (-not ("IndexNowTestHandler" -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Collections;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+public sealed class IndexNowRecordedCommand {
+  public string Label { get; set; }
+  public string Location { get; set; }
+}
+
+internal sealed class NonSeekableStreamingContent : HttpContent {
+  private readonly Func<Stream> _streamFactory;
+
+  public NonSeekableStreamingContent(Func<Stream> streamFactory) {
+    _streamFactory = streamFactory;
+  }
+
+  protected override Task SerializeToStreamAsync(Stream stream, TransportContext context) {
+    return Task.CompletedTask;
+  }
+
+  protected override Task<Stream> CreateContentReadStreamAsync() {
+    return Task.FromResult(_streamFactory());
+  }
+
+  protected override bool TryComputeLength(out long length) {
+    length = 0;
+    return false;
+  }
+}
+
+internal sealed class OversizedChunkStream : Stream {
+  private readonly int _totalBytes;
+  private readonly Action _onCompleted;
+  private int _sent;
+
+  public OversizedChunkStream(int totalBytes, Action onCompleted) {
+    _totalBytes = totalBytes;
+    _onCompleted = onCompleted;
+  }
+
+  public override bool CanRead => true;
+  public override bool CanSeek => false;
+  public override bool CanWrite => false;
+  public override long Length => throw new NotSupportedException();
+  public override long Position {
+    get => throw new NotSupportedException();
+    set => throw new NotSupportedException();
+  }
+
+  public override void Flush() { }
+  public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+  public override void SetLength(long value) => throw new NotSupportedException();
+  public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+  public override int Read(byte[] buffer, int offset, int count) {
+    return ReadAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
+  }
+
+  public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    if (_sent >= _totalBytes) {
+      if (_onCompleted != null) { _onCompleted(); }
+      return Task.FromResult(0);
+    }
+    int toCopy = Math.Min(count, Math.Min(16384, _totalBytes - _sent));
+    for (int i = 0; i < toCopy; i++) {
+      buffer[offset + i] = (byte)'x';
+    }
+    _sent += toCopy;
+    return Task.FromResult(toCopy);
+  }
+}
+
+internal sealed class SlowChunkStream : Stream {
+  private readonly int _totalChunks;
+  private readonly int _delayMs;
+  private int _chunksSent;
+  private static readonly byte[] Piece = Encoding.UTF8.GetBytes("<span>drip</span>");
+
+  public SlowChunkStream(int totalChunks, int delayMs) {
+    _totalChunks = totalChunks;
+    _delayMs = delayMs;
+  }
+
+  public override bool CanRead => true;
+  public override bool CanSeek => false;
+  public override bool CanWrite => false;
+  public override long Length => throw new NotSupportedException();
+  public override long Position {
+    get => throw new NotSupportedException();
+    set => throw new NotSupportedException();
+  }
+
+  public override void Flush() { }
+  public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+  public override void SetLength(long value) => throw new NotSupportedException();
+  public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+  public override int Read(byte[] buffer, int offset, int count) {
+    return ReadAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
+  }
+
+  public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+    if (_chunksSent >= _totalChunks) {
+      return 0;
+    }
+    if (_chunksSent > 0) {
+      await Task.Delay(_delayMs, cancellationToken);
+    }
+    _chunksSent++;
+    int toCopy = Math.Min(count, Piece.Length);
+    Buffer.BlockCopy(Piece, 0, buffer, offset, toCopy);
+    return toCopy;
+  }
+}
+
+public sealed class IndexNowTestHandler : HttpClientHandler {
+  public static IList CommandLog;
+  public static string ExpectedLocation;
+  public static bool AfterPages;
+  public static bool SnapshotFailure;
+  public static bool Unchanged;
+  public static bool StalePage;
+  public static bool ReorderedAttributes;
+  public static int PublicAfterSuccessAttempt;
+  public static bool EmptyPublicAfterBody;
+  public static bool OversizedPublicAfterBody;
+  public static bool SlowPublicAfterBody;
+  public static int IndexNowStatus = 200;
+  public static int PublicAfterCalls;
+  public static bool OversizedCompleted;
+  public static string PublishedHtml;
+  public static string OldHtml;
+  public static string ReorderedPublishedHtml;
+  public static string ReorderedOldHtml;
+  public static string IndexNowKey;
+
+  protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+    if (AllowAutoRedirect || request.Method != HttpMethod.Get) {
+      throw new InvalidOperationException("Options HTTP IndexNow incorrectes.");
+    }
+    string uri = request.RequestUri.AbsoluteUri;
+    if (uri == "https://tankwars-game.com/") {
+      string cacheControl = request.Headers.CacheControl != null ? request.Headers.CacheControl.ToString() : "";
+      if (!cacheControl.Contains("no-cache")) {
+        throw new InvalidOperationException("La vérification publique doit demander une revalidation.");
+      }
+      string label = AfterPages ? "public-after" : "public-before";
+      CommandLog.Add(new IndexNowRecordedCommand { Label = label, Location = ExpectedLocation });
+
+      if (!AfterPages && SnapshotFailure) {
+        throw new HttpRequestException("Erreur réseau simulée avant publication.");
+      }
+      if (AfterPages) {
+        PublicAfterCalls++;
+        if (EmptyPublicAfterBody) {
+          return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new ByteArrayContent(Array.Empty<byte>())
+          });
+        }
+        if (OversizedPublicAfterBody) {
+          return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new NonSeekableStreamingContent(() => new OversizedChunkStream(2 * 1024 * 1024, () => { OversizedCompleted = true; }))
+          });
+        }
+        if (SlowPublicAfterBody) {
+          return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new NonSeekableStreamingContent(() => new SlowChunkStream(100, 40))
+          });
+        }
+        if (PublicAfterSuccessAttempt > 0 && PublicAfterCalls < PublicAfterSuccessAttempt) {
+          return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(OldHtml, Encoding.UTF8, "text/html")
+          });
+        }
+        if (ReorderedAttributes) {
+          return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(ReorderedPublishedHtml.Replace("bruit-nouveau", "bruit-public"), Encoding.UTF8, "text/html")
+          });
+        }
+        string afterHtml = !StalePage ? PublishedHtml : OldHtml;
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+          Content = new StringContent(afterHtml, Encoding.UTF8, "text/html")
+        });
+      }
+
+      if (ReorderedAttributes) {
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+          Content = new StringContent(ReorderedOldHtml, Encoding.UTF8, "text/html")
+        });
+      }
+      string beforeHtml = Unchanged ? PublishedHtml.Replace("index-new.js", "index-old.js") : OldHtml;
+      return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+        Content = new StringContent(beforeHtml, Encoding.UTF8, "text/html")
+      });
+    }
+
+    string expectedIndexNow = "https://api.indexnow.org/indexnow?url=https%3A%2F%2Ftankwars-game.com%2F&key=" + IndexNowKey;
+    if (uri != expectedIndexNow) {
+      throw new InvalidOperationException("Destination IndexNow incorrecte.");
+    }
+    CommandLog.Add(new IndexNowRecordedCommand { Label = "indexnow", Location = ExpectedLocation });
+    return Task.FromResult(new HttpResponseMessage((HttpStatusCode)IndexNowStatus) {
+      Content = new StringContent("SECRET_MARKER", Encoding.UTF8, "text/plain")
+    });
+  }
+}
+'@
+}
+
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("tankwars-deploy-tests-" + [guid]::NewGuid().ToString("N"))
 $originalLocation = Get-Location
 $savedEnvironment = @{}
@@ -56,13 +273,19 @@ $global:deploymentTestCommandLog = [System.Collections.Generic.List[object]]::ne
 $global:deploymentTestFailureCommand = ""
 $global:deploymentTestDeployOutput = "https://tankwars-api.example.workers.dev"
 $global:deploymentTestDoctorWarning = $false
-$global:deploymentTestIndexNowCase = $null
-$global:deploymentTestPublicAfterCalls = 0
 $indexNowKey = "a" * 64
 $publishedHtml = '<link rel="canonical" href="https://tankwars-game.com/"><title>TankWars</title><main>Nouvel aperçu</main><script type="module" src="/assets/index-new.js"></script>'
 $oldHtml = $publishedHtml.Replace("Nouvel aperçu", "Ancien aperçu").Replace("index-new.js", "index-old.js")
 $reorderedPublishedHtml = '<link href="https://tankwars-game.com/" rel="canonical"><meta data-name="description" content="bruit-nouveau"><title>TankWars</title><main>Nouvel aperçu</main><script src="/assets/index-new.js" type="module"></script>'
 $reorderedOldHtml = '<link href="https://tankwars-game.com/" rel="canonical"><meta data-name="description" content="bruit-ancien"><title>TankWars</title><main>Ancien aperçu</main><script src="/assets/index-old.js" type="module"></script>'
+
+[IndexNowTestHandler]::CommandLog = $global:deploymentTestCommandLog
+[IndexNowTestHandler]::ExpectedLocation = $fixtureRoot
+[IndexNowTestHandler]::PublishedHtml = $publishedHtml
+[IndexNowTestHandler]::OldHtml = $oldHtml
+[IndexNowTestHandler]::ReorderedPublishedHtml = $reorderedPublishedHtml
+[IndexNowTestHandler]::ReorderedOldHtml = $reorderedOldHtml
+[IndexNowTestHandler]::IndexNowKey = $indexNowKey
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -94,62 +317,11 @@ function node {
   else {
     Assert-True ($args[2] -eq "deploy" -and $args[3] -eq (Join-Path $fixtureRoot "dist") -and $args[4] -eq "--project-name" -and $args[5] -eq "tankwars" -and $args[6] -eq "--branch" -and $args[7] -eq "main") "Cible Pages incorrecte."
     Assert-True ([DeploymentProbeHandler]::Calls -gt 0) "Pages sans sonde."
+    [IndexNowTestHandler]::AfterPages = $true
   }
   $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $operation; Location = (Get-Location).Path })
   $global:LASTEXITCODE = [int]($operation -eq $global:deploymentTestFailureCommand)
   if ($operation -eq "worker") { $global:deploymentTestDeployOutput }
-}
-
-function Invoke-WebRequest {
-  [CmdletBinding()]
-  param(
-    [uri]$Uri, [hashtable]$Headers, [int]$ConnectionTimeoutSeconds,
-    [int]$OperationTimeoutSeconds, [int]$MaximumRedirection, [switch]$SkipHttpErrorCheck
-  )
-  Assert-True (
-    $PSBoundParameters.ContainsKey("MaximumRedirection") -and
-    $MaximumRedirection -eq 0 -and
-    $ConnectionTimeoutSeconds -gt 0 -and
-    $OperationTimeoutSeconds -gt 0 -and
-    $SkipHttpErrorCheck
-  ) "Options HTTP IndexNow incorrectes."
-  $currentCase = $global:deploymentTestIndexNowCase
-  if ($Uri.AbsoluteUri -ceq "https://tankwars-game.com/") {
-    Assert-True ($Headers["Cache-Control"] -eq "no-cache") "La vérification publique doit demander une revalidation."
-    $afterPages = "pages" -in $global:deploymentTestCommandLog.Label
-    $label = if ($afterPages) { "public-after" } else { "public-before" }
-    $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path })
-    if (-not $afterPages -and $currentCase.SnapshotFailure) {
-      throw "Erreur réseau simulée avant publication."
-    }
-    if ($afterPages) {
-      $global:deploymentTestPublicAfterCalls++
-      if ($currentCase.EmptyPublicAfterBody) {
-        return [pscustomobject]@{ StatusCode = 200; Content = "" }
-      }
-      if ($currentCase.OversizedPublicAfterBody) {
-        return [pscustomobject]@{ StatusCode = 200; Content = ("x" * 262145) }
-      }
-      if ($currentCase.PublicAfterSuccessAttempt -and $global:deploymentTestPublicAfterCalls -lt $currentCase.PublicAfterSuccessAttempt) {
-        return [pscustomobject]@{ StatusCode = 200; Content = $oldHtml }
-      }
-      if ($currentCase.ReorderedAttributes) {
-        return [pscustomobject]@{ StatusCode = 200; Content = $reorderedPublishedHtml.Replace("bruit-nouveau", "bruit-public") }
-      }
-      $html = if (-not $currentCase.StalePage) { $publishedHtml } else { $oldHtml }
-      return [pscustomobject]@{ StatusCode = 200; Content = $html }
-    }
-    if ($currentCase.ReorderedAttributes) {
-      return [pscustomobject]@{ StatusCode = 200; Content = $reorderedOldHtml }
-    }
-    $html = if ($currentCase.Unchanged) {
-      $publishedHtml.Replace("index-new.js", "index-old.js")
-    } else { $oldHtml }
-    return [pscustomobject]@{ StatusCode = 200; Content = $html }
-  }
-  Assert-True ($Uri.AbsoluteUri -ceq "https://api.indexnow.org/indexnow?url=https%3A%2F%2Ftankwars-game.com%2F&key=$indexNowKey") "Destination IndexNow incorrecte."
-  $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = "indexnow"; Location = (Get-Location).Path })
-  return [pscustomobject]@{ StatusCode = ($currentCase.IndexNowStatus ?? 200); Content = "SECRET_MARKER" }
 }
 
 function Start-Sleep {
@@ -166,7 +338,13 @@ try {
   }
   [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/index.html"), $publishedHtml)
   [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/$indexNowKey.txt"), $indexNowKey)
-  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "notify-indexnow.ps1") -Destination (Join-Path $fixtureRoot "Scripts")
+  $indexNowSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "notify-indexnow.ps1") -Raw
+  $testIndexNowSource = $indexNowSource.
+    Replace('[System.Net.Http.HttpClientHandler]::new()', '[IndexNowTestHandler]::new()').
+    Replace('[TimeSpan]::FromSeconds(5)', '[TimeSpan]::FromMilliseconds(150)').
+    Replace('Start-Sleep -Seconds 2', 'Start-Sleep -Milliseconds 10')
+  Assert-True ($testIndexNowSource -ne $indexNowSource -and $testIndexNowSource.Contains('[IndexNowTestHandler]::new()') -and $testIndexNowSource.Contains('[TimeSpan]::FromMilliseconds(150)') -and $testIndexNowSource.Contains('Start-Sleep -Milliseconds 10')) "Points de simulation IndexNow absents."
+  [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "Scripts/notify-indexnow.ps1"), $testIndexNowSource, [System.Text.UTF8Encoding]::new($false))
   $testSource = $source.Replace('[System.Net.Http.HttpClientHandler]::new()', '[DeploymentProbeHandler]::new()').Replace('[TimeSpan]::FromSeconds(60)', '[TimeSpan]::FromMilliseconds(100)')
   Assert-True ($testSource -ne $source -and $testSource.Contains('[DeploymentProbeHandler]::new()') -and $testSource.Contains('[TimeSpan]::FromMilliseconds(100)')) "Points de simulation absents."
   $fixtureScript = Join-Path $fixtureRoot "deploy-cloudflare.ps1"
@@ -183,6 +361,7 @@ try {
     @{ Name = "fichier de clé IndexNow vide"; Success = $true; EmptyKeyFile = $true; NoIndexNow = $true; ExpectedIndexNowWarning = 'IndexNow : Le contenu du fichier de clé IndexNow ne correspond pas à son nom\.' },
     @{ Name = "réponse publique vide"; Success = $true; EmptyPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
     @{ Name = "réponse publique anormalement volumineuse"; Success = $true; OversizedPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
+    @{ Name = "réponse publique lente"; Success = $true; SlowPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : L’accueil public est inaccessible\." },
     @{ Name = "IndexNow reçu avec validation de clé en attente"; Success = $true; IndexNowStatus = 202 },
     @{ Name = "échec IndexNow après publication"; Success = $true; IndexNowStatus = 429; IndexNowWarning = $true },
     @{ Name = "avertissement React Doctor visible et non bloquant"; Success = $true; DoctorWarning = $true },
@@ -223,8 +402,18 @@ try {
     $global:deploymentTestCommandLog.Clear()
     $global:deploymentTestFailureCommand = $case.Failure
     $global:deploymentTestDoctorWarning = $case.DoctorWarning -eq $true
-    $global:deploymentTestIndexNowCase = $case
-    $global:deploymentTestPublicAfterCalls = 0
+    [IndexNowTestHandler]::AfterPages = $false
+    [IndexNowTestHandler]::SnapshotFailure = $case.SnapshotFailure -eq $true
+    [IndexNowTestHandler]::Unchanged = $case.Unchanged -eq $true
+    [IndexNowTestHandler]::StalePage = $case.StalePage -eq $true
+    [IndexNowTestHandler]::ReorderedAttributes = $case.ReorderedAttributes -eq $true
+    [IndexNowTestHandler]::PublicAfterSuccessAttempt = if ($case.PublicAfterSuccessAttempt) { $case.PublicAfterSuccessAttempt } else { 0 }
+    [IndexNowTestHandler]::EmptyPublicAfterBody = $case.EmptyPublicAfterBody -eq $true
+    [IndexNowTestHandler]::OversizedPublicAfterBody = $case.OversizedPublicAfterBody -eq $true
+    [IndexNowTestHandler]::SlowPublicAfterBody = $case.SlowPublicAfterBody -eq $true
+    [IndexNowTestHandler]::IndexNowStatus = if ($case.IndexNowStatus) { $case.IndexNowStatus } else { 200 }
+    [IndexNowTestHandler]::PublicAfterCalls = 0
+    [IndexNowTestHandler]::OversizedCompleted = $false
     $global:deploymentTestDeployOutput = if ($case.ContainsKey("Output")) { $case.Output } else { "https://tankwars-api.example.workers.dev" }
     $distHtml = if ($case.ReorderedAttributes) { $reorderedPublishedHtml } else { $publishedHtml }
     [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/index.html"), $distHtml)
@@ -257,7 +446,13 @@ try {
       Assert-True ($output -match $case.ExpectedIndexNowWarning) "Avertissement IndexNow attendu absent ($($case.Name)). $output"
     }
     else {
-      Assert-True (($output -match "IndexNow : (Le nouveau build|IndexNow a répondu|comparaison avant publication|Le contenu du fichier|La réponse de l’accueil)") -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
+      Assert-True (($output -match "IndexNow : (Le nouveau build|IndexNow a répondu|comparaison avant publication|Le contenu du fichier|La réponse de l’accueil|L’accueil public)") -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
+    }
+    if ($case.OversizedPublicAfterBody) {
+      Assert-True (-not [IndexNowTestHandler]::OversizedCompleted) "Le flux volumineux sans Content-Length aurait dû être interrompu avant la fin."
+    }
+    if ($case.SlowPublicAfterBody) {
+      Assert-True ($elapsed.Elapsed.TotalSeconds -lt 3) "Le délai global par requête IndexNow n’a pas interrompu la réponse lente ($($elapsed.Elapsed.TotalSeconds)s)."
     }
     foreach ($command in $global:deploymentTestCommandLog) { Assert-True ($command.Location -eq $fixtureRoot) "Commande hors du dépôt." }
     if ($case.NoCommands) { Assert-True ($labels.Count -eq 0) "Commande avant validation de la configuration." }
@@ -283,9 +478,10 @@ try {
   Write-Output "$($cases.Count) scénarios réussis; aucun réseau ni déploiement réel."
 }
 finally {
+  [IndexNowTestHandler]::CommandLog = $null
   Set-Location -LiteralPath $originalLocation.Path
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process") }
-  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput, deploymentTestDoctorWarning, deploymentTestIndexNowCase, deploymentTestPublicAfterCalls -Scope Global -ErrorAction SilentlyContinue
+  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput, deploymentTestDoctorWarning -Scope Global -ErrorAction SilentlyContinue
   # Seul le répertoire temporaire explicitement créé ci-dessus est supprimé.
   $resolvedFixture = [System.IO.Path]::GetFullPath($fixtureRoot)
   $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
