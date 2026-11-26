@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomSlotConfig } from '../types/room';
 import { VGA_PALETTE } from '../types/game';
@@ -24,15 +25,17 @@ export function OnlineLobbyCreate({
   onExitToLocalMenu,
 }: OnlineLobbyCreateProps) {
   const { t } = useTranslation();
+  const numPlayersLabelId = useId();
 
   return (
     <>
-      <div style={{ marginBottom: 10, color: '#AAAAAA', fontSize: 12 }}>{t('num_players_label')}</div>
-      <div className="retro-num-row" style={{ marginBottom: 14 }}>
+      <div id={numPlayersLabelId} style={{ marginBottom: 10, color: '#AAAAAA', fontSize: 12 }}>{t('num_players_label')}</div>
+      <div className="retro-num-row" role="group" aria-labelledby={numPlayersLabelId} style={{ marginBottom: 14 }}>
         {[2, 3, 4].map((n) => (
           <button
             key={n}
             type="button"
+            aria-pressed={n === numPlayers}
             className={`retro-num-btn ${n === numPlayers ? 'active' : ''}`}
             onClick={() => onChangeNumPlayers(n as 2 | 3 | 4)}
           >
@@ -41,12 +44,12 @@ export function OnlineLobbyCreate({
         ))}
       </div>
 
-      <div style={{ marginBottom: 8, color: '#AAAAAA', fontSize: 12 }}>
+      <h2 className="lobby-section-heading">
         {t('battle_configuration')} — {t('auto_start_note')}
-      </div>
+      </h2>
 
       {import.meta.env.DEV && (
-        <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: '#AAAAAA', marginBottom: 8 }}>
           Dev: Assurez-vous que <code>npm run worker:dev</code> tourne dans un autre terminal (port 8787 par défaut).
         </div>
       )}
@@ -79,7 +82,7 @@ export function OnlineLobbyCreate({
           </select>
 
           {cfg.type === 'human' && idx > 0 && (
-            <span className="lobby-slot-hint" style={{ fontSize: 12, color: '#666' }}>
+            <span className="lobby-slot-hint" style={{ fontSize: 12, color: '#AAAAAA' }}>
               {t('link_instructions')}
             </span>
           )}

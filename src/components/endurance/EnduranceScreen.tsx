@@ -73,7 +73,7 @@ function SessionView({ session, onExit }: { session: EnduranceSession; onExit: (
     <p>{t("endurance_progress", { attempted: s.attempted, completed: s.completed, abandoned: s.abandoned, interrupted: s.interrupted, rounds: s.roundsCompleted })}</p>
     <p>{s.id} · {(s.durationMs / 60000).toFixed(1)} min · {session.phase} · {s.status} {s.reason}</p>
     <p role="status">{t("endurance_storage")}: {s.storageError ?? (session.busy ? t("endurance_saving") : t("endurance_saved"))}</p>
-    <p aria-label={t("diagnostics_metrics")}>{t("diagnostics_metrics")}: {JSON.stringify({ ...diagnostic, heapBytes: memory?.usedJSHeapSize ?? null })}</p>
+    <p>{t("diagnostics_metrics")}: {JSON.stringify({ ...diagnostic, heapBytes: memory?.usedJSHeapSize ?? null })}</p>
     {session.journalStatus && <p role="status">{t("endurance_journal_status", { ...session.journalStatus,
       state: t(session.journalStatus.complete ? "endurance_journal_complete" : session.journalStatus.error || !session.running ? "endurance_journal_incomplete" : "endurance_journal_active") })}</p>}
     {(error || s.storageError) && <p role="alert">{error ?? s.storageError}</p>}

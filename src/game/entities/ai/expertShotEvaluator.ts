@@ -167,7 +167,7 @@ export function expertTacticalPoints(
     if (midpoint.x >= 0 && midpoint.x < terrain.width) points.push(midpoint);
   }
   if (weaponId === "DRILLER" && targets.length > 0) {
-    const nearest = [...targets].sort((a, b) =>
+    const nearest = targets.toSorted((a, b) =>
       Math.abs(a.tank.position.x - shooter.tank.position.x) -
         Math.abs(b.tank.position.x - shooter.tank.position.x) ||
       roster.indexOf(a) - roster.indexOf(b))[0];
@@ -264,7 +264,7 @@ export function resolvePostSimulationPrimaryTarget(
     }
   }
 
-  const sorted = [...basin].sort((a, b) =>
+  const sorted = basin.toSorted((a, b) =>
     Number(b.destroyed) - Number(a.destroyed) ||
     b.damageMilli - a.damageMilli ||
     Number(b.directHit) - Number(a.directHit) ||

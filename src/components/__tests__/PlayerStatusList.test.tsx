@@ -64,6 +64,8 @@ describe("PlayerStatusList", () => {
   ] as const)("renders health, shield and profiles in %s", async (language, title, you, aliceHealth, aliceShield, bobHealth, bobShield, human, ok) => {
     await show(language);
     expect(screen.getByRole("region", { name: title })).toBeDefined();
+    expect(screen.getByRole("heading", { level: 2, name: title })).toBeDefined();
+    expect(screen.getByRole("list")).toBeDefined();
     expect(screen.getByText(you)).toBeDefined();
     expect(screen.getByText("Alice").textContent).toBe("Alice");
     expect(screen.getByText(aliceHealth)).toBeDefined();
@@ -163,5 +165,20 @@ describe("PlayerStatusList", () => {
     expect(screen.getAllByText("IA SIMPLE")).toHaveLength(2);
     expect(screen.getByText("IA SNIPER")).toBeDefined();
     expect(screen.getByText("IA EXPERT")).toBeDefined();
+  });
+
+  it("remaps low-contrast BLUE and VOLT_PURPLE player name text while preserving the swatch color", async () => {
+    await show("fr", "local", [
+      card({ id: "blue", name: "Blue", color: "#5555FF" }),
+      card({ id: "purple", name: "Purple", color: "#B300FF" }),
+    ]);
+    const blueName = screen.getByText("Blue");
+    const purpleName = screen.getByText("Purple");
+    expect(blueName.style.color).toBe("rgb(127, 127, 255)");
+    expect(purpleName.style.color).toBe("rgb(204, 102, 255)");
+
+    const swatches = document.querySelectorAll<HTMLElement>(".player-status-swatch");
+    expect(swatches[0]?.style.backgroundColor).toBe("rgb(85, 85, 255)");
+    expect(swatches[1]?.style.backgroundColor).toBe("rgb(179, 0, 255)");
   });
 });

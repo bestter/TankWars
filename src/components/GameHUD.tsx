@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { memo, useId } from "react";
 import { useTranslation } from "react-i18next";
 import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 import { ALL_WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "../types/weapon";
 import { VGA_PALETTE } from "../types/game";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 import { CombatWaitSpinner } from "./CombatWaitSpinner";
 import { getHudWaitCauseKey, type HudWaitCauseKey } from "./combatWaitStatus";
 import { WEAPON_I18N_KEYS, weaponShortLabel } from "./weaponShortLabel";
@@ -28,6 +29,7 @@ function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
   return (
     <>
       <span
+        aria-hidden="true"
         style={{
           display: "inline-block",
           width: 9,
@@ -40,7 +42,7 @@ function PlayerReadout({ turnInfo }: Pick<GameHUDProps, "turnInfo">) {
       />
       <span
         className="retro-hud-player-name"
-        style={{ color: turnInfo.playerColor, fontWeight: "bold" }}
+        style={{ color: getAccessibleTankTextColor(turnInfo.playerColor), fontWeight: "bold" }}
       >
         {turnInfo.playerName}
       </span>
@@ -79,36 +81,40 @@ function TurnStatus({ turnInfo, gameMode }: Pick<GameHUDProps, "turnInfo" | "gam
 
 function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnInfo" | "onWeaponSelect">) {
   const { t } = useTranslation();
+  const weaponGroupLabelId = useId();
   const currentWeapon = turnInfo?.currentWeapon;
   const inventory = turnInfo?.inventory ?? {};
   const canInteract = !!turnInfo?.isHuman && !turnInfo.isInputLocked;
 
   return (
-    <div className="retro-hud-weapons">
-      <span style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
+    <div className="retro-hud-weapons" role="group" aria-labelledby={weaponGroupLabelId}>
+      <span id={weaponGroupLabelId} style={{ color: VGA_PALETTE.MAGENTA, marginRight: 2 }}>{t("hud_weapon")}</span>
       {ALL_WEAPON_IDS.map((weaponId) => {
         const definition = WEAPON_REGISTRY[weaponId];
         const ammo = inventory[weaponId] ?? 0;
         const isCurrent = currentWeapon === weaponId;
         const hasAmmo = weaponId === "MISSILE" || ammo > 0;
         const selectable = canInteract && hasAmmo;
+        const shortLabel = weaponShortLabel(weaponId);
+        const weaponName = t(WEAPON_I18N_KEYS[weaponId]);
         const backgroundColor = isCurrent ? "#002200" : hasAmmo ? "#111111" : "#0a0a0a";
         const borderColor = isCurrent
           ? VGA_PALETTE.GREEN
           : hasAmmo
             ? VGA_PALETTE.GRAY
-            : VGA_PALETTE.DARK_GRAY;
+            : "#666666";
         const color = isCurrent
           ? definition.color
           : hasAmmo
             ? VGA_PALETTE.WHITE
-            : VGA_PALETTE.DARK_GRAY;
+            : "#888888";
 
         return (
           <button
             key={weaponId}
             type="button"
             disabled={!selectable}
+            aria-pressed={isCurrent}
             onClick={() => onWeaponSelect?.(weaponId)}
             className="retro-weapon-btn"
             style={{
@@ -116,11 +122,26 @@ function WeaponSelector({ turnInfo, onWeaponSelect }: Pick<GameHUDProps, "turnIn
               color,
               borderColor,
               cursor: selectable ? "pointer" : "default",
-              opacity: hasAmmo ? 1 : 0.55,
+              opacity: 1,
             }}
-            title={t(WEAPON_I18N_KEYS[weaponId])}
+            title={weaponName}
           >
-            {weaponShortLabel(weaponId)}:{weaponId === "MISSILE" ? "∞" : ammo}
+            {weaponId === "MISSILE" ? (
+              <>
+                <span>{shortLabel}</span>
+                <span aria-hidden="true">:∞</span>{" "}
+                <span className="visually-hidden">
+                  — {weaponName} {t("hud_ammo_unlimited")}
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  {shortLabel}:{ammo}
+                </span>{" "}
+                <span className="visually-hidden">— {weaponName}</span>
+              </>
+            )}
           </button>
         );
       })}

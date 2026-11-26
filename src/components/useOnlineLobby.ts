@@ -5,7 +5,7 @@ import type { RoomSlotConfig, ServerGameMessage, ServerRosterUpdate } from '../t
 import type { Player } from '../types/player';
 import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
 import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
-import type { JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
+import type { CopySlotFeedback, CopySlotStatus, JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
 
 export function useOnlineLobby({
   initialParticipation,
@@ -40,7 +40,11 @@ export function useOnlineLobby({
   const [storageWarning, setStorageWarning] = useState<OnlineEntryMessage | null>(null);
   const participationRef = useRef(initialParticipation);
   const [error, setError] = useState<string | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<Record<number, boolean>>({});
+  const [copyFeedback, setCopyFeedback] = useState<Record<number, CopySlotFeedback | undefined>>({});
+  const copyTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const lastCopyAnnouncementBySlotRef = useRef<Map<number, CopySlotFeedback>>(new Map());
+  const nextCopyAttemptIdRef = useRef(0);
+  const activeCopyAttemptBySlotRef = useRef<Map<number, number>>(new Map());
 
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(false);
@@ -322,13 +326,22 @@ export function useOnlineLobby({
     return () => clearInterval(retryId);
   }, [view]);
 
-  // Cleanup WS on unmount
+  // Cleanup WS and copy feedback timers on unmount
   useEffect(() => {
     const currentWsRef = wsRef;
+    const copyTimers = copyTimersRef.current;
+    const activeCopyAttempts = activeCopyAttemptBySlotRef.current;
+    const lastCopyAnnouncements = lastCopyAnnouncementBySlotRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearReconnectTimer();
+      for (const timer of copyTimers.values()) {
+        clearTimeout(timer);
+      }
+      copyTimers.clear();
+      activeCopyAttempts.clear();
+      lastCopyAnnouncements.clear();
       connectionRef.current = null;
       if (currentWsRef.current && !gameStartedRef.current) {
         currentWsRef.current.onclose = null;
@@ -434,17 +447,73 @@ export function useOnlineLobby({
   };
 
   // --- Copy helper ---
+  const invalidateSlotCopyAttempt = useCallback((slot: number): number => {
+    nextCopyAttemptIdRef.current += 1;
+    const attemptId = nextCopyAttemptIdRef.current;
+    activeCopyAttemptBySlotRef.current.set(slot, attemptId);
+    const previousTimer = copyTimersRef.current.get(slot);
+    if (previousTimer !== undefined) {
+      clearTimeout(previousTimer);
+      copyTimersRef.current.delete(slot);
+    }
+    return attemptId;
+  }, []);
+
+  const dismissCopyFeedback = useCallback((slot: number) => {
+    invalidateSlotCopyAttempt(slot);
+    setCopyFeedback((prev) => {
+      if (!(slot in prev)) return prev;
+      const next = { ...prev };
+      delete next[slot];
+      return next;
+    });
+  }, [invalidateSlotCopyAttempt]);
+
   const copyLink = async (url: string | null, slot: number) => {
     if (!url) return;
+    const attemptId = invalidateSlotCopyAttempt(slot);
+
+    let status: CopySlotStatus = 'copied';
     try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
       await navigator.clipboard.writeText(url);
-      setCopyFeedback((prev) => ({ ...prev, [slot]: true }));
-      setTimeout(() => {
-        setCopyFeedback((prev) => ({ ...prev, [slot]: false }));
-      }, 1400);
     } catch {
-      // Fallback: prompt
-      prompt('Copiez ce lien :', url);
+      status = 'failed';
+    }
+
+    if (!mountedRef.current || activeCopyAttemptBySlotRef.current.get(slot) !== attemptId) {
+      return;
+    }
+
+    const previousAnnouncement = lastCopyAnnouncementBySlotRef.current.get(slot);
+    const announcement = {
+      status,
+      appendAnnouncementSpace: previousAnnouncement?.status === status && !previousAnnouncement.appendAnnouncementSpace,
+    };
+    lastCopyAnnouncementBySlotRef.current.set(slot, announcement);
+
+    setCopyFeedback((prev) => ({
+      ...prev,
+      [slot]: announcement,
+    }));
+
+    if (status === 'copied') {
+      const timer = setTimeout(() => {
+        if (copyTimersRef.current.get(slot) === timer) {
+          copyTimersRef.current.delete(slot);
+        }
+        if (!mountedRef.current || activeCopyAttemptBySlotRef.current.get(slot) !== attemptId) {
+          return;
+        }
+        setCopyFeedback((prev) => {
+          const next = { ...prev };
+          delete next[slot];
+          return next;
+        });
+      }, 2000);
+      copyTimersRef.current.set(slot, timer);
     }
   };
 
@@ -456,6 +525,13 @@ export function useOnlineLobby({
   const leaveRoom = () => {
     connectionRef.current = null;
     clearReconnectTimer();
+    for (const timer of copyTimersRef.current.values()) {
+      clearTimeout(timer);
+    }
+    copyTimersRef.current.clear();
+    activeCopyAttemptBySlotRef.current.clear();
+    lastCopyAnnouncementBySlotRef.current.clear();
+    setCopyFeedback({});
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
@@ -497,6 +573,7 @@ export function useOnlineLobby({
     handleCreateRoom,
     handleJoin,
     copyLink,
+    dismissCopyFeedback,
     updateSlot,
     leaveRoom,
     onExitToLocalMenu,

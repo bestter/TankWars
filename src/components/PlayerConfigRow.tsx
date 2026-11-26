@@ -88,6 +88,7 @@ export function PlayerConfigRow({
         onColorSelect={(newColor) => onColorSelect(index, newColor)}
         unavailableColors={unavailableColors}
         colorPool={colorPool}
+        groupLabel={t("color_picker_player_group_label", { num: index + 1 })}
       />
 
       {/* Select Controller Type (Humain, IA Simple, IA OK, IA Sniper, IA Expert) */}

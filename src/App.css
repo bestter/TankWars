@@ -427,7 +427,6 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   min-inline-size: 42px;
   min-block-size: 24px;
   border: 2px solid;
-  outline: none;
   pointer-events: auto;
   box-sizing: border-box;
 }
@@ -547,6 +546,46 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   gap: 10px;
 }
 
+.retro-modal-confirm {
+  width: min(440px, 92%);
+  border: 4px solid #ff5555;
+  background-color: rgba(0, 0, 0, 0.94);
+  overflow-y: auto;
+}
+
+.retro-modal-confirm[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.retro-modal-confirm-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #ffffff;
+}
+
+.retro-modal-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.retro-modal-confirm-actions .round-summary-menu-btn {
+  margin-top: 0;
+  margin-inline: 0;
+  min-block-size: 44px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-color: #ff5555;
+  color: #ff5555;
+}
+
 .protocol-mismatch-overlay p {
   margin: 0;
   max-width: 420px;
@@ -581,7 +620,6 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   overflow-wrap: break-word;
   text-align: center;
   pointer-events: none;
-  animation: fire-rejection-in 150ms ease-out;
 }
 
 @keyframes fire-rejection-in {
@@ -615,7 +653,6 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   pointer-events: none;
   overflow-wrap: break-word;
   transform: translateX(-50%);
-  animation: zeus-announcement-in 180ms steps(2, end);
 }
 
 @supports (font-size: 1cqi) {
@@ -633,6 +670,16 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   to {
     opacity: 1;
     transform: translateX(-50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fire-rejection-toast {
+    animation: fire-rejection-in 150ms ease-out;
+  }
+
+  .zeus-announcement {
+    animation: zeus-announcement-in 180ms steps(2, end);
   }
 }
 
@@ -781,8 +828,13 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   outline-offset: 2px;
 }
 
-#main-content:focus {
+#main-content:focus:not(:focus-visible) {
   outline: none;
+}
+
+.app-shell :where(a[href], button, input, select, textarea, summary, canvas.game-canvas):focus-visible {
+  outline: 2px solid #ffff55;
+  outline-offset: 2px;
 }
 
 .retro-subtitle {
@@ -795,7 +847,12 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 
 .retro-section {
   color: #55ffff;
+  font-family: inherit;
   font-size: 13px;
+  font-weight: normal;
+  letter-spacing: normal;
+  line-height: 1.35;
+  text-align: left;
   margin: 14px 0 6px;
   padding-bottom: 2px;
   border-bottom: 1px solid #333333;
@@ -835,8 +892,14 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .retro-input:focus {
-  outline: none;
   border-color: #55ffff;
+}
+
+.retro-input:focus-visible,
+.retro-input.retro-input-error:focus-visible,
+.retro-input.retro-input-conflict-source:focus-visible {
+  outline: 2px solid #55ffff;
+  outline-offset: 2px;
 }
 
 .retro-player-name-field {
@@ -865,14 +928,14 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   display: block;
   margin-top: 3px;
   color: #ff5555;
-  font-size: 9px;
-  line-height: 1.2;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .retro-color-picker-help {
   margin-top: -2px;
   margin-bottom: 8px;
-  color: #666666;
+  color: #999999;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -959,19 +1022,21 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   overflow-wrap: break-word;
 }
 
-.retro-start-btn:hover {
+.retro-start-btn:hover:not(:disabled) {
   background: #2a2a2a;
   color: #ffffff;
   border-color: #ffffff;
 }
 
-.retro-start-btn:active {
-  transform: translateY(1px);
+@media (prefers-reduced-motion: no-preference) {
+  .retro-start-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
 }
 
 .retro-legal {
-  font-size: 9px;
-  color: #555555;
+  font-size: 11px;
+  color: #999999;
   margin-top: 18px;
   text-align: center;
   letter-spacing: 0.3px;
@@ -992,16 +1057,14 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   box-sizing: border-box;
   position: relative;
   transition: opacity 0.15s ease-in-out, border-color 0.15s ease-in-out;
-  width: 24px;
-  height: 24px;
+  min-inline-size: 24px;
+  min-block-size: 24px;
   border: 1px solid #555555;
   cursor: pointer;
   opacity: 0.75;
 }
 
 .retro-color-swatch-btn.selected {
-  width: 24px;
-  height: 24px;
   border: 2px solid #ffffff;
   opacity: 1;
 }
@@ -1013,7 +1076,23 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .retro-color-swatch-btn:hover:not(:disabled) {
-  opacity: 1 !important;
+  opacity: 1;
+}
+
+@media (forced-colors: active) {
+  .retro-color-swatch-btn {
+    forced-color-adjust: none;
+  }
+
+  .retro-color-swatch-btn.selected {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+
+  .app-shell :where(a[href], button, input, select, textarea, summary, canvas.game-canvas):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 
 .retro-color-swatch-unavailable-mark {
@@ -1169,6 +1248,34 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   }
 }
 
+@keyframes shot-earnings-fade {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shot-earnings-line {
+    animation-name: shot-earnings-fade;
+  }
+}
+
+.round-summary-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  text-align: left;
+}
+
 .round-summary-menu-btn {
   display: block;
   margin-top: 10px;
@@ -1219,12 +1326,25 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   min-inline-size: 28px;
   min-block-size: 24px;
   padding: 3px 8px;
-  border: none;
+  border: 2px solid transparent;
   cursor: pointer;
   font-family: monospace;
   font-weight: bold;
   font-size: 12px;
   box-sizing: border-box;
+}
+
+.language-switcher-btn.active {
+  border-color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .language-switcher-btn.active {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
 }
 
 .retro-menu-container {
@@ -1302,6 +1422,14 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   overflow-wrap: anywhere;
 }
 
+.lobby-name-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #aaaaaa;
+  text-align: left;
+}
+
 .lobby-name-input {
   width: 100%;
   padding: 6px;
@@ -1311,6 +1439,25 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   box-sizing: border-box;
   min-block-size: 32px;
   font-family: monospace;
+}
+
+.lobby-section-heading {
+  margin: 0 0 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: normal;
+  color: #aaaaaa;
+}
+
+.lobby-waiting-heading {
+  font-size: 13px;
+  color: #ffff55;
+}
+
+.lobby-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .lobby-wait-slot-row {
@@ -1335,6 +1482,45 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.lobby-copy-status {
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.lobby-copy-status[data-status="copied"] {
+  opacity: 1;
+  color: #55ff55;
+}
+
+.lobby-copy-status[data-status="failed"] {
+  opacity: 1;
+  color: #ff5555;
+}
+
+.lobby-copy-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 100%;
+  max-width: 100%;
+  min-inline-size: 0;
+}
+
+.lobby-copy-fallback-url {
+  flex: 1 1 200px;
+  min-inline-size: 140px;
+  max-width: 100%;
+  padding: 4px 6px;
+  background: #000000;
+  color: #ffffff;
+  border: 1px solid #ff5555;
+  font-family: monospace;
+  font-size: 11px;
+  box-sizing: border-box;
 }
 
 .lobby-action-btn,
@@ -1810,9 +1996,11 @@ canvas {
   .combat-menu-btn,
   .protocol-mismatch-overlay button,
   .retro-modal-error button,
+  .retro-modal-confirm button,
   .lobby-slot-select,
   .lobby-secondary-btn,
   .lobby-name-input,
+  .lobby-copy-fallback-url,
   .lobby-action-btn,
   .lobby-action-link {
     min-block-size: 44px;
@@ -1848,8 +2036,8 @@ canvas {
 
   .retro-color-swatch-btn,
   .retro-color-swatch-btn.selected {
-    width: 32px;
-    height: 32px;
+    min-inline-size: 44px;
+    min-block-size: 44px;
   }
 
   .weapon-shop-actions {

@@ -276,4 +276,289 @@ describe('useOnlineLobby', () => {
     // WebSocket close must have been called on unmount
     expect(mockWs.close).toHaveBeenCalled();
   });
+
+  it('announces copy success without prompt, deduplicates repeated messages, cancels prior timer, and clears on unmount', async () => {
+    vi.useFakeTimers();
+    const promptSpy = vi.fn();
+    vi.stubGlobal('prompt', promptSpy);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+
+    expect(writeText).toHaveBeenCalledWith('https://tankwars.pages.dev/?room=R1&slot=1&token=T1');
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(result.current.copyFeedback[1]).toBeDefined();
+
+    // Repeat click before expiry cancels prior timer and appends \u00A0 for VoiceOver
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: true });
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current.copyFeedback[1]).toBeDefined();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Unmount with an active timer cleans up cleanly
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    unmount();
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('keeps copy failure feedback until dismissed, overwritten by success, or leaving the room', async () => {
+    vi.useFakeTimers();
+    const promptSpy = vi.fn();
+    vi.stubGlobal('prompt', promptSpy);
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const onExitToLocalMenu = vi.fn();
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+        onExitToLocalMenu,
+      })
+    );
+
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
+
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
+
+    // Explicit dismiss clears failure immediately
+    act(() => {
+      result.current.dismissCopyFeedback(1);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Retry failing then succeeding replaces failure and auto-clears after 2000ms
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
+
+    writeText.mockResolvedValueOnce(undefined);
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Leaving room clears failure state and timers
+    await act(async () => {
+      await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
+    });
+    expect(result.current.copyFeedback[1]?.status).toBe('failed');
+    act(() => {
+      result.current.leaveRoom();
+    });
+    expect(result.current.copyFeedback).toEqual({});
+    expect(onExitToLocalMenu).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('prevents stale overlapping copy attempts and timers from clearing or overwriting newer failure state', async () => {
+    vi.useFakeTimers();
+    const createDeferred = () => {
+      let resolve!: () => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    const deferredQueue: ReturnType<typeof createDeferred>[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn(() => {
+          const d = createDeferred();
+          deferredQueue.push(d);
+          return d.promise;
+        }),
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+        onExitToLocalMenu: vi.fn(),
+      })
+    );
+
+    const url = 'https://tankwars.pages.dev/?room=R1&slot=1&token=T1';
+
+    // Order A: attempt 1 resolves (success) after attempt 2 started, then attempt 2 rejects (failure)
+    let p1!: Promise<void>;
+    let p2!: Promise<void>;
+    act(() => {
+      p1 = result.current.copyLink(url, 1);
+      p2 = result.current.copyLink(url, 1);
+    });
+    expect(deferredQueue).toHaveLength(2);
+
+    await act(async () => {
+      deferredQueue[0].resolve();
+      await p1;
+    });
+    // Attempt 1 is stale: must not set 'copied' or schedule a timer
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    await act(async () => {
+      deferredQueue[1].reject(new Error('denied'));
+      await p2;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
+
+    // Reverse order: attempt 4 rejects first (current), then stale attempt 3 resolves
+    let p3!: Promise<void>;
+    let p4!: Promise<void>;
+    act(() => {
+      p3 = result.current.copyLink(url, 1);
+      p4 = result.current.copyLink(url, 1);
+    });
+    expect(deferredQueue).toHaveLength(4);
+
+    await act(async () => {
+      deferredQueue[3].reject(new Error('denied'));
+      await p4;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
+
+    await act(async () => {
+      deferredQueue[2].resolve();
+      await p3;
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
+
+    // Invalidate in-flight attempt via dismissCopyFeedback
+    let p5!: Promise<void>;
+    act(() => {
+      p5 = result.current.copyLink(url, 1);
+      result.current.dismissCopyFeedback(1);
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+    await act(async () => {
+      deferredQueue[4].resolve();
+      await p5;
+    });
+    expect(result.current.copyFeedback[1]).toBeUndefined();
+
+    // Invalidate in-flight attempt via leaveRoom
+    let p6!: Promise<void>;
+    act(() => {
+      p6 = result.current.copyLink(url, 1);
+      result.current.leaveRoom();
+    });
+    await act(async () => {
+      deferredQueue[5].reject(new Error('denied'));
+      await p6;
+    });
+    expect(result.current.copyFeedback).toEqual({});
+
+    vi.useRealTimers();
+  });
+
+  it('tracks copy announcements per slot so A -> B -> A always changes slot A status text', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    const { result } = renderHook(() =>
+      useOnlineLobby({
+        onStartGame: vi.fn(),
+      })
+    );
+
+    const urlA = 'https://tankwars.pages.dev/?room=R1&slot=0&token=T0';
+    const urlB = 'https://tankwars.pages.dev/?room=R1&slot=1&token=T1';
+
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
+
+    await act(async () => {
+      await result.current.copyLink(urlB, 1);
+    });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
+
+    // Returning to A before 2000ms must produce a distinct announcement for slot 0
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: true });
+
+    // Repeating A again alternates back cleanly even after expiry
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(result.current.copyFeedback[0]).toBeUndefined();
+
+    await act(async () => {
+      await result.current.copyLink(urlA, 0);
+    });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
+
+    vi.useRealTimers();
+  });
 });

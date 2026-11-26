@@ -6,7 +6,7 @@ import { useModalDialog } from "./modalDialog";
 export function ProtocolMismatchDialog() {
   const { t } = useTranslation();
   const titleId = useId();
-  const { dialogRef, handleClose } = useModalDialog();
+  const { dialogRef, handleClose } = useModalDialog({ dismissActiveModals: true });
   const refreshBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export function SessionErrorDialog({
 }: SessionErrorDialogProps) {
   const { t } = useTranslation();
   const titleId = useId();
-  const { dialogRef, handleClose } = useModalDialog();
+  const { dialogRef, handleClose } = useModalDialog({ dismissActiveModals: true });
   const retryBtnRef = useRef<HTMLButtonElement | null>(null);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
 
@@ -132,6 +132,73 @@ export function SessionErrorDialog({
             {t("btn_menu")}
           </button>
         )}
+      </div>
+    </dialog>
+  );
+}
+
+export interface OnlineQuitConfirmDialogProps {
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}
+
+export function OnlineQuitConfirmDialog({
+  onCancel,
+  onConfirm,
+}: OnlineQuitConfirmDialogProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const { dialogRef, closeDialog, handleClose } = useModalDialog({
+    onDismiss: onCancel,
+  });
+  const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    cancelBtnRef.current?.focus();
+  }, []);
+
+  const handleCancelClick = () => {
+    closeDialog("cancel");
+    onCancel();
+  };
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+    handleCancelClick();
+  };
+
+  const handleConfirmClick = () => {
+    closeDialog("confirm");
+    onConfirm();
+  };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="retro-modal retro-modal-confirm"
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      onClose={handleClose}
+    >
+      <h2 id={titleId} className="retro-modal-confirm-title">
+        {t("online_quit_confirm")}
+      </h2>
+      <div className="retro-modal-confirm-actions">
+        <button
+          ref={cancelBtnRef}
+          type="button"
+          className="retro-btn"
+          onClick={handleCancelClick}
+        >
+          {t("online_quit_cancel")}
+        </button>
+        <button
+          type="button"
+          className="round-summary-menu-btn"
+          onClick={handleConfirmClick}
+        >
+          {t("online_quit_confirm_btn")}
+        </button>
       </div>
     </dialog>
   );

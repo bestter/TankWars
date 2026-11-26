@@ -19,7 +19,7 @@ export function materialBoundaryPoints(
   const reach = TANK_HITBOX_WIDTH / 2 + SOFT_TERRAIN_DESTRUCTION_MULTIPLIER * radius +
     (weapon === "DRILLER" ? Math.max(0, DRILLER_SHAFT_DEPTH - radius) : 0);
   const materials = terrain.getMaterials();
-  const ordered = [...targets].sort((a, b) => roster.indexOf(a) - roster.indexOf(b));
+  const ordered = targets.toSorted((a, b) => roster.indexOf(a) - roster.indexOf(b));
   const windows = ordered.map((target) => {
     const tx = target.tank.position.x;
     const boundaries: number[] = [];

@@ -1,7 +1,7 @@
 import { makeRoundMap } from "../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
 import { makePlayer, makeTank } from '../game/__tests__/helpers';
@@ -236,7 +236,7 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.queryByRole('button', { name: 'join_room_btn' })).toBeNull();
   });
 
-  it('confirms before returning from a restored online game', () => {
+  it('confirms via a native dialog focusing Cancel before returning from a restored online game, without window.confirm', () => {
     const players = [
       makePlayer({ id: 'player-1', name: 'Host' }),
       makePlayer({ id: 'player-2', name: 'Guest', tank: makeTank('tank-2', 620, 300) }),
@@ -278,18 +278,163 @@ describe('App component (State and Lifecycle integration)', () => {
       'tankwars-online-session-v2',
       JSON.stringify(session),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm')
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
+    persistParticipation({
+      version: 1,
+      room: 'room-abc',
+      slot: 0,
+      token: 'TOKEN1',
+      name: 'Host',
+      engaged: true,
+      mode: 'host',
+      slots: [],
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     render(<App />);
     const returnButton = screen.getByRole('button', { name: 'Mock Return To Menu' });
     fireEvent.click(returnButton);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('dialog', { name: 'online_quit_confirm' }) as HTMLDialogElement;
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog.getAttribute('role')).toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBeNull();
+    const cancelBtn = screen.getByRole('button', { name: 'online_quit_cancel' });
+    expect(document.activeElement).toBe(cancelBtn);
+
+    // Canceling by button keeps match open
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
 
+    // Canceling by Esc keeps match open
     fireEvent.click(returnButton);
+    const dialogForEsc = screen.getByRole('dialog', { name: 'online_quit_confirm' });
+    fireEvent(dialogForEsc, new Event('cancel', { cancelable: true }));
+    expect(dialogForEsc).toHaveProperty('returnValue', 'cancel');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
+
+    // Confirming clears online storage + participation and returns to menu
+    fireEvent.click(returnButton);
+    fireEvent.click(screen.getByRole('button', { name: 'online_quit_confirm_btn' }));
     expect(screen.getByText('main_title')).toBeDefined();
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    expect(window.sessionStorage.getItem('tankwars-online-session-v2')).toBeNull();
+    expect(readParticipation()).toBeNull();
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('closes the connected native dialog before unmounting so focus returns to the invoker on Cancel, Esc, and native close', () => {
+    const players = [
+      makePlayer({ id: 'player-1', name: 'Host' }),
+      makePlayer({ id: 'player-2', name: 'Guest', tank: makeTank('tank-2', 620, 300) }),
+    ];
+    const session: PersistedOnlineSession = {
+      meta: {
+        initialMap: makeRoundMap(),
+        roomId: 'room-focus',
+        localPlayerId: 'player-1',
+        slot: 0,
+        token: 'TOKEN_FOCUS',
+      },
+      players,
+      canvas: {
+        map: makeRoundMap(),
+        gamePhase: 'COMBAT',
+        currentManche: 1,
+        uiPlayers: players,
+        shopPlayers: players,
+        currentShopIndex: 0,
+        roundResult: null,
+        lastRoundOutcome: null,
+        wind: 0,
+        authoritySlot: 0,
+        authorityEpoch: 1,
+        lastAppliedShotId: 0,
+        lastAppliedZeusStrikeId: 0,
+        shopSession: createEmptyShopSession(),
+        lastAppliedShopEpoch: 0,
+        lastCompletedRoundNumber: 0,
+        lastSeenShotId: 0,
+        pendingFireIntent: null,
+        fireRejection: null,
+        roundEarningsByPlayer: {},
+        earningsOverlay: null,
+      },
+    };
+    window.sessionStorage.setItem('tankwars-online-session-v2', JSON.stringify(session));
+
+    const previousFocusMap = new WeakMap<HTMLDialogElement, HTMLElement>();
+    const proto = HTMLDialogElement.prototype as HTMLDialogElement & {
+      showModal?: () => void;
+      close?: (returnValue?: string) => void;
+    };
+    const originalShowModal = proto.showModal;
+    const originalClose = proto.close;
+
+    proto.showModal = function (this: HTMLDialogElement) {
+      if (document.activeElement instanceof HTMLElement) {
+        previousFocusMap.set(this, document.activeElement);
+      }
+      this.setAttribute('open', '');
+      Object.defineProperty(this, 'open', { configurable: true, get: () => true });
+    };
+    proto.close = function (this: HTMLDialogElement, returnValue?: string) {
+      if (!this.hasAttribute('open')) return;
+      this.removeAttribute('open');
+      Object.defineProperty(this, 'open', { configurable: true, get: () => false });
+      if (returnValue !== undefined) {
+        this.returnValue = returnValue;
+      }
+      // Chromium only restores focus when the dialog is still connected to the DOM.
+      if (this.isConnected) {
+        const invoker = previousFocusMap.get(this);
+        invoker?.focus();
+      }
+      this.dispatchEvent(new Event('close'));
+    };
+
+    try {
+      render(<StrictMode><App /></StrictMode>);
+      const returnButton = screen.getByRole('button', { name: 'Mock Return To Menu' });
+
+      // 1) Cancel button
+      returnButton.focus();
+      fireEvent.click(returnButton);
+      const cancelBtn = screen.getByRole('button', { name: 'online_quit_cancel' });
+      expect(document.activeElement).toBe(cancelBtn);
+      fireEvent.click(cancelBtn);
+      expect(document.querySelector('dialog')).toBeNull();
+      expect(document.activeElement).toBe(returnButton);
+
+      // 2) Esc (cancel event)
+      fireEvent.click(returnButton);
+      const dialogForEsc = screen.getByRole('dialog', { name: 'online_quit_confirm' });
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'online_quit_cancel' }));
+      fireEvent(dialogForEsc, new Event('cancel', { cancelable: true }));
+      expect(document.querySelector('dialog')).toBeNull();
+      expect(document.activeElement).toBe(returnButton);
+
+      // 3) Native close without prior cancel (e.g. CloseWatcher / repeated Esc)
+      fireEvent.click(returnButton);
+      const dialogForClose = screen.getByRole('dialog', { name: 'online_quit_confirm' }) as HTMLDialogElement;
+      act(() => {
+        dialogForClose.close();
+      });
+      expect(document.querySelector('dialog')).toBeNull();
+      expect(document.activeElement).toBe(returnButton);
+
+      // 4) Confirm still quits and cleans up
+      fireEvent.click(returnButton);
+      fireEvent.click(screen.getByRole('button', { name: 'online_quit_confirm_btn' }));
+      expect(screen.getByText('main_title')).toBeDefined();
+      expect(window.sessionStorage.getItem('tankwars-online-session-v2')).toBeNull();
+    } finally {
+      if (originalShowModal) proto.showModal = originalShowModal;
+      else Reflect.deleteProperty(proto, 'showModal');
+      if (originalClose) proto.close = originalClose;
+      else Reflect.deleteProperty(proto, 'close');
+    }
   });
 
   it('keeps staging hotseat-only even with an invitation URL and a saved online session', () => {

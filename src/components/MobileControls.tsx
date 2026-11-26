@@ -1,9 +1,11 @@
 import {
   memo,
   useCallback,
-  useRef,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
+  type MouseEvent,
   type PointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,6 +14,7 @@ import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 
 export interface MobileControlsProps {
   turnInfo: CurrentTurnInfo | null;
+  disabled?: boolean;
   onAdjustAngle: (delta: number) => void;
   onAdjustPower: (delta: number) => void;
   onCycleWeapon: (delta: 1 | -1) => void;
@@ -20,8 +23,19 @@ export interface MobileControlsProps {
 
 type ButtonPointerEvent = PointerEvent<HTMLButtonElement>;
 
+function isPointerClick(event: MouseEvent<HTMLButtonElement>): boolean {
+  if (event.detail !== 0) return true;
+  const native = event.nativeEvent;
+  return (
+    "pointerType" in native &&
+    typeof native.pointerType === "string" &&
+    native.pointerType !== ""
+  );
+}
+
 export const MobileControls = memo(function MobileControls({
   turnInfo,
+  disabled = false,
   onAdjustAngle,
   onAdjustPower,
   onCycleWeapon,
@@ -84,14 +98,14 @@ export const MobileControls = memo(function MobileControls({
 
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
-  const canInteract = isHumanTurn && !isLocked;
+  const canInteract = isHumanTurn && !isLocked && !disabled;
   const playerId = turnInfo?.playerId ?? null;
   const controlsActive = isTouch && canInteract;
 
-  // Arrêt au démontage, à la disparition des commandes, au verrouillage,
-  // à la perte du tour humain et au changement de joueur. Les mises à jour
-  // ordinaires du HUD ne modifient pas ces dépendances.
-  useEffect(() => {
+  // Arrêt synchrone au démontage, à la disparition des commandes, au verrouillage,
+  // à l’ouverture d’un dialogue modal bloquant, à la perte du tour humain et au
+  // changement de joueur. Les mises à jour ordinaires du HUD ne modifient pas ces dépendances.
+  useLayoutEffect(() => {
     return () => {
       stopAction();
     };
@@ -160,6 +174,10 @@ export const MobileControls = memo(function MobileControls({
       }
       stopIfOwner(e);
     },
+    onClick: (e: MouseEvent<HTMLButtonElement>) => {
+      if (isPointerClick(e) || !canInteract) return;
+      action();
+    },
   });
 
   if (!isTouch) return null;
@@ -169,13 +187,13 @@ export const MobileControls = memo(function MobileControls({
       {/* Colonne Gauche: Angle */}
       <div className="mobile-control-group">
         <span className="mobile-group-label" style={{ color: VGA_PALETTE.CYAN }}>
-          ANGLE
+          {t("mobile_angle_label")}
         </span>
         <div className="mobile-button-row">
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
-            aria-label="Réduire l'angle"
+            aria-label={t("mobile_angle_decrease")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustAngle(-1))}
           >
@@ -184,7 +202,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-angle"
-            aria-label="Augmenter l'angle"
+            aria-label={t("mobile_angle_increase")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustAngle(1))}
           >
@@ -196,13 +214,13 @@ export const MobileControls = memo(function MobileControls({
       {/* Colonne Milieu: Puissance */}
       <div className="mobile-control-group">
         <span className="mobile-group-label" style={{ color: VGA_PALETTE.YELLOW }}>
-          POWER
+          {t("mobile_power_label")}
         </span>
         <div className="mobile-button-row">
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
-            aria-label="Réduire la puissance"
+            aria-label={t("mobile_power_decrease")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustPower(-1))}
           >
@@ -211,7 +229,7 @@ export const MobileControls = memo(function MobileControls({
           <button
             type="button"
             className="retro-mobile-btn retro-mobile-adjust-btn btn-power"
-            aria-label="Augmenter la puissance"
+            aria-label={t("mobile_power_increase")}
             disabled={!canInteract}
             {...holdProps(() => onAdjustPower(1))}
           >
@@ -228,7 +246,8 @@ export const MobileControls = memo(function MobileControls({
           disabled={!canInteract}
           onClick={() => onCycleWeapon(1)}
         >
-          {t("mobile_weapon_btn", "WEAPON 🔄")}
+          <span>{t("mobile_weapon_btn")}</span>{" "}
+          <span aria-hidden="true">🔄</span>
         </button>
         <button
           type="button"
@@ -241,7 +260,8 @@ export const MobileControls = memo(function MobileControls({
             color: canInteract ? VGA_PALETTE.WHITE : VGA_PALETTE.GRAY,
           }}
         >
-          {t("mobile_fire_btn", "FIRE ! 💥")}
+          <span>{t("mobile_fire_btn")}</span>{" "}
+          <span aria-hidden="true">💥</span>
         </button>
       </div>
     </div>

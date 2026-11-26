@@ -190,4 +190,32 @@ describe('styles CSS cleanup (#405)', () => {
     );
     expect(appCss).not.toMatch(/top:\s*34px;/);
   });
+
+  it('provides :focus-visible rings without bare outline: none, enforces accessible contrast, reduced motion, forced-colors, 44px swatches, and zero CSS nesting in index.css (#455)', () => {
+    expect(appCss).not.toMatch(/\.retro-weapon-btn\s*\{[^}]*outline:\s*none;/);
+    expect(appCss).not.toMatch(/\.retro-input:focus\s*\{[^}]*outline:\s*none;/);
+    expect(appCss).toContain('#main-content:focus:not(:focus-visible)');
+    expect(appCss).toContain(':focus-visible');
+    expect(appCss).toContain('.retro-start-btn:hover:not(:disabled)');
+    expect(appCss).toMatch(/\.retro-color-swatch-btn:hover:not\(:disabled\)\s*\{[^}]*opacity:\s*1;/);
+    expect(appCss).not.toMatch(/\.retro-color-swatch-btn:hover:not\(:disabled\)\s*\{[^}]*!important/);
+
+    expect(appCss).toMatch(/@media\s*\(forced-colors:\s*active\)\s*\{[\s\S]*?\.retro-color-swatch-btn\s*\{[^}]*forced-color-adjust:\s*none;/);
+    expect(appCss).toMatch(/@media\s*\(pointer:\s*coarse\)\s*\{[\s\S]*?\.retro-color-swatch-btn,\s*\.retro-color-swatch-btn\.selected\s*\{[^}]*min-inline-size:\s*44px;\s*min-block-size:\s*44px;/);
+    expect(appCss).toMatch(/@media\s*\(pointer:\s*coarse\)\s*\{[^{}]*\.lobby-copy-fallback-url,[^{}]*\{\s*min-block-size:\s*44px;/);
+
+    expect(appCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*no-preference\)\s*\{[\s\S]*?\.fire-rejection-toast\s*\{[\s\S]*?\.zeus-announcement\s*\{/);
+    expect(appCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.shot-earnings-line\s*\{[^}]*animation-name:\s*shot-earnings-fade;/);
+
+    expect(appCss).not.toMatch(/\.retro-legal\s*\{[^}]*color:\s*#555555;/);
+    expect(appCss).not.toMatch(/\.retro-color-picker-help\s*\{[^}]*color:\s*#666666;/);
+    expect(appCss).toMatch(/\.retro-legal\s*\{[^}]*color:\s*#999999;/);
+    expect(appCss).toMatch(/\.retro-color-picker-help\s*\{[^}]*color:\s*#999999;/);
+
+    // Firefox 115 ESR compatibility: no nested @media rules inside selectors in src/index.css
+    expect(indexCss).not.toMatch(/:root\s*\{[^}]*@media/);
+    expect(indexCss).not.toMatch(/h1\s*\{[^}]*@media/);
+    expect(indexCss).not.toMatch(/h2\s*\{[^}]*@media/);
+    expect(indexCss).toMatch(/@media\s*\(max-width:\s*1024px\)\s*\{\s*:root\s*\{/);
+  });
 });

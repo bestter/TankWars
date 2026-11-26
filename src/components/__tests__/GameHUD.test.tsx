@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GameHUD } from '../GameHUD';
+import { getAccessibleTankTextColor } from '../accessibleColor';
+import { weaponShortLabel } from '../weaponShortLabel';
+import { ALL_WEAPON_IDS } from '../../types/weapon';
 import type { CurrentTurnInfo } from '../../game/engine/TurnManager';
 import { VGA_PALETTE } from '../../types/game';
 import fr from '../../locales/fr.json';
@@ -15,9 +18,16 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (localeMode.current !== 'key') {
-        const dict = (localeMode.current === 'fr' ? fr : en) as Record<string, unknown>;
-        const raw = dict[key];
-        if (typeof raw === 'string') return raw;
+        let current: unknown = localeMode.current === 'fr' ? fr : en;
+        for (const segment of key.split('.')) {
+          if (current && typeof current === 'object' && segment in current) {
+            current = (current as Record<string, unknown>)[segment];
+          } else {
+            current = undefined;
+            break;
+          }
+        }
+        if (typeof current === 'string') return current;
       }
       if (options && options.weapon !== undefined) {
         return `${key} ${options.weapon}`;
@@ -58,9 +68,23 @@ describe('GameHUD', () => {
 
     render(<GameHUD turnInfo={turnInfo} />);
 
-    expect(screen.getByText('Commander Shepard')).toBeDefined();
+    const playerNameEl = screen.getByText('Commander Shepard');
+    expect(playerNameEl).toBeDefined();
+    expect(playerNameEl.style.color).not.toBe('rgb(85, 85, 255)');
+    const expectedHex = getAccessibleTankTextColor(VGA_PALETTE.BLUE);
+    expect(expectedHex).toBe('#7F7FFF');
+    expect(playerNameEl.style.color).toBe('rgb(127, 127, 255)');
+    expect(document.querySelector('.retro-hud-player [aria-hidden="true"]')).not.toBeNull();
     expect(screen.getByText('42°')).toBeDefined();
     expect(screen.getByText('75')).toBeDefined();
+
+    const weaponsGroup = screen.getByRole('group', { name: 'hud_weapon' });
+    expect(weaponsGroup).toBeDefined();
+    const missileBtn = screen.getByRole('button', { name: 'MIS — weapons.MISSILE hud_ammo_unlimited' });
+    const grenadeBtn = screen.getByRole('button', { name: 'GRE:3 — weapons.GRENADE' });
+    expect(weaponsGroup.contains(missileBtn)).toBe(true);
+    expect(missileBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(grenadeBtn.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('triggers onWeaponSelect when clicking an owned weapon button', () => {
@@ -258,6 +282,77 @@ describe('GameHUD', () => {
       await user.tab();
       expect(document.activeElement).not.toBe(spinner);
       expect(waitStatus?.contains(document.activeElement)).toBe(false);
+    }
+  });
+
+  it('activates a weapon button with keyboard Space/Enter', async () => {
+    const user = userEvent.setup();
+    const onWeaponSelect = vi.fn();
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory: { MISSILE: 99, GRENADE: 3 },
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: false,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} onWeaponSelect={onWeaponSelect} />);
+    const grenadeBtn = screen.getByRole('button', { name: 'GRE:3 — weapons.GRENADE' });
+    grenadeBtn.focus();
+    await user.keyboard('{Enter}');
+    expect(onWeaponSelect).toHaveBeenCalledWith('GRENADE');
+  });
+
+  it.each(['fr', 'en'] as const)('includes visible short label, full weapon name, and quantity in accessible names in %s (WCAG 2.5.3)', (locale) => {
+    localeMode.current = locale;
+    const dict = locale === 'fr' ? fr : en;
+    const inventory: Partial<Record<(typeof ALL_WEAPON_IDS)[number], number>> = {
+      MISSILE: 99,
+      GRENADE: 3,
+      CLUSTER: 2,
+      NUKE: 1,
+      THERMONUCLEAR: 0,
+      DRILLER: 4,
+      BULLET: 5,
+      BULLDOZER: 2,
+    };
+    const turnInfo: CurrentTurnInfo = {
+      playerId: 'p-1',
+      playerName: 'Commander Shepard',
+      isHuman: true,
+      playerColor: VGA_PALETTE.BLUE,
+      angle: 45,
+      power: 50,
+      currentWeapon: 'MISSILE',
+      inventory,
+      turn: 1,
+      isInputLocked: false,
+      tanksAreFalling: false,
+    };
+
+    render(<GameHUD turnInfo={turnInfo} />);
+
+    for (const weaponId of ALL_WEAPON_IDS) {
+      const short = weaponShortLabel(weaponId);
+      const fullName = dict.weapons[weaponId];
+      if (weaponId === 'MISSILE') {
+        const btn = screen.getByRole('button', {
+          name: `${short} — ${fullName} ${dict.hud_ammo_unlimited}`,
+        });
+        expect(btn).toBeDefined();
+      } else {
+        const qty = inventory[weaponId] ?? 0;
+        const btn = screen.getByRole('button', {
+          name: `${short}:${qty} — ${fullName}`,
+        });
+        expect(btn).toBeDefined();
+      }
     }
   });
 });

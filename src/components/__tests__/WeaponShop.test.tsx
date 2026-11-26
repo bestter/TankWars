@@ -61,6 +61,9 @@ vi.mock('react-i18next', () => ({
       if (options && options.count !== undefined && options.max !== undefined) {
         return `${key} ${options.count}/${options.max}`;
       }
+      if (options && options.weapon !== undefined) {
+        return `${key} ${String(options.weapon)}`;
+      }
       return key;
     },
   }),
@@ -491,5 +494,38 @@ describe('WeaponShop', () => {
     fireEvent(dialog, disabledCancelEvent);
     expect(disabledCancelEvent.defaultPrevented).toBe(true);
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('disambiguates buy/sell buttons with weapon name, marks swatch decorative, and remaps low-contrast player color', () => {
+    const player = makePlayer({
+      id: 'p-1',
+      name: 'Blue Knight',
+      money: 1000,
+      inventory: { GRENADE: 2, CLUSTER: 1 },
+      tank: makeTank('tank-1', 100, 200, { color: VGA_PALETTE.BLUE }),
+    });
+
+    render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    const buyGrenade = screen.getByRole('button', { name: 'shop_buy_weapon_label weapons.GRENADE' });
+    const sellGrenade = screen.getByRole('button', { name: 'shop_sell_weapon_label weapons.GRENADE' });
+    const buyCluster = screen.getByRole('button', { name: 'shop_buy_weapon_label weapons.CLUSTER' });
+    const sellCluster = screen.getByRole('button', { name: 'shop_sell_weapon_label weapons.CLUSTER' });
+    expect(buyGrenade).not.toBe(buyCluster);
+    expect(sellGrenade).not.toBe(sellCluster);
+
+    const swatch = document.querySelector('.weapon-shop-player-header [aria-hidden="true"]');
+    expect(swatch).not.toBeNull();
+
+    const nameEl = screen.getByText('Blue Knight');
+    expect(nameEl.style.color).toBe('rgb(127, 127, 255)');
   });
 });

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { Player } from "../types/player";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 
 export interface GameOverOverlayProps {
   winner: Player | null;
@@ -12,7 +13,7 @@ export function GameOverOverlay({ winner }: GameOverOverlayProps) {
     <div className="game-over-overlay">
       <div
         className="game-over-winner"
-        style={{ color: winner.tank.color }}
+        style={{ color: getAccessibleTankTextColor(winner.tank.color) }}
       >
         {t("winner_wins", { name: winner.name })}
       </div>

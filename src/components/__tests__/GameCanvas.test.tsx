@@ -180,11 +180,37 @@ describe("GameCanvas component", () => {
   it("renders canvas element with proper attributes and accessibility roles", () => {
     render(<GameCanvas />);
 
+    const heading = screen.getByRole("heading", { level: 1, name: "combat_heading" });
+    expect(heading.classList.contains("visually-hidden")).toBe(true);
+
     const canvas = screen.getByRole("img");
     expect(canvas).toBeDefined();
     expect(canvas.classList.contains("game-canvas")).toBe(true);
     expect(canvas.getAttribute("aria-label")).toBe("canvas_game_aria_label");
     expect(canvas.tabIndex).toBe(0);
+  });
+
+  it("omits the combat h1 heading when mounted inside EnduranceScreen", () => {
+    render(<GameCanvas endurance={{} as never} />);
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+
+  it.each([" ", "Enter"])("handles %j on the canvas without invoking the global shortcut", (key) => {
+    render(<GameCanvas />);
+    const canvas = screen.getByRole("img");
+    canvas.focus();
+    const globalKeydown = vi.fn();
+    window.addEventListener("keydown", globalKeydown);
+
+    try {
+      expect(fireEvent.keyDown(canvas, { key })).toBe(false);
+      expect(mockHandlers.handleCanvasClick).toHaveBeenCalledOnce();
+      expect(globalKeydown).not.toHaveBeenCalled();
+      fireEvent.keyDown(canvas, { key: "ArrowUp" });
+      expect(globalKeydown).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener("keydown", globalKeydown);
+    }
   });
 
   it("updates the stage's height budget when the touch controls wrap or disappear", () => {
@@ -1284,5 +1310,107 @@ describe("GameCanvas component", () => {
     };
     rerender(<GameCanvas onReturnToMenu={vi.fn()} />);
     expect(stage?.contains(document.querySelector(".game-over-overlay"))).toBe(true);
+  });
+
+  it.each([
+    ["▶", "handleAdjustAngle"],
+    ["▲", "handleAdjustPower"],
+  ] as const)(
+    "stops tactile hold on %s when quitConfirmationOpen becomes true and ignores old release after closing",
+    (label, handlerKey) => {
+      vi.useFakeTimers();
+      const originalPointerEvent = window.PointerEvent;
+      if (typeof window.PointerEvent === "undefined") {
+        class PointerEventDouble extends MouseEvent {
+          pointerId: number;
+          pointerType: string;
+          constructor(type: string, init: PointerEventInit = {}) {
+            super(type, init);
+            this.pointerId = init.pointerId ?? 0;
+            this.pointerType = init.pointerType ?? "touch";
+          }
+        }
+        Object.defineProperty(window, "PointerEvent", { value: PointerEventDouble, configurable: true });
+      }
+
+      try {
+        const { rerender } = render(<GameCanvas quitConfirmationOpen={false} />);
+        const btn = screen.getByText(label);
+
+        fireEvent.pointerDown(btn, { pointerId: 3, pointerType: "touch", button: 0, buttons: 1 });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(1);
+        act(() => { vi.advanceTimersByTime(250 + 80); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        rerender(<GameCanvas quitConfirmationOpen />);
+        expect((btn as HTMLButtonElement).disabled).toBe(true);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        rerender(<GameCanvas quitConfirmationOpen={false} />);
+        expect((btn as HTMLButtonElement).disabled).toBe(false);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        fireEvent.pointerUp(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.pointerOut(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.pointerLeave(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.click(btn, { detail: 1 });
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        fireEvent.pointerDown(btn, { pointerId: 4, pointerType: "touch", button: 0, buttons: 1 });
+        fireEvent.pointerUp(btn, { pointerId: 4, pointerType: "touch" });
+        fireEvent.click(btn, { detail: 1 });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(3);
+      } finally {
+        if (originalPointerEvent === undefined) {
+          Reflect.deleteProperty(window, "PointerEvent");
+        }
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("stops tactile hold on MobileControls when protocolMismatch occurs during COMBAT", () => {
+    vi.useFakeTimers();
+    const originalPointerEvent = window.PointerEvent;
+    if (typeof window.PointerEvent === "undefined") {
+      class PointerEventDouble extends MouseEvent {
+        pointerId: number;
+        pointerType: string;
+        constructor(type: string, init: PointerEventInit = {}) {
+          super(type, init);
+          this.pointerId = init.pointerId ?? 0;
+          this.pointerType = init.pointerType ?? "touch";
+        }
+      }
+      Object.defineProperty(window, "PointerEvent", { value: PointerEventDouble, configurable: true });
+    }
+
+    try {
+      const session = vi.mocked(useGameSession)({});
+      const { rerender } = render(<GameCanvas gameMode="online" />);
+      const btn = screen.getByText("▶");
+
+      fireEvent.pointerDown(btn, { pointerId: 5, pointerType: "touch", button: 0, buttons: 1 });
+      act(() => { vi.advanceTimersByTime(250 + 80); });
+      expect(mockHandlers.handleAdjustAngle).toHaveBeenCalledTimes(2);
+
+      session.state = {
+        ...defaultSessionState,
+        protocolMismatch: { requiredVersion: 5, receivedVersion: 4 },
+      };
+      vi.mocked(useGameSession).mockReturnValue(session);
+      rerender(<GameCanvas gameMode="online" />);
+
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(mockHandlers.handleAdjustAngle).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalPointerEvent === undefined) {
+        Reflect.deleteProperty(window, "PointerEvent");
+      }
+      vi.useRealTimers();
+    }
   });
 });

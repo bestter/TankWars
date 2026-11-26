@@ -10,6 +10,7 @@ import { OnlineLobby } from "./components/OnlineLobby";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { Player } from "./types/player";
 import { SEO } from './components/SEO';
+import { OnlineQuitConfirmDialog } from './components/RecoveryDialogs';
 import {
   clearOnlineSession,
 } from "./utils/onlineSession";
@@ -36,6 +37,7 @@ interface AppScreenProps {
   readonly onlineMeta: OnlineMeta | null;
   readonly resumeCanvas: ReturnType<typeof createInitialAppState>["resumeCanvas"];
   readonly freeWeapons: boolean;
+  readonly quitConfirmationOpen: boolean;
   readonly onStartLocalGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
   readonly onStartOnlineGame: (
     players: Player[],
@@ -56,6 +58,7 @@ function AppScreen({
   onlineMeta,
   resumeCanvas,
   freeWeapons,
+  quitConfirmationOpen,
   onStartLocalGame,
   onStartOnlineGame,
   onHideOnlineLobby,
@@ -79,6 +82,7 @@ function AppScreen({
           token={onlineMeta?.token}
           ws={onlineMeta?.ws}
           freeWeapons={freeWeapons}
+          quitConfirmationOpen={quitConfirmationOpen}
         />
       </div>
     );
@@ -120,8 +124,36 @@ function AppScreen({
  * qui les injecte dans l'engine (TerrainManager.generate + TankManager.spawnTanks faits à l'intérieur).
  */
 
+function resolveActiveScreen(
+  showEndurance: boolean,
+  hasEnduranceScreen: boolean,
+  showMenu: boolean,
+  showOnlineLobby: boolean,
+): "endurance" | "combat" | "online-lobby" | "menu" {
+  if (showEndurance && hasEnduranceScreen) return "endurance";
+  if (!showMenu) return "combat";
+  if (showOnlineLobby) return "online-lobby";
+  return "menu";
+}
+
+function collectReturnToMenuMessages(): OnlineEntryMessage[] {
+  const clearedCombat = clearOnlineSession();
+  const clearedLobby = clearParticipation();
+  const cleaned = cleanParticipationUrl();
+  const nextMessages: OnlineEntryMessage[] = [];
+  if (!clearedCombat || !clearedLobby) {
+    nextMessages.push('online_storage_clear_failed');
+  }
+  if (!cleaned) {
+    nextMessages.push('online_url_cleanup_failed');
+  }
+  return nextMessages;
+}
+
 function App() {
   const [showEndurance, setShowEndurance] = useState(false);
+  const [onlineQuitConfirmRequestId, setOnlineQuitConfirmRequestId] = useState<number | null>(null);
+  const nextOnlineQuitConfirmRequestIdRef = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const { t } = useTranslation();
   const hotseatOnly = isHotseatOnlyBuild();
@@ -177,36 +209,32 @@ function App() {
   };
 
   const handleReturnToMenu = (): void => {
+    setOnlineQuitConfirmRequestId(null);
     dispatch({ type: "RETURN_TO_MENU" });
     setParticipation(null);
-    const clearedCombat = clearOnlineSession();
-    const clearedLobby = clearParticipation();
-    const cleaned = cleanParticipationUrl();
-    setMessages({ type: 'replace', messages: [
-      ...(!clearedCombat || !clearedLobby ? ['online_storage_clear_failed' as const] : []),
-      ...(!cleaned ? ['online_url_cleanup_failed' as const] : []),
-    ] });
+    setMessages({ type: 'replace', messages: collectReturnToMenuMessages() });
   };
 
   const handleReturnToLobbyOrMenu = (): void => {
     if (state.onlineMeta) {
-      const ok = window.confirm(t("online_quit_confirm"));
-      if (!ok) return;
+      nextOnlineQuitConfirmRequestIdRef.current += 1;
+      setOnlineQuitConfirmRequestId(nextOnlineQuitConfirmRequestIdRef.current);
+      return;
     }
     handleReturnToMenu();
   };
 
   const showMenu = state.phase === "MENU" && state.players === null;
   const { players, onlineMeta, resumeCanvas } = state;
+  const quitConfirmationOpen =
+    onlineQuitConfirmRequestId !== null && Boolean(onlineMeta);
 
-  const activeScreen =
-    showEndurance && EnduranceScreen
-      ? "endurance"
-      : !showMenu
-        ? "combat"
-        : showOnlineLobby
-          ? "online-lobby"
-          : "menu";
+  const activeScreen = resolveActiveScreen(
+    showEndurance,
+    Boolean(EnduranceScreen),
+    showMenu,
+    showOnlineLobby,
+  );
   const previousScreenRef = useRef(activeScreen);
 
   useLayoutEffect(() => {
@@ -261,11 +289,19 @@ function App() {
             onlineMeta={onlineMeta}
             resumeCanvas={resumeCanvas}
             freeWeapons={state.freeWeapons}
+            quitConfirmationOpen={quitConfirmationOpen}
             onStartLocalGame={handleStartGame}
             onStartOnlineGame={handleStartOnlineGame}
             onHideOnlineLobby={handleOnlineMenuToggle}
             onReturnToMenu={handleReturnToLobbyOrMenu}
             onPersistenceWarning={handlePersistenceWarning}
+          />
+        )}
+        {quitConfirmationOpen && (
+          <OnlineQuitConfirmDialog
+            key={onlineQuitConfirmRequestId}
+            onCancel={() => setOnlineQuitConfirmRequestId(null)}
+            onConfirm={handleReturnToMenu}
           />
         )}
       </main>

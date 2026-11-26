@@ -404,7 +404,7 @@ export class EnduranceSession implements CombatObserver {
     try {
       this.validate();
       const actual = this.host?.context().players.filter(p => !p.tank.isDead && p.tank.health > 0).map(p => p.id) ?? [];
-      if (survivors.length > 1 || JSON.stringify([...survivors].sort()) !== JSON.stringify([...actual].sort())) throw new Error("INVALID_ROUND_RESULT");
+      if (survivors.length > 1 || JSON.stringify(survivors.toSorted()) !== JSON.stringify(actual.toSorted())) throw new Error("INVALID_ROUND_RESULT");
       this.collector.finish(survivors);
       const round = this.roundRecord(true, survivors);
       addMetrics(this.block.completedMetrics, this.collector.data); addMetrics(this.session.completedMetrics, this.collector.data);

@@ -10,6 +10,8 @@ export interface ColorPickerProps {
   unavailableColors: ReadonlySet<Color>;
   /** The full pool of colors to choose from */
   colorPool: readonly Color[];
+  /** Accessible group label for this player's color picker */
+  groupLabel?: string;
 }
 
 export function ColorPicker({
@@ -17,11 +19,16 @@ export function ColorPicker({
   onColorSelect,
   unavailableColors,
   colorPool,
+  groupLabel,
 }: ColorPickerProps) {
   const { t } = useTranslation();
 
   return (
-    <div className="retro-color-picker">
+    <div
+      className="retro-color-picker"
+      role="group"
+      aria-label={groupLabel ?? t("color_picker_group_label")}
+    >
       {colorPool.map((color) => {
         const isSelected = color === selectedColor;
         const isUnavailable = color !== selectedColor && unavailableColors.has(color);
@@ -32,6 +39,7 @@ export function ColorPicker({
             key={color}
             type="button"
             disabled={isUnavailable}
+            aria-pressed={isSelected}
             className={btnClass}
             onClick={() => {
               if (!isUnavailable) {
@@ -54,7 +62,10 @@ export function ColorPicker({
             }
           >
             {isUnavailable && (
-              <span className="retro-color-swatch-unavailable-mark">
+              <span
+                className="retro-color-swatch-unavailable-mark"
+                aria-hidden="true"
+              >
                 ✕
               </span>
             )}

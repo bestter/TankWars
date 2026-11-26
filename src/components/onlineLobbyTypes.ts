@@ -4,6 +4,13 @@ import type { Player } from '../types/player';
 
 export type LobbyView = 'create' | 'waiting' | 'joining';
 
+export type CopySlotStatus = 'copied' | 'failed';
+
+export interface CopySlotFeedback {
+  readonly status: CopySlotStatus;
+  readonly appendAnnouncementSpace: boolean;
+}
+
 export interface SlotUI {
   slot: number;
   type: 'human' | 'ai';

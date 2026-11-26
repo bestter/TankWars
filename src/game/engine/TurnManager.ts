@@ -563,6 +563,7 @@ export class TurnManager {
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
+    if (typeof document !== "undefined" && document.querySelector("dialog[open]") !== null) return;
     if (typeof Element !== "undefined" && event.target instanceof Element && event.target.closest("a[href], button, select, input, textarea")) return;
     const player = this.getCurrentPlayer();
     if (!player || player.tank.isDead) return;

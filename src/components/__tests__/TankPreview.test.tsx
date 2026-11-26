@@ -54,6 +54,7 @@ describe('TankPreview', () => {
 
     const canvas = container.querySelector('canvas') as HTMLCanvasElement;
     expect(canvas).not.toBeNull();
+    expect(canvas.getAttribute('aria-hidden')).toBe('true');
     expect(canvas.width).toBe(40);
     expect(canvas.height).toBe(22);
   });

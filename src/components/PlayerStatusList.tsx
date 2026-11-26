@@ -7,6 +7,7 @@ import {
   type PlayerStatusCard,
 } from "./playerStatus";
 import { WEAPON_I18N_KEYS, weaponShortLabel } from "./weaponShortLabel";
+import { getAccessibleTankTextColor } from "./accessibleColor";
 
 export interface PlayerStatusListProps {
   readonly players: readonly PlayerStatusCard[];
@@ -29,10 +30,10 @@ export const PlayerStatusList = memo(function PlayerStatusList({
 
   return (
     <section className="player-status" aria-labelledby={titleId}>
-      <p id={titleId} className="player-status-title">
+      <h2 id={titleId} className="player-status-title">
         {t("player_status_title")}
-      </p>
-      <ul className="player-status-list">
+      </h2>
+      <ul className="player-status-list" role="list">
         {players.map((player) => {
           const current = player.id === currentPlayerId;
           const weapons = visibleStatusWeapons(player.inventory);
@@ -48,7 +49,7 @@ export const PlayerStatusList = memo(function PlayerStatusList({
                   aria-hidden="true"
                   style={{ backgroundColor: player.color }}
                 />
-                <span className="player-status-name" style={{ color: player.color }}>
+                <span className="player-status-name" style={{ color: getAccessibleTankTextColor(player.color) }}>
                   {player.name}
                 </span>
                 <span className="player-status-profile">{t(playerStatusProfileKey(player))}</span>
