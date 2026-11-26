@@ -169,7 +169,9 @@ internal sealed class SlowChunkStream : Stream {
   }
 }
 
-public sealed class IndexNowTestHandler : HttpClientHandler {
+public sealed class IndexNowTestHandler : HttpMessageHandler {
+  public bool AllowAutoRedirect { get; set; } = true;
+  public int MaxResponseDrainSize { get; set; } = 1024 * 1024;
   public static IList CommandLog;
   public static string ExpectedLocation;
   public static bool AfterPages;
@@ -191,7 +193,7 @@ public sealed class IndexNowTestHandler : HttpClientHandler {
   public static string IndexNowKey;
 
   protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
-    if (AllowAutoRedirect || request.Method != HttpMethod.Get) {
+    if (AllowAutoRedirect || MaxResponseDrainSize != 0 || request.Method != HttpMethod.Get) {
       throw new InvalidOperationException("Options HTTP IndexNow incorrectes.");
     }
     string uri = request.RequestUri.AbsoluteUri;
@@ -340,7 +342,7 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/$indexNowKey.txt"), $indexNowKey)
   $indexNowSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "notify-indexnow.ps1") -Raw
   $testIndexNowSource = $indexNowSource.
-    Replace('[System.Net.Http.HttpClientHandler]::new()', '[IndexNowTestHandler]::new()').
+    Replace('[System.Net.Http.SocketsHttpHandler]::new()', '[IndexNowTestHandler]::new()').
     Replace('[TimeSpan]::FromSeconds(5)', '[TimeSpan]::FromMilliseconds(150)').
     Replace('Start-Sleep -Seconds 2', 'Start-Sleep -Milliseconds 10')
   Assert-True ($testIndexNowSource -ne $indexNowSource -and $testIndexNowSource.Contains('[IndexNowTestHandler]::new()') -and $testIndexNowSource.Contains('[TimeSpan]::FromMilliseconds(150)') -and $testIndexNowSource.Contains('Start-Sleep -Milliseconds 10')) "Points de simulation IndexNow absents."

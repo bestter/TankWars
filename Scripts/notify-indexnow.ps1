@@ -120,8 +120,9 @@ function Get-PublicPage {
 }
 
 try {
-  $httpHandler = [System.Net.Http.HttpClientHandler]::new()
+  $httpHandler = [System.Net.Http.SocketsHttpHandler]::new()
   $httpHandler.AllowAutoRedirect = $false
+  $httpHandler.MaxResponseDrainSize = 0
   $httpClient = [System.Net.Http.HttpClient]::new($httpHandler)
   $httpClient.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
   $httpClient.MaxResponseContentBufferSize = $maxPublicHtmlBytes

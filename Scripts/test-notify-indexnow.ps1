@@ -35,12 +35,16 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
   public string PublicHtml = "";
   public int PublicStatusCode = 200;
   public int ExactChunkedBytes = 0;
-  public int OversizedTotalBytes = 8 * 1024 * 1024;
+  public int OversizedTotalBytes = 768 * 1024;
   public int SlowTotalChunks = 100;
   public int SlowDelayMs = 60;
   public int IndexNowStatusCode = 200;
   public int LastPayloadBytesSent;
+  public readonly ConcurrentQueue<int> PayloadBytesSentPerRequest = new ConcurrentQueue<int>();
   public readonly ConcurrentQueue<IndexNowRecordedRequest> Requests = new ConcurrentQueue<IndexNowRecordedRequest>();
+  private readonly object _completionLock = new object();
+  private int _completedConnections = 0;
+  private long _generation = 0;
 
   public IndexNowLocalHttpServer() {
     _listener = new TcpListener(IPAddress.Loopback, 0);
@@ -54,10 +58,31 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
     PublicHtml = html ?? "";
     PublicStatusCode = 200;
     ExactChunkedBytes = 0;
+    OversizedTotalBytes = 768 * 1024;
     IndexNowStatusCode = 200;
     Interlocked.Exchange(ref LastPayloadBytesSent, 0);
+    int ignoredCount;
+    while (PayloadBytesSentPerRequest.TryDequeue(out ignoredCount)) { }
     IndexNowRecordedRequest ignored;
     while (Requests.TryDequeue(out ignored)) { }
+    lock (_completionLock) {
+      _generation++;
+      _completedConnections = 0;
+    }
+  }
+
+  public bool WaitForCompletedConnections(int expectedCount, int timeoutMs) {
+    long deadline = Environment.TickCount64 + timeoutMs;
+    lock (_completionLock) {
+      while (_completedConnections < expectedCount) {
+        long remaining = deadline - Environment.TickCount64;
+        if (remaining <= 0) {
+          return false;
+        }
+        Monitor.Wait(_completionLock, (int)Math.Min(remaining, int.MaxValue));
+      }
+      return true;
+    }
   }
 
   private async Task AcceptLoopAsync() {
@@ -74,6 +99,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
   }
 
   private async Task HandleClientAsync(TcpClient client) {
+    long generation = Interlocked.Read(ref _generation);
     try {
       using (client)
       using (NetworkStream stream = client.GetStream()) {
@@ -132,7 +158,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
         }
 
         if (PublicMode == "oversized-chunked") {
-          await WriteChunkedHeaderAsync(stream, 200);
+          await WriteChunkedHeaderAsync(stream, 200, false);
           byte[] chunk = new byte[16384];
           for (int i = 0; i < chunk.Length; i++) { chunk[i] = (byte)'a'; }
           int sent = 0;
@@ -145,14 +171,19 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
               }
               await WriteChunkAsync(stream, slice);
               sent += len;
-              await Task.Delay(1, _cts.Token);
+              if (sent >= 262144) {
+                await Task.Delay(1, _cts.Token);
+              }
             }
             await WriteChunkAsync(stream, Array.Empty<byte>());
           }
           catch {
             // Fermeture précoce attendue lorsque le client interrompt la lecture.
           }
-          Interlocked.Exchange(ref LastPayloadBytesSent, sent);
+          if (generation == Interlocked.Read(ref _generation)) {
+            Interlocked.Exchange(ref LastPayloadBytesSent, sent);
+            PayloadBytesSentPerRequest.Enqueue(sent);
+          }
           return;
         }
 
@@ -186,6 +217,14 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
     }
     catch {
       // Ignorer les fermetures de socket côté client pendant les tests négatifs.
+    }
+    finally {
+      lock (_completionLock) {
+        if (generation == _generation) {
+          _completedConnections++;
+          Monitor.PulseAll(_completionLock);
+        }
+      }
     }
   }
 
@@ -235,9 +274,10 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
     await stream.FlushAsync();
   }
 
-  private static async Task WriteChunkedHeaderAsync(NetworkStream stream, int statusCode) {
+  private static async Task WriteChunkedHeaderAsync(NetworkStream stream, int statusCode, bool closeConnection = true) {
     string reason = statusCode == 200 ? "OK" : "Status";
-    string headers = "HTTP/1.1 " + statusCode + " " + reason + "\r\nContent-Type: text/html; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+    string connectionHeader = closeConnection ? "Connection: close\r\n" : "";
+    string headers = "HTTP/1.1 " + statusCode + " " + reason + "\r\nContent-Type: text/html; charset=utf-8\r\nTransfer-Encoding: chunked\r\n" + connectionHeader + "\r\n";
     byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
     await stream.WriteAsync(headerBytes, 0, headerBytes.Length);
     await stream.FlushAsync();
@@ -245,12 +285,14 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
 
   private static async Task WriteChunkAsync(NetworkStream stream, byte[] data) {
     byte[] sizeLine = Encoding.ASCII.GetBytes(data.Length.ToString("X") + "\r\n");
-    await stream.WriteAsync(sizeLine, 0, sizeLine.Length);
-    if (data.Length > 0) {
-      await stream.WriteAsync(data, 0, data.Length);
-    }
     byte[] crlf = Encoding.ASCII.GetBytes("\r\n");
-    await stream.WriteAsync(crlf, 0, crlf.Length);
+    byte[] frame = new byte[sizeLine.Length + data.Length + crlf.Length];
+    Buffer.BlockCopy(sizeLine, 0, frame, 0, sizeLine.Length);
+    if (data.Length > 0) {
+      Buffer.BlockCopy(data, 0, frame, sizeLine.Length, data.Length);
+    }
+    Buffer.BlockCopy(crlf, 0, frame, sizeLine.Length + data.Length, crlf.Length);
+    await stream.WriteAsync(frame, 0, frame.Length);
     await stream.FlushAsync();
   }
 
@@ -337,6 +379,7 @@ try {
   Write-Output "PASS : build public périmé après 3 tentatives"
 
   # 4. Réponse trop volumineuse sans Content-Length (interruption pendant le flux)
+  $maxAllowedOversizedBytes = 512 * 1024
   $server.Reset("oversized-chunked", "")
   $threw = $false
   try {
@@ -347,7 +390,8 @@ try {
     Assert-True ($_.Exception.Message -eq "La réponse de l’accueil public est vide ou anormalement volumineuse.") "Message taille dépassée inattendu (-Snapshot) : $($_.Exception.Message)"
   }
   Assert-True $threw "Une erreur était attendue pour la réponse volumineuse sans Content-Length (-Snapshot)."
-  Assert-True ($server.LastPayloadBytesSent -lt $server.OversizedTotalBytes) "Le serveur a envoyé tout le flux volumineux ($($server.LastPayloadBytesSent) / $($server.OversizedTotalBytes))."
+  Assert-True ($server.WaitForCompletedConnections(1, 5000)) "La connexion serveur n’a pas été fermée à temps (-Snapshot)."
+  Assert-True ($server.LastPayloadBytesSent -ge 262144 -and $server.LastPayloadBytesSent -le $maxAllowedOversizedBytes) "Le serveur a envoyé un volume inattendu après rejet à 256 Kio (-Snapshot) : $($server.LastPayloadBytesSent) / $($server.OversizedTotalBytes) octets (max attendu : $maxAllowedOversizedBytes)."
 
   $server.Reset("oversized-chunked", "")
   $threw = $false
@@ -359,8 +403,14 @@ try {
     Assert-True ($_.Exception.Message -eq "La réponse de l’accueil public est vide ou anormalement volumineuse.") "Message taille dépassée inattendu (-DistPath) : $($_.Exception.Message)"
   }
   Assert-True $threw "Une erreur était attendue pour la réponse volumineuse sans Content-Length (-DistPath)."
+  Assert-True ($server.WaitForCompletedConnections(3, 5000)) "Les 3 connexions serveur n’ont pas été fermées à temps (-DistPath)."
   $reqs = @($server.Requests.ToArray())
   Assert-True ($reqs.Count -eq 3 -and -not ($reqs.Target -like "/indexnow*")) "3 tentatives sans soumission IndexNow attendues."
+  $sentPerAttempt = @($server.PayloadBytesSentPerRequest.ToArray())
+  Assert-True ($sentPerAttempt.Count -eq 3) "3 mesures de volume attendues (-DistPath), reçu $($sentPerAttempt.Count)."
+  foreach ($sentBytes in $sentPerAttempt) {
+    Assert-True ($sentBytes -ge 262144 -and $sentBytes -le $maxAllowedOversizedBytes) "Le serveur a envoyé un volume inattendu après rejet à 256 Kio (-DistPath) : $($sentPerAttempt -join ', ') / $($server.OversizedTotalBytes) octets (max attendu : $maxAllowedOversizedBytes)."
+  }
   Write-Output "PASS : réponse trop volumineuse sans Content-Length"
 
   # 5. Bornes exactes sans Content-Length (262144 accepté, 262145 rejeté)
