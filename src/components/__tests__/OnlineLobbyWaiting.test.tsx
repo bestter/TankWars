@@ -5,10 +5,13 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { OnlineLobbyWaiting, type OnlineLobbyWaitingProps } from '../OnlineLobbyWaiting';
 import type { JoinedInfo, SlotUI } from '../onlineLobbyTypes';
 
+const translateCopyStatus = vi.hoisted(() => vi.fn((key: string) => key));
+
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
+      if (key === 'link_copied' || key === 'link_copy_failed') return translateCopyStatus(key);
       if (options) {
         if (options.num !== undefined) return `${key}_${options.num}`;
         if (options.joined !== undefined && options.total !== undefined) return `${key}_${options.joined}_${options.total}`;
@@ -38,6 +41,7 @@ describe('OnlineLobbyWaiting component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
+    translateCopyStatus.mockImplementation((key) => key);
 
     mockSetMyName = vi.fn();
     mockOnJoin = vi.fn();
@@ -201,7 +205,7 @@ describe('OnlineLobbyWaiting component', () => {
         slotsInfo={defaultSlotsInfo}
         roster={defaultRoster}
         isJoining={false}
-        copyFeedback={{ 1: { status: 'copied', message: 'link_copied' } }}
+        copyFeedback={{ 1: { status: 'copied', appendAnnouncementSpace: false } }}
         serverGameLive={false}
         connected={true}
         onJoin={mockOnJoin}
@@ -247,7 +251,7 @@ describe('OnlineLobbyWaiting component', () => {
         slotsInfo={defaultSlotsInfo}
         roster={defaultRoster}
         isJoining={false}
-        copyFeedback={{ 1: { status: 'failed', message: 'link_copy_failed' } }}
+        copyFeedback={{ 1: { status: 'failed', appendAnnouncementSpace: false } }}
         serverGameLive={false}
         connected={true}
         onJoin={mockOnJoin}
@@ -284,7 +288,7 @@ describe('OnlineLobbyWaiting component', () => {
           <OnlineLobbyWaiting {...props} copyFeedback={copyFeedback} />
         </StrictMode>
       );
-      const { rerender } = render(renderLobby({ 1: { status: 'failed', message: 'link_copy_failed' } }));
+      const { rerender } = render(renderLobby({ 1: { status: 'failed', appendAnnouncementSpace: false } }));
       const field = screen.getByRole('textbox', { name: 'invite_url_label_2' });
       const close = screen.getByRole('button', { name: 'copy_fallback_close — slot_label_2' });
       const otherCopy = screen.getByRole('button', { name: 'copy_link — slot_label_1' });
@@ -293,12 +297,37 @@ describe('OnlineLobbyWaiting component', () => {
       fireEvent.click(retry);
       controls[focusedControl].focus();
 
-      rerender(renderLobby({ 1: { status: 'copied', message: 'link_copied' } }));
+      rerender(renderLobby({ 1: { status: 'copied', appendAnnouncementSpace: false } }));
 
       expect(screen.queryByRole('textbox', { name: 'invite_url_label_2' })).toBeNull();
       expect(document.activeElement).toBe(focusedControl === 'another invitation' ? otherCopy : retry);
     },
   );
+
+  it('retranslates a persistent copy failure in the existing status region', () => {
+    const props = {
+      view: 'waiting', roomId: 'ROOM-WAIT', numPlayers: 3,
+      myName: 'Alice', setMyName: mockSetMyName,
+      slotsInfo: defaultSlotsInfo, roster: defaultRoster,
+      isJoining: false, serverGameLive: false, connected: true,
+      onJoin: mockOnJoin, onCopyLink: mockOnCopyLink,
+      onDismissCopyFeedback: mockOnDismissCopyFeedback, onLeaveRoom: mockOnLeaveRoom,
+      copyFeedback: { 1: { status: 'failed', appendAnnouncementSpace: true } },
+    } satisfies OnlineLobbyWaitingProps;
+    translateCopyStatus.mockReturnValue('Copie impossible');
+    const { rerender } = render(<OnlineLobbyWaiting {...props} />);
+    const [, status] = screen.getAllByRole('status');
+    const field = screen.getByRole('textbox', { name: 'invite_url_label_2' });
+    field.focus();
+    expect(status.textContent).toBe('Copie impossible\u00A0');
+
+    translateCopyStatus.mockReturnValue('Could not copy');
+    rerender(<OnlineLobbyWaiting {...props} />);
+
+    expect(screen.getAllByRole('status')[1]).toBe(status);
+    expect(status.textContent).toBe('Could not copy\u00A0');
+    expect(document.activeElement).toBe(field);
+  });
 
   it('renders live roster with connected count and server live message', () => {
     const fullRoster: JoinedInfo[] = [

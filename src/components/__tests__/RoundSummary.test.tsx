@@ -289,4 +289,23 @@ describe('RoundSummary', () => {
     expect(screen.getByText('outcome_winner Blue Leader').style.color).toBe('rgb(127, 127, 255)');
     expect(screen.getByText('Blue Leader').style.color).toBe('rgb(127, 127, 255)');
   });
+
+  it.each([
+    ["#5555FF", "rgb(127, 127, 255)"],
+    ["#B300FF", "rgb(204, 102, 255)"],
+  ] as const)('keeps the name and KO indicator opaque for eliminated tanks of color %s', (color, accessibleColor) => {
+    const eliminated = makePlayer({
+      id: 'p-ko',
+      name: 'Eliminated Player',
+      tank: makeTank('tank-ko', 0, 0, { isDead: true, color }),
+    });
+    render(<RoundSummary {...defaultProps} players={[eliminated, player2]} />);
+
+    const label = screen.getByText('Eliminated Playerko_indicator');
+    const row = label.closest('li');
+    expect(row?.style.opacity).toBe('');
+    expect(label.style.opacity).toBe('');
+    expect(label.style.color).toBe(accessibleColor);
+    expect(row?.querySelector<HTMLElement>('[aria-hidden="true"]')?.style.opacity).toBe('0.55');
+  });
 });

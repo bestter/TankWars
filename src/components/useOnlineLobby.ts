@@ -42,7 +42,7 @@ export function useOnlineLobby({
   const [error, setError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<Record<number, CopySlotFeedback | undefined>>({});
   const copyTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  const lastCopyAnnouncementBySlotRef = useRef<Map<number, string>>(new Map());
+  const lastCopyAnnouncementBySlotRef = useRef<Map<number, CopySlotFeedback>>(new Map());
   const nextCopyAttemptIdRef = useRef(0);
   const activeCopyAttemptBySlotRef = useRef<Map<number, number>>(new Map());
 
@@ -487,15 +487,16 @@ export function useOnlineLobby({
       return;
     }
 
-    const baseMessage = t(status === 'copied' ? 'link_copied' : 'link_copy_failed');
     const previousAnnouncement = lastCopyAnnouncementBySlotRef.current.get(slot);
-    const announcement =
-      baseMessage === previousAnnouncement ? `${baseMessage}\u00A0` : baseMessage;
+    const announcement = {
+      status,
+      appendAnnouncementSpace: previousAnnouncement?.status === status && !previousAnnouncement.appendAnnouncementSpace,
+    };
     lastCopyAnnouncementBySlotRef.current.set(slot, announcement);
 
     setCopyFeedback((prev) => ({
       ...prev,
-      [slot]: { status, message: announcement },
+      [slot]: announcement,
     }));
 
     if (status === 'copied') {

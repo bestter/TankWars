@@ -8,7 +8,7 @@ export type CopySlotStatus = 'copied' | 'failed';
 
 export interface CopySlotFeedback {
   readonly status: CopySlotStatus;
-  readonly message: string;
+  readonly appendAnnouncementSpace: boolean;
 }
 
 export interface SlotUI {

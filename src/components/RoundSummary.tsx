@@ -116,13 +116,7 @@ export function RoundSummary({
           const roundEarnings = result?.earningsByPlayer[p.id] ?? 0;
           const eliminated = p.tank.isDead;
           return (
-            <li
-              key={p.id}
-              className="round-summary-row"
-              style={{
-                opacity: eliminated ? 0.55 : 1,
-              }}
-            >
+            <li key={p.id} className="round-summary-row">
               <span
                 aria-hidden="true"
                 style={{
@@ -132,6 +126,7 @@ export function RoundSummary({
                   backgroundColor: p.tank.color,
                   border: `1px solid ${VGA_PALETTE.WHITE}`,
                   flexShrink: 0,
+                  opacity: eliminated ? 0.55 : undefined,
                 }}
               />
               <span

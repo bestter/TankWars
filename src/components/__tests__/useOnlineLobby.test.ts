@@ -299,7 +299,7 @@ describe('useOnlineLobby', () => {
 
     expect(writeText).toHaveBeenCalledWith('https://tankwars.pages.dev/?room=R1&slot=1&token=T1');
     expect(promptSpy).not.toHaveBeenCalled();
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
 
     act(() => {
       vi.advanceTimersByTime(1500);
@@ -310,7 +310,7 @@ describe('useOnlineLobby', () => {
     await act(async () => {
       await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied\u00A0' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: true });
 
     act(() => {
       vi.advanceTimersByTime(1000);
@@ -357,12 +357,12 @@ describe('useOnlineLobby', () => {
     });
 
     expect(promptSpy).not.toHaveBeenCalled();
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
 
     act(() => {
       vi.advanceTimersByTime(10000);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
 
     // Explicit dismiss clears failure immediately
     act(() => {
@@ -374,13 +374,13 @@ describe('useOnlineLobby', () => {
     await act(async () => {
       await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
 
     writeText.mockResolvedValueOnce(undefined);
     await act(async () => {
       await result.current.copyLink('https://tankwars.pages.dev/?room=R1&slot=1&token=T1', 1);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
 
     act(() => {
       vi.advanceTimersByTime(2000);
@@ -455,12 +455,12 @@ describe('useOnlineLobby', () => {
       deferredQueue[1].reject(new Error('denied'));
       await p2;
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
 
     act(() => {
       vi.advanceTimersByTime(5000);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: false });
 
     // Reverse order: attempt 4 rejects first (current), then stale attempt 3 resolves
     let p3!: Promise<void>;
@@ -475,18 +475,18 @@ describe('useOnlineLobby', () => {
       deferredQueue[3].reject(new Error('denied'));
       await p4;
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
 
     await act(async () => {
       deferredQueue[2].resolve();
       await p3;
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
 
     act(() => {
       vi.advanceTimersByTime(5000);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', message: 'link_copy_failed\u00A0' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'failed', appendAnnouncementSpace: true });
 
     // Invalidate in-flight attempt via dismissCopyFeedback
     let p5!: Promise<void>;
@@ -535,18 +535,18 @@ describe('useOnlineLobby', () => {
     await act(async () => {
       await result.current.copyLink(urlA, 0);
     });
-    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied' });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
 
     await act(async () => {
       await result.current.copyLink(urlB, 1);
     });
-    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', message: 'link_copied' });
+    expect(result.current.copyFeedback[1]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
 
     // Returning to A before 2000ms must produce a distinct announcement for slot 0
     await act(async () => {
       await result.current.copyLink(urlA, 0);
     });
-    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied\u00A0' });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: true });
 
     // Repeating A again alternates back cleanly even after expiry
     act(() => {
@@ -557,7 +557,7 @@ describe('useOnlineLobby', () => {
     await act(async () => {
       await result.current.copyLink(urlA, 0);
     });
-    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', message: 'link_copied' });
+    expect(result.current.copyFeedback[0]).toEqual({ status: 'copied', appendAnnouncementSpace: false });
 
     vi.useRealTimers();
   });

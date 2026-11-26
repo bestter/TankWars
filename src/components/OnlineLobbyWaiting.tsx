@@ -53,6 +53,10 @@ function InviteActions({
       }
     };
   }, []);
+  const message = feedback
+    ? t(feedback.status === 'copied' ? 'link_copied' : 'link_copy_failed')
+      + (feedback.appendAnnouncementSpace ? '\u00A0' : '')
+    : '';
 
   return (
     <div className="lobby-wait-slot-actions">
@@ -68,7 +72,7 @@ function InviteActions({
         <span className="visually-hidden">— {slotLabel}</span>
       </button>
       <span role="status" className="lobby-copy-status" data-status={feedback?.status}>
-        {feedback?.message ?? ''}
+        {message}
       </span>
       <a href={url} target="_blank" rel="noopener noreferrer" className="lobby-action-link" style={{ color: VGA_PALETTE.ELECTRIC_CYAN }}>
         {t('open_link')}{' '}
