@@ -56,9 +56,13 @@ $global:deploymentTestCommandLog = [System.Collections.Generic.List[object]]::ne
 $global:deploymentTestFailureCommand = ""
 $global:deploymentTestDeployOutput = "https://tankwars-api.example.workers.dev"
 $global:deploymentTestDoctorWarning = $false
+$global:deploymentTestIndexNowCase = $null
+$global:deploymentTestPublicAfterCalls = 0
 $indexNowKey = "a" * 64
 $publishedHtml = '<link rel="canonical" href="https://tankwars-game.com/"><title>TankWars</title><main>Nouvel aperçu</main><script type="module" src="/assets/index-new.js"></script>'
 $oldHtml = $publishedHtml.Replace("Nouvel aperçu", "Ancien aperçu").Replace("index-new.js", "index-old.js")
+$reorderedPublishedHtml = '<link href="https://tankwars-game.com/" rel="canonical"><meta data-name="description" content="bruit-nouveau"><title>TankWars</title><main>Nouvel aperçu</main><script src="/assets/index-new.js" type="module"></script>'
+$reorderedOldHtml = '<link href="https://tankwars-game.com/" rel="canonical"><meta data-name="description" content="bruit-ancien"><title>TankWars</title><main>Ancien aperçu</main><script src="/assets/index-old.js" type="module"></script>'
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -66,9 +70,9 @@ function Assert-True {
 }
 
 function npm {
-  $label = ("npm " + ($args -join " ")) -replace ' --scope changed\b', ''
+  $label = "npm " + ($args -join " ")
   if ($args[1] -eq "doctor" -and $global:deploymentTestDoctorWarning) {
-    Assert-True ($label -eq "npm run doctor --verbose --blocking error") "Les avertissements React Doctor doivent être non bloquants."
+    Assert-True ($label -eq "npm run doctor --verbose --scope full --blocking error") "Les avertissements React Doctor doivent être non bloquants."
     Write-Host "React Doctor : avertissement simulé, aucune erreur."
   }
   $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path; Api = $env:VITE_API_BASE; Hotseat = $env:VITE_HOTSEAT_ONLY })
@@ -102,20 +106,50 @@ function Invoke-WebRequest {
     [uri]$Uri, [hashtable]$Headers, [int]$ConnectionTimeoutSeconds,
     [int]$OperationTimeoutSeconds, [int]$MaximumRedirection, [switch]$SkipHttpErrorCheck
   )
-  Assert-True ($MaximumRedirection -eq 0 -and $ConnectionTimeoutSeconds -gt 0 -and $OperationTimeoutSeconds -gt 0 -and $SkipHttpErrorCheck) "Options HTTP IndexNow incorrectes."
+  Assert-True (
+    $PSBoundParameters.ContainsKey("MaximumRedirection") -and
+    $MaximumRedirection -eq 0 -and
+    $ConnectionTimeoutSeconds -gt 0 -and
+    $OperationTimeoutSeconds -gt 0 -and
+    $SkipHttpErrorCheck
+  ) "Options HTTP IndexNow incorrectes."
+  $currentCase = $global:deploymentTestIndexNowCase
   if ($Uri.AbsoluteUri -ceq "https://tankwars-game.com/") {
     Assert-True ($Headers["Cache-Control"] -eq "no-cache") "La vérification publique doit demander une revalidation."
     $afterPages = "pages" -in $global:deploymentTestCommandLog.Label
     $label = if ($afterPages) { "public-after" } else { "public-before" }
     $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path })
-    $html = if ($afterPages -and -not $case.StalePage) { $publishedHtml } elseif ($case.Unchanged) {
+    if (-not $afterPages -and $currentCase.SnapshotFailure) {
+      throw "Erreur réseau simulée avant publication."
+    }
+    if ($afterPages) {
+      $global:deploymentTestPublicAfterCalls++
+      if ($currentCase.EmptyPublicAfterBody) {
+        return [pscustomobject]@{ StatusCode = 200; Content = "" }
+      }
+      if ($currentCase.OversizedPublicAfterBody) {
+        return [pscustomobject]@{ StatusCode = 200; Content = ("x" * 262145) }
+      }
+      if ($currentCase.PublicAfterSuccessAttempt -and $global:deploymentTestPublicAfterCalls -lt $currentCase.PublicAfterSuccessAttempt) {
+        return [pscustomobject]@{ StatusCode = 200; Content = $oldHtml }
+      }
+      if ($currentCase.ReorderedAttributes) {
+        return [pscustomobject]@{ StatusCode = 200; Content = $reorderedPublishedHtml.Replace("bruit-nouveau", "bruit-public") }
+      }
+      $html = if (-not $currentCase.StalePage) { $publishedHtml } else { $oldHtml }
+      return [pscustomobject]@{ StatusCode = 200; Content = $html }
+    }
+    if ($currentCase.ReorderedAttributes) {
+      return [pscustomobject]@{ StatusCode = 200; Content = $reorderedOldHtml }
+    }
+    $html = if ($currentCase.Unchanged) {
       $publishedHtml.Replace("index-new.js", "index-old.js")
     } else { $oldHtml }
     return [pscustomobject]@{ StatusCode = 200; Content = $html }
   }
   Assert-True ($Uri.AbsoluteUri -ceq "https://api.indexnow.org/indexnow?url=https%3A%2F%2Ftankwars-game.com%2F&key=$indexNowKey") "Destination IndexNow incorrecte."
   $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = "indexnow"; Location = (Get-Location).Path })
-  return [pscustomobject]@{ StatusCode = ($case.IndexNowStatus ?? 200); Content = "SECRET_MARKER" }
+  return [pscustomobject]@{ StatusCode = ($currentCase.IndexNowStatus ?? 200); Content = "SECRET_MARKER" }
 }
 
 function Start-Sleep {
@@ -143,6 +177,12 @@ try {
     @{ Name = "succès et variables absentes"; Success = $true },
     @{ Name = "contenu inchangé malgré un nouveau module Vite"; Success = $true; Unchanged = $true },
     @{ Name = "nouveau build public non confirmé"; Success = $true; StalePage = $true; IndexNowWarning = $true },
+    @{ Name = "reprise publique réussie à la 2e tentative"; Success = $true; PublicAfterSuccessAttempt = 2 },
+    @{ Name = "attributs HTML inversés et data-name ignoré"; Success = $true; ReorderedAttributes = $true },
+    @{ Name = "échec du snapshot initial avant publication"; Success = $true; SnapshotFailure = $true; ExpectedIndexNowWarning = 'IndexNow : comparaison avant publication indisponible\.' },
+    @{ Name = "fichier de clé IndexNow vide"; Success = $true; EmptyKeyFile = $true; NoIndexNow = $true; ExpectedIndexNowWarning = 'IndexNow : Le contenu du fichier de clé IndexNow ne correspond pas à son nom\.' },
+    @{ Name = "réponse publique vide"; Success = $true; EmptyPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
+    @{ Name = "réponse publique anormalement volumineuse"; Success = $true; OversizedPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
     @{ Name = "IndexNow reçu avec validation de clé en attente"; Success = $true; IndexNowStatus = 202 },
     @{ Name = "échec IndexNow après publication"; Success = $true; IndexNowStatus = 429; IndexNowWarning = $true },
     @{ Name = "avertissement React Doctor visible et non bloquant"; Success = $true; DoctorWarning = $true },
@@ -176,14 +216,20 @@ try {
     "https://tankwars-api.example.workers.dev?SECRET_MARKER", "https://tankwars-api.example.workers.dev#SECRET_MARKER",
     "https://tankwars-api.example.workers.dev.evil.invalid", "https://127.0.0.1", "https://tankwars-api.example.workers.dev/a/.."
   )) { $cases += @{ Name = "URL interdite"; Url = $url; NoCommands = $true } }
-  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --blocking error", "git diff --check")) {
+  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --scope full --blocking error", "git diff --check")) {
     $cases += @{ Name = "échec $validation"; Failure = $validation; NoProbe = $true; NoWorker = $true }
   }
   foreach ($case in $cases) {
     $global:deploymentTestCommandLog.Clear()
     $global:deploymentTestFailureCommand = $case.Failure
     $global:deploymentTestDoctorWarning = $case.DoctorWarning -eq $true
+    $global:deploymentTestIndexNowCase = $case
+    $global:deploymentTestPublicAfterCalls = 0
     $global:deploymentTestDeployOutput = if ($case.ContainsKey("Output")) { $case.Output } else { "https://tankwars-api.example.workers.dev" }
+    $distHtml = if ($case.ReorderedAttributes) { $reorderedPublishedHtml } else { $publishedHtml }
+    [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/index.html"), $distHtml)
+    $keyFileBody = if ($case.EmptyKeyFile) { "" } else { $indexNowKey }
+    [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/$indexNowKey.txt"), $keyFileBody)
     [DeploymentProbeHandler]::Body = if ($case.ContainsKey("Body")) { $case.Body } else { $validHealth }
     [DeploymentProbeHandler]::Status = if ($case.ContainsKey("Status")) { $case.Status } else { 200 }
     [DeploymentProbeHandler]::WaitForCancellation = $case.Wait -eq $true
@@ -206,16 +252,24 @@ try {
     if ($case.DoctorWarning) { Assert-True ($output -match 'React Doctor : avertissement simulé, aucune erreur\.') "Diagnostic React Doctor masqué." }
     $labels = @($global:deploymentTestCommandLog | ForEach-Object Label)
     Assert-True (($labels -contains "pages") -eq ($case.Success -eq $true -or $case.PagesAttempted -eq $true)) "Publication Pages inattendue : $($case.Name)."
-    Assert-True (($labels -contains "indexnow") -eq ($case.Success -eq $true -and -not $case.Unchanged -and -not $case.StalePage)) "Envoi IndexNow inattendu : $($case.Name)."
-    Assert-True (($output -match 'IndexNow : (Le nouveau build|IndexNow a répondu)') -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
+    Assert-True (($labels -contains "indexnow") -eq ($case.Success -eq $true -and -not $case.Unchanged -and -not $case.StalePage -and -not $case.NoIndexNow)) "Envoi IndexNow inattendu : $($case.Name)."
+    if ($case.ExpectedIndexNowWarning) {
+      Assert-True ($output -match $case.ExpectedIndexNowWarning) "Avertissement IndexNow attendu absent ($($case.Name)). $output"
+    }
+    else {
+      Assert-True (($output -match "IndexNow : (Le nouveau build|IndexNow a répondu|comparaison avant publication|Le contenu du fichier|La réponse de l’accueil)") -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
+    }
     foreach ($command in $global:deploymentTestCommandLog) { Assert-True ($command.Location -eq $fixtureRoot) "Commande hors du dépôt." }
     if ($case.NoCommands) { Assert-True ($labels.Count -eq 0) "Commande avant validation de la configuration." }
     if ($case.NoWorker) { Assert-True ($labels -notcontains "worker") "Worker publié malgré validation échouée." }
     if ($case.NoProbe) { Assert-True ([DeploymentProbeHandler]::Calls -eq 0) "Sonde après échec préalable." }
     if ($case.Wait) { Assert-True ($elapsed.Elapsed.TotalSeconds -lt 3) "Budget de sonde non respecté." }
     if ($case.Success) {
-      $expectedLabels = 'npm run lint|npm run build|npm run test|npm run doctor --verbose --blocking error|git diff --check|worker|npm run build|public-before|pages'
+      $expectedLabels = 'npm run lint|npm run build|npm run test|npm run doctor --verbose --scope full --blocking error|git diff --check|worker|npm run build|public-before|pages'
       if ($case.StalePage) { $expectedLabels += '|public-after|public-after|public-after' }
+      elseif ($case.PublicAfterRetries) { $expectedLabels += ('|public-after' * $case.PublicAfterRetries) }
+      elseif ($case.PublicAfterSuccessAttempt) { $expectedLabels += ('|public-after' * $case.PublicAfterSuccessAttempt) + '|indexnow' }
+      elseif ($case.NoIndexNow) { $expectedLabels += '|public-after' }
       elseif (-not $case.Unchanged) { $expectedLabels += '|public-after|indexnow' }
       Assert-True (($labels -join '|') -eq $expectedLabels) "Ordre incorrect : $($labels -join '|')"
       if ($case.IndexNowStatus -eq 202) { Assert-True ($output -match 'validation de la clé en attente') "L’état 202 doit être visible." }
@@ -231,7 +285,7 @@ try {
 finally {
   Set-Location -LiteralPath $originalLocation.Path
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process") }
-  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput, deploymentTestDoctorWarning -Scope Global -ErrorAction SilentlyContinue
+  Remove-Variable -Name deploymentTestCommandLog, deploymentTestFailureCommand, deploymentTestDeployOutput, deploymentTestDoctorWarning, deploymentTestIndexNowCase, deploymentTestPublicAfterCalls -Scope Global -ErrorAction SilentlyContinue
   # Seul le répertoire temporaire explicitement créé ci-dessus est supprimé.
   $resolvedFixture = [System.IO.Path]::GetFullPath($fixtureRoot)
   $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar

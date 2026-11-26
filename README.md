@@ -162,7 +162,7 @@ Production uses a controlled Worker-first publication. First, [disable automatic
 
 On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
 
-1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope changed --blocking error` → `git diff --check`, displaying React Doctor diagnostics while allowing warnings;
+1. runs `npm run lint` → `npm run build` → `npm run test` → `npm run doctor -- --verbose --scope full --blocking error` → `git diff --check`, displaying React Doctor diagnostics while allowing warnings;
 2. deploys the Worker with the repository's local Wrangler;
 3. polls the uncached `/api/health` without following redirects for at most 60 seconds, requires `ok: true` and service `tankwars-api`, and checks both numeric versions against the literal constants in `src/game/online/protocol.ts` (currently `5`/`5`);
 4. rebuilds with `VITE_API_BASE=<Worker URL>` and `VITE_HOTSEAT_ONLY=false`;
