@@ -202,6 +202,7 @@ describe('styles CSS cleanup (#405)', () => {
 
     expect(appCss).toMatch(/@media\s*\(forced-colors:\s*active\)\s*\{[\s\S]*?\.retro-color-swatch-btn\s*\{[^}]*forced-color-adjust:\s*none;/);
     expect(appCss).toMatch(/@media\s*\(pointer:\s*coarse\)\s*\{[\s\S]*?\.retro-color-swatch-btn,\s*\.retro-color-swatch-btn\.selected\s*\{[^}]*min-inline-size:\s*44px;\s*min-block-size:\s*44px;/);
+    expect(appCss).toMatch(/@media\s*\(pointer:\s*coarse\)\s*\{[^{}]*\.lobby-copy-fallback-url,[^{}]*\{\s*min-block-size:\s*44px;/);
 
     expect(appCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*no-preference\)\s*\{[\s\S]*?\.fire-rejection-toast\s*\{[\s\S]*?\.zeus-announcement\s*\{/);
     expect(appCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.shot-earnings-line\s*\{[^}]*animation-name:\s*shot-earnings-fade;/);

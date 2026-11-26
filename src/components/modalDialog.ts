@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type SyntheticEvent } from "react";
 
 export function openModalDialog(dialog: HTMLDialogElement): void {
   if (dialog.open || dialog.hasAttribute("open")) return;
@@ -33,83 +33,84 @@ export interface UseModalDialogOptions {
   readonly dismissActiveModals?: boolean;
 }
 
-interface DismissibleModalEntry {
+interface ModalEntry {
   readonly dialog: HTMLDialogElement;
   readonly dismiss: () => void;
 }
 
-const activeDismissibleModals = new Set<DismissibleModalEntry>();
-
-function removeDismissibleEntriesFor(dialog: HTMLDialogElement): void {
-  for (const entry of activeDismissibleModals) {
-    if (entry.dialog === dialog) {
-      activeDismissibleModals.delete(entry);
-    }
-  }
-}
+const activeModals = new Set<ModalEntry>();
 
 export function useModalDialog({ onDismiss, dismissActiveModals = false }: UseModalDialogOptions = {}) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const isUnmountingRef = useRef(false);
-  const isClosingProgrammaticallyRef = useRef(false);
+  const explicitlyClosedDialogRef = useRef<HTMLDialogElement | null>(null);
+  const pendingCloseEventsRef = useRef(new WeakMap<HTMLDialogElement, number>());
   const onDismissRef = useRef(onDismiss);
 
   useEffect(() => {
     onDismissRef.current = onDismiss;
   }, [onDismiss]);
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    isUnmountingRef.current = false;
-    isClosingProgrammaticallyRef.current = false;
-    dialog.returnValue = "";
-
-    let entry: DismissibleModalEntry | null = null;
-    if (onDismissRef.current) {
-      entry = {
-        dialog,
-        dismiss: () => {
-          isClosingProgrammaticallyRef.current = true;
-          closeModalDialog(dialog);
-          onDismissRef.current?.();
-        },
-      };
-      activeDismissibleModals.add(entry);
-    } else if (dismissActiveModals) {
-      for (const activeEntry of [...activeDismissibleModals]) {
-        if (activeEntry.dialog === dialog) continue;
-        activeDismissibleModals.delete(activeEntry);
-        activeEntry.dismiss();
-      }
+  const closeWithoutDismiss = useCallback((dialog: HTMLDialogElement, returnValue?: string) => {
+    if (!dialog.open && !dialog.hasAttribute("open")) return;
+    if (typeof dialog.close === "function") {
+      // Native close events are queued and can outlive a StrictMode effect replay.
+      const pending = pendingCloseEventsRef.current;
+      pending.set(dialog, (pending.get(dialog) ?? 0) + 1);
     }
-
-    openModalDialog(dialog);
-    return () => {
-      if (entry) {
-        activeDismissibleModals.delete(entry);
-      }
-      isUnmountingRef.current = true;
-      closeModalDialog(dialog);
-    };
-  }, [dismissActiveModals]);
-
-  const closeDialog = useCallback((returnValue?: string) => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    removeDismissibleEntriesFor(dialog);
-    isClosingProgrammaticallyRef.current = true;
     closeModalDialog(dialog, returnValue);
   }, []);
 
-  const handleClose = useCallback(() => {
-    if (isUnmountingRef.current || isClosingProgrammaticallyRef.current) {
+  const closeDialog = useCallback((returnValue?: string) => {
+    const dialog = dialogRef.current;
+    if (!dialog || (!dialog.open && !dialog.hasAttribute("open"))) return;
+    explicitlyClosedDialogRef.current = dialog;
+    closeWithoutDismiss(dialog, returnValue);
+  }, [closeWithoutDismiss]);
+
+  // Dismiss before showModal so the browser can restore focus to the old invoker.
+  useEffect(() => {
+    if (!dismissActiveModals || !dialogRef.current) return;
+    for (const entry of [...activeModals]) {
+      if (entry.dialog !== dialogRef.current) entry.dismiss();
+    }
+  }, [dismissActiveModals]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const entry: ModalEntry = {
+      dialog,
+      dismiss: () => {
+        const dismiss = onDismissRef.current;
+        if (!dismiss || (!dialog.open && !dialog.hasAttribute("open"))) return;
+        closeDialog();
+        dismiss();
+      },
+    };
+    activeModals.add(entry);
+    // A dialog already dismissed by a sibling stays closed during StrictMode's replay.
+    if (explicitlyClosedDialogRef.current !== dialog) {
+      dialog.returnValue = "";
+      openModalDialog(dialog);
+    }
+    return () => {
+      activeModals.delete(entry);
+      closeWithoutDismiss(dialog);
+    };
+  }, [closeDialog, closeWithoutDismiss]);
+
+  const handleClose = useCallback((event: SyntheticEvent<HTMLDialogElement>) => {
+    const dialog = event.currentTarget;
+    if (event.target !== dialog) return;
+    const pending = pendingCloseEventsRef.current;
+    const count = pending.get(dialog) ?? 0;
+    if (count > 0) {
+      if (count === 1) pending.delete(dialog);
+      else pending.set(dialog, count - 1);
       return;
     }
-    const dialog = dialogRef.current;
-    if (!dialog?.isConnected || dialog.open) return;
+    if (dialog !== dialogRef.current || !dialog.isConnected || dialog.open) return;
     if (onDismissRef.current) {
-      removeDismissibleEntriesFor(dialog);
       dialog.returnValue = "";
       onDismissRef.current();
       return;

@@ -462,6 +462,7 @@ export function GameCanvas({
   const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>): void => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
+      e.stopPropagation();
       handleCanvasClick();
     }
   };

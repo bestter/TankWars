@@ -157,15 +157,14 @@ export function OnlineQuitConfirmDialog({
     cancelBtnRef.current?.focus();
   }, []);
 
-  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
-    event.preventDefault();
-    closeDialog();
-    onCancel();
-  };
-
   const handleCancelClick = () => {
     closeDialog("cancel");
     onCancel();
+  };
+
+  const handleCancel = (event: SyntheticEvent<HTMLDialogElement, Event>) => {
+    event.preventDefault();
+    handleCancelClick();
   };
 
   const handleConfirmClick = () => {

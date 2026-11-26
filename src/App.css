@@ -2000,6 +2000,7 @@ canvas {
   .lobby-slot-select,
   .lobby-secondary-btn,
   .lobby-name-input,
+  .lobby-copy-fallback-url,
   .lobby-action-btn,
   .lobby-action-link {
     min-block-size: 44px;

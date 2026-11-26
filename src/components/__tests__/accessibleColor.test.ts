@@ -38,11 +38,13 @@ describe("getAccessibleTankTextColor", () => {
     const lightBlue = getAccessibleTankTextColor("#5555ff");
     expect(lightBlue).toBe(getAccessibleTankTextColor(VGA_PALETTE.BLUE));
     expect(lightBlue.toLowerCase()).not.toBe("#5555ff");
+    expect(getAccessibleTankTextColor("  #5555fF\t")).toBe(lightBlue);
 
     const lightPurple = getAccessibleTankTextColor("#b300ff");
     expect(lightPurple).toBe(getAccessibleTankTextColor(VGA_PALETTE.VOLT_PURPLE));
     expect(lightPurple.toLowerCase()).not.toBe("#b300ff");
 
     expect(getAccessibleTankTextColor("#ff0000")).toBe("#ff0000");
+    expect(getAccessibleTankTextColor("constructor")).toBe("constructor");
   });
 });

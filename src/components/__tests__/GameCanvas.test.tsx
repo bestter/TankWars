@@ -195,6 +195,24 @@ describe("GameCanvas component", () => {
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 
+  it.each([" ", "Enter"])("handles %j on the canvas without invoking the global shortcut", (key) => {
+    render(<GameCanvas />);
+    const canvas = screen.getByRole("img");
+    canvas.focus();
+    const globalKeydown = vi.fn();
+    window.addEventListener("keydown", globalKeydown);
+
+    try {
+      expect(fireEvent.keyDown(canvas, { key })).toBe(false);
+      expect(mockHandlers.handleCanvasClick).toHaveBeenCalledOnce();
+      expect(globalKeydown).not.toHaveBeenCalled();
+      fireEvent.keyDown(canvas, { key: "ArrowUp" });
+      expect(globalKeydown).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener("keydown", globalKeydown);
+    }
+  });
+
   it("updates the stage's height budget when the touch controls wrap or disappear", () => {
     type Resize = (entries: { contentRect: { height: number } }[]) => void;
     let notifyResize: Resize | undefined;

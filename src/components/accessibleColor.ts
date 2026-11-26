@@ -24,5 +24,8 @@ export const TANK_TEXT_COLOR_OVERRIDES: Readonly<Record<string, string>> = {
  * backgrounds while keeping VGA_PALETTE canvas and swatch colors untouched.
  */
 export function getAccessibleTankTextColor(color: string): string {
-  return TANK_TEXT_COLOR_OVERRIDES[color.toLowerCase()] ?? color;
+  const key = color.trim().toLowerCase();
+  return Object.hasOwn(TANK_TEXT_COLOR_OVERRIDES, key)
+    ? TANK_TEXT_COLOR_OVERRIDES[key]
+    : color;
 }

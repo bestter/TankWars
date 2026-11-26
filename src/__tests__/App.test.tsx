@@ -311,6 +311,7 @@ describe('App component (State and Lifecycle integration)', () => {
     fireEvent.click(returnButton);
     const dialogForEsc = screen.getByRole('dialog', { name: 'online_quit_confirm' });
     fireEvent(dialogForEsc, new Event('cancel', { cancelable: true }));
+    expect(dialogForEsc).toHaveProperty('returnValue', 'cancel');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
 
