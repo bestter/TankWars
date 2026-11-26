@@ -1,5 +1,5 @@
 # Tests du script privé avec HTTP et commandes natives simulés; aucune publication.
-#Requires -Version 7.0
+#Requires -Version 7.4
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sourcePath = Join-Path $repoRoot "deploy-cloudflare.ps1"
@@ -56,6 +56,9 @@ $global:deploymentTestCommandLog = [System.Collections.Generic.List[object]]::ne
 $global:deploymentTestFailureCommand = ""
 $global:deploymentTestDeployOutput = "https://tankwars-api.example.workers.dev"
 $global:deploymentTestDoctorWarning = $false
+$indexNowKey = "a" * 64
+$publishedHtml = '<link rel="canonical" href="https://tankwars-game.com/"><title>TankWars</title><main>Nouvel aperçu</main><script type="module" src="/assets/index-new.js"></script>'
+$oldHtml = $publishedHtml.Replace("Nouvel aperçu", "Ancien aperçu").Replace("index-new.js", "index-old.js")
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -63,9 +66,9 @@ function Assert-True {
 }
 
 function npm {
-  $label = "npm " + ($args -join " ")
+  $label = ("npm " + ($args -join " ")) -replace ' --scope changed\b', ''
   if ($args[1] -eq "doctor" -and $global:deploymentTestDoctorWarning) {
-    Assert-True ($label -eq "npm run doctor --verbose --scope changed --blocking error") "Les avertissements React Doctor doivent être non bloquants."
+    Assert-True ($label -eq "npm run doctor --verbose --blocking error") "Les avertissements React Doctor doivent être non bloquants."
     Write-Host "React Doctor : avertissement simulé, aucune erreur."
   }
   $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path; Api = $env:VITE_API_BASE; Hotseat = $env:VITE_HOTSEAT_ONLY })
@@ -93,13 +96,43 @@ function node {
   if ($operation -eq "worker") { $global:deploymentTestDeployOutput }
 }
 
+function Invoke-WebRequest {
+  [CmdletBinding()]
+  param(
+    [uri]$Uri, [hashtable]$Headers, [int]$ConnectionTimeoutSeconds,
+    [int]$OperationTimeoutSeconds, [int]$MaximumRedirection, [switch]$SkipHttpErrorCheck
+  )
+  Assert-True ($MaximumRedirection -eq 0 -and $ConnectionTimeoutSeconds -gt 0 -and $OperationTimeoutSeconds -gt 0 -and $SkipHttpErrorCheck) "Options HTTP IndexNow incorrectes."
+  if ($Uri.AbsoluteUri -ceq "https://tankwars-game.com/") {
+    Assert-True ($Headers["Cache-Control"] -eq "no-cache") "La vérification publique doit demander une revalidation."
+    $afterPages = "pages" -in $global:deploymentTestCommandLog.Label
+    $label = if ($afterPages) { "public-after" } else { "public-before" }
+    $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = $label; Location = (Get-Location).Path })
+    $html = if ($afterPages -and -not $case.StalePage) { $publishedHtml } elseif ($case.Unchanged) {
+      $publishedHtml.Replace("index-new.js", "index-old.js")
+    } else { $oldHtml }
+    return [pscustomobject]@{ StatusCode = 200; Content = $html }
+  }
+  Assert-True ($Uri.AbsoluteUri -ceq "https://api.indexnow.org/indexnow?url=https%3A%2F%2Ftankwars-game.com%2F&key=$indexNowKey") "Destination IndexNow incorrecte."
+  $global:deploymentTestCommandLog.Add([pscustomobject]@{ Label = "indexnow"; Location = (Get-Location).Path })
+  return [pscustomobject]@{ StatusCode = ($case.IndexNowStatus ?? 200); Content = "SECRET_MARKER" }
+}
+
+function Start-Sleep {
+  param([int]$Milliseconds, [int]$Seconds)
+  if ($Milliseconds -gt 0) { Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds $Milliseconds }
+}
+
 try {
-  foreach ($directory in @("node_modules/wrangler/bin", "worker", "src/game/online", "dist", "caller")) {
+  foreach ($directory in @("node_modules/wrangler/bin", "worker", "src/game/online", "dist", "caller", "Scripts")) {
     New-Item -ItemType Directory -Path (Join-Path $fixtureRoot $directory) -Force | Out-Null
   }
-  foreach ($file in @("node_modules/wrangler/bin/wrangler.js", "worker/wrangler.toml", "dist/index.html")) {
+  foreach ($file in @("node_modules/wrangler/bin/wrangler.js", "worker/wrangler.toml")) {
     [System.IO.File]::WriteAllText((Join-Path $fixtureRoot $file), "fixture")
   }
+  [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/index.html"), $publishedHtml)
+  [System.IO.File]::WriteAllText((Join-Path $fixtureRoot "dist/$indexNowKey.txt"), $indexNowKey)
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "notify-indexnow.ps1") -Destination (Join-Path $fixtureRoot "Scripts")
   $testSource = $source.Replace('[System.Net.Http.HttpClientHandler]::new()', '[DeploymentProbeHandler]::new()').Replace('[TimeSpan]::FromSeconds(60)', '[TimeSpan]::FromMilliseconds(100)')
   Assert-True ($testSource -ne $source -and $testSource.Contains('[DeploymentProbeHandler]::new()') -and $testSource.Contains('[TimeSpan]::FromMilliseconds(100)')) "Points de simulation absents."
   $fixtureScript = Join-Path $fixtureRoot "deploy-cloudflare.ps1"
@@ -108,6 +141,10 @@ try {
   $validHealth = '{"ok":true,"service":"tankwars-api","protocolVersion":3,"minimumClientProtocolVersion":3}'
   $cases = @(
     @{ Name = "succès et variables absentes"; Success = $true },
+    @{ Name = "contenu inchangé malgré un nouveau module Vite"; Success = $true; Unchanged = $true },
+    @{ Name = "nouveau build public non confirmé"; Success = $true; StalePage = $true; IndexNowWarning = $true },
+    @{ Name = "IndexNow reçu avec validation de clé en attente"; Success = $true; IndexNowStatus = 202 },
+    @{ Name = "échec IndexNow après publication"; Success = $true; IndexNowStatus = 429; IndexNowWarning = $true },
     @{ Name = "avertissement React Doctor visible et non bloquant"; Success = $true; DoctorWarning = $true },
     @{ Name = "succès et variables présentes"; Success = $true; Present = $true; Url = "https://tankwars-api.example.workers.dev:443/" },
     @{ Name = "versions lues dynamiquement"; Success = $true; Protocol = $validProtocol.Replace('3 as const', '4 as const'); Body = $validHealth.Replace(':3', ':4'); Version = 4 },
@@ -139,7 +176,7 @@ try {
     "https://tankwars-api.example.workers.dev?SECRET_MARKER", "https://tankwars-api.example.workers.dev#SECRET_MARKER",
     "https://tankwars-api.example.workers.dev.evil.invalid", "https://127.0.0.1", "https://tankwars-api.example.workers.dev/a/.."
   )) { $cases += @{ Name = "URL interdite"; Url = $url; NoCommands = $true } }
-  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --scope changed --blocking error", "git diff --check")) {
+  foreach ($validation in @("npm run lint", "npm run build", "npm run test", "npm run doctor --verbose --blocking error", "git diff --check")) {
     $cases += @{ Name = "échec $validation"; Failure = $validation; NoProbe = $true; NoWorker = $true }
   }
   foreach ($case in $cases) {
@@ -159,7 +196,7 @@ try {
     Set-Location -LiteralPath (Join-Path $fixtureRoot "caller")
     $global:LASTEXITCODE = 0
     $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = (& $fixtureScript 6>&1 | Out-String)
+    $output = (& $fixtureScript 3>&1 6>&1 | Out-String)
     $exitCode = $LASTEXITCODE
     Assert-True (($exitCode -eq 0) -eq ($case.Success -eq $true)) "Résultat incorrect : $($case.Name). $output"
     Assert-True ((Get-Location).Path -eq (Join-Path $fixtureRoot "caller")) "Répertoire non restauré : $($case.Name)."
@@ -169,13 +206,19 @@ try {
     if ($case.DoctorWarning) { Assert-True ($output -match 'React Doctor : avertissement simulé, aucune erreur\.') "Diagnostic React Doctor masqué." }
     $labels = @($global:deploymentTestCommandLog | ForEach-Object Label)
     Assert-True (($labels -contains "pages") -eq ($case.Success -eq $true -or $case.PagesAttempted -eq $true)) "Publication Pages inattendue : $($case.Name)."
+    Assert-True (($labels -contains "indexnow") -eq ($case.Success -eq $true -and -not $case.Unchanged -and -not $case.StalePage)) "Envoi IndexNow inattendu : $($case.Name)."
+    Assert-True (($output -match 'IndexNow : (Le nouveau build|IndexNow a répondu)') -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
     foreach ($command in $global:deploymentTestCommandLog) { Assert-True ($command.Location -eq $fixtureRoot) "Commande hors du dépôt." }
     if ($case.NoCommands) { Assert-True ($labels.Count -eq 0) "Commande avant validation de la configuration." }
     if ($case.NoWorker) { Assert-True ($labels -notcontains "worker") "Worker publié malgré validation échouée." }
     if ($case.NoProbe) { Assert-True ([DeploymentProbeHandler]::Calls -eq 0) "Sonde après échec préalable." }
     if ($case.Wait) { Assert-True ($elapsed.Elapsed.TotalSeconds -lt 3) "Budget de sonde non respecté." }
     if ($case.Success) {
-      Assert-True (($labels -join '|') -eq 'npm run lint|npm run build|npm run test|npm run doctor --verbose --scope changed --blocking error|git diff --check|worker|npm run build|pages') "Ordre incorrect : $($labels -join '|')"
+      $expectedLabels = 'npm run lint|npm run build|npm run test|npm run doctor --verbose --blocking error|git diff --check|worker|npm run build|public-before|pages'
+      if ($case.StalePage) { $expectedLabels += '|public-after|public-after|public-after' }
+      elseif (-not $case.Unchanged) { $expectedLabels += '|public-after|indexnow' }
+      Assert-True (($labels -join '|') -eq $expectedLabels) "Ordre incorrect : $($labels -join '|')"
+      if ($case.IndexNowStatus -eq 202) { Assert-True ($output -match 'validation de la clé en attente') "L’état 202 doit être visible." }
       $build = @($global:deploymentTestCommandLog | Where-Object Label -eq 'npm run build')[1]
       Assert-True ($build.Api -eq 'https://tankwars-api.example.workers.dev' -and $build.Hotseat -eq 'false') "Build online incorrect."
       $expectedVersion = if ($case.Version) { $case.Version } else { 3 }
