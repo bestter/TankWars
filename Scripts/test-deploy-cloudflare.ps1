@@ -112,17 +112,19 @@ internal sealed class OversizedChunkStream : Stream {
   }
 
   public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+    return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+  }
+
+  public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
     if (_sent >= _totalBytes) {
       if (_onCompleted != null) { _onCompleted(); }
-      return Task.FromResult(0);
+      return ValueTask.FromResult(0);
     }
-    int toCopy = Math.Min(count, Math.Min(16384, _totalBytes - _sent));
-    for (int i = 0; i < toCopy; i++) {
-      buffer[offset + i] = (byte)'x';
-    }
+    int toCopy = Math.Min(buffer.Length, Math.Min(16384, _totalBytes - _sent));
+    buffer.Span.Slice(0, toCopy).Fill((byte)'x');
     _sent += toCopy;
-    return Task.FromResult(toCopy);
+    return ValueTask.FromResult(toCopy);
   }
 }
 
@@ -155,7 +157,11 @@ internal sealed class SlowChunkStream : Stream {
     return ReadAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
   }
 
-  public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+  public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+    return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+  }
+
+  public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) {
     if (_chunksSent >= _totalChunks) {
       return 0;
     }
@@ -163,8 +169,8 @@ internal sealed class SlowChunkStream : Stream {
       await Task.Delay(_delayMs, cancellationToken);
     }
     _chunksSent++;
-    int toCopy = Math.Min(count, Piece.Length);
-    Buffer.BlockCopy(Piece, 0, buffer, offset, toCopy);
+    int toCopy = Math.Min(buffer.Length, Piece.Length);
+    Piece.AsSpan(0, toCopy).CopyTo(buffer.Span);
     return toCopy;
   }
 }
@@ -363,7 +369,7 @@ try {
     @{ Name = "fichier de clé IndexNow vide"; Success = $true; EmptyKeyFile = $true; NoIndexNow = $true; ExpectedIndexNowWarning = 'IndexNow : Le contenu du fichier de clé IndexNow ne correspond pas à son nom\.' },
     @{ Name = "réponse publique vide"; Success = $true; EmptyPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
     @{ Name = "réponse publique anormalement volumineuse"; Success = $true; OversizedPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : La réponse de l’accueil public est vide ou anormalement volumineuse\." },
-    @{ Name = "réponse publique lente"; Success = $true; SlowPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : L’accueil public est inaccessible\." },
+    @{ Name = "réponse publique lente"; Success = $true; SlowPublicAfterBody = $true; NoIndexNow = $true; PublicAfterRetries = 3; ExpectedIndexNowWarning = "IndexNow : Délai dépassé lors de l’accès à l’accueil public\." },
     @{ Name = "IndexNow reçu avec validation de clé en attente"; Success = $true; IndexNowStatus = 202 },
     @{ Name = "échec IndexNow après publication"; Success = $true; IndexNowStatus = 429; IndexNowWarning = $true },
     @{ Name = "avertissement React Doctor visible et non bloquant"; Success = $true; DoctorWarning = $true },
@@ -448,7 +454,7 @@ try {
       Assert-True ($output -match $case.ExpectedIndexNowWarning) "Avertissement IndexNow attendu absent ($($case.Name)). $output"
     }
     else {
-      Assert-True (($output -match "IndexNow : (Le nouveau build|IndexNow a répondu|comparaison avant publication|Le contenu du fichier|La réponse de l’accueil|L’accueil public)") -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
+      Assert-True (($output -match "IndexNow : (Le nouveau build|IndexNow a répondu|comparaison avant publication|Le contenu du fichier|La réponse de l’accueil|L’accueil public|Délai dépassé|Impossible de joindre)") -eq ($case.IndexNowWarning -eq $true)) "Avertissement IndexNow inattendu : $($case.Name). $output"
     }
     if ($case.OversizedPublicAfterBody) {
       Assert-True (-not [IndexNowTestHandler]::OversizedCompleted) "Le flux volumineux sans Content-Length aurait dû être interrompu avant la fin."

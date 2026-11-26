@@ -85,6 +85,17 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
     }
   }
 
+  private void RecordPayloadBytesSent(long generation, int sent, bool enqueuePerRequest) {
+    lock (_completionLock) {
+      if (generation == _generation) {
+        Interlocked.Exchange(ref LastPayloadBytesSent, sent);
+        if (enqueuePerRequest) {
+          PayloadBytesSentPerRequest.Enqueue(sent);
+        }
+      }
+    }
+  }
+
   private async Task AcceptLoopAsync() {
     while (!_cts.IsCancellationRequested) {
       TcpClient client;
@@ -99,7 +110,10 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
   }
 
   private async Task HandleClientAsync(TcpClient client) {
-    long generation = Interlocked.Read(ref _generation);
+    long generation;
+    lock (_completionLock) {
+      generation = _generation;
+    }
     try {
       using (client)
       using (NetworkStream stream = client.GetStream()) {
@@ -153,7 +167,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
             offset += len;
           }
           await WriteChunkAsync(stream, Array.Empty<byte>());
-          Interlocked.Exchange(ref LastPayloadBytesSent, sent);
+          RecordPayloadBytesSent(generation, sent, false);
           return;
         }
 
@@ -180,10 +194,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
           catch {
             // Fermeture précoce attendue lorsque le client interrompt la lecture.
           }
-          if (generation == Interlocked.Read(ref _generation)) {
-            Interlocked.Exchange(ref LastPayloadBytesSent, sent);
-            PayloadBytesSentPerRequest.Enqueue(sent);
-          }
+          RecordPayloadBytesSent(generation, sent, true);
           return;
         }
 
@@ -202,7 +213,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
           catch {
             // Fermeture précoce attendue après expiration du délai global client.
           }
-          Interlocked.Exchange(ref LastPayloadBytesSent, sent);
+          RecordPayloadBytesSent(generation, sent, false);
           return;
         }
 
@@ -210,7 +221,7 @@ public sealed class IndexNowLocalHttpServer : IDisposable {
         byte[] bodyBytes = Encoding.UTF8.GetBytes(PublicHtml);
         if (bodyBytes.Length > 0) {
           await WriteChunkAsync(stream, bodyBytes);
-          Interlocked.Exchange(ref LastPayloadBytesSent, bodyBytes.Length);
+          RecordPayloadBytesSent(generation, bodyBytes.Length, false);
         }
         await WriteChunkAsync(stream, Array.Empty<byte>());
       }
@@ -441,7 +452,7 @@ try {
   }
   catch {
     $threw = $true
-    Assert-True ($_.Exception.Message -eq "L’accueil public est inaccessible.") "Message délai global inattendu (-Snapshot) : $($_.Exception.Message)"
+    Assert-True ($_.Exception.Message -eq "Délai dépassé lors de l’accès à l’accueil public.") "Message délai global inattendu (-Snapshot) : $($_.Exception.Message)"
   }
   $sw.Stop()
   Assert-True $threw "Une erreur était attendue sur réponse lente (-Snapshot)."
@@ -455,7 +466,7 @@ try {
   }
   catch {
     $threw = $true
-    Assert-True ($_.Exception.Message -eq "L’accueil public est inaccessible.") "Message délai global inattendu (-DistPath) : $($_.Exception.Message)"
+    Assert-True ($_.Exception.Message -eq "Délai dépassé lors de l’accès à l’accueil public.") "Message délai global inattendu (-DistPath) : $($_.Exception.Message)"
   }
   $sw.Stop()
   Assert-True $threw "Une erreur était attendue sur réponse lente (-DistPath)."

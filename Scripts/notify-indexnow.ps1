@@ -51,7 +51,7 @@ function Read-BoundedResponseText {
   $charSet = $Response.Content.Headers.ContentType?.CharSet
   if (-not [string]::IsNullOrWhiteSpace($charSet)) {
     try {
-      $encoding = [System.Text.Encoding]::GetEncoding($charSet.Trim('"'))
+      $encoding = [System.Text.Encoding]::GetEncoding($charSet.Trim('"', "'", ' '))
     }
     catch [System.ArgumentException] {
       $encoding = [System.Text.UTF8Encoding]::new($false)
@@ -97,6 +97,9 @@ function Get-PublicPage {
       $response = $httpClient.SendAsync($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $requestCancellation.Token).GetAwaiter().GetResult()
     }
     catch {
+      if ($requestCancellation.IsCancellationRequested -or $_.Exception -is [System.OperationCanceledException]) {
+        throw "Délai dépassé lors de l’accès à l’accueil public."
+      }
       throw "L’accueil public est inaccessible."
     }
     if ([int]$response.StatusCode -ne 200) {
@@ -108,6 +111,9 @@ function Get-PublicPage {
     catch {
       if ($_.Exception -is [System.IO.InvalidDataException]) {
         throw $_.Exception.Message
+      }
+      if ($requestCancellation.IsCancellationRequested -or $_.Exception -is [System.OperationCanceledException]) {
+        throw "Délai dépassé lors de l’accès à l’accueil public."
       }
       throw "L’accueil public est inaccessible."
     }
@@ -189,6 +195,9 @@ try {
       $submission = $httpClient.SendAsync($indexNowRequest, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $indexNowCancellation.Token).GetAwaiter().GetResult()
     }
     catch {
+      if ($indexNowCancellation.IsCancellationRequested -or $_.Exception -is [System.OperationCanceledException]) {
+        throw "Délai dépassé lors de l’envoi à IndexNow."
+      }
       throw "Impossible de joindre IndexNow."
     }
     switch ([int]$submission.StatusCode) {
