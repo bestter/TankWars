@@ -1,27 +1,34 @@
-// src/components/SEO.tsx
-import React from 'react';
+import { useEffect } from 'react';
+import type { FC } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useTranslation } from 'react-i18next';
-// On importe le type de clé issu de la configuration globale
 import type { ParseKeys } from 'i18next';
 
 interface SEOProps {
-    // ParseKeys force la prop à être l'une des clés réelles de tes fichiers de traduction
-    titleKey: ParseKeys;
-    descriptionKey: ParseKeys;
+  titleKey: ParseKeys;
+  descriptionKey: ParseKeys;
 }
 
-export const SEO: React.FC<SEOProps> = ({ titleKey, descriptionKey }) => {
-    const { t, i18n } = useTranslation();
+export const SEO: FC<SEOProps> = ({ titleKey, descriptionKey }) => {
+  const { t, i18n } = useTranslation();
+  const currentLang = i18n.language?.startsWith('fr') ? 'fr' : 'en';
+  const description = t(descriptionKey);
 
-    const currentLang = i18n.language.startsWith('fr') ? 'fr' : 'en';
+  useEffect(() => {
+    // L'HTML initial fournit déjà cette balise aux robots sans JavaScript.
+    let meta = document.head.querySelector<HTMLMetaElement>('meta[name="description"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'description';
+      document.head.append(meta);
+    }
+    meta.content = description;
+  }, [description]);
 
-    return (
-        <Helmet>
-            <html lang={currentLang} />
-            {/* On force le casting en string car le retour de ParseKeys peut déstabiliser certains types natifs de Helmet */}
-            <title>{t(titleKey)}</title>
-            <meta name="description" content={t(descriptionKey)} />
-        </Helmet>
-    );
+  return (
+    <Helmet>
+      <html lang={currentLang} />
+      <title>{t(titleKey)}</title>
+    </Helmet>
+  );
 };
