@@ -1,5 +1,7 @@
 # Bestter's TankWars
 
+[Play TankWars / Jouer à TankWars](https://tankwars-game.com/)
+
 Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382/#383) : [commandes, dépendances, seuils, preuves, secours et codes / commands, dependencies, objectives, evidence, recovery and exit codes](Scripts/endurance/README.md).
 
 > A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
@@ -176,6 +178,12 @@ The repository also contains a separate [GitHub Pages workflow](./.github/workfl
 
 The [Release workflow](./.github/workflows/release-and-deploy.yml) runs the same checks before publishing build artifacts for `v*` tags or published releases. A failed check blocks artifact publication; for an already published release, it cannot undo the release event. Both workflows run their own checks rather than assuming the independent CI and React Doctor workflows have finished.
 
+### Search indexing / Indexation
+
+- `index.html` serves the game overview before React loads, including for browsers with JavaScript disabled. Keep it consistent with the game. Update `<lastmod>` in [sitemap.xml](./public/sitemap.xml) when the home page changes substantially. Use the date of the content change. [Google sitemap guide](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap) · [Bing sitemap guide](https://blogs.bing.com/webmaster/2025/7/Keeping-Content-Discoverable-with-Sitemaps-in-AI-Powered-Search/)
+- After publishing, check that the home page, `robots.txt` and `sitemap.xml` on [tankwars-game.com](https://tankwars-game.com/) all reference the custom domain. Submit the sitemap for the production site in [Google Search Console](https://search.google.com/search-console) and [Bing Webmaster Tools](https://www.bing.com/webmasters/). Use the existing public key file to notify [IndexNow](https://www.indexnow.org/documentation) after substantial changes to the live home page.
+- Before redirecting, allow the exact custom origin in both the Worker CORS policy and its invitation URL validation. Once the new build is live and multiplayer invitations work on the custom domain, [set up a permanent Cloudflare redirect](https://developers.cloudflare.com/pages/how-to/redirect-to-custom-domain/) for the old production hostname `tankwars.pages.dev`. Preserve the path and query string so valid invitation links can still reach the game. Scope the redirect to the production hostname to keep preview deployments available.
+
 The [njsscan workflow](./.github/workflows/njsscan.yml) keeps security findings advisory, but fails when the scanner cannot run, its report is missing or malformed, its execution is incomplete, or its exit code disagrees with the report. An available SARIF report is still uploaded after a failed scan check. The runner validates the expected njsscan 1.0.1 report structure and execution evidence; GitHub's upload action performs the SARIF schema validation. Run its isolated regression tests with `python -B -m unittest discover -s Scripts -p "test_njsscan_runner.py" -v`.
 
 ---
@@ -342,7 +350,7 @@ Implementation: `src/game/endurance/` is independent of React; `src/components/e
 - **Rendering**: HTML5 Canvas 2D (no WebGL, no external libs)
 - **Physics**: Hand-rolled fixed-timestep integrator (no Matter.js, Rapier, etc.)
 - **Online backend**: Cloudflare Workers + Durable Objects (`worker/`, deployed separately from Pages)
-- **Hosting**: Cloudflare Pages (`tankwars.pages.dev`) + optional Worker API
+- **Hosting**: [tankwars-game.com](https://tankwars-game.com/) on Cloudflare Pages + optional Worker API
 - **Styling**: Minimal CSS + a few inline styles (monospace retro aesthetic)
 
 ---
