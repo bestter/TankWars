@@ -3,10 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { HelmetProvider } from 'react-helmet-async';
 import { SEO } from '../SEO';
+import indexHtml from '../../../index.html?raw';
+import robotsText from '../../../public/robots.txt?raw';
+import sitemapXml from '../../../public/sitemap.xml?raw';
 
 let currentLanguage = 'fr';
 
-// Mock react-i18next
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string) => `trans_${key}`,
@@ -16,81 +18,44 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+describe('static SEO metadata', () => {
+  it('publishes the canonical URL and share card in the initial HTML', () => {
+    const canonical = 'https://tankwars-game.com/';
+    const html = new DOMParser().parseFromString(indexHtml, 'text/html');
+    const sitemap = new DOMParser().parseFromString(sitemapXml, 'application/xml');
+
+    expect(html.head.querySelector('link[rel="canonical"]')?.getAttribute('href')).toBe(canonical);
+    expect(html.head.querySelector('meta[property="og:url"]')?.getAttribute('content')).toBe(canonical);
+    expect(html.head.querySelector('meta[property="og:title"]')?.getAttribute('content')).toBe(html.title);
+    expect(html.head.querySelector('meta[property="og:image"]')?.getAttribute('content')).toBe(`${canonical}icon-512.png`);
+    expect(html.head.querySelector('meta[name="twitter:card"]')?.getAttribute('content')).toBe('summary');
+    expect(html.head.querySelector('meta[name="twitter:image"]')?.getAttribute('content')).toBe(`${canonical}icon-512.png`);
+    expect(robotsText).toContain(`Sitemap: ${canonical}sitemap.xml`);
+    expect(sitemap.querySelector('loc')?.textContent).toBe(canonical);
+  });
+});
+
 describe('SEO component', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    cleanup();
     currentLanguage = 'fr';
   });
 
-  afterEach(() => {
-    cleanup();
-  });
+  afterEach(cleanup);
 
-  it('injects page title, description, canonical link, and OpenGraph/Twitter tags', () => {
+  it.each(['fr', 'en'])('localizes the page metadata for %s without duplicating static tags', (language) => {
+    currentLanguage = language;
+
     render(
       <HelmetProvider>
         <SEO titleKey="seo_title" descriptionKey="seo_description" />
       </HelmetProvider>
     );
 
-    // Title
     expect(document.title).toBe('trans_seo_title');
-
-    // Description
-    const metaDesc = document.querySelector('meta[name="description"]');
-    expect(metaDesc?.getAttribute('content')).toBe('trans_seo_description');
-
-    // Canonical link
-    const canonicalLink = document.querySelector('link[rel="canonical"]');
-    expect(canonicalLink?.getAttribute('href')).toBe('https://tankwars.pages.dev');
-
-    // Alternate links
-    const altEn = document.querySelector('link[rel="alternate"][hreflang="en"]');
-    const altFr = document.querySelector('link[rel="alternate"][hreflang="fr"]');
-    const altDefault = document.querySelector('link[rel="alternate"][hreflang="x-default"]');
-    expect(altEn?.getAttribute('href')).toBe('https://tankwars.pages.dev');
-    expect(altFr?.getAttribute('href')).toBe('https://tankwars.pages.dev');
-    expect(altDefault?.getAttribute('href')).toBe('https://tankwars.pages.dev');
-
-    // OpenGraph
-    const ogTitle = document.querySelector('meta[property="og:title"]');
-    const ogDesc = document.querySelector('meta[property="og:description"]');
-    const ogUrl = document.querySelector('meta[property="og:url"]');
-    const ogImage = document.querySelector('meta[property="og:image"]');
-    expect(ogTitle?.getAttribute('content')).toBe('trans_seo_title');
-    expect(ogDesc?.getAttribute('content')).toBe('trans_seo_description');
-    expect(ogUrl?.getAttribute('content')).toBe('https://tankwars.pages.dev');
-    expect(ogImage?.getAttribute('content')).toBe('https://tankwars.pages.dev/og-image.jpg');
-
-    // Twitter Card
-    const twitterCard = document.querySelector('meta[name="twitter:card"]');
-    const twitterTitle = document.querySelector('meta[name="twitter:title"]');
-    expect(twitterCard?.getAttribute('content')).toBe('summary_large_image');
-    expect(twitterTitle?.getAttribute('content')).toBe('trans_seo_title');
-
-    // HTML lang attribute
-    expect(document.documentElement.lang).toBe('fr');
-  });
-
-  it('supports custom path parameter and english language attribute', () => {
-    currentLanguage = 'en';
-
-    render(
-      <HelmetProvider>
-        <SEO titleKey="seo_title" descriptionKey="seo_description" path="/play-online" />
-      </HelmetProvider>
-    );
-
-    const canonicalLink = document.querySelector('link[rel="canonical"]');
-    expect(canonicalLink?.getAttribute('href')).toBe('https://tankwars.pages.dev/play-online');
-
-    const ogUrl = document.querySelector('meta[property="og:url"]');
-    expect(ogUrl?.getAttribute('content')).toBe('https://tankwars.pages.dev/play-online');
-
-    const twitterUrl = document.querySelector('meta[name="twitter:url"]');
-    expect(twitterUrl?.getAttribute('content')).toBe('https://tankwars.pages.dev/play-online');
-
-    expect(document.documentElement.lang).toBe('en');
+    expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe('trans_seo_description');
+    expect(document.documentElement.lang).toBe(language);
+    expect(document.querySelector('link[rel="canonical"]')).toBeNull();
+    expect(document.querySelector('meta[property^="og:"]')).toBeNull();
+    expect(document.querySelector('meta[name^="twitter:"]')).toBeNull();
   });
 });

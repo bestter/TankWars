@@ -1,5 +1,7 @@
 # Bestter's TankWars
 
+[Play TankWars / Jouer à TankWars](https://tankwars-game.com/)
+
 Pilote d’endurance réutilisable / Reusable endurance driver (v0.13.5, #382/#383) : [commandes, dépendances, seuils, preuves, secours et codes / commands, dependencies, objectives, evidence, recovery and exit codes](Scripts/endurance/README.md).
 
 > A browser-based artillery tank battle game with material-dependent destructible terrain and a retro DOS/VGA title screen. Built from scratch with React + TypeScript + HTML5 Canvas.
@@ -342,7 +344,7 @@ Implementation: `src/game/endurance/` is independent of React; `src/components/e
 - **Rendering**: HTML5 Canvas 2D (no WebGL, no external libs)
 - **Physics**: Hand-rolled fixed-timestep integrator (no Matter.js, Rapier, etc.)
 - **Online backend**: Cloudflare Workers + Durable Objects (`worker/`, deployed separately from Pages)
-- **Hosting**: Cloudflare Pages (`tankwars.pages.dev`) + optional Worker API
+- **Hosting**: [tankwars-game.com](https://tankwars-game.com/) on Cloudflare Pages + optional Worker API
 - **Styling**: Minimal CSS + a few inline styles (monospace retro aesthetic)
 
 ---
