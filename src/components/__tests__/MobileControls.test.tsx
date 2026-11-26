@@ -512,6 +512,65 @@ describe('MobileControls', () => {
         act(() => { vi.advanceTimersByTime(160); });
         expect(defaultProps.onAdjustPower).toHaveBeenCalledTimes(4);
       });
+
+      it.each([
+        ['▶', 'onAdjustAngle', 1],
+        ['▲', 'onAdjustPower', 1],
+      ] as const)('%s : arrête immédiatement quand disabled devient true, ignore le relâchement après fermeture et reprend au prochain appui', (label, cb, delta) => {
+        const { rerender } = render(<MobileControls {...defaultProps} />);
+        const btn = screen.getByText(label);
+
+        down(btn, 7, { pointerType: 'touch' });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(1);
+        act(() => { vi.advanceTimersByTime(250 + 80); });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(2);
+
+        // Ouverture d'une confirmation modale -> disabled=true arrête immédiatement le maintien.
+        rerender(<MobileControls {...defaultProps} disabled />);
+        expect((btn as HTMLButtonElement).disabled).toBe(true);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(2);
+
+        // Fermeture (Échap / Annuler) pendant que le doigt est encore posé : aucune reprise ni pas au relâchement.
+        rerender(<MobileControls {...defaultProps} disabled={false} />);
+        expect((btn as HTMLButtonElement).disabled).toBe(false);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(2);
+
+        fireEvent.pointerMove(btn, { pointerId: 7, pointerType: 'touch', buttons: 1, clientX: 10, clientY: 10 });
+        fireEvent.pointerUp(btn, { pointerId: 7, pointerType: 'touch' });
+        fireEvent.pointerOut(btn, { pointerId: 7, pointerType: 'touch' });
+        fireEvent.pointerLeave(btn, { pointerId: 7, pointerType: 'touch' });
+        fireEvent.click(btn, { detail: 1 });
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(2);
+
+        // Nouvel appui bref -> exactement un pas.
+        down(btn, 8, { pointerType: 'touch' });
+        fireEvent.pointerUp(btn, { pointerId: 8, pointerType: 'touch' });
+        fireEvent.click(btn, { detail: 1 });
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(3);
+        expect(defaultProps[cb]).toHaveBeenLastCalledWith(delta);
+
+        // Nouvel appui prolongé -> répétition normale.
+        down(btn, 9, { pointerType: 'touch' });
+        act(() => { vi.advanceTimersByTime(250 + 160); });
+        fireEvent.pointerUp(btn, { pointerId: 9, pointerType: 'touch' });
+        expect(defaultProps[cb]).toHaveBeenCalledTimes(6);
+      });
+
+      it('ne démarre ni au pointeur ni au clic quand disabled est true', () => {
+        render(<MobileControls {...defaultProps} disabled />);
+        const angleBtn = screen.getByText('▶');
+        const powerBtn = screen.getByText('▲');
+
+        down(angleBtn, 1, { pointerType: 'touch' });
+        fireEvent.click(powerBtn, { detail: 0 });
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(defaultProps.onAdjustAngle).not.toHaveBeenCalled();
+        expect(defaultProps.onAdjustPower).not.toHaveBeenCalled();
+      });
     });
 
     it('ne démarre pas lorsque les commandes sont désactivées', () => {

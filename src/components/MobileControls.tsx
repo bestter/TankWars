@@ -1,8 +1,9 @@
 import {
   memo,
   useCallback,
-  useRef,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   type MouseEvent,
   type PointerEvent,
@@ -13,6 +14,7 @@ import type { CurrentTurnInfo } from "../game/engine/TurnManager";
 
 export interface MobileControlsProps {
   turnInfo: CurrentTurnInfo | null;
+  disabled?: boolean;
   onAdjustAngle: (delta: number) => void;
   onAdjustPower: (delta: number) => void;
   onCycleWeapon: (delta: 1 | -1) => void;
@@ -33,6 +35,7 @@ function isPointerClick(event: MouseEvent<HTMLButtonElement>): boolean {
 
 export const MobileControls = memo(function MobileControls({
   turnInfo,
+  disabled = false,
   onAdjustAngle,
   onAdjustPower,
   onCycleWeapon,
@@ -95,14 +98,14 @@ export const MobileControls = memo(function MobileControls({
 
   const isHumanTurn = !!turnInfo?.isHuman;
   const isLocked = !!turnInfo?.isInputLocked;
-  const canInteract = isHumanTurn && !isLocked;
+  const canInteract = isHumanTurn && !isLocked && !disabled;
   const playerId = turnInfo?.playerId ?? null;
   const controlsActive = isTouch && canInteract;
 
-  // Arrêt au démontage, à la disparition des commandes, au verrouillage,
-  // à la perte du tour humain et au changement de joueur. Les mises à jour
-  // ordinaires du HUD ne modifient pas ces dépendances.
-  useEffect(() => {
+  // Arrêt synchrone au démontage, à la disparition des commandes, au verrouillage,
+  // à l’ouverture d’un dialogue modal bloquant, à la perte du tour humain et au
+  // changement de joueur. Les mises à jour ordinaires du HUD ne modifient pas ces dépendances.
+  useLayoutEffect(() => {
     return () => {
       stopAction();
     };

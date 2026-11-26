@@ -472,4 +472,206 @@ describe("Online quit confirmation during round transitions", () => {
       screen.queryByRole("dialog", { name: "round_preparation_failed" }),
     ).toBeNull();
   });
+
+  it("stops an active mobile hold when OnlineQuitConfirmDialog opens and ignores old release after Esc or Cancel", () => {
+    const originalMatchMedia = window.matchMedia;
+    const originalMaxTouchPoints = navigator.maxTouchPoints;
+    const originalPointerEvent = window.PointerEvent;
+
+    vi.useRealTimers();
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date"],
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(pointer: coarse)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    Object.defineProperty(navigator, "maxTouchPoints", {
+      value: 1,
+      writable: true,
+      configurable: true,
+    });
+    if (typeof window.PointerEvent === "undefined") {
+      class PointerEventDouble extends MouseEvent {
+        pointerId: number;
+        pointerType: string;
+        constructor(type: string, init: PointerEventInit = {}) {
+          super(type, init);
+          this.pointerId = init.pointerId ?? 0;
+          this.pointerType = init.pointerType ?? "touch";
+        }
+      }
+      Object.defineProperty(window, "PointerEvent", { value: PointerEventDouble, configurable: true });
+    }
+
+    try {
+      const players = seedSession("COMBAT");
+      render(
+        <StrictMode>
+          <HelmetProvider>
+            <App />
+          </HelmetProvider>
+        </StrictMode>,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(latestCombatWs).not.toBeNull();
+
+      const snapshotBase = {
+        roundNumber: 1,
+        map: makeRoundMap(),
+        initialPlayers: players,
+        players,
+        economicRevision: 0,
+        roundEarningsByPlayer: { "player-1": 0, "player-2": 0 },
+        currentPlayerIndex: 0,
+        zeus: {
+          type: "ZEUS_STATE",
+          activeZeusId: null,
+          currentPlayerIndex: 0,
+          rotationSlots: [0, 1],
+          deadSlots: [false, false],
+          activeStrike: null,
+          lastAppliedStrikeId: 0,
+        },
+        activeShotId: null,
+        activeShot: null,
+        authoritySlot: 0,
+        authorityEpoch: 1,
+      };
+      act(() => {
+        latestCombatWs?.emitMessage({
+          type: "COMBAT_CATCH_UP_BEGIN",
+          catchUpId: "c-mobile-hold",
+          roundNumber: 1,
+          fragmentCount: 1,
+          boundary: 0,
+        });
+        latestCombatWs?.emitMessage({
+          type: "COMBAT_CATCH_UP_FRAGMENT",
+          catchUpId: "c-mobile-hold",
+          roundNumber: 1,
+          fragmentCount: 1,
+          boundary: 0,
+          index: 0,
+          kind: "BASE",
+          data: JSON.stringify(snapshotBase),
+        });
+        latestCombatWs?.emitMessage({
+          type: "COMBAT_CATCH_UP_END",
+          catchUpId: "c-mobile-hold",
+          roundNumber: 1,
+          fragmentCount: 1,
+          boundary: 0,
+        });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+
+      const readHudValue = (label: "ANG" | "POW"): number => {
+        const labelEl = screen.getByText(label);
+        return Number.parseInt(labelEl.nextElementSibling?.textContent ?? "", 10);
+      };
+
+      const menuBtn = screen.getByRole("button", { name: "btn_menu" });
+      const anglePlusBtn = screen.getByRole("button", { name: "mobile_angle_increase" });
+      const powerPlusBtn = screen.getByRole("button", { name: "mobile_power_increase" });
+
+      // 1) Maintien sur angle (+), ouverture Menu, fermeture Échap doigt encore posé
+      expect(readHudValue("ANG")).toBe(45);
+      fireEvent.pointerDown(anglePlusBtn, { pointerId: 11, pointerType: "touch", button: 0, buttons: 1 });
+      act(() => {
+        vi.advanceTimersByTime(250 + 80);
+      });
+      expect(readHudValue("ANG")).toBe(47);
+
+      fireEvent.click(menuBtn);
+      const escDialog = screen.getByRole("dialog", { name: "online_quit_confirm" });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(readHudValue("ANG")).toBe(47);
+
+      fireEvent(escDialog, new Event("cancel", { cancelable: true }));
+      expect(screen.queryByRole("dialog", { name: "online_quit_confirm" })).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(readHudValue("ANG")).toBe(47);
+
+      fireEvent.pointerUp(anglePlusBtn, { pointerId: 11, pointerType: "touch" });
+      fireEvent.pointerOut(anglePlusBtn, { pointerId: 11, pointerType: "touch" });
+      fireEvent.pointerLeave(anglePlusBtn, { pointerId: 11, pointerType: "touch" });
+      fireEvent.click(anglePlusBtn, { detail: 1 });
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(readHudValue("ANG")).toBe(47);
+
+      fireEvent.pointerDown(anglePlusBtn, { pointerId: 12, pointerType: "touch", button: 0, buttons: 1 });
+      fireEvent.pointerUp(anglePlusBtn, { pointerId: 12, pointerType: "touch" });
+      fireEvent.click(anglePlusBtn, { detail: 1 });
+      expect(readHudValue("ANG")).toBe(48);
+
+      // 2) Maintien sur puissance (+), ouverture Menu, fermeture Annuler doigt encore posé
+      expect(readHudValue("POW")).toBe(55);
+      fireEvent.pointerDown(powerPlusBtn, { pointerId: 21, pointerType: "touch", button: 0, buttons: 1 });
+      act(() => {
+        vi.advanceTimersByTime(250 + 80);
+      });
+      expect(readHudValue("POW")).toBe(57);
+
+      fireEvent.click(menuBtn);
+      expect(screen.getByRole("dialog", { name: "online_quit_confirm" })).toBeDefined();
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(readHudValue("POW")).toBe(57);
+
+      fireEvent.click(screen.getByRole("button", { name: "online_quit_cancel" }));
+      expect(screen.queryByRole("dialog", { name: "online_quit_confirm" })).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(readHudValue("POW")).toBe(57);
+
+      fireEvent.pointerUp(powerPlusBtn, { pointerId: 21, pointerType: "touch" });
+      fireEvent.pointerOut(powerPlusBtn, { pointerId: 21, pointerType: "touch" });
+      fireEvent.pointerLeave(powerPlusBtn, { pointerId: 21, pointerType: "touch" });
+      fireEvent.click(powerPlusBtn, { detail: 1 });
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(readHudValue("POW")).toBe(57);
+
+      fireEvent.pointerDown(powerPlusBtn, { pointerId: 22, pointerType: "touch", button: 0, buttons: 1 });
+      fireEvent.pointerUp(powerPlusBtn, { pointerId: 22, pointerType: "touch" });
+      fireEvent.click(powerPlusBtn, { detail: 1 });
+      expect(readHudValue("POW")).toBe(58);
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+      Object.defineProperty(navigator, "maxTouchPoints", {
+        value: originalMaxTouchPoints,
+        writable: true,
+        configurable: true,
+      });
+      if (originalPointerEvent === undefined) {
+        Reflect.deleteProperty(window, "PointerEvent");
+      }
+    }
+  });
 });

@@ -533,6 +533,7 @@ export function GameCanvas({
         {isCombatActive && (
           <MobileControls
             turnInfo={turnInfo}
+            disabled={quitConfirmationOpen || hasBlockingModalError}
             onAdjustAngle={handleAdjustAngle}
             onAdjustPower={handleAdjustPower}
             onCycleWeapon={handleCycleWeapon}

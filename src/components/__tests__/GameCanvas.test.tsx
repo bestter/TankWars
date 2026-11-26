@@ -1311,4 +1311,106 @@ describe("GameCanvas component", () => {
     rerender(<GameCanvas onReturnToMenu={vi.fn()} />);
     expect(stage?.contains(document.querySelector(".game-over-overlay"))).toBe(true);
   });
+
+  it.each([
+    ["▶", "handleAdjustAngle"],
+    ["▲", "handleAdjustPower"],
+  ] as const)(
+    "stops tactile hold on %s when quitConfirmationOpen becomes true and ignores old release after closing",
+    (label, handlerKey) => {
+      vi.useFakeTimers();
+      const originalPointerEvent = window.PointerEvent;
+      if (typeof window.PointerEvent === "undefined") {
+        class PointerEventDouble extends MouseEvent {
+          pointerId: number;
+          pointerType: string;
+          constructor(type: string, init: PointerEventInit = {}) {
+            super(type, init);
+            this.pointerId = init.pointerId ?? 0;
+            this.pointerType = init.pointerType ?? "touch";
+          }
+        }
+        Object.defineProperty(window, "PointerEvent", { value: PointerEventDouble, configurable: true });
+      }
+
+      try {
+        const { rerender } = render(<GameCanvas quitConfirmationOpen={false} />);
+        const btn = screen.getByText(label);
+
+        fireEvent.pointerDown(btn, { pointerId: 3, pointerType: "touch", button: 0, buttons: 1 });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(1);
+        act(() => { vi.advanceTimersByTime(250 + 80); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        rerender(<GameCanvas quitConfirmationOpen />);
+        expect((btn as HTMLButtonElement).disabled).toBe(true);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        rerender(<GameCanvas quitConfirmationOpen={false} />);
+        expect((btn as HTMLButtonElement).disabled).toBe(false);
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        fireEvent.pointerUp(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.pointerOut(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.pointerLeave(btn, { pointerId: 3, pointerType: "touch" });
+        fireEvent.click(btn, { detail: 1 });
+        act(() => { vi.advanceTimersByTime(500); });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(2);
+
+        fireEvent.pointerDown(btn, { pointerId: 4, pointerType: "touch", button: 0, buttons: 1 });
+        fireEvent.pointerUp(btn, { pointerId: 4, pointerType: "touch" });
+        fireEvent.click(btn, { detail: 1 });
+        expect(mockHandlers[handlerKey]).toHaveBeenCalledTimes(3);
+      } finally {
+        if (originalPointerEvent === undefined) {
+          Reflect.deleteProperty(window, "PointerEvent");
+        }
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("stops tactile hold on MobileControls when protocolMismatch occurs during COMBAT", () => {
+    vi.useFakeTimers();
+    const originalPointerEvent = window.PointerEvent;
+    if (typeof window.PointerEvent === "undefined") {
+      class PointerEventDouble extends MouseEvent {
+        pointerId: number;
+        pointerType: string;
+        constructor(type: string, init: PointerEventInit = {}) {
+          super(type, init);
+          this.pointerId = init.pointerId ?? 0;
+          this.pointerType = init.pointerType ?? "touch";
+        }
+      }
+      Object.defineProperty(window, "PointerEvent", { value: PointerEventDouble, configurable: true });
+    }
+
+    try {
+      const session = vi.mocked(useGameSession)({});
+      const { rerender } = render(<GameCanvas gameMode="online" />);
+      const btn = screen.getByText("▶");
+
+      fireEvent.pointerDown(btn, { pointerId: 5, pointerType: "touch", button: 0, buttons: 1 });
+      act(() => { vi.advanceTimersByTime(250 + 80); });
+      expect(mockHandlers.handleAdjustAngle).toHaveBeenCalledTimes(2);
+
+      session.state = {
+        ...defaultSessionState,
+        protocolMismatch: { requiredVersion: 5, receivedVersion: 4 },
+      };
+      vi.mocked(useGameSession).mockReturnValue(session);
+      rerender(<GameCanvas gameMode="online" />);
+
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(mockHandlers.handleAdjustAngle).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalPointerEvent === undefined) {
+        Reflect.deleteProperty(window, "PointerEvent");
+      }
+      vi.useRealTimers();
+    }
+  });
 });
