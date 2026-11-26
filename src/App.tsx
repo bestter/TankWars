@@ -226,6 +226,8 @@ function App() {
 
   const showMenu = state.phase === "MENU" && state.players === null;
   const { players, onlineMeta, resumeCanvas } = state;
+  const quitConfirmationOpen =
+    onlineQuitConfirmRequestId !== null && Boolean(onlineMeta);
 
   const activeScreen = resolveActiveScreen(
     showEndurance,
@@ -287,7 +289,7 @@ function App() {
             onlineMeta={onlineMeta}
             resumeCanvas={resumeCanvas}
             freeWeapons={state.freeWeapons}
-            quitConfirmationOpen={onlineQuitConfirmRequestId !== null}
+            quitConfirmationOpen={quitConfirmationOpen}
             onStartLocalGame={handleStartGame}
             onStartOnlineGame={handleStartOnlineGame}
             onHideOnlineLobby={handleOnlineMenuToggle}
@@ -295,7 +297,7 @@ function App() {
             onPersistenceWarning={handlePersistenceWarning}
           />
         )}
-        {onlineQuitConfirmRequestId !== null && state.onlineMeta && (
+        {quitConfirmationOpen && (
           <OnlineQuitConfirmDialog
             key={onlineQuitConfirmRequestId}
             onCancel={() => setOnlineQuitConfirmRequestId(null)}

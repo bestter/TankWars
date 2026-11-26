@@ -3,7 +3,7 @@ import { VGA_PALETTE } from "../types/game";
 
 export function LanguageSwitcher() {
   const { t, i18n } = useTranslation();
-  const currentLang = i18n.language || "en";
+  const currentLang = (i18n.resolvedLanguage ?? i18n.language ?? "en").toLowerCase();
   const isFr = currentLang.startsWith("fr");
   const isEn = currentLang.startsWith("en");
 

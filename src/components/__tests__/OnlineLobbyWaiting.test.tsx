@@ -14,6 +14,7 @@ vi.mock('react-i18next', () => ({
       if (key === 'link_copied' || key === 'link_copy_failed') return translateCopyStatus(key);
       if (options) {
         if (options.num !== undefined) return `${key}_${options.num}`;
+        if (options.profile !== undefined) return `${key}_${options.profile}`;
         if (options.joined !== undefined && options.total !== undefined) return `${key}_${options.joined}_${options.total}`;
       }
       return key;
@@ -392,5 +393,36 @@ describe('OnlineLobbyWaiting component', () => {
 
     expect(screen.getByText('lobby_connected')).toBeDefined();
     expect(document.querySelector('[aria-hidden="true"]')?.textContent).toContain('●');
+  });
+
+  it('falls back to lobby_slot_ai instead of resolving inherited Object.prototype keys for unknown AI profiles', () => {
+    const unexpectedProfileSlots: SlotUI[] = [
+      { slot: 0, type: 'human', url: 'https://tankwars.pages.dev/?room=TEST1&slot=0' },
+      { slot: 1, type: 'ai', aiProfile: 'constructor', url: null },
+      { slot: 2, type: 'ai', aiProfile: 'toString', url: null },
+    ];
+
+    render(
+      <OnlineLobbyWaiting
+        view="waiting"
+        roomId="ROOM-PROTO"
+        numPlayers={3}
+        myName="Alice"
+        setMyName={mockSetMyName}
+        slotsInfo={unexpectedProfileSlots}
+        roster={defaultRoster}
+        isJoining={false}
+        copyFeedback={{}}
+        serverGameLive={false}
+        connected={true}
+        onJoin={mockOnJoin}
+        onCopyLink={mockOnCopyLink}
+        onDismissCopyFeedback={mockOnDismissCopyFeedback}
+        onLeaveRoom={mockOnLeaveRoom}
+      />
+    );
+
+    expect(screen.getByText(/slot_label_2 — lobby_slot_ai_constructor/)).toBeDefined();
+    expect(screen.getByText(/slot_label_3 — lobby_slot_ai_toString/)).toBeDefined();
   });
 });

@@ -140,4 +140,43 @@ describe("LanguageSwitcher", () => {
     const enButton = screen.getByRole("button", { name: "EN" });
     expect(enButton).toHaveStyle(`background: ${VGA_PALETTE.GREEN}`);
   });
+
+  it("handles uppercase language codes like FR-CA", () => {
+    vi.mocked(reactI18next.useTranslation).mockReturnValue({
+      i18n: {
+        language: "FR-CA",
+        changeLanguage: changeLanguageMock,
+      },
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
+      ready: true,
+    } as unknown as ReturnType<typeof reactI18next.useTranslation>);
+
+    render(<LanguageSwitcher />);
+
+    const frButton = screen.getByRole("button", { name: "FR" });
+    const enButton = screen.getByRole("button", { name: "EN" });
+    expect(frButton).toHaveAttribute("aria-pressed", "true");
+    expect(frButton).toHaveClass("active");
+    expect(enButton).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("prefers i18n.resolvedLanguage when browser language falls back from an unsupported locale", () => {
+    vi.mocked(reactI18next.useTranslation).mockReturnValue({
+      i18n: {
+        language: "de-DE",
+        resolvedLanguage: "en",
+        changeLanguage: changeLanguageMock,
+      },
+      t: ((key: string) => key) as unknown as ReturnType<typeof reactI18next.useTranslation>["t"],
+      ready: true,
+    } as unknown as ReturnType<typeof reactI18next.useTranslation>);
+
+    render(<LanguageSwitcher />);
+
+    const enButton = screen.getByRole("button", { name: "EN" });
+    const frButton = screen.getByRole("button", { name: "FR" });
+    expect(enButton).toHaveAttribute("aria-pressed", "true");
+    expect(enButton).toHaveClass("active");
+    expect(frButton).toHaveAttribute("aria-pressed", "false");
+  });
 });

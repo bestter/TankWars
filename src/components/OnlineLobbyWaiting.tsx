@@ -130,11 +130,11 @@ export function OnlineLobbyWaiting({
     if (slot.type === 'human') {
       return slot.slot === 0 ? t('your_slot') : t('controller_human');
     }
-    const key = slot.aiProfile
-      ? AI_SLOT_KEYS[slot.aiProfile as keyof typeof AI_SLOT_KEYS]
-      : undefined;
-    if (key) return t(key);
-    return t('lobby_slot_ai', { profile: slot.aiProfile ?? '' }).trim();
+    const profile = slot.aiProfile;
+    if (profile && Object.hasOwn(AI_SLOT_KEYS, profile)) {
+      return t(AI_SLOT_KEYS[profile as keyof typeof AI_SLOT_KEYS]);
+    }
+    return t('lobby_slot_ai', { profile: profile ?? '' }).trim();
   };
 
   return (

@@ -39,8 +39,16 @@ export function OnlineLobby(props: OnlineLobbyProps) {
           {!props.onPersistenceWarning && <OnlinePersistenceAlerts messages={lobby.storageWarning ? [lobby.storageWarning] : []} />}
 
           {error && (
-            <div role="alert" style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>{error}
-              {lobby.roundPreparationFailed && <button type="button" className="lobby-secondary-btn" onClick={lobby.retryPreparation}>{t('btn_retry')}</button>}
+            <div style={{ color: VGA_PALETTE.RED, marginBottom: 10, fontSize: 13 }}>
+              <span role="alert">{error}</span>
+              {lobby.roundPreparationFailed && (
+                <>
+                  {' '}
+                  <button type="button" className="lobby-secondary-btn" onClick={lobby.retryPreparation}>
+                    {t('btn_retry')}
+                  </button>
+                </>
+              )}
             </div>
           )}
 

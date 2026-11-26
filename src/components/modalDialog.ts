@@ -43,7 +43,7 @@ const activeModals = new Set<ModalEntry>();
 export function useModalDialog({ onDismiss, dismissActiveModals = false }: UseModalDialogOptions = {}) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const explicitlyClosedDialogRef = useRef<HTMLDialogElement | null>(null);
-  const pendingCloseEventsRef = useRef(new WeakMap<HTMLDialogElement, number>());
+  const pendingCloseEventsRef = useRef<WeakMap<HTMLDialogElement, number> | null>(null);
   const onDismissRef = useRef(onDismiss);
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export function useModalDialog({ onDismiss, dismissActiveModals = false }: UseMo
     if (!dialog.open && !dialog.hasAttribute("open")) return;
     if (typeof dialog.close === "function") {
       // Native close events are queued and can outlive a StrictMode effect replay.
-      const pending = pendingCloseEventsRef.current;
+      const pending = (pendingCloseEventsRef.current ??= new WeakMap<HTMLDialogElement, number>());
       pending.set(dialog, (pending.get(dialog) ?? 0) + 1);
     }
     closeModalDialog(dialog, returnValue);
@@ -103,8 +103,8 @@ export function useModalDialog({ onDismiss, dismissActiveModals = false }: UseMo
     const dialog = event.currentTarget;
     if (event.target !== dialog) return;
     const pending = pendingCloseEventsRef.current;
-    const count = pending.get(dialog) ?? 0;
-    if (count > 0) {
+    const count = pending?.get(dialog) ?? 0;
+    if (pending && count > 0) {
       if (count === 1) pending.delete(dialog);
       else pending.set(dialog, count - 1);
       return;
