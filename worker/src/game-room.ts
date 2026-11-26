@@ -92,6 +92,18 @@ import {
 import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
 const REPORT_WINDOW_MS = 20_000;
+const ROOM_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
+const WS_RATE_LIMIT_WINDOW_MS = 5_000;
+const WS_RATE_LIMIT_MAX_MESSAGES = 120;
+const MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT = 32;
+const MAX_PROCESSED_SHOP_ACTIONS = 512;
+const NON_PERSISTED_SHOP_REJECTIONS = new Set<ShopRejectedMessage['reason']>([
+  'MALFORMED',
+  'SHOP_CLOSED',
+  'STALE_SHOP_EPOCH',
+  'SHOP_NOT_AVAILABLE',
+  'NOT_YOUR_SLOT',
+]);
 
 interface ShotReportRecovery {
   deadlineAt: number;
@@ -169,6 +181,7 @@ interface RoomState {
   // When game has started
   started: boolean;
   startAt?: number;
+  lastActivityAt?: number;
   // Authoritative game state (MVP single round)
   players: Player[];
   map: RoundMap | null;
@@ -255,7 +268,7 @@ function migrateAcceptedFireActions(
     if (value.slot !== slot || value.result.slot !== slot || value.result.actionId !== actionId) {
       return;
     }
-    actions[slot] ??= {};
+    actions[slot] ??= Object.create(null);
     actions[slot][actionId] = { slot, result: value.result };
     acceptedCount++;
   };
@@ -292,6 +305,7 @@ export class GameRoom extends DurableObject {
   private cancelShotSettledTimeout: (() => void) | null = null;
   private shotOperation: Promise<void> = Promise.resolve();
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
+  private wsMessageTimestamps = new Map<number, number[]>();
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
   /**
@@ -324,7 +338,7 @@ export class GameRoom extends DurableObject {
           if (entry.kind === "event") this.state.combatJournal.push(entry.value as CombatEvent);
           if (entry.kind === "earnings") this.state.earningsResults[entry.key] = entry.value as PersistedEarningsResult;
           if (entry.kind === "fire" && entry.slot !== undefined) {
-            this.state.processedFireActionsBySlot[entry.slot] ??= {};
+            this.state.processedFireActionsBySlot[entry.slot] ??= Object.create(null);
             this.state.processedFireActionsBySlot[entry.slot][entry.key] = entry.value as PersistedFireAction;
           }
           if (entry.kind === "shop") this.state.processedShopActions[entry.key] = entry.value as PersistedShopAction;
@@ -453,6 +467,7 @@ export class GameRoom extends DurableObject {
 
   private async saveState(alarmAt?: number | null): Promise<void> {
     if (!this.state) return;
+    this.state.lastActivityAt = Date.now();
     const { combatJournal, earningsResults, shotHistory,
       processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
     const main = structuredClone(mainSource);
@@ -712,6 +727,7 @@ export class GameRoom extends DurableObject {
       tokens,
       joinedHumans: {},
       started: false,
+      lastActivityAt: Date.now(),
       players: [],
       map: null,
       initialRoundPlayers: [],
@@ -770,7 +786,7 @@ export class GameRoom extends DurableObject {
         : null,
     }));
 
-    await this.saveState();
+    await this.saveState(Date.now() + ROOM_IDLE_TTL_MS);
 
     return new Response(
       JSON.stringify({
@@ -908,11 +924,34 @@ export class GameRoom extends DurableObject {
     return new Response('GameRoom: unsupported', { status: 400 });
   }
 
+  private isSlotMessageRateLimited(slot: number): boolean {
+    const now = Date.now();
+    const timestamps = this.wsMessageTimestamps.get(slot)?.filter((ts) => now - ts < WS_RATE_LIMIT_WINDOW_MS) ?? [];
+    if (timestamps.length >= WS_RATE_LIMIT_MAX_MESSAGES) {
+      this.wsMessageTimestamps.set(slot, timestamps);
+      return true;
+    }
+    timestamps.push(now);
+    this.wsMessageTimestamps.set(slot, timestamps);
+    return false;
+  }
+
   // --- Client message handler (only FIRE for now in MVP) ---
   private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
+    if (this.isSlotMessageRateLimited(slot)) {
+      console.warn(`[GameRoom] Rate-limiting WebSocket messages from slot ${slot}`);
+      return;
+    }
     // Enforce payload size limit to prevent memory exhaustion / DoS
-    if (typeof raw === 'string' && raw.length > 8192) {
-      console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
+    if (typeof raw === 'string') {
+      if (raw.length > 8192) {
+        console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
+        return;
+      }
+    } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+      if (raw.byteLength > 8192) {
+        console.warn(`[GameRoom] Dropping oversized binary payload from slot ${slot} (size: ${raw.byteLength})`);
+      }
       return;
     }
     let msg: Record<string, unknown>;
@@ -1135,17 +1174,21 @@ export class GameRoom extends DurableObject {
     await this.runShotOperation(async () => {
       if (!this.state || this.sockets.has(slot)) return;
       if (this.state.started) {
-        if (!this.buildGameStartMessage()) return;
-        if (this.state.earningsAuthoritySlot !== slot) return;
-        const active = this.state.activeShot;
-        const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
-        await this.electEarningsAuthority(next);
-        return;
+        if (this.buildGameStartMessage() && this.state.earningsAuthoritySlot === slot) {
+          const active = this.state.activeShot;
+          const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
+          await this.electEarningsAuthority(next);
+        }
+      } else if (this.state.slotConfigs[slot]?.type === 'human' && this.state.joinedHumans[slot]) {
+        delete this.state.joinedHumans[slot];
+        await this.saveState();
+        this.sendRosterUpdate();
       }
-      if (this.state.slotConfigs[slot]?.type !== 'human' || !this.state.joinedHumans[slot]) return;
-      delete this.state.joinedHumans[slot];
-      await this.saveState();
-      this.sendRosterUpdate();
+      if (this.sockets.size === 0 && !this.state.activeShot && !this.state.activeZeusStrike) {
+        const activityAt = this.state.lastActivityAt ?? Date.now();
+        this.state.lastActivityAt = activityAt;
+        await this.ctx.storage.setAlarm(activityAt + ROOM_IDLE_TTL_MS);
+      }
     });
   }
 
@@ -1180,9 +1223,15 @@ export class GameRoom extends DurableObject {
   private sendGameStartToSocket(ws: WebSocket): void {
     const msg = this.buildGameStartMessage();
     if (!msg) {
-      if (this.state?.started) ws.send(JSON.stringify({
-        type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber,
-      }));
+      if (this.state?.started) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber,
+          }));
+        } catch {
+          // ignore stale socket
+        }
+      }
       return;
     }
     try {
@@ -1230,7 +1279,9 @@ export class GameRoom extends DurableObject {
       const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
       elected = await this.electEarningsAuthority(next);
     }
-    if (elected === undefined && rosterChanged) await this.saveState();
+    if (elected === undefined && rosterChanged) {
+      await this.saveState(this.state.activeShot ? undefined : null);
+    }
     if (!wasStarted) {
       this.sendRosterUpdate();
       await this.maybeAutoStart();
@@ -1310,7 +1361,7 @@ export class GameRoom extends DurableObject {
     this.state.authorityEpoch++;
     this.resetShotCoordination();
 
-    await this.saveState();
+    await this.saveState(null);
 
     // Tell everyone the game is starting + give them the full initial snapshot
     const gameStart = this.buildGameStartMessage();
@@ -1442,7 +1493,12 @@ export class GameRoom extends DurableObject {
     }
 
     const { actionId, command } = decoded.message;
-    const previous = this.state.processedFireActionsBySlot[slot]?.[actionId];
+    const slotActions = Object.hasOwn(this.state.processedFireActionsBySlot, slot)
+      ? this.state.processedFireActionsBySlot[slot]
+      : undefined;
+    const previous = slotActions && Object.hasOwn(slotActions, actionId)
+      ? slotActions[actionId]
+      : undefined;
     if (previous) {
       this.sendToSlot(slot, previous.result);
       return;
@@ -1569,7 +1625,7 @@ export class GameRoom extends DurableObject {
     };
     this.appendCombatEvent(shotEvent);
     this.state.shotHistory.push(shotEvent);
-    this.state.processedFireActionsBySlot[fromSlot] ??= {};
+    this.state.processedFireActionsBySlot[fromSlot] ??= Object.create(null);
     this.state.processedFireActionsBySlot[fromSlot][actionId] = {
       slot: fromSlot,
       result: shotEvent,
@@ -1627,7 +1683,23 @@ export class GameRoom extends DurableObject {
   }
 
   async alarm(): Promise<void> {
-    await this.runShotOperation(() => this.recoverShotReport());
+    await this.runShotOperation(async () => {
+      await this.recoverShotReport();
+      if (
+        this.state &&
+        !this.state.activeShot &&
+        !this.state.activeZeusStrike &&
+        this.sockets.size === 0 &&
+        typeof this.state.lastActivityAt === 'number' &&
+        this.state.lastActivityAt + ROOM_IDLE_TTL_MS <= Date.now()
+      ) {
+        await this.ctx.storage.deleteAll();
+        this.state = null;
+        this.committedState = null;
+        this.lastCombatStringified.clear();
+        this.lastCombatValues.clear();
+      }
+    });
   }
 
   private async recoverShotReport(): Promise<void> {
@@ -1752,7 +1824,7 @@ export class GameRoom extends DurableObject {
       reject("WRONG_SHOT");
       return;
     }
-    const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId);
+    const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId, active.isFirstShotOfRound);
     if (!validated.ok) { reject(validated.reason); return; }
     const totals = { ...this.state.roundEarningsByPlayer };
     for (const award of message.awards) {
@@ -2113,9 +2185,21 @@ export class GameRoom extends DurableObject {
     kind: 'BUY_SELL' | 'READY',
   ): Promise<void> {
     if (!this.state) return;
-    if (rejection.actionId && rejection.reason !== 'MALFORMED') {
+    if (
+      this.state.shopSession !== null &&
+      rejection.actionId &&
+      !NON_PERSISTED_SHOP_REJECTIONS.has(rejection.reason)
+    ) {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
-      if (!this.state.processedShopActions[actionKey]) {
+      const entries = Object.values(this.state.processedShopActions);
+      const slotRejectionsCount = entries.filter(
+        (entry) => entry.slot === slot && entry.result.type === 'SHOP_REJECTED',
+      ).length;
+      if (
+        !Object.hasOwn(this.state.processedShopActions, actionKey) &&
+        entries.length < MAX_PROCESSED_SHOP_ACTIONS &&
+        slotRejectionsCount < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
+      ) {
         this.state.processedShopActions[actionKey] = {
           slot,
           result: rejection,
@@ -2194,7 +2278,9 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const target = message.equipmentId ? { equipmentId: message.equipmentId } : { weaponId: message.weaponId };
     const actionKey = makeShopActionKey('BUY_SELL', slot, message.actionId);
-    const previous = this.state.processedShopActions[actionKey];
+    const previous = Object.hasOwn(this.state.processedShopActions, actionKey)
+      ? this.state.processedShopActions[actionKey]
+      : undefined;
     if (previous) {
       if (previous.slot === slot) {
         if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
@@ -2298,7 +2384,9 @@ export class GameRoom extends DurableObject {
   ): Promise<void> {
     if (!this.state) return;
     const actionKey = makeShopActionKey('READY', slot, message.actionId);
-    const previous = this.state.processedShopActions[actionKey];
+    const previous = Object.hasOwn(this.state.processedShopActions, actionKey)
+      ? this.state.processedShopActions[actionKey]
+      : undefined;
     if (previous) {
       if (previous.slot === slot) {
         if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {

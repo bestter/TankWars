@@ -37,6 +37,10 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
     const connectSrcTokens = connectSrcDirective!.split(/\s+/);
     expect(connectSrcTokens).not.toContain('ws:');
     expect(connectSrcTokens).not.toContain('wss:');
+    expect(directives).toContain("object-src 'none'");
+    expect(directives).toContain("base-uri 'none'");
+    expect(directives).toContain("form-action 'none'");
+    expect(content).toContain('<meta name="referrer" content="strict-origin-when-cross-origin" />');
   });
 
   it('should require style-src to allow unsafe-inline in public/_headers to prevent production UI breakage', () => {
@@ -55,12 +59,20 @@ describe('Content Security Policy (CSP) Safety Checks', () => {
     expect(cspLine).toContain("'unsafe-inline'");
     expect(cspLine).toContain('https://static.cloudflareinsights.com');
     expect(cspLine).toContain('https://cloudflareinsights.com');
+    expect(cspLine).toContain("object-src 'none'");
+    expect(cspLine).toContain("base-uri 'none'");
+    expect(cspLine).toContain("form-action 'none'");
+    expect(cspLine).toContain("frame-ancestors 'none'");
+    expect(content).toContain('Permissions-Policy: camera=(), geolocation=(), microphone=()');
+    expect(content).toContain('Cross-Origin-Opener-Policy: same-origin-allow-popups');
 
     const connectSrcMatch = cspLine!.match(/connect-src\s+([^;]+)/);
     expect(connectSrcMatch).not.toBeNull();
     const connectSrcTokens = connectSrcMatch![1].trim().split(/\s+/);
     expect(connectSrcTokens).not.toContain('ws:');
     expect(connectSrcTokens).not.toContain('wss:');
+    expect(connectSrcTokens).not.toContain('http://localhost:8787');
+    expect(connectSrcTokens).not.toContain('ws://localhost:8787');
 
     // Vérifions qu'aucune note non commentée n'est interprétée comme un en-tête HTTP
     const nonEmptyNonCommentLines = lines
@@ -76,7 +88,7 @@ describe('Service worker cache strategy', () => {
   it('uses network-first for navigations and manifest.json while ignoring cross-origin fetches', () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const content = fs.readFileSync(swPath, 'utf-8');
-    expect(content).toContain('const CACHE_NAME = "tankwars-v4"');
+    expect(content).toContain('const CACHE_NAME = "tankwars-v5"');
     expect(content).toContain('e.request.mode === "navigate"');
     expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
     expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
@@ -137,11 +149,86 @@ describe('Service worker cache strategy', () => {
     const responses = { exact, canonical, network: networkResponse };
     expect(await pending).toBe(responses[expectedSource]);
     expect(match.mock.calls.map(([input, options]) => {
-      expect(options).toEqual({ cacheName: 'tankwars-v4' });
+      expect(options).toEqual({ cacheName: 'tankwars-v5' });
       const url = new URL(typeof input === 'string' ? input : input.url, origin);
       return `${url.pathname}${url.search}`;
     })).toEqual(lookups);
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it('stores navigation responses under /index.html without query tokens and skips /api/ routes', async () => {
+    const origin = 'https://tankwars.example';
+    const stored = new Map<string, Response>();
+    const open = vi.fn(async () => ({
+      put: vi.fn(async (key: string | Request, value: Response) => {
+        stored.set(typeof key === 'string' ? key : key.url, value);
+      }),
+    }));
+    const match = vi.fn(async (key: string | Request) => {
+      const k = typeof key === 'string' ? key : key.url;
+      return stored.get(k);
+    });
+    const listeners = new Map<string, (event: {
+      request: { url: string; method: string; mode: string; destination: string; headers?: { get: (name: string) => string | null } };
+      waitUntil: (promise: Promise<unknown>) => void;
+      respondWith: (response: Promise<Response>) => void;
+    }) => void>();
+    let networkShouldFail = false;
+    const fetchMock = vi.fn(async () => {
+      if (networkShouldFail) throw new Error('Offline');
+      return new Response('<html>app</html>', { status: 200 });
+    });
+
+    vm.runInNewContext(fs.readFileSync(path.resolve(process.cwd(), 'public/sw.js'), 'utf-8'), {
+      self: { location: { origin }, addEventListener: listeners.set.bind(listeners) },
+      fetch: fetchMock,
+      caches: { match, open },
+      console: { warn: vi.fn() },
+      URL,
+    });
+
+    const dispatch = async (req: { url: string; method: string; mode: string; destination: string; upgrade?: string }) => {
+      let pending: Promise<Response> | undefined;
+      const waits: Promise<unknown>[] = [];
+      listeners.get('fetch')?.({
+        request: {
+          url: req.url,
+          method: req.method,
+          mode: req.mode,
+          destination: req.destination,
+          headers: { get: (name: string) => (name.toLowerCase() === 'upgrade' ? req.upgrade ?? null : null) },
+        },
+        waitUntil: (p) => { waits.push(p); },
+        respondWith: (p) => { pending = p; },
+      });
+      const res = pending ? await pending : undefined;
+      await Promise.all(waits);
+      return res;
+    };
+
+    const navRes = await dispatch({
+      url: `${origin}/?room=r1&slot=1&token=secret-token`,
+      method: 'GET',
+      mode: 'navigate',
+      destination: 'document',
+    });
+    expect(navRes?.status).toBe(200);
+    expect([...stored.keys()]).toEqual(['/index.html']);
+
+    networkShouldFail = true;
+    const offlineNavRes = await dispatch({
+      url: `${origin}/?room=r1&slot=1&token=other-token`,
+      method: 'GET',
+      mode: 'navigate',
+      destination: 'document',
+    });
+    expect(await offlineNavRes?.text()).toBe('<html>app</html>');
+    expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v5' });
+
+    fetchMock.mockClear();
+    expect(await dispatch({ url: `${origin}/api/health`, method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
+    expect(await dispatch({ url: `${origin}/api/rooms/r1/ws`, method: 'GET', mode: 'cors', destination: '', upgrade: 'websocket' })).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('refreshes a manifest with a fresh HTTP cache entry during installation and online, and keeps it offline', async () => {
@@ -299,7 +386,7 @@ describe('Service worker cache strategy', () => {
     expect(skipWaitingCalled).toBe(true);
     expect(clientsClaimCalled).toBe(true);
     expect(cacheStorage.has('tankwars-v3')).toBe(false);
-    expect(cacheStorage.get('tankwars-v4')?.get('/manifest.json')?.body)
+    expect(cacheStorage.get('tankwars-v5')?.get('/manifest.json')?.body)
       .toBe('{"orientation":"any"}');
     expect(networkCalls).toContain('/manifest.json');
 

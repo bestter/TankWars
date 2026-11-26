@@ -67,6 +67,10 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
   };
   const storage = {
     ...storageOps,
+    deleteAll: vi.fn(async () => {
+      activeData.clear();
+      mockStorage.alarmAt = undefined;
+    }),
     setAlarm: vi.fn(async (time: number | Date) => { mockStorage.alarmAt = Number(time); }),
     transaction: vi.fn(async (callback: (txn: MockTransaction) => Promise<void>) => {
       const staged = structuredClone(storageData);
@@ -283,9 +287,24 @@ describe('Zeus v3 durable settlement', () => {
       await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId } });
       return room.getRoster()!.activeShot!;
     };
-    const report = (shotId: number, amount = 0) => ({ type: 'SHOT_EARNINGS', shotId, authorityEpoch: room.getRoster()!.authorityEpoch,
-      players: reportPlayers(room), awards: amount ? [{ playerId: 'player-1', amount }] : [], deadSlots: room.getRoster()!.players.map((p) => p.tank.isDead), directHitVictimIds: [],
-      roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } });
+    const report = (shotId: number, amount = 0) => {
+      const state = room.getRoster()!;
+      const players = reportPlayers(room);
+      const shooterId = state.activeShot?.ownerId ?? players[0].id;
+      if (amount > 0) {
+        const victim = players.find((p) => p.id !== shooterId && !p.tank.isDead);
+        if (victim) {
+          const damage = Math.max(1, Math.min(victim.tank.health - 1, Math.ceil(amount / 3)));
+          victim.tank.health -= damage;
+        }
+      }
+      return {
+        type: 'SHOT_EARNINGS', shotId, authorityEpoch: state.authorityEpoch,
+        players, awards: amount ? [{ playerId: shooterId, amount }] : [],
+        deadSlots: players.map((p) => p.tank.isDead), directHitVictimIds: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      };
+    };
     const restart = async (reconnect = true) => {
       const now = Date.now();
       vi.clearAllTimers();
@@ -968,7 +987,8 @@ describe('Zeus v3 durable settlement', () => {
     await handle.call(restored, 0, JSON.stringify({ type: 'SHOT_EARNINGS', shotId: first.shotId }));
     expect(sockets[1].getLastMessage()).toEqual(result);
     expect(restored.getRoster()).toEqual(restoredBefore);
-    expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(30);
+    expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(10);
+    expect(restored.getRoster()!.roundEarningsByPlayer['player-2']).toBe(20);
     for (const slot of [0, 1]) await handle.call(restored, slot, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: `ready-${slot}` }));
     expect(restored.getRoster()!.earningsResults).toEqual({});
     expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(0);
@@ -985,7 +1005,7 @@ describe('Zeus v3 durable settlement', () => {
     state.zeusState.shotsWithoutEarnings = 9;
     const shot = await fire();
     await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
-    const bad = report(shot.shotId, 10);
+    const bad = report(shot.shotId, 0);
     bad.players[0].tank.position.x += 10;
     bad.players[1].tank[field] += 0.000000001;
     const before = structuredClone(state);
@@ -4015,13 +4035,16 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const damagedPlayers = reportPlayers(room, [false, false]);
+      damagedPlayers[1].tank.health = 95;
       const base = {
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
+        type: 'SHOT_EARNINGS', players: damagedPlayers, shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
         deadSlots: [false, false], directHitVictimIds: [], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       };
       await handle.call(room, 1, JSON.stringify({ ...base, authorityEpoch: 1 }));
       await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 0 }));
       await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 1, awards: [{ playerId: 'player-1', amount: 1.5 }] }));
+      await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 1, awards: [{ playerId: 'player-1', amount: 999_999 }] }));
       const players = (Reflect.get(room, 'state') as { players: Array<{ money: number }> }).players;
       expect(players[0].money).toBe(250);
     });
@@ -4032,8 +4055,10 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const damagedPlayers = reportPlayers(room, [false, false]);
+      damagedPlayers[1].tank.health = 95;
       const report = {
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: damagedPlayers, shotId: shot?.shotId, authorityEpoch: 1,
         awards: [{ playerId: 'player-1', amount: 10 }], deadSlots: [false, false],
         directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
@@ -4073,8 +4098,10 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const directHitPlayers = reportPlayers(room, [false, false]);
+      directHitPlayers[1].tank.health = 95;
       await handle.call(room, 0, JSON.stringify({
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: directHitPlayers, shotId: shot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false], directHitVictimIds: ['player-2'],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
@@ -4094,8 +4121,10 @@ describe('GameRoom Durable Object', () => {
       const bulldozerShot = ws0.getAllMessages<{ type: string; shotId: number }>()
         .filter((message) => message.type === 'SHOT')
         .pop();
+      const bulldozerPlayers = reportPlayers(room, [false, false]);
+      bulldozerPlayers[0].tank.health = 95;
       await handle.call(room, 0, JSON.stringify({
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: bulldozerShot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: bulldozerPlayers, shotId: bulldozerShot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false], directHitVictimIds: ['player-1'],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
@@ -4673,6 +4702,65 @@ describe('GameRoom Durable Object', () => {
       expect(finalState.players[0]).toMatchObject({ money: 0, tank: { shield: 160, maxShield: 40 } });
       expect(finalState.players[0]).not.toHaveProperty('reinforcedShieldPending');
       expect(finalState.players[1].inventory.DRILLER).toBe(1);
+    });
+
+    it('does not persist SHOP_CLOSED rejections, drops oversized ArrayBuffer payloads, and cleans up idle rooms after 24h', async () => {
+      vi.useFakeTimers();
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'security-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+        await handle.call(room, 0, new ArrayBuffer(9000));
+
+        const state = Reflect.get(room, 'state') as {
+          processedShopActions: Record<string, unknown>;
+        };
+        // Spam SHOP_BUY_SELL while shop is closed
+        for (let i = 0; i < 5; i++) {
+          await handle.call(room, 0, JSON.stringify({
+            type: 'SHOP_BUY_SELL',
+            shopEpoch: 1,
+            actionId: `closed-${i}`,
+            weaponId: 'GRENADE',
+            delta: 1,
+          }));
+        }
+        expect(Object.keys(state.processedShopActions)).toEqual([]);
+
+        const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+        await disconnect.call(room, 0, ws0 as unknown as WebSocket);
+        await disconnect.call(room, 1, ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBeDefined();
+
+        vi.setSystemTime(baseNow + 24 * 60 * 60 * 1000 + 1);
+        await room.alarm();
+        expect(Reflect.get(room, 'state')).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

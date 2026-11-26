@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, stat, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -39,6 +39,8 @@ if (!path) {
       }
       alternative = { weaponId: options.get("--weapon"), angle, power };
     }
+    const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
+    if ((await stat(path)).size > MAX_ARCHIVE_BYTES) throw new Error("ARCHIVE_TOO_LARGE");
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }

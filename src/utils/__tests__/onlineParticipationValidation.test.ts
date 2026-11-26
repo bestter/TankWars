@@ -27,6 +27,7 @@ describe('isParticipation', () => {
   });
   it.each([
     null, [], {}, { ...host, version: 2 }, { ...host, room: ' ' },
+    { ...host, room: '../admin' }, { ...host, room: 'a/b' },
     { ...host, slot: -1 }, { ...host, slot: 4 }, { ...host, slot: 0.5 }, { ...host, slot: '0' },
     { ...host, token: '' }, { ...host, name: 1 }, { ...host, name: 'X'.repeat(17) },
     { ...host, name: ' ' }, { ...host, engaged: 'true' }, { ...host, mode: 'unknown' },

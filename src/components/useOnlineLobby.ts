@@ -7,6 +7,28 @@ import { getOnlineApiBase, getOnlineWsBase } from '../utils/onlineApi';
 import { isStrictOnlineMessage, ONLINE_PROTOCOL_VERSION } from '../game/online/protocol';
 import type { CopySlotFeedback, CopySlotStatus, JoinedInfo, LobbyView, OnlineLobbyProps, SlotUI } from './onlineLobbyTypes';
 
+function isServerRosterUpdate(value: unknown): value is ServerRosterUpdate {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== 'ROSTER_UPDATE' || !Array.isArray(record.roster)) return false;
+  if (record.numPlayers !== undefined && (!Number.isInteger(record.numPlayers) || Number(record.numPlayers) < 2 || Number(record.numPlayers) > 4)) {
+    return false;
+  }
+  if (record.gameStarted !== undefined && typeof record.gameStarted !== 'boolean') return false;
+  return record.roster.every((entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const item = entry as Record<string, unknown>;
+    return (
+      typeof item.slot === 'number' &&
+      Number.isInteger(item.slot) &&
+      item.slot >= 0 &&
+      item.slot < 4 &&
+      typeof item.name === 'string' &&
+      (item.type === 'human' || item.type === 'ai')
+    );
+  });
+}
+
 export function useOnlineLobby({
   initialParticipation,
   initialRoomId,
@@ -187,7 +209,7 @@ export function useOnlineLobby({
       }
 
       const nameParam = nameForClaim ? `&name=${encodeURIComponent(nameForClaim)}` : '';
-      const wsUrl = `${getOnlineWsBase()}/api/rooms/${rId}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
+      const wsUrl = `${getOnlineWsBase()}/api/rooms/${encodeURIComponent(rId)}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}${nameParam}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -231,20 +253,20 @@ export function useOnlineLobby({
           return;
         }
         if (parsed.type === 'ROSTER_UPDATE') {
-          const r = parsed as ServerRosterUpdate;
-          setRoster(r.roster);
-          rosterRef.current = r.roster;
-          if (typeof r.numPlayers === 'number') {
-            serverNumPlayersRef.current = r.numPlayers;
+          if (!isServerRosterUpdate(parsed)) return;
+          setRoster(parsed.roster);
+          rosterRef.current = parsed.roster;
+          if (typeof parsed.numPlayers === 'number') {
+            serverNumPlayersRef.current = parsed.numPlayers;
           }
 
-          const rosterComplete = isRosterReadyToStart(r.roster);
+          const rosterComplete = isRosterReadyToStart(parsed.roster);
 
-          if (r.gameStarted) {
+          if (parsed.gameStarted) {
             serverGameLiveRef.current = true;
             setServerGameLive(true);
           }
-          if (r.gameStarted || rosterComplete) {
+          if (parsed.gameStarted || rosterComplete) {
             requestGameStartCatchUp(ws);
           }
         }

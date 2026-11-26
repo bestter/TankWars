@@ -24,6 +24,7 @@ import { ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter'
 export interface Env {
   GAME_ROOM: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace;
+  ALLOW_LOCAL_ORIGINS?: string;
 }
 
 const RATE_LIMIT_BUCKETS = {
@@ -31,6 +32,49 @@ const RATE_LIMIT_BUCKETS = {
   websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
 } as const;
 const TEXT_ENCODER = new TextEncoder();
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeClientIp(rawIp: string): string {
+  if (!rawIp.includes(':')) return rawIp;
+  const addr = rawIp.split('%')[0].trim().toLowerCase();
+  const [headPart, tailPart, extra] = addr.split('::');
+  if (extra !== undefined) return rawIp;
+
+  const parseSide = (part: string): string[] | null => {
+    if (!part) return [];
+    const tokens = part.split(':');
+    const out: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (tok.includes('.')) {
+        if (i !== tokens.length - 1) return null;
+        const octets = tok.split('.');
+        if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o) || Number(o) > 255)) return null;
+        const n = octets.map((o) => Number(o));
+        out.push(((n[0] << 8) | n[1]).toString(16).padStart(4, '0'));
+        out.push(((n[2] << 8) | n[3]).toString(16).padStart(4, '0'));
+      } else {
+        if (!/^[0-9a-f]{1,4}$/.test(tok)) return null;
+        out.push(tok.padStart(4, '0'));
+      }
+    }
+    return out;
+  };
+
+  const head = parseSide(headPart);
+  if (!head) return rawIp;
+  let full: string[];
+  if (tailPart !== undefined) {
+    const tail = parseSide(tailPart);
+    if (!tail || head.length + tail.length >= 8) return rawIp;
+    const missing = 8 - head.length - tail.length;
+    full = [...head, ...Array.from({ length: missing }, () => '0000'), ...tail];
+  } else {
+    if (head.length !== 8) return rawIp;
+    full = head;
+  }
+  return `${full.slice(0, 4).join(':')}::/64`;
+}
 
 const isHeaderSafeToken = (value: string): boolean => {
   if (value.length === 0 || value.length > 256 || value.trim() !== value) return false;
@@ -50,11 +94,17 @@ export default {
     const isWebSocketUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
 
     const origin = request.headers.get('Origin');
+    const allowLocalOrigins =
+      url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1' ||
+      env.ALLOW_LOCAL_ORIGINS === 'true';
     const isAllowedOrigin = origin && (
       origin === 'https://tankwars.pages.dev' ||
       /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
-      /^http:\/\/localhost:(5173|4173|8787)$/.test(origin) ||
-      /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(origin)
+      (allowLocalOrigins && (
+        /^http:\/\/localhost:(5173|4173|8787)$/.test(origin) ||
+        /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(origin)
+      ))
     );
     const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
 
@@ -63,6 +113,7 @@ export default {
     const withResponseHeaders = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
+      headers.append('Vary', 'Origin');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('X-Frame-Options', 'DENY');
       headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -76,7 +127,7 @@ export default {
     const enforceRateLimit = async (scope: keyof typeof RATE_LIMIT_BUCKETS = 'rooms'): Promise<Response | null> => {
       // Cloudflare supplies this header in production. Local/non-proxied requests
       // without it share one 'unknown' bucket; never trust a client-supplied fallback IP.
-      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      const ip = normalizeClientIp(request.headers.get('cf-connecting-ip') || 'unknown');
       const { prefix, path } = RATE_LIMIT_BUCKETS[scope];
       const limiterName = prefix + ip;
 
@@ -242,7 +293,7 @@ export default {
       if (isWebSocketUpgrade) return rejectRestUpgrade();
       const parts = pathname.split('/');
       const roomId = parts[3];
-      if (parts.length !== 5 || !roomId || roomId.length > 256) {
+      if (parts.length !== 5 || !roomId || !UUID_V4_RE.test(roomId)) {
         return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid room ID' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
@@ -284,7 +335,7 @@ export default {
       if (origin !== null && !isAllowedOrigin) {
         return withResponseHeaders(new Response('Forbidden: Invalid Origin', { status: 403 }));
       }
-      if (parts.length !== 5 || !roomId || roomId.length > 256) {
+      if (parts.length !== 5 || !roomId || !UUID_V4_RE.test(roomId)) {
         return withResponseHeaders(new Response('Missing or invalid room/slot/token', { status: 400 }));
       }
       if (request.method !== 'GET') {

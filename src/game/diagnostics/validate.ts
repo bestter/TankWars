@@ -5,6 +5,8 @@ import type { ShotArchive, StoredState } from "./types";
 
 const PROJECTILE_KEYS = new Set(["shotId", "munitionId", "x", "y", "vx", "vy", "weaponId", "ownerId", "ownerColor", "isSubmunition", "lastVy", "initialAngle", "initialPower", "bounceCount", "hasLeftOwnerHitbox"]);
 const EVENT_KINDS = new Set(["pre-shot", "projectile-launched", "settled", "current", "interrupted", "impact", "combat", "advisor", "boundary"]);
+const MAX_ARCHIVE_TERRAINS = 256;
+const MAX_ARCHIVE_RECORDS = 50_000;
 
 export function object(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
 function requireValue(ok: unknown, code: string): asserts ok { if (!ok) throw new Error(code); }
@@ -66,7 +68,8 @@ export function validateArchive(value: unknown): ShotArchive {
   requireValue(value.rules === RULES_ID || value.rules === LEGACY_SHIELD_RULES_ID, "INCOMPATIBLE_PHYSICS_RULES");
   requireValue(typeof value.gameVersion === "string" && typeof value.build === "string" && typeof value.sessionId === "string" &&
     integer(value.firstSequence) && integer(value.lastSequence) && integer(value.evicted) && typeof value.complete === "boolean" &&
-    (value.error === null || typeof value.error === "string") && Array.isArray(value.records) && Array.isArray(value.terrains) && finiteTree(value), "INVALID_ARCHIVE_MANIFEST");
+    (value.error === null || typeof value.error === "string") && Array.isArray(value.records) && Array.isArray(value.terrains) &&
+    value.terrains.length <= MAX_ARCHIVE_TERRAINS && value.records.length <= MAX_ARCHIVE_RECORDS && finiteTree(value), "INVALID_ARCHIVE_MANIFEST");
   const terrains = new Map<string, { width: number; height: number }>();
   for (const t of value.terrains) {
     requireValue(object(t) && typeof t.id === "string" && integer(t.width) && t.width > 0 && t.width <= 16384 &&

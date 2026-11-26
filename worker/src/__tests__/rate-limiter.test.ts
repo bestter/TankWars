@@ -45,7 +45,7 @@ function createEnv() {
     headers: ip ? { 'cf-connecting-ip': ip } : {},
     body: JSON.stringify({ numPlayers: 2 }),
   }), env);
-  const connectWebSocket = (ip: string) => worker.fetch(new Request('https://api.example/api/rooms/room-id/ws?slot=0&token=token123', {
+  const connectWebSocket = (ip: string) => worker.fetch(new Request('https://api.example/api/rooms/11111111-1111-4111-8111-111111111111/ws?slot=0&token=token123', {
     headers: { Upgrade: 'websocket', 'cf-connecting-ip': ip },
   }), env);
   return { env, createRoom, connectWebSocket, limiterFetch, roomFetch, limiters };
@@ -97,11 +97,16 @@ describe('Room creation rate limiting', () => {
     expect(roomFetch).toHaveBeenCalledTimes(5);
   });
 
-  it('keeps different IPs independent', async () => {
+  it('keeps different IPs independent and groups IPv6 addresses by /64 prefix', async () => {
     const { createRoom } = createEnv();
     for (let i = 0; i < 5; i++) await createRoom('192.0.2.1');
     expect((await createRoom('192.0.2.1')).status).toBe(429);
     expect((await createRoom('192.0.2.2')).status).toBe(200);
+    for (let i = 0; i < 5; i++) {
+      expect((await createRoom(`2001:db8:85a3:1::${i + 1}`)).status).toBe(200);
+    }
+    expect((await createRoom('2001:db8:85a3:1:abcd::99')).status).toBe(429);
+    expect((await createRoom('2001:db8:85a3:2::1')).status).toBe(200);
   });
 
   it('uses a shared unknown bucket when cf-connecting-ip is absent', async () => {

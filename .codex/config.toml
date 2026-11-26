@@ -2,8 +2,6 @@ model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 web_search = "live"
 
-[windows]
-sandbox = "elevated" # Legacy fallback
 [features]
 prefer_mxc = true
 multi_agent = true

@@ -70,6 +70,7 @@ describe("v3 earnings authority", () => {
     roster[1].tank.health = 60;
     report.players[1].tank.health = health;
     report.players[1].tank.shield = shield;
+    if (health === 60 && shield === 20) report.awards = [];
     const before = structuredClone(roster);
     const result = validateEarnings(report, roster, "a", "MISSILE");
     expect(result.ok).toBe(accepted);
@@ -100,8 +101,17 @@ describe("v3 earnings authority", () => {
     ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["a"]; }],
     ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["b", "b"]; }],
     ["MALFORMED", (r: ShotEarningsMessage) => { r.awards.push(r.awards[0]); }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.awards = [{ playerId: "a", amount: 1_000_000 }]; }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.awards = [{ playerId: "b", amount: 5 }]; }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.players[1].tank.position.x = 9999; }],
+    ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["b"]; }],
   ] as const)("refuses %s before modifying the roster", (reason, mutate) => {
     const { roster, report } = fixture();
+    report.players[1].tank.shield = 15;
+    if (reason === "ILLEGAL_VICTIM") {
+      report.players[1].tank.shield = 20;
+      report.awards = [];
+    }
     const before = structuredClone(roster);
     mutate(report);
     expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason });
@@ -115,6 +125,7 @@ describe("v3 earnings authority", () => {
     expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "RESURRECTION" });
     const next = fixture();
     next.report.players[1].inventory.BULLET = 0;
+    next.report.awards = [];
     expect(validateEarnings(next.report, next.roster, "a", "MISSILE").ok).toBe(true);
   });
 

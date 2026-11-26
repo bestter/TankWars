@@ -15,6 +15,13 @@ interface Row {
 }
 const pad = (n: number) => String(n).padStart(16, "0");
 const escape = (value: unknown): string => String(value ?? "inconnu / unknown").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const safeRelativePath = (value: unknown): string => {
+  const str = String(value ?? "");
+  if (!str || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(str) || str.startsWith("//") || str.includes("..")) {
+    return "#";
+  }
+  return escape(str);
+};
 function page(title: string, body: string): Uint8Array {
   return encoder.encode(`<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(title)}</title><style>body{font:15px monospace;max-width:1100px;margin:2rem auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #888;padding:.5rem;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#1462a8}</style><h1>${escape(title)}</h1>${body}<footer>Signé / Signed : Codex — GPT-6</footer></html>`);
 }
@@ -190,9 +197,9 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
         await disk.put("closed-views", cacheKey, { signature, html: prefix + htmlPath, index: prefix + indexPath });
         number++; rows = []; bytes = 0; return;
       }
-      const content = rows.map(row => `<tr><td>${row.sequence}</td><td>${escape(row.kind)}</td><td>${escape(row.name)} (${escape(row.playerId)})<br>${escape(row.role)}</td><td>${escape(row.profile)} ${escape(row.weapon)}</td><td>${escape(row.durationMs)}</td><td><a href="../${row.location.path}">Source ${row.location.offset}+${row.location.length} octets</a><pre>${escape(JSON.stringify(row.detail))}</pre>${row.shotHash ? `<a href="shot-${row.shotHash}.html">${escape(row.shotKey)}</a>` : ""}</td></tr>`).join("");
+      const content = rows.map(row => `<tr><td>${row.sequence}</td><td>${escape(row.kind)}</td><td>${escape(row.name)} (${escape(row.playerId)})<br>${escape(row.role)}</td><td>${escape(row.profile)} ${escape(row.weapon)}</td><td>${escape(row.durationMs)}</td><td><a href="../${safeRelativePath(row.location.path)}">Source ${row.location.offset}+${row.location.length} octets</a><pre>${escape(JSON.stringify(row.detail))}</pre>${row.shotHash ? `<a href="shot-${escape(row.shotHash)}.html">${escape(row.shotKey)}</a>` : ""}</td></tr>`).join("");
       await output.write(`report/${info.id}-${number}.html`, one(page(info.label,
-        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${metadata ? `<details open><summary>État enregistré / Recorded state · ${escape(metadata.capturedAtSequence)}</summary><a href="../${metadata.location.path}">Preuve / Evidence ${metadata.location.offset}+${metadata.location.length}</a><pre>${escape(JSON.stringify(metadata.record, null, 2))}</pre></details>` : ""}${totals ? `<pre>${escape(JSON.stringify(totals))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
+        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${metadata ? `<details open><summary>État enregistré / Recorded state · ${escape(metadata.capturedAtSequence)}</summary><a href="../${safeRelativePath(metadata.location.path)}">Preuve / Evidence ${metadata.location.offset}+${metadata.location.length}</a><pre>${escape(JSON.stringify(metadata.record, null, 2))}</pre></details>` : ""}${totals ? `<pre>${escape(JSON.stringify(totals))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
         (number > 1 ? `<a href="${info.id}-${number - 1}.html">Précédente / Previous</a> ` : "") + (next ? `<a href="${info.id}-${number + 1}.html">Suite / Next</a>` : ""))));
       await output.write(`index/views/${info.id}-${number}.json`, one(jsonBytes({ label: info.label, page: number, next: next ? `index/views/${info.id}-${number + 1}.json` : null, metadata, rows })));
       if (next) await disk.put("closed-views", cacheKey, { signature, html: prefix + htmlPath, index: prefix + indexPath });

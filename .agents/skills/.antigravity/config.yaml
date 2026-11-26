@@ -2,5 +2,5 @@
 tools:
   bash:
     auto_approve:
-      - pattern: "^npx vitest.*"
-      - pattern: "^npm run test.*"
+      - pattern: "^npx vitest( [A-Za-z0-9_./:-]+)*$"
+      - pattern: "^npm run test( -- [A-Za-z0-9_./:-]+)*$"

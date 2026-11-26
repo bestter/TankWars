@@ -869,7 +869,7 @@ export function attachOnlineCombat(
     ) {
       return;
     }
-    const wsUrl = `${wsBase}/api/rooms/${roomId}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}`;
+    const wsUrl = `${wsBase}/api/rooms/${encodeURIComponent(roomId)}/ws?protocolVersion=${ONLINE_PROTOCOL_VERSION}&slot=${slot}&token=${encodeURIComponent(token)}`;
     gameWs = new WebSocket(wsUrl);
     gameWsRef.current = gameWs;
     bindCombatWsHandlers(gameWs);

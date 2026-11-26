@@ -1,4 +1,4 @@
-const CACHE_NAME = "tankwars-v4";
+const CACHE_NAME = "tankwars-v5";
 const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
 const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
@@ -69,6 +69,14 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
+  // Ne jamais intercepter ni mettre en cache les appels API ou les handshakes WebSocket
+  if (
+    requestUrl.pathname.startsWith("/api/") ||
+    e.request.headers?.get?.("upgrade")?.toLowerCase() === "websocket"
+  ) {
+    return;
+  }
+
   const isManifestRequest =
     requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
@@ -81,6 +89,8 @@ self.addEventListener("fetch", (e) => {
       isManifestRequest && !isNavigate
         ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
         : fetch(e.request);
+    // Clé canonique sans query string pour ne jamais persister de jeton (?token=...) dans CacheStorage
+    const cacheKey = isManifestRequest ? MANIFEST_PATH : "/index.html";
 
     e.respondWith(
       fetchRequest
@@ -97,7 +107,7 @@ self.addEventListener("fetch", (e) => {
             const copy = response.clone();
             const cacheWrite = caches
               .open(CACHE_NAME)
-              .then((cache) => cache.put(e.request, copy))
+              .then((cache) => cache.put(cacheKey, copy))
               .catch((err) => {
                 if (typeof console !== "undefined") {
                   console.warn("[sw] Cache update failed", err);
@@ -113,7 +123,7 @@ self.addEventListener("fetch", (e) => {
           const options = { cacheName: CACHE_NAME };
           const fallback = isManifestRequest
             ? await findCachedManifest(e.request)
-            : (await caches.match(e.request, options)) ?? (await caches.match("/index.html", options));
+            : await caches.match("/index.html", options);
           if (fallback) return fallback;
           throw err;
         })

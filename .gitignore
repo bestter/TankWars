@@ -32,4 +32,17 @@ coverage/
 pr_description.txt
 
 # Wrangler local dev state (Durable Objects SQLite, cache)
+.wrangler/
 worker/.wrangler/
+
+# Local secrets & environment files
+.env
+.env.*
+!.env.production.example
+**/.dev.vars*
+*.local.json
+
+# Security scan & Python caches
+results.sarif
+__pycache__/
+*.pyc
