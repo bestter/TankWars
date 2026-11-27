@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryDisk } from "./bundleMemory";
 import { buildBundle, type BundleSource } from "../bundle/build";
 import { exportOptions, PartWriter, type FileReference } from "../bundle/format";
-import { encoder, identity, jsonBytes, one, readBytes, readJson, safePath, sha256 } from "../bundle/io";
+import { encoder, identity, jsonBytes, one, readBytes, readJson, safePath, safeRelativeHref, sha256 } from "../bundle/io";
 import { extractShot, extractShotByHash, readManifest, validateBundle } from "../bundle/read";
 import { writeZip } from "../bundle/zip";
 import { fixture } from "./helpers";
@@ -300,5 +300,53 @@ describe("progressive endurance bundle", () => {
     const second = await buildBundle(input, disk);
     expect(second.reportComplete).toBe(false);
     expect(second.index).toBe(first.index);
+  });
+  it.each([
+    " javascript:alert(1)",
+    "\tjavascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "//evil.example/report.html",
+    "derived\\..\\evil.html",
+    "/abs/path.html",
+  ])("neutralizes unsafe href path (%s) in incomplete report notices and derived reports", async (badPath) => {
+    expect(safeRelativeHref(badPath)).toBe("#");
+
+    class FailReportDisk extends MemoryDisk {
+      failReport = false;
+      override async write(path: string, chunks: AsyncIterable<Uint8Array>) {
+        if (this.failReport && path.startsWith("derived/") && path.endsWith(".html")) throw new Error("REPORT_FAIL");
+        return super.write(path, chunks);
+      }
+    }
+    const disk = new FailReportDisk(), input = source([entry(1)]);
+    await buildBundle(input, disk);
+    const saved = await disk.get("export-state", "manifest") as { index: string };
+    saved.index = badPath;
+    await disk.put("export-state", "manifest", saved);
+    disk.failReport = true;
+    input.status.persisted = 2; input.status.emitted = 2;
+    input.journal = async after => [entry(1), entry(2)].filter(e => e.sequence > after);
+    await buildBundle(input, disk);
+    const noticeHtml = new TextDecoder().decode(await readBytes(disk, "index.html"));
+    expect(noticeHtml).toContain('href="#"');
+    expect(noticeHtml).not.toContain("javascript:");
+  });
+  it("sanitizes unsafe location paths and shotHash values when rendering report pages", async () => {
+    const disk = new MemoryDisk();
+    const manifest = await buildBundle(source([]), disk);
+    const viewId = await identity("Test view");
+    await disk.put("views", viewId, { id: viewId, label: "Test view" });
+    await disk.put(`view-${viewId}`, "0000000000000001/shooter/p1", {
+      sequence: 1, blockId: "b", round: 1, turn: 1, kind: "shot",
+      location: { path: " javascript:alert(1)", offset: 0, length: 10 },
+      shotKey: "1:1:1", shotHash: 'abc" onclick="alert(1)',
+      playerId: "p1", name: "P1", profile: "ok", role: "tireur",
+      weapon: "MISSILE", durationMs: 1, detail: {}, reasons: [],
+    });
+    await renderReport(disk, manifest);
+    const html = new TextDecoder().decode(await readBytes(disk, `report/${viewId}-1.html`));
+    expect(html).toContain('href="#"');
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("onclick=");
   });
 });

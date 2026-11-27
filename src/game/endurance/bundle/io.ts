@@ -15,6 +15,11 @@ export function safePath(path: string): string {
   if (!/^[a-zA-Z0-9_./-]+$/.test(path) || path.startsWith("/") || path.split("/").some(p => !p || p === "." || p === "..")) throw new Error("INVALID_BUNDLE_PATH");
   return path;
 }
+export function safeRelativeHref(value: unknown): string {
+  const str = String(value ?? "");
+  try { return safePath(str); }
+  catch { return "#"; }
+}
 export async function sha256(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");

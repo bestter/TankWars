@@ -306,6 +306,8 @@ export class GameRoom extends DurableObject {
   private shotOperation: Promise<void> = Promise.resolve();
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
   private wsMessageTimestamps = new Map<number, number[]>();
+  private wsRateLimitWarnedUntil = new Map<number, number>();
+  private needsIdleAlarmClear = true;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
   /**
@@ -500,7 +502,7 @@ export class GameRoom extends DurableObject {
         if (entry.kind === "event") nextJournal.push(clonedValue as CombatEvent);
         else if (entry.kind === "earnings") nextEarnings[entry.key] = clonedValue as PersistedEarningsResult;
         else if (entry.kind === "fire" && entry.slot !== undefined) {
-          nextFire[entry.slot] ??= {};
+          nextFire[entry.slot] ??= Object.create(null);
           nextFire[entry.slot][entry.key] = clonedValue as PersistedFireAction;
         } else if (entry.kind === "shop") nextShop[entry.key] = clonedValue as PersistedShopAction;
       }
@@ -533,6 +535,11 @@ export class GameRoom extends DurableObject {
       this.lastCombatValues = committedValues;
       this.needsCombatStorageSync = false;
       this.syncedRoundNumber = main.roundNumber;
+      if (nextAlarmAt === null) {
+        this.needsIdleAlarmClear = false;
+      } else if (this.state.activeZeusStrike === null && this.idleExpiryAt(this.state.lastActivityAt) !== undefined) {
+        this.needsIdleAlarmClear = true;
+      }
       this.state.combatJournal = [...nextJournal];
       const nextShots = shotHistory.length === 0 && nextJournal.length === 0
         ? []
@@ -541,7 +548,7 @@ export class GameRoom extends DurableObject {
       this.state.earningsResults = { ...nextEarnings };
       const stateFire: Record<number, Record<string, PersistedFireAction>> = {};
       for (const [slot, actions] of Object.entries(nextFire)) {
-        stateFire[Number(slot)] = { ...actions };
+        stateFire[Number(slot)] = Object.assign(Object.create(null), actions);
       }
       this.state.processedFireActionsBySlot = stateFire;
       this.state.processedShopActions = { ...nextShop };
@@ -938,10 +945,20 @@ export class GameRoom extends DurableObject {
     return false;
   }
 
+  private shouldWarnRateLimit(slot: number): boolean {
+    const now = Date.now();
+    const warnedUntil = this.wsRateLimitWarnedUntil.get(slot) ?? 0;
+    if (now < warnedUntil) return false;
+    this.wsRateLimitWarnedUntil.set(slot, now + WS_RATE_LIMIT_WINDOW_MS);
+    return true;
+  }
+
   // --- Client message handler (only FIRE for now in MVP) ---
   private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
     if (this.isSlotMessageRateLimited(slot)) {
-      console.warn(`[GameRoom] Rate-limiting WebSocket messages from slot ${slot}`);
+      if (this.shouldWarnRateLimit(slot)) {
+        console.warn(`[GameRoom] Rate-limiting WebSocket messages from slot ${slot}`);
+      }
       return;
     }
     // Enforce payload size limit to prevent memory exhaustion / DoS
@@ -1168,6 +1185,7 @@ export class GameRoom extends DurableObject {
     }
     this.sockets.delete(slot);
     this.pendingClaimNames.delete(ws);
+    if (this.sockets.size === 0) this.needsIdleAlarmClear = true;
     try {
       ws.close(1000, 'connection closed');
     } catch {
@@ -1279,7 +1297,10 @@ export class GameRoom extends DurableObject {
       const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
       elected = await this.electEarningsAuthority(next);
     }
-    if (elected === undefined && rosterChanged) {
+    if (
+      elected === undefined &&
+      (rosterChanged || (wasStarted && this.needsIdleAlarmClear && !this.state.activeShot && !this.state.activeZeusStrike))
+    ) {
       await this.saveState(this.state.activeShot ? undefined : null);
     }
     if (!wasStarted) {
@@ -1437,7 +1458,7 @@ export class GameRoom extends DurableObject {
     }
     this.state.earningsAuthoritySlot = next;
     this.state.authorityEpoch++;
-    await this.saveState(relay?.deadlineAt);
+    await this.saveState(relay?.deadlineAt ?? (active ? undefined : null));
     if (next !== null && active) {
       const socket = this.sockets.get(next);
       // Send the journal before announcing the new epoch so the client can verify its replay.
@@ -1710,6 +1731,9 @@ export class GameRoom extends DurableObject {
         this.committedState = null;
         this.lastCombatStringified.clear();
         this.lastCombatValues.clear();
+        this.wsMessageTimestamps.clear();
+        this.wsRateLimitWarnedUntil.clear();
+        this.aiProfiles.clear();
       } else if (lastActivityAt === undefined) {
         await this.saveState();
       } else {

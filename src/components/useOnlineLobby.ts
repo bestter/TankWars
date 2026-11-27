@@ -11,21 +11,28 @@ function isServerRosterUpdate(value: unknown): value is ServerRosterUpdate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (record.type !== 'ROSTER_UPDATE' || !Array.isArray(record.roster)) return false;
-  if (record.numPlayers !== undefined && (!Number.isInteger(record.numPlayers) || Number(record.numPlayers) < 2 || Number(record.numPlayers) > 4)) {
+  if (
+    record.numPlayers !== undefined &&
+    (typeof record.numPlayers !== 'number' || !Number.isInteger(record.numPlayers) || record.numPlayers < 2 || record.numPlayers > 4)
+  ) {
     return false;
   }
   if (record.gameStarted !== undefined && typeof record.gameStarted !== 'boolean') return false;
+  const seenSlots = new Set<number>();
   return record.roster.every((entry: unknown) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
     const item = entry as Record<string, unknown>;
-    return (
-      typeof item.slot === 'number' &&
-      Number.isInteger(item.slot) &&
-      item.slot >= 0 &&
-      item.slot < 4 &&
-      typeof item.name === 'string' &&
-      (item.type === 'human' || item.type === 'ai')
-    );
+    if (
+      typeof item.slot !== 'number' ||
+      !Number.isInteger(item.slot) ||
+      item.slot < 0 ||
+      item.slot >= 4 ||
+      seenSlots.has(item.slot)
+    ) {
+      return false;
+    }
+    seenSlots.add(item.slot);
+    return typeof item.name === 'string' && (item.type === 'human' || item.type === 'ai');
   });
 }
 

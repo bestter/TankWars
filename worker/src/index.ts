@@ -32,7 +32,7 @@ const RATE_LIMIT_BUCKETS = {
   websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
 } as const;
 const TEXT_ENCODER = new TextEncoder();
-const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function normalizeClientIp(rawIp: string): string {
   if (!rawIp.includes(':')) return rawIp;
@@ -72,6 +72,18 @@ function normalizeClientIp(rawIp: string): string {
   } else {
     if (head.length !== 8) return rawIp;
     full = head;
+  }
+  if (
+    full[0] === '0000' &&
+    full[1] === '0000' &&
+    full[2] === '0000' &&
+    full[3] === '0000' &&
+    full[4] === '0000' &&
+    (full[5] === 'ffff' || (full[5] === '0000' && full[6] !== '0000'))
+  ) {
+    const hi = parseInt(full[6], 16);
+    const lo = parseInt(full[7], 16);
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
   }
   return `${full.slice(0, 4).join(':')}::/64`;
 }

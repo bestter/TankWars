@@ -205,7 +205,7 @@ describe('Worker Entrypoint', () => {
       expectSecurityHeaders(response);
     });
 
-    it.each(['room1', 'a'.repeat(257), '11111111-1111-1111-8111-111111111111'])(
+    it.each(['room1', 'a'.repeat(257), '11111111-1111-1111-8111-111111111111', 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'])(
       'rejects non-UUIDv4 roomId (%s) without waking a GameRoom DO',
       async (badRoomId) => {
         const { env, mockNamespace } = createMockEnv();
@@ -392,7 +392,7 @@ describe('Worker Entrypoint', () => {
       expectSecurityHeaders(response);
     });
 
-    it.each(['non-uuid-room', 'b'.repeat(257)])(
+    it.each(['non-uuid-room', 'b'.repeat(257), 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'])(
       'rejects WebSocket upgrade with non-UUIDv4 roomId (%s) without waking a GameRoom DO',
       async (badRoomId) => {
         const { env, mockNamespace } = createMockEnv();

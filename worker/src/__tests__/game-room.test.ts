@@ -4800,5 +4800,113 @@ describe('GameRoom Durable Object', () => {
         vi.useRealTimers();
       }
     });
+
+    it('clears the 24h idle alarm and refreshes lastActivityAt on reconnect (with or without authority change)', async () => {
+      vi.useFakeTimers();
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'reconnect-alarm-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+
+        sockets.set(0, ws0 as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        await claim.call(room, 1, 'Bob', ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBeUndefined();
+
+        // Cas 1 : déconnexion complète puis reconnexion avec élection d'autorité (electEarningsAuthority)
+        await disconnect.call(room, 0, ws0 as unknown as WebSocket);
+        await disconnect.call(room, 1, ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(baseNow + 24 * 60 * 60 * 1000);
+
+        const reconnect1At = baseNow + 10_000;
+        vi.setSystemTime(reconnect1At);
+        const ws0b = new MockWebSocket();
+        sockets.set(0, ws0b as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0b as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBeUndefined();
+        expect(room.getRoster()?.lastActivityAt).toBe(reconnect1At);
+
+        // Cas 2 : après restauration à froid avec autorité déjà sur le slot 0 et alarme armée,
+        // reconnexion du slot 0 avec le même nom (elected === undefined && rosterChanged === false)
+        const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        setup.mockStorage.alarmAt = undefined;
+        await restored.alarm();
+        expect(setup.mockStorage.alarmAt).toBe(reconnect1At + 24 * 60 * 60 * 1000);
+
+        const reconnect2At = reconnect1At + 5_000;
+        vi.setSystemTime(reconnect2At);
+        const ws0c = new MockWebSocket();
+        const restoredSockets = Reflect.get(restored, 'sockets') as Map<number, WebSocket>;
+        restoredSockets.set(0, ws0c as unknown as WebSocket);
+        const restoredClaim = Reflect.get(restored, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        await restoredClaim.call(restored, 0, 'Alice', ws0c as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBeUndefined();
+        expect(restored.getRoster()?.lastActivityAt).toBe(reconnect2At);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('logs WebSocket rate-limit warnings at most once per window per slot', async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'rate-warn-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+        for (let i = 0; i < 150; i++) {
+          await handle.call(room, 0, '{}');
+        }
+        const rateWarnings = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && msg.includes('Rate-limiting WebSocket messages'),
+        );
+        expect(rateWarnings).toHaveLength(1);
+
+        vi.setSystemTime(baseNow + 5_001);
+        for (let i = 0; i < 125; i++) {
+          await handle.call(room, 0, '{}');
+        }
+        const rateWarningsAfterWindow = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && msg.includes('Rate-limiting WebSocket messages'),
+        );
+        expect(rateWarningsAfterWindow).toHaveLength(2);
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
   });
 });

@@ -109,6 +109,19 @@ describe('Room creation rate limiting', () => {
     expect((await createRoom('2001:db8:85a3:2::1')).status).toBe(200);
   });
 
+  it('normalizes IPv4-mapped IPv6 addresses to their canonical IPv4 bucket without breaking ::1', async () => {
+    const { createRoom, limiters } = createEnv();
+    for (let i = 0; i < 4; i++) {
+      expect((await createRoom('::ffff:192.0.2.1')).status).toBe(200);
+    }
+    expect((await createRoom('::ffff:c000:0201')).status).toBe(200);
+    expect((await createRoom('192.0.2.1')).status).toBe(429);
+    expect((await createRoom('::ffff:192.0.2.2')).status).toBe(200);
+    expect((await createRoom('::1')).status).toBe(200);
+    expect(limiters.has('rate_limit_192.0.2.1')).toBe(true);
+    expect(limiters.has('rate_limit_0000:0000:0000:0000::/64')).toBe(true);
+  });
+
   it('uses a shared unknown bucket when cf-connecting-ip is absent', async () => {
     const { createRoom, limiters } = createEnv();
     for (let i = 0; i < 5; i++) expect((await createRoom()).status).toBe(200);

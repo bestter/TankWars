@@ -34,6 +34,10 @@ describe("strict online protocol", () => {
       expect(isStrictOnlineMessage(protoPayload)).toBe(false);
       const constructorPayload = JSON.parse('{"type":"FIRE_REJECTED","reason":"MALFORMED","inventory":{"constructor":1},"currentWeapon":"MISSILE"}');
       expect(isStrictOnlineMessage(constructorPayload)).toBe(false);
+      const toStringShopPayload = JSON.parse('{"type":"SHOP_STATE","shopEpoch":1,"roundNumber":1,"readySlots":[],"players":[],"purchasesByPlayerId":{"toString":{"MISSILE":1}},"aiShopApplied":true}');
+      expect(isStrictOnlineMessage(toStringShopPayload)).toBe(false);
+      const valueOfEarningsPayload = JSON.parse('{"type":"SHOT_EARNINGS_APPLIED","shotId":1,"economicRevision":1,"roundEarningsByPlayer":{"valueOf":10},"awards":[],"balances":[],"hasEarnings":false,"blockDurationMs":0,"roundOutcome":{"isRoundEnd":false,"isDraw":false,"roundWinnerId":null}}');
+      expect(isStrictOnlineMessage(valueOfEarningsPayload)).toBe(false);
     });
 
     it("accepte un inventaire vide et les quantités entières aux bornes", () => {

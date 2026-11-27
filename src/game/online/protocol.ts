@@ -340,7 +340,7 @@ function isFireCommand(value: unknown): value is FireCommand {
 const FORBIDDEN_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function isSafeRecordKey(key: string): boolean {
-  return !FORBIDDEN_RECORD_KEYS.has(key);
+  return !FORBIDDEN_RECORD_KEYS.has(key) && !Object.hasOwn(Object.prototype, key);
 }
 
 function isInventory(
