@@ -143,6 +143,7 @@ function computeWeaponRowState({
     maxPurchasesPerVisit: policy.maxPurchasesPerVisit,
     buyReason,
     sellReason: showSeparateSellReason ? sellReason : null,
+    sellReasonVisuallyHidden: showSeparateSellReason && sellReason === "NO_STOCK",
     canBuy,
     canSell,
     buyReasonId,
@@ -222,11 +223,16 @@ function WeaponShopRow({
         {row.sellReason && (
           <div
             id={row.sellReasonId}
-            style={{
-              fontSize: "12px",
-              color: VGA_PALETTE.RED,
-              lineHeight: 1.2,
-            }}
+            className={row.sellReasonVisuallyHidden ? "visually-hidden" : undefined}
+            style={
+              row.sellReasonVisuallyHidden
+                ? undefined
+                : {
+                    fontSize: "12px",
+                    color: VGA_PALETTE.RED,
+                    lineHeight: 1.2,
+                  }
+            }
           >
             {t(SHOP_DENIAL_KEYS[row.sellReason])}
           </div>
