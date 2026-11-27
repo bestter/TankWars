@@ -432,6 +432,8 @@ progress.retro-spinner:indeterminate::-moz-progress-bar {
 }
 
 .weapon-shop-row {
+  /* Keep the absolutely positioned sale description inside the scrolling list. */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
