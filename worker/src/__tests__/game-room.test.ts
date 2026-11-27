@@ -1227,7 +1227,7 @@ describe('Zeus v3 durable settlement', () => {
     await restored.alarm();
 
     expect(storage.transaction).not.toHaveBeenCalled();
-    expect(storage.setAlarm).not.toHaveBeenCalled();
+    expect(storage.setAlarm).toHaveBeenCalledWith(beforeAlarm);
     expect(restored.getRoster()).toEqual(beforeState);
     expect(setup.mockStorage.storageData).toEqual(beforeStorage);
     expect(setup.mockStorage.alarmAt).toBe(beforeAlarm);
@@ -5095,7 +5095,7 @@ describe('GameRoom Durable Object', () => {
       }
     });
 
-    it('bounds accepted BUY_SELL entries in processedShopActions via FIFO eviction while preserving READY', async () => {
+    it('retains accepted shop actions across saturation, restart and READY', async () => {
       const setup = createMockCtx();
       const room = new GameRoom(setup.ctx as DurableObjectState, {});
       Object.defineProperty(room, 'ctx', { value: setup.ctx });
@@ -5118,45 +5118,55 @@ describe('GameRoom Durable Object', () => {
       await claim.call(room, 0, 'Alice');
       await claim.call(room, 1, 'Bob');
 
-      const state = Reflect.get(room, 'state') as {
-        roundEnded: boolean;
-        players: Player[];
-        processedShopActions: Record<string, { slot: number; result: ShopRejectedMessage }>;
-      };
+      const state = room.getRoster()!;
       state.roundEnded = true;
       const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
       await handle.call(room, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
       await handle.call(room, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' }));
 
-      // Seed 511 prior BUY_SELL entries so total reaches 512 (MAX_PROCESSED_SHOP_ACTIONS)
-      for (let i = 0; i < 511; i++) {
-        state.processedShopActions[`BUY_SELL:1:pre-${i}`] = {
-          slot: 1,
-          result: { type: 'SHOP_REJECTED', shopEpoch: 1, actionId: `pre-${i}`, reason: 'NO_STOCK' },
+      state.players[1].inventory.GRENADE = 10;
+      const sell = (actionId: string) => JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId, weaponId: 'GRENADE', delta: -1,
+      });
+      await handle.call(room, 1, sell('first-sale'));
+      const firstSale = state.processedShopActions['BUY_SELL:1:first-sale'].result;
+      if (firstSale.type !== 'SHOP_STATE') throw new Error('Missing first accepted sale');
+      for (let i = 0; i < 508; i++) {
+        const actionId = `prior-sale-${i}`;
+        state.processedShopActions[`BUY_SELL:1:${actionId}`] = {
+          slot: 1, result: { ...firstSale, acknowledgedAction: { slot: 1, actionId } },
         };
       }
+      await handle.call(room, 1, sell('last-sale'));
+      expect(Object.keys(state.processedShopActions)).toHaveLength(511);
+      const inventory = structuredClone(state.players[1].inventory);
+      const { money } = state.players[1];
+      const { economicRevision } = state;
 
-      state.players[1].inventory.GRENADE = 10;
-      for (let i = 0; i < 5; i++) {
-        await handle.call(room, 1, JSON.stringify({
-          type: 'SHOP_BUY_SELL',
-          shopEpoch: 1,
-          actionId: `sell-${i}`,
-          weaponId: 'GRENADE',
-          delta: -1,
-        }));
-      }
+      const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+      await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+      const restoredSockets = Reflect.get(restored, 'sockets') as Map<number, WebSocket>;
+      restoredSockets.set(0, ws0 as unknown as WebSocket);
+      restoredSockets.set(1, ws1 as unknown as WebSocket);
 
-      const keys = Object.keys(state.processedShopActions);
-      expect(keys.length).toBe(512);
-      expect(Object.hasOwn(state.processedShopActions, 'READY:0:ready-0')).toBe(true);
-      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-0')).toBe(false);
-      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-4')).toBe(false);
-      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-5')).toBe(true);
-      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:sell-4')).toBe(true);
+      await handle.call(restored, 1, sell('over-capacity'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', actionId: 'over-capacity', reason: 'PURCHASE_LIMIT' });
+      await handle.call(restored, 1, sell('first-sale'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 1, actionId: 'first-sale' } });
+      expect(restored.getRoster()!.players[1]).toMatchObject({ inventory, money });
+      expect(restored.getRoster()!.economicRevision).toBe(economicRevision);
+
+      await handle.call(restored, 1, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' }));
+      expect(ws1.getAllMessages<{ type: string }>().find(message => message.type === 'SHOP_FINISH'))
+        .toMatchObject({ acknowledgedAction: { slot: 1, actionId: 'ready-1' } });
+      expect(Object.keys(restored.getRoster()!.processedShopActions)).toHaveLength(512);
+      await handle.call(restored, 1, sell('first-sale'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_FINISH', acknowledgedAction: { slot: 1, actionId: 'first-sale' } });
+      expect(restored.getRoster()!.players[1]).toMatchObject({ inventory, money });
     });
 
-    it('never calls saveState on an incompatible started room during disconnect or alarm without lastActivityAt', async () => {
+    it.each(['idle', 'shot', 'Zeus strike'])('expires an incompatible room with legacy %s state without rewriting combat', async (legacyState) => {
       vi.useFakeTimers();
       const idleTtlMs = 24 * 60 * 60 * 1000;
       try {
@@ -5187,25 +5197,46 @@ describe('GameRoom Durable Object', () => {
         const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
         persisted.combatSchemaVersion = 5;
         delete persisted.lastActivityAt;
+        if (legacyState === 'shot') persisted.activeShot = { shotId: 1, slot: 0 };
+        if (legacyState === 'Zeus strike') persisted.activeZeusStrike = { strikeId: 1, resolveAt: now + 100 };
         setup.mockStorage.storageData.set('state', persisted);
+        setup.mockStorage.alarmAt = undefined;
 
-        const reloaded = new GameRoom(setup.ctx as DurableObjectState, {});
-        Object.defineProperty(reloaded, 'ctx', { value: setup.ctx });
-        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        const restore = async () => {
+          const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+          await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+          return restored;
+        };
+        const reloaded = await restore();
+        const originalExpiry = now + idleTtlMs;
+        expect(setup.mockStorage.alarmAt).toBe(originalExpiry);
+        expect(setup.mockStorage.storageData.get('state')).toEqual(persisted);
 
-        const context = setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } };
-        context.storage.transaction.mockClear();
+        let expiresAt = originalExpiry;
+        if (legacyState !== 'idle') {
+          const wsLegacy = new MockWebSocket();
+          (Reflect.get(reloaded, 'sockets') as Map<number, WebSocket>).set(1, wsLegacy as unknown as WebSocket);
+          const claimLegacy = Reflect.get(reloaded, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+          await claimLegacy.call(reloaded, 1, 'Bob', wsLegacy);
+          expect(wsLegacy.getLastMessage()).toMatchObject({ reason: 'NEW_GAME_REQUIRED' });
+          vi.setSystemTime(originalExpiry);
+          setup.mockStorage.alarmAt = undefined;
+          await reloaded.alarm();
+          expiresAt += idleTtlMs;
+          expect(setup.mockStorage.alarmAt).toBe(expiresAt);
+        }
 
-        await reloaded.alarm();
-        expect(context.storage.transaction).not.toHaveBeenCalled();
-        expect(setup.mockStorage.alarmAt).toBe(now + idleTtlMs);
-
-        const wsLegacy = new MockWebSocket();
-        (Reflect.get(reloaded, 'sockets') as Map<number, WebSocket>).set(1, wsLegacy as unknown as WebSocket);
-        const disconnect = Reflect.get(reloaded, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
-        await disconnect.call(reloaded, 1, wsLegacy as unknown as WebSocket);
-        expect(context.storage.transaction).not.toHaveBeenCalled();
-        expect(setup.mockStorage.alarmAt).toBe(now + idleTtlMs);
+        vi.setSystemTime(expiresAt - 1);
+        setup.mockStorage.alarmAt = undefined;
+        const restored = await restore();
+        expect(setup.mockStorage.alarmAt).toBe(expiresAt);
+        expect(setup.mockStorage.storageData.get('state')).toEqual(persisted);
+        vi.setSystemTime(expiresAt);
+        setup.mockStorage.alarmAt = undefined;
+        await restored.alarm();
+        expect(restored.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
       } finally {
         vi.useRealTimers();
       }

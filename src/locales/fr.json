@@ -133,7 +133,7 @@
   "shop_waiting_state": "Synchronisation de la boutique…",
   "shop_bought": "Acheté : {{count}} / {{max}}",
   "shop_reason_stock_cap": "Stock maximal atteint",
-  "shop_reason_purchase_limit": "Limite d'achat atteinte",
+  "shop_reason_purchase_limit": "Limite de transactions atteinte",
   "shop_reason_insufficient_funds": "Fonds insuffisants",
   "shop_reason_no_stock": "Aucun stock à vendre",
   "shop_reason_not_sold": "Cette arme n'est pas vendue",

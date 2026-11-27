@@ -93,6 +93,7 @@ import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
 const REPORT_WINDOW_MS = 20_000;
 const ROOM_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
+const LEGACY_ROOM_EXPIRY_KEY = 'legacyIdleExpiresAt';
 const WS_RATE_LIMIT_WINDOW_MS = 5_000;
 const WS_RATE_LIMIT_MAX_MESSAGES = 120;
 const WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE = 240;
@@ -439,6 +440,13 @@ export class GameRoom extends DurableObject {
           processedFireActionsBySlot: clonedFire,
           processedShopActions: { ...processedShopActions },
         };
+        if (this.isIncompatibleStartedRoom()) {
+          const expiresAt = await ctx.storage.get<number>(LEGACY_ROOM_EXPIRY_KEY);
+          if (expiresAt === undefined || await ctx.storage.getAlarm() === null) {
+            await this.armLegacyRoomExpiry(expiresAt ?? (this.state.lastActivityAt ?? Date.now()) + ROOM_IDLE_TTL_MS);
+          }
+          return;
+        }
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
@@ -1254,10 +1262,10 @@ export class GameRoom extends DurableObject {
         this.sendRosterUpdate();
         return;
       }
-      if (this.sockets.size === 0 && this.idleExpiryAt(Date.now()) !== undefined) {
+      if (this.sockets.size === 0) {
         if (this.isIncompatibleStartedRoom()) {
-          await this.ctx.storage.setAlarm(Date.now() + ROOM_IDLE_TTL_MS);
-        } else {
+          await this.armLegacyRoomExpiry(Date.now() + ROOM_IDLE_TTL_MS);
+        } else if (this.idleExpiryAt(Date.now()) !== undefined) {
           await this.saveState();
         }
       }
@@ -1767,8 +1775,42 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private async armLegacyRoomExpiry(expiresAt: number): Promise<void> {
+    // Store the deadline alongside the alarm without rewriting the old combat state.
+    await this.ctx.storage.transaction(async txn => {
+      await txn.put(LEGACY_ROOM_EXPIRY_KEY, expiresAt);
+      await txn.setAlarm(Math.max(Date.now(), expiresAt));
+    });
+  }
+
+  private async deleteExpiredRoom(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+    this.state = null;
+    this.committedState = null;
+    this.lastCombatStringified.clear();
+    this.lastCombatValues.clear();
+    this.wsMessageTimestamps.clear();
+    this.wsRateLimitWarnedUntil.clear();
+    this.wsRateLimitDroppedCount.clear();
+    this.aiProfiles.clear();
+  }
+
   async alarm(): Promise<void> {
     await this.runShotOperation(async () => {
+      const now = Date.now();
+      if (this.isIncompatibleStartedRoom()) {
+        const savedExpiry = await this.ctx.storage.get<number>(LEGACY_ROOM_EXPIRY_KEY);
+        const expiresAt = savedExpiry ?? (this.state?.lastActivityAt ?? now) + ROOM_IDLE_TTL_MS;
+        if (expiresAt <= now) {
+          if (this.sockets.size > 0) await this.armLegacyRoomExpiry(now + ROOM_IDLE_TTL_MS);
+          else await this.deleteExpiredRoom();
+        } else if (savedExpiry === undefined) {
+          await this.armLegacyRoomExpiry(expiresAt);
+        } else {
+          await this.ctx.storage.setAlarm(expiresAt);
+        }
+        return;
+      }
       const strike = this.state?.activeZeusStrike;
       if (strike && this.buildGameStartMessage()) {
         if (Date.now() < strike.resolveAt) await this.ctx.storage.setAlarm(strike.resolveAt);
@@ -1779,38 +1821,21 @@ export class GameRoom extends DurableObject {
         await this.recoverShotReport();
         return;
       }
-      const now = Date.now();
       const lastActivityAt = this.state?.lastActivityAt;
       const expiresAt = this.idleExpiryAt(lastActivityAt ?? now);
       if (expiresAt === undefined) return;
       if (this.sockets.size > 0) {
         if (expiresAt <= now || lastActivityAt === undefined) {
-          if (this.isIncompatibleStartedRoom()) {
-            await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
-          } else {
-            await this.saveState();
-          }
+          await this.saveState();
         } else {
           await this.ctx.storage.setAlarm(expiresAt);
         }
         return;
       }
       if (lastActivityAt === undefined) {
-        if (this.isIncompatibleStartedRoom()) {
-          await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
-        } else {
-          await this.saveState();
-        }
+        await this.saveState();
       } else if (expiresAt <= now) {
-        await this.ctx.storage.deleteAll();
-        this.state = null;
-        this.committedState = null;
-        this.lastCombatStringified.clear();
-        this.lastCombatValues.clear();
-        this.wsMessageTimestamps.clear();
-        this.wsRateLimitWarnedUntil.clear();
-        this.wsRateLimitDroppedCount.clear();
-        this.aiProfiles.clear();
+        await this.deleteExpiredRoom();
       } else {
         await this.ctx.storage.setAlarm(expiresAt);
       }
@@ -2310,7 +2335,7 @@ export class GameRoom extends DurableObject {
       ).length;
       if (
         !Object.hasOwn(this.state.processedShopActions, actionKey) &&
-        entries.length < MAX_PROCESSED_SHOP_ACTIONS &&
+        entries.length < this.shopActionBudget(this.state.shopSession) &&
         slotRejectionsCount < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
       ) {
         this.state.processedShopActions[actionKey] = {
@@ -2384,17 +2409,11 @@ export class GameRoom extends DurableObject {
     this.broadcast(this.buildShopStateMessage());
   }
 
-  private pruneProcessedShopActionsIfNeeded(): void {
-    if (!this.state) return;
-    const keys = Object.keys(this.state.processedShopActions);
-    let count = keys.length;
-    if (count < MAX_PROCESSED_SHOP_ACTIONS) return;
-    for (const key of keys) {
-      if (!key.startsWith('BUY_SELL:')) continue;
-      delete this.state.processedShopActions[key];
-      count--;
-      if (count < MAX_PROCESSED_SHOP_ACTIONS) return;
-    }
+  private shopActionBudget(session: { readySlots: readonly number[] }): number {
+    // Leave an entry for each human who still has to confirm READY.
+    const readySlots = new Set(session.readySlots);
+    const remainingReady = this.getHumanSlots().filter(slot => !readySlots.has(slot)).length;
+    return MAX_PROCESSED_SHOP_ACTIONS - remainingReady;
   }
 
   private async handleShopBuySell(
@@ -2460,6 +2479,13 @@ export class GameRoom extends DurableObject {
       }, 'BUY_SELL');
       return;
     }
+    if (Object.keys(this.state.processedShopActions).length >= this.shopActionBudget(session)) {
+      this.sendToSlot(slot, {
+        type: 'SHOP_REJECTED', shopEpoch: session.shopEpoch,
+        actionId: message.actionId, ...target, delta: message.delta, reason: 'PURCHASE_LIMIT',
+      } satisfies ShopRejectedMessage);
+      return;
+    }
     const player = this.state.players[slot];
     if (!player) {
       await this.rejectShopAction(slot, {
@@ -2496,7 +2522,6 @@ export class GameRoom extends DurableObject {
     session.purchasesByPlayerId = result.counters;
     const acknowledgedAction = { slot, actionId: message.actionId };
     const stateMessage = this.buildShopStateMessage(acknowledgedAction);
-    this.pruneProcessedShopActionsIfNeeded();
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
@@ -2574,7 +2599,6 @@ export class GameRoom extends DurableObject {
     const acknowledgedAction = { slot, actionId: message.actionId };
     if (this.allHumansReady(session)) session.closingAction ??= acknowledgedAction;
     const stateMessage = this.buildShopStateMessage(acknowledgedAction);
-    this.pruneProcessedShopActionsIfNeeded();
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
