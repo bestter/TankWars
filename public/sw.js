@@ -1,4 +1,4 @@
-const CACHE_NAME = "tankwars-v6";
+const CACHE_NAME = "tankwars-v7";
 const APP_PATH = "/index.html";
 const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
@@ -92,8 +92,9 @@ self.addEventListener("fetch", (e) => {
       isManifestRequest && !isNavigate
         ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
         : fetch(e.request);
-    // Clé canonique sans query string pour ne jamais persister de jeton (?token=...) dans CacheStorage
+    // La clé et l’URL mémorisée dans la réponse sont deux valeurs distinctes.
     const cacheKey = isManifestRequest ? MANIFEST_PATH : APP_PATH;
+    const hasInvitationToken = requestUrl.searchParams.has("token");
 
     e.respondWith(
       fetchRequest
@@ -106,9 +107,8 @@ self.addEventListener("fetch", (e) => {
               return response;
             }
           }
-          if (response.ok && (isManifestRequest || (
-            !response.redirected && /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? "")
-          ))) {
+          if (response.ok && !hasInvitationToken && !response.redirected && (isManifestRequest ||
+            /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? ""))) {
             const copy = response.clone();
             const cacheWrite = caches
               .open(CACHE_NAME)

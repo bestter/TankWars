@@ -1,6 +1,7 @@
 import { FALL_DISTANCE_MAX_PX, type Player } from "../../types/player";
 import { reinforcedShieldCapacity } from "../round/shield";
 import { ROUND_HEIGHT, ROUND_WIDTH } from "../round/prepareRound";
+import { CLUSTER_SUBMUNITION_COUNT } from "../combatConstants";
 import {
   DAMAGE_PRECISION,
   ExactAccumulator,
@@ -44,6 +45,7 @@ export function validateEarnings(
   const beforeById = new Map<string, Player>();
   const afterById = new Map<string, Player>();
   const directVictims = new Set(weaponId === "BULLDOZER" ? [] : report.directHitVictimIds);
+  const isCluster = weaponId === "CLUSTER";
   let opponentDamageMilli = 0;
   let newlyDeadOpponents = 0;
   const aliveBeforeIds: string[] = [];
@@ -84,13 +86,19 @@ export function validateEarnings(
           // fractional shield left. Earlier absorption pays at most half per
           // shield point spent (splash reward or the direct absorption ratio).
           let shieldDamageCap = shieldDelta;
-          if (shieldDelta > 0 && normalized.tank.shield === 0 && directVictims.has(original.id)) {
-            const directAbsorptionCap = weaponId === "CLUSTER" ? shieldDelta / 2 + 1 : Math.ceil(shieldDelta / 2);
+          const wasDirect = directVictims.has(original.id);
+          if (shieldDelta > 0 && normalized.tank.shield === 0 && wasDirect) {
+            const directAbsorptionCap = isCluster ? shieldDelta / 2 + 1 : Math.ceil(shieldDelta / 2);
             shieldDamageCap = Math.max(shieldDelta, directAbsorptionCap);
           }
+          // Each submunition rounds health and absorption independently,
+          // adding at most half a milli-point per impact and component.
+          const roundingPerComponent = isCluster && wasDirect ? Math.floor(CLUSTER_SUBMUNITION_COUNT / 2) : 0;
           opponentDamageMilli +=
             Math.ceil(healthDelta * DAMAGE_PRECISION) +
-            Math.ceil(shieldDamageCap * DAMAGE_PRECISION);
+            Math.ceil(shieldDamageCap * DAMAGE_PRECISION) +
+            (healthDelta > 0 ? roundingPerComponent : 0) +
+            (shieldDelta > 0 ? roundingPerComponent : 0);
         }
         if (normalized.tank.isDead) {
           newlyDeadOpponents++;

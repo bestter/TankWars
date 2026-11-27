@@ -1,6 +1,9 @@
 import { readFile, stat, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
+import { constants as bufferLimits } from "node:buffer";
+
+const MIB = 1024 * 1024;
 
 async function startServer() {
   const { createServer } = await import("vite");
@@ -10,12 +13,12 @@ async function startServer() {
 
 const [path, ...args] = process.argv.slice(2);
 if (!path) {
-  console.error("Usage: node Scripts/read-shot-archive.mjs <archive.json> [--shot <key> | --shot-hash <sha256>] [--output <file>] [--replay] [--weapon <id> --angle <n> --power <n>]");
+  console.error("Usage: node Scripts/read-shot-archive.mjs <archive.json> [--max-input-mib <n>] [--shot <key> | --shot-hash <sha256>] [--output <file>] [--replay] [--weapon <id> --angle <n> --power <n>]");
   process.exitCode = 1;
 } else {
   let server, disk, temporary;
   try {
-    const allowed = new Set(["--shot", "--shot-hash", "--replay", "--weapon", "--angle", "--power", "--output"]);
+    const allowed = new Set(["--max-input-mib", "--shot", "--shot-hash", "--replay", "--weapon", "--angle", "--power", "--output"]);
     const options = new Map();
     for (let i = 0; i < args.length; i++) {
       if (!allowed.has(args[i]) || options.has(args[i])) throw new Error("INVALID_CLI_ARGUMENT");
@@ -39,8 +42,12 @@ if (!path) {
       }
       alternative = { weaponId: options.get("--weapon"), angle, power };
     }
-    const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
-    if ((await stat(path)).size > MAX_ARCHIVE_BYTES) throw new Error("ARCHIVE_TOO_LARGE");
+    const maxInputMiB = Number(options.get("--max-input-mib") ?? 50);
+    if (!Number.isSafeInteger(maxInputMiB) || maxInputMiB < 1 || maxInputMiB > Math.ceil(bufferLimits.MAX_STRING_LENGTH / MIB)) {
+      throw new Error("INVALID_ARCHIVE_SIZE_LIMIT");
+    }
+    const maxInputBytes = Math.min(maxInputMiB * MIB, bufferLimits.MAX_STRING_LENGTH);
+    if ((await stat(path)).size > maxInputBytes) throw new Error("ARCHIVE_TOO_LARGE: raise --max-input-mib for a larger JSON input");
     const text = await readFile(path, "utf8");
     let value;
     try { value = JSON.parse(text); }

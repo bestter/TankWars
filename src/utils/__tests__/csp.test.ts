@@ -88,7 +88,7 @@ describe('Service worker cache strategy', () => {
   it('uses network-first for navigations and manifest.json while ignoring cross-origin fetches', () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const content = fs.readFileSync(swPath, 'utf-8');
-    expect(content).toContain('const CACHE_NAME = "tankwars-v6"');
+    expect(content).toContain('const CACHE_NAME = "tankwars-v7"');
     expect(content).toContain('e.request.mode === "navigate"');
     expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
     expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
@@ -149,7 +149,7 @@ describe('Service worker cache strategy', () => {
     const responses = { exact, canonical, network: networkResponse };
     expect(await pending).toBe(responses[expectedSource]);
     expect(match.mock.calls.map(([input, options]) => {
-      expect(options).toEqual({ cacheName: 'tankwars-v6' });
+      expect(options).toEqual({ cacheName: 'tankwars-v7' });
       const url = new URL(typeof input === 'string' ? input : input.url, origin);
       return `${url.pathname}${url.search}`;
     })).toEqual(lookups);
@@ -181,7 +181,11 @@ describe('Service worker cache strategy', () => {
         return new Response('User-agent: *', { headers: { 'Content-Type': 'text/plain' } });
       }
       const html = url.pathname === '/other.html' ? '<html>other</html>' : '<html>app</html>';
-      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+      const response = new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+      Object.defineProperty(response, 'url', { value: url.href });
+      const clone = response.clone.bind(response);
+      response.clone = () => Object.defineProperty(clone(), 'url', { value: url.href });
+      return response;
     });
 
     vm.runInNewContext(fs.readFileSync(path.resolve(process.cwd(), 'public/sw.js'), 'utf-8'), {
@@ -211,16 +215,12 @@ describe('Service worker cache strategy', () => {
       return res;
     };
 
-    const navRes = await dispatch({
-      url: `${origin}/?room=r1&slot=1&token=secret-token`,
-      method: 'GET',
-      mode: 'navigate',
-      destination: 'document',
-    });
-    expect(navRes?.status).toBe(200);
-    expect([...stored.keys()]).toEqual(['/index.html']);
-
     const navigate = (url: string) => dispatch({ url: `${origin}${url}`, method: 'GET', mode: 'navigate', destination: 'document' });
+    expect((await navigate('/'))?.status).toBe(200);
+    const invitation = '/?room=r1&slot=1&token=secret-token';
+    expect((await navigate(invitation))?.url).toBe(`${origin}${invitation}`);
+    expect([...stored.keys()]).toEqual(['/index.html']);
+    expect(stored.get('/index.html')?.url).toBe(`${origin}/`);
     expect(await (await navigate('/robots.txt'))?.text()).toBe('User-agent: *');
     expect(await (await navigate('/other.html'))?.text()).toBe('<html>other</html>');
     expect(await (await navigate('/index.html?plain'))?.text()).toBe('User-agent: *');
@@ -233,7 +233,7 @@ describe('Service worker cache strategy', () => {
       destination: 'document',
     });
     expect(await offlineNavRes?.text()).toBe('<html>app</html>');
-    expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v6' });
+    expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v7' });
     await expect(navigate('/robots.txt')).rejects.toThrow('Offline');
 
     fetchMock.mockClear();
@@ -397,7 +397,7 @@ describe('Service worker cache strategy', () => {
     expect(skipWaitingCalled).toBe(true);
     expect(clientsClaimCalled).toBe(true);
     expect(cacheStorage.has('tankwars-v3')).toBe(false);
-    expect(cacheStorage.get('tankwars-v6')?.get('/manifest.json')?.body)
+    expect(cacheStorage.get('tankwars-v7')?.get('/manifest.json')?.body)
       .toBe('{"orientation":"any"}');
     expect(networkCalls).toContain('/manifest.json');
 

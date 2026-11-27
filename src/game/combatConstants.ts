@@ -16,3 +16,5 @@ export const BOTTOM_SUPPORT_MARGIN = 14;
 
 /** Rayon inclusif d'élimination instantanée THERMONUCLEAR. */
 export const THERMONUCLEAR_INSTANT_KILL_RADIUS = 75;
+
+export const CLUSTER_SUBMUNITION_COUNT = 5;
