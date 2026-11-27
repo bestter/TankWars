@@ -85,4 +85,18 @@ describe("read-shot-archive CLI", () => {
       expect(result.stderr.trim()).toBe("Error: INVALID_ALTERNATIVE_COMMAND");
     },
   );
+
+  it("rejects multi-line invalid JSON inputs without parsing subsequent lines", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tankwars-archive-cli-"));
+    const archive = join(directory, "invalid.json");
+    try {
+      writeFileSync(archive, '{"not":"journal-status"}\n{"second":"line"}\n');
+      const result = run(archive);
+      expect(result.status).toBe(1);
+      expect(result.stderr.trim()).toBe("Error: INVALID_ARCHIVE_JSON");
+    } finally {
+      rmSync(archive, { force: true });
+      rmdirSync(directory);
+    }
+  });
 });

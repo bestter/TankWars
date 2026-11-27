@@ -52,9 +52,15 @@ if (!path) {
     let value;
     try { value = JSON.parse(text); }
     catch {
-      const rows = text.trim().split(/\r?\n/).map(line => JSON.parse(line));
-      if (!rows.length || rows[0].kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
-      value = { schemaVersion: rows[0].schemaVersion, format: "legacy-journal", events: rows.length - 1 };
+      const trimmed = text.trim();
+      const nl = trimmed.indexOf("\n");
+      const firstLine = (nl === -1 ? trimmed : trimmed.slice(0, nl)).trim();
+      let header;
+      try { header = firstLine ? JSON.parse(firstLine) : null; }
+      catch { throw new Error("INVALID_ARCHIVE_JSON"); }
+      if (!header || header.kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
+      const rows = trimmed.split(/\r?\n/).map(line => JSON.parse(line));
+      value = { schemaVersion: header.schemaVersion, format: "legacy-journal", events: rows.length - 1 };
     }
     const isBundle = typeof value === "object" && value !== null && !Array.isArray(value) && value.format === "tankwars-endurance-bundle";
     let archive;

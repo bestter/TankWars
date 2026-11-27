@@ -94,6 +94,7 @@ import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 const REPORT_WINDOW_MS = 20_000;
 const ROOM_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const LEGACY_ROOM_EXPIRY_KEY = 'legacyIdleExpiresAt';
+const TEXT_ENCODER = new TextEncoder();
 const WS_RATE_LIMIT_WINDOW_MS = 5_000;
 const WS_RATE_LIMIT_MAX_MESSAGES = 120;
 const WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE = 240;
@@ -126,10 +127,17 @@ interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   directHitVictimIds: string[];
 }
 
+interface CompactShopFinishAck {
+  type: 'SHOP_COMPLETED_ACK';
+  shopEpoch: number;
+  acknowledgedAction?: ShopActionAcknowledgement;
+}
+
 type PersistedShopActionResult =
   | ShopStateMessage
   | ShopRejectedMessage
-  | ShopFinishMessage;
+  | ShopFinishMessage
+  | CompactShopFinishAck;
 
 interface PersistedShopSession {
   shopEpoch: number;
@@ -310,6 +318,7 @@ export class GameRoom extends DurableObject {
   private wsMessageTimestamps = new Map<number, number[]>();
   private wsRateLimitWarnedUntil = new Map<number, number>();
   private wsRateLimitDroppedCount = new Map<number, number>();
+  private wsPayloadWarnedUntil = new Map<number, number>();
   private needsIdleRefreshOnReconnect = true;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
@@ -908,7 +917,8 @@ export class GameRoom extends DurableObject {
         // Handle messages from this player
         server.accept();
         server.addEventListener('message', (evt) => {
-          this.handleClientMessage(slot, evt.data).catch((err) => {
+          if (this.sockets.get(slot) !== server) return;
+          this.handleClientMessage(slot, evt.data, server).catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error('[GameRoom] Error handling client message from slot=', slot, ':', errorMessage);
           });
@@ -997,8 +1007,17 @@ export class GameRoom extends DurableObject {
     return true;
   }
 
+  private shouldWarnPayload(slot: number): boolean {
+    const now = Date.now();
+    const warnedUntil = this.wsPayloadWarnedUntil.get(slot) ?? 0;
+    if (now < warnedUntil) return false;
+    this.wsPayloadWarnedUntil.set(slot, now + WS_RATE_LIMIT_WINDOW_MS);
+    return true;
+  }
+
   // --- Client message handler (only FIRE for now in MVP) ---
-  private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
+  private async handleClientMessage(slot: number, raw: unknown, ws?: WebSocket): Promise<void> {
+    if (ws && this.sockets.get(slot) !== ws) return;
     if (this.isSlotMessageRateLimited(slot)) {
       const drops = (this.wsRateLimitDroppedCount.get(slot) ?? 0) + 1;
       this.wsRateLimitDroppedCount.set(slot, drops);
@@ -1008,22 +1027,23 @@ export class GameRoom extends DurableObject {
       if (drops >= WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE) {
         console.warn(`[GameRoom] Closing WebSocket for slot ${slot} after sustained rate-limit violations (${drops} dropped messages)`);
         this.wsRateLimitDroppedCount.delete(slot);
-        try {
-          this.sockets.get(slot)?.close(1008, 'rate limit exceeded');
-        } catch {
-          // ignore stale socket
+        const activeWs = ws ?? this.sockets.get(slot);
+        if (activeWs) {
+          await this.handleSocketDisconnect(slot, activeWs, 1008, 'rate limit exceeded');
         }
       }
       return;
     }
     // Enforce payload size limit to prevent memory exhaustion / DoS
     if (typeof raw === 'string') {
-      if (raw.length > 8192) {
-        console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
+      if (raw.length > 8192 || (raw.length > 2730 && TEXT_ENCODER.encode(raw).byteLength > 8192)) {
+        if (this.shouldWarnPayload(slot)) {
+          console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (length: ${raw.length})`);
+        }
         return;
       }
     } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
-      if (raw.byteLength > 8192) {
+      if (raw.byteLength > 8192 && this.shouldWarnPayload(slot)) {
         console.warn(`[GameRoom] Dropping oversized binary payload from slot ${slot} (size: ${raw.byteLength})`);
       }
       return;
@@ -1032,7 +1052,9 @@ export class GameRoom extends DurableObject {
     try {
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        console.warn(`[GameRoom] Invalid message format from slot ${slot}`);
+        if (this.shouldWarnPayload(slot)) {
+          console.warn(`[GameRoom] Invalid message format from slot ${slot}`);
+        }
         return;
       }
       msg = parsed as Record<string, unknown>;
@@ -1229,7 +1251,12 @@ export class GameRoom extends DurableObject {
     });
   }
 
-  private async handleSocketDisconnect(slot: number, ws: WebSocket): Promise<void> {
+  private async handleSocketDisconnect(
+    slot: number,
+    ws: WebSocket,
+    closeCode = 1000,
+    closeReason = 'connection closed',
+  ): Promise<void> {
     if (this.sockets.get(slot) !== ws) {
       try {
         ws.close(1000, 'connection closed');
@@ -1243,7 +1270,7 @@ export class GameRoom extends DurableObject {
     this.wsRateLimitDroppedCount.delete(slot);
     if (this.sockets.size === 0) this.needsIdleRefreshOnReconnect = true;
     try {
-      ws.close(1000, 'connection closed');
+      ws.close(closeCode, closeReason);
     } catch {
       // ignore if already closed
     }
@@ -1792,6 +1819,7 @@ export class GameRoom extends DurableObject {
     this.wsMessageTimestamps.clear();
     this.wsRateLimitWarnedUntil.clear();
     this.wsRateLimitDroppedCount.clear();
+    this.wsPayloadWarnedUntil.clear();
     this.aiProfiles.clear();
   }
 
@@ -2336,6 +2364,7 @@ export class GameRoom extends DurableObject {
       if (
         !Object.hasOwn(this.state.processedShopActions, actionKey) &&
         entries.length < this.shopActionBudget(this.state.shopSession) &&
+        this.countSlotNonReadyShopActions(slot) < this.slotShopActionBudget() &&
         slotRejectionsCount < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
       ) {
         this.state.processedShopActions[actionKey] = {
@@ -2416,6 +2445,49 @@ export class GameRoom extends DurableObject {
     return MAX_PROCESSED_SHOP_ACTIONS - remainingReady;
   }
 
+  private slotShopActionBudget(): number {
+    const humanCount = Math.max(1, this.getHumanSlots().length);
+    // Reserve 1 READY entry per human and split the remaining budget evenly per human slot.
+    return Math.floor((MAX_PROCESSED_SHOP_ACTIONS - humanCount) / humanCount);
+  }
+
+  private countSlotNonReadyShopActions(slot: number): number {
+    if (!this.state) return 0;
+    let count = 0;
+    for (const [key, entry] of Object.entries(this.state.processedShopActions)) {
+      if (entry.slot !== slot) continue;
+      if (key.startsWith('READY:') && entry.result.type !== 'SHOP_REJECTED') continue;
+      count++;
+    }
+    return count;
+  }
+
+  private resolvePersistedShopResult(
+    slot: number,
+    actionId: string,
+    result: PersistedShopActionResult,
+  ): ShopStateMessage | ShopFinishMessage | ShopRejectedMessage {
+    if (result.type === 'SHOP_STATE' && this.state?.shopSession) {
+      return this.buildShopStateMessage({ slot, actionId });
+    }
+    if (result.type === 'SHOP_COMPLETED_ACK') {
+      const completed = this.state?.lastCompletedShop;
+      if (completed && completed.shopEpoch === result.shopEpoch) {
+        return {
+          ...completed,
+          ...(result.acknowledgedAction ? { acknowledgedAction: result.acknowledgedAction } : {}),
+        };
+      }
+      return {
+        type: 'SHOP_REJECTED',
+        shopEpoch: this.state?.shopSession?.shopEpoch ?? null,
+        actionId,
+        reason: 'SHOP_CLOSED',
+      };
+    }
+    return result;
+  }
+
   private async handleShopBuySell(
     slot: number,
     message: ShopBuySellMessage,
@@ -2436,11 +2508,7 @@ export class GameRoom extends DurableObject {
           }, 'BUY_SELL');
           return;
         }
-        const result =
-          previous.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
-              : previous.result;
-        this.sendToSlot(slot, result);
+        this.sendToSlot(slot, this.resolvePersistedShopResult(slot, message.actionId, previous.result));
       }
       else {
         this.sendToSlot(slot, {
@@ -2479,7 +2547,10 @@ export class GameRoom extends DurableObject {
       }, 'BUY_SELL');
       return;
     }
-    if (Object.keys(this.state.processedShopActions).length >= this.shopActionBudget(session)) {
+    if (
+      Object.keys(this.state.processedShopActions).length >= this.shopActionBudget(session) ||
+      this.countSlotNonReadyShopActions(slot) >= this.slotShopActionBudget()
+    ) {
       this.sendToSlot(slot, {
         type: 'SHOP_REJECTED', shopEpoch: session.shopEpoch,
         actionId: message.actionId, ...target, delta: message.delta, reason: 'PURCHASE_LIMIT',
@@ -2558,11 +2629,7 @@ export class GameRoom extends DurableObject {
           await this.completeShopPhase();
         }
         const current = this.state.processedShopActions[actionKey];
-        const result =
-          current.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
-              : current.result;
-        this.sendToSlot(slot, result);
+        this.sendToSlot(slot, this.resolvePersistedShopResult(slot, message.actionId, current.result));
       }
       return;
     }
@@ -2634,14 +2701,20 @@ export class GameRoom extends DurableObject {
       acknowledgedAction: session.closingAction,
     };
 
-    // Chaque action acceptée conserve son accusé et la même carte terminale. Les refus restent des refus.
+    // Chaque action acceptée conserve un accusé compact sans dupliquer la carte. Les refus restent des refus.
     this.state.lastCompletedShop = finish;
     const upgradedShopActions: Record<string, PersistedShopAction> = {};
     for (const [actionKey, action] of Object.entries(this.state.processedShopActions)) {
       if (action.result.type === 'SHOP_STATE' && action.result.shopEpoch === shopEpoch) {
         upgradedShopActions[actionKey] = {
           slot: action.slot,
-          result: { ...finish, acknowledgedAction: action.result.acknowledgedAction },
+          result: {
+            type: 'SHOP_COMPLETED_ACK',
+            shopEpoch,
+            ...(action.result.acknowledgedAction
+              ? { acknowledgedAction: action.result.acknowledgedAction }
+              : {}),
+          },
         };
       } else {
         upgradedShopActions[actionKey] = action;

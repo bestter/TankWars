@@ -18,6 +18,7 @@ function isServerRosterUpdate(value: unknown): value is ServerRosterUpdate {
     return false;
   }
   if (record.gameStarted !== undefined && typeof record.gameStarted !== 'boolean') return false;
+  const maxSlots = typeof record.numPlayers === 'number' ? record.numPlayers : 4;
   const seenSlots = new Set<number>();
   return record.roster.every((entry: unknown) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
@@ -26,13 +27,17 @@ function isServerRosterUpdate(value: unknown): value is ServerRosterUpdate {
       typeof item.slot !== 'number' ||
       !Number.isInteger(item.slot) ||
       item.slot < 0 ||
-      item.slot >= 4 ||
+      item.slot >= maxSlots ||
       seenSlots.has(item.slot)
     ) {
       return false;
     }
     seenSlots.add(item.slot);
-    return typeof item.name === 'string' && (item.type === 'human' || item.type === 'ai');
+    return (
+      typeof item.name === 'string' &&
+      item.name.length <= 32 &&
+      (item.type === 'human' || item.type === 'ai')
+    );
   });
 }
 

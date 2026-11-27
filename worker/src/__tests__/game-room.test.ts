@@ -5064,11 +5064,12 @@ describe('GameRoom Durable Object', () => {
       }
     });
 
-    it('closes a WebSocket with 1008 after sustained rate-limit violations', async () => {
+    it('closes a WebSocket with 1008, detaches it immediately, shifts authority, ignores stale messages, and bounds UTF-8/warn spam', async () => {
       vi.useFakeTimers();
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        vi.setSystemTime(1_700_000_000_000);
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
         const setup = createMockCtx();
         const room = new GameRoom(setup.ctx as DurableObjectState, {});
         Object.defineProperty(room, 'ctx', { value: setup.ctx });
@@ -5083,19 +5084,105 @@ describe('GameRoom Durable Object', () => {
         }));
 
         const ws0 = new MockWebSocket();
-        (Reflect.get(room, 'sockets') as Map<number, WebSocket>).set(0, ws0 as unknown as WebSocket);
-        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
-        for (let i = 0; i < 120 + 240; i++) {
-          await handle.call(room, 0, '{}');
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+        expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown, ws?: WebSocket) => Promise<void>;
+        // Multi-byte UTF-8 > 8192 bytes even though length === 3000 <= 8192; warnings are rate-limited.
+        for (let i = 0; i < 5; i++) {
+          await handle.call(room, 0, JSON.stringify({ type: 'IDENTIFY', name: '€'.repeat(3000) }), ws0 as unknown as WebSocket);
+          await handle.call(room, 0, '123', ws0 as unknown as WebSocket);
+        }
+        const payloadWarnings = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && (msg.includes('oversized payload') || msg.includes('Invalid message format')),
+        );
+        expect(payloadWarnings).toHaveLength(1);
+        expect(room.getRoster()!.joinedHumans[0]?.name).toBe('Alice');
+
+        // Remaining messages in the 5s window + 240 dropped messages trigger immediate 1008 detachment.
+        for (let i = 0; i < 110 + 240; i++) {
+          await handle.call(room, 0, '{}', ws0 as unknown as WebSocket);
         }
         expect(ws0.closeCode).toBe(1008);
+        expect(sockets.has(0)).toBe(false);
+        expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+
+        // Even after the rate-limit window expires, messages from the detached ws0 instance are ignored.
+        vi.setSystemTime(baseNow + 10_000);
+        await handle.call(room, 0, JSON.stringify({ type: 'IDENTIFY', name: 'Zombie' }), ws0 as unknown as WebSocket);
+        expect(room.getRoster()!.joinedHumans[0]?.name).toBe('Alice');
       } finally {
         warnSpy.mockRestore();
         vi.useRealTimers();
       }
     });
 
-    it('retains accepted shop actions across saturation, restart and READY', async () => {
+    it('isolates shop action budgets per human slot so one player cannot block another', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'shop-isolation-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const state = room.getRoster()!;
+      state.roundEnded = true;
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
+
+      state.players[0].inventory.GRENADE = 10;
+      state.players[1].inventory.GRENADE = 10;
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'seed-0', weaponId: 'GRENADE', delta: -1,
+      }));
+      const seedResult = state.processedShopActions['BUY_SELL:0:seed-0'].result;
+      if (seedResult.type !== 'SHOP_STATE') throw new Error('Missing seed sale');
+      // Slot 0 consumes its full per-slot budget (255 = floor((512 - 2) / 2)).
+      for (let i = 0; i < 254; i++) {
+        const actionId = `spam-${i}`;
+        state.processedShopActions[`BUY_SELL:0:${actionId}`] = {
+          slot: 0, result: { ...seedResult, acknowledgedAction: { slot: 0, actionId } },
+        };
+      }
+
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'slot0-blocked', weaponId: 'GRENADE', delta: -1,
+      }));
+      expect(ws0.getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', actionId: 'slot0-blocked', reason: 'PURCHASE_LIMIT' });
+
+      // Slot 1 still transacts and both slots can confirm READY.
+      await handle.call(room, 1, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'slot1-ok', weaponId: 'GRENADE', delta: -1,
+      }));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 1, actionId: 'slot1-ok' } });
+
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' }));
+      await handle.call(room, 1, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' }));
+      expect(ws1.getAllMessages<{ type: string }>().some(message => message.type === 'SHOP_FINISH')).toBe(true);
+    });
+
+    it('retains accepted shop actions across saturation, restart and READY using compact completion markers', async () => {
       const setup = createMockCtx();
       const room = new GameRoom(setup.ctx as DurableObjectState, {});
       Object.defineProperty(room, 'ctx', { value: setup.ctx });
@@ -5131,7 +5218,13 @@ describe('GameRoom Durable Object', () => {
       await handle.call(room, 1, sell('first-sale'));
       const firstSale = state.processedShopActions['BUY_SELL:1:first-sale'].result;
       if (firstSale.type !== 'SHOP_STATE') throw new Error('Missing first accepted sale');
-      for (let i = 0; i < 508; i++) {
+      for (let i = 0; i < 255; i++) {
+        const actionId = `slot0-prior-${i}`;
+        state.processedShopActions[`BUY_SELL:0:${actionId}`] = {
+          slot: 0, result: { ...firstSale, acknowledgedAction: { slot: 0, actionId } },
+        };
+      }
+      for (let i = 0; i < 253; i++) {
         const actionId = `prior-sale-${i}`;
         state.processedShopActions[`BUY_SELL:1:${actionId}`] = {
           slot: 1, result: { ...firstSale, acknowledgedAction: { slot: 1, actionId } },
@@ -5160,7 +5253,16 @@ describe('GameRoom Durable Object', () => {
       await handle.call(restored, 1, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' }));
       expect(ws1.getAllMessages<{ type: string }>().find(message => message.type === 'SHOP_FINISH'))
         .toMatchObject({ acknowledgedAction: { slot: 1, actionId: 'ready-1' } });
-      expect(Object.keys(restored.getRoster()!.processedShopActions)).toHaveLength(512);
+      const completedActions = restored.getRoster()!.processedShopActions;
+      expect(Object.keys(completedActions)).toHaveLength(512);
+      const compactEntry = completedActions['BUY_SELL:1:first-sale'].result;
+      expect(compactEntry).toEqual({
+        type: 'SHOP_COMPLETED_ACK',
+        shopEpoch: 1,
+        acknowledgedAction: { slot: 1, actionId: 'first-sale' },
+      });
+      expect('map' in compactEntry).toBe(false);
+
       await handle.call(restored, 1, sell('first-sale'));
       expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_FINISH', acknowledgedAction: { slot: 1, actionId: 'first-sale' } });
       expect(restored.getRoster()!.players[1]).toMatchObject({ inventory, money });

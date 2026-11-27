@@ -604,6 +604,8 @@ describe('useOnlineLobby', () => {
         mockWs.onmessage?.({ data: JSON.stringify({ type: 'ROSTER_UPDATE', roster: 'not-an-array' }) });
         mockWs.onmessage?.({ data: JSON.stringify({ type: 'ROSTER_UPDATE', roster: [{ slot: 99, type: 'evil', name: 'x' }] }) });
         mockWs.onmessage?.({ data: JSON.stringify({ type: 'ROSTER_UPDATE', numPlayers: 2, roster: [{ slot: 0, type: 'human', name: 'A' }, { slot: 0, type: 'human', name: 'B' }] }) });
+        mockWs.onmessage?.({ data: JSON.stringify({ type: 'ROSTER_UPDATE', numPlayers: 2, roster: [{ slot: 2, type: 'human', name: 'Out' }] }) });
+        mockWs.onmessage?.({ data: JSON.stringify({ type: 'ROSTER_UPDATE', numPlayers: 2, roster: [{ slot: 0, type: 'human', name: 'X'.repeat(33) }] }) });
       });
     }).not.toThrow();
     expect(result.current.roster).toEqual([]);
