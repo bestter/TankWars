@@ -258,7 +258,7 @@ function App() {
     showMenu,
     showOnlineLobby,
   );
-  const { showContact, openContact, closeContact } = useContactRoute(gameScreen === 'menu', hotseatOnly);
+  const { showContact, openContact, closeContact, navigationFailed } = useContactRoute(gameScreen === 'menu', hotseatOnly);
   useScreenScroll(showContact ? 'contact' : gameScreen, mainRef);
 
   const handleOnlineMenuToggle = (): void => {
@@ -291,6 +291,9 @@ function App() {
 
       <main ref={mainRef} id="main-content" tabIndex={-1} className="app-main">
         <OnlinePersistenceAlerts messages={messages} />
+        {navigationFailed && gameScreen === 'menu' && (
+          <p className="contact-error" role="alert">{t('contact_navigation_error')}</p>
+        )}
         {showEndurance && EnduranceScreen ? (
           <Suspense fallback={<p>{t("endurance_loading")}</p>}>
             <EnduranceScreen onExit={() => setShowEndurance(false)} />

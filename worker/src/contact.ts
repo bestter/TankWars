@@ -60,14 +60,14 @@ export async function handleContact(
     return Response.json({ error: 'Invalid contact request' }, { status: 400 });
   }
 
-  const limited = await enforceRateLimit();
-  if (limited) return limited;
-
   const { CONTACT_EMAIL: binding, CONTACT_FROM_EMAIL: from, CONTACT_TO_EMAIL: to } = env;
-  if (!binding || !from || !to || !isValidContactEmail(from) || !isValidContactEmail(to)) {
+  if (typeof binding?.send !== 'function' || !from || !to || !isValidContactEmail(from) || !isValidContactEmail(to)) {
     console.error('[Worker] Contact email binding or address configuration is missing or invalid');
     return Response.json({ error: 'Contact service unavailable' }, { status: 503 });
   }
+
+  const limited = await enforceRateLimit();
+  if (limited) return limited;
 
   // Quote each user-controlled line so it cannot imitate an unquoted boundary.
   const quoted = `Name: ${payload.name}\nEmail: ${payload.email}\n\n${payload.message}`

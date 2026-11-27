@@ -65,9 +65,9 @@ describe('ContactScreen', () => {
   });
 
   it.each([
-    [true, 'http://localhost:8787'],
-    [false, 'https://worker.example.com'],
-  ])('posts contact JSON and prevents repeat submits while pending (DEV=%s)', async (dev, apiBase) => {
+    [true, 'http://localhost:8787', 'contact_local_worker_description'],
+    [false, 'https://worker.example.com', 'contact_sent_description'],
+  ])('posts contact JSON and shows the matching confirmation (DEV=%s)', async (dev, apiBase, description) => {
     vi.stubEnv('DEV', dev);
     vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
     vi.stubEnv('VITE_API_BASE', 'https://worker.example.com/');
@@ -86,6 +86,8 @@ describe('ContactScreen', () => {
     expect(submit.matches(':disabled')).toBe(true);
     await act(async () => resolveResponse(Response.json({ ok: true })));
     expect(screen.getByRole('heading', { name: 'contact_sent_title' })).toBeDefined();
+    expect(screen.getByText(description)).toBeDefined();
+    expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(description);
   });
 
   it.each([

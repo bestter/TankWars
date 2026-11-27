@@ -128,6 +128,9 @@ describe('Contact delivery', () => {
     expect(limited.status).toBe(429);
     expect(limited.headers.get('Retry-After')).toBe('900');
     expect(limited.headers.get('Access-Control-Expose-Headers')).toBe('Retry-After');
+    expect(limited.headers.get('Access-Control-Allow-Origin')).toBe('https://tankwars-game.com');
+    expect(limited.headers.get('Vary')).toBe('Origin');
+    expect(limited.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect((await createRoom('192.0.2.15')).status).toBe(200);
     expect((await connectWebSocket('192.0.2.15')).status).toBe(200);
     expect(send).toHaveBeenCalledTimes(3);
@@ -144,15 +147,30 @@ describe('Contact delivery', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it.each(['missing binding', 'missing address', 'provider failure'])('returns a generic error for %s', async (problem) => {
+  it.each(['missing binding', 'missing address', 'invalid address'])('rejects %s before resolving the limiter', async (problem) => {
     const { env, send } = createEnv();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     if (problem === 'missing binding') delete env.CONTACT_EMAIL;
     if (problem === 'missing address') delete env.CONTACT_TO_EMAIL;
-    if (problem === 'provider failure') send.mockRejectedValue(new Error('details with team@example.com'));
+    if (problem === 'invalid address') env.CONTACT_FROM_EMAIL = 'invalid';
     const response = await worker.fetch(contactRequest(), env);
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ error: 'Contact service unavailable' });
+    expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledOnce();
+  });
+
+  it('returns a generic error when delivery fails after admission without logging untrusted details', async () => {
+    const { env, send, limiterFetch } = createEnv();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const providerError = new Error('details with team@example.com');
+    providerError.name = 'failure for guest@example.com';
+    send.mockRejectedValue(providerError);
+    const response = await worker.fetch(contactRequest(), env);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'Contact service unavailable' });
+    expect(limiterFetch).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledOnce();
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/example\.com|guest/);
   });
@@ -275,6 +293,8 @@ describe('WebSocket admission rate limiting', () => {
     const denied = await connectWebSocket(ip);
     expect(denied.status).toBe(429);
     expect(denied.headers.get('Retry-After')).toBe('10');
+    expect(denied.headers.get('Access-Control-Allow-Origin')).toBe('https://tankwars.pages.dev');
+    expect(denied.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(env.RATE_LIMITER.idFromName).toHaveBeenCalledWith('ws_rate_limit_' + ip);
     expect(env.GAME_ROOM.idFromName).toHaveBeenCalledTimes(WEBSOCKET_RATE_LIMIT_MAX_REQUESTS);
     expect(roomFetch).toHaveBeenCalledTimes(WEBSOCKET_RATE_LIMIT_MAX_REQUESTS);

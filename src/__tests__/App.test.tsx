@@ -93,20 +93,24 @@ describe('App component (State and Lifecycle integration)', () => {
   });
 
   it('synchronizes contact with browser back and forward and keeps the Canvas unmounted', async () => {
+    const suffix = '?lang=fr#anchor';
+    window.history.replaceState({ keep: true }, '', `/${suffix}`);
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
-    expect(window.location.pathname).toBe('/contact');
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/contact${suffix}`);
+    expect(window.history.state).toEqual({ keep: true });
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'contact_title' }));
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
     expect(screen.getByTestId('seo-mock').dataset.title).toBe('contact_seo_title');
 
     window.history.back();
     await waitFor(() => expect(screen.getByText('main_title')).toBeDefined());
-    expect(window.location.pathname).toBe('/');
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/${suffix}`);
     window.history.forward();
     await screen.findByRole('heading', { name: 'contact_title' });
     fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
-    expect(window.location.pathname).toBe('/');
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/${suffix}`);
+    expect(window.history.state).toEqual({ keep: true });
     expect(document.activeElement).toBe(screen.getByRole('main'));
   });
 
@@ -114,6 +118,41 @@ describe('App component (State and Lifecycle integration)', () => {
     window.history.replaceState({}, '', path);
     render(<App />);
     expect(screen.getByRole('heading', { name: 'contact_title' })).toBeDefined();
+  });
+
+  it('keeps the menu after a previously open contact path is blocked and contact becomes available again', () => {
+    window.history.replaceState({}, '', '/contact');
+    const { rerender } = render(<App />);
+    expect(screen.getByRole('heading', { name: 'contact_title' })).toBeDefined();
+
+    deploymentMode.hotseatOnly = true;
+    rerender(<App />);
+    expect(window.location.pathname).toBe('/');
+    deploymentMode.hotseatOnly = false;
+    rerender(<App />);
+    expect(screen.getByRole('button', { name: 'contact_title' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
+  });
+
+  it('keeps the contact form and its draft if history rejects navigation', () => {
+    window.history.replaceState({}, '', '/contact?lang=fr#anchor');
+    const pushState = vi.spyOn(window.history, 'pushState').mockImplementationOnce(() => {
+      throw new DOMException('History is unavailable', 'SecurityError');
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<App />);
+    const message = screen.getByLabelText<HTMLTextAreaElement>('contact_message');
+    fireEvent.change(message, { target: { value: 'Unsaved contact message' } });
+    fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
+    expect(screen.getByText('contact_navigation_error')).toBeDefined();
+    expect(log).toHaveBeenCalledWith('[TankWars] Contact history update failed', 'pushState');
+    expect(message.value).toBe('Unsaved contact message');
+    expect(window.location.pathname).toBe('/contact');
+
+    fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
+    expect(pushState).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('contact_navigation_error')).toBeNull();
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe('/?lang=fr#anchor');
   });
 
   it.each(['hotseat', 'no API base'])('hides contact and normalizes the URL in %s builds', (mode) => {

@@ -62,7 +62,9 @@ export function ContactScreen({ onBack }: { onBack: () => void }) {
   const [errors, setErrors] = useState<ContactErrors>({});
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const simulated = import.meta.env.DEV && import.meta.env.VITE_CONTACT_USE_LOCAL_WORKER !== 'true';
-  const sentDescription = import.meta.env.DEV ? 'contact_simulated_description' : 'contact_sent_description';
+  const sentDescription = simulated
+    ? 'contact_simulated_description'
+    : import.meta.env.DEV ? 'contact_local_worker_description' : 'contact_sent_description';
 
   useLayoutEffect(() => {
     headingRef.current?.focus({ preventScroll: true });

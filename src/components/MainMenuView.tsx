@@ -148,9 +148,11 @@ export function MainMenuView({
             )}
             {onEndurance && <div style={{ marginTop: 10 }}><button type="button" className="retro-online-btn" onClick={onEndurance}>{t("endurance_title")}</button></div>}
             {onContact && (
-              <button className="retro-online-btn contact-back" type="button" onClick={onContact}>
-                {t("contact_title")}
-              </button>
+              <div style={{ marginTop: 10 }}>
+                <button className="retro-online-btn" type="button" onClick={onContact}>
+                  {t("contact_title")}
+                </button>
+              </div>
             )}
           </div>
 

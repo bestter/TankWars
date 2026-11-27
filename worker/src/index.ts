@@ -155,10 +155,10 @@ export default {
 
       // Bound the complete identifier in UTF-8 bytes, including our namespace prefix.
       if (TEXT_ENCODER.encode(limiterName).byteLength > 256) {
-        return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
+        return new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
-        }));
+        });
       }
 
       try {
@@ -168,10 +168,10 @@ export default {
         });
         const retryAfter = response.headers.get('Retry-After');
         if (response.status === 429 && retryAfter !== null && /^[1-9]\d*$/.test(retryAfter)) {
-          return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+          return new Response(JSON.stringify({ error: 'Too Many Requests' }), {
             status: 429,
             headers: { 'content-type': 'application/json', 'Retry-After': retryAfter },
-          }));
+          });
         }
         if (response.status !== 204) {
           throw new Error(`Unexpected rate limiter response: ${response.status}`);
@@ -181,10 +181,10 @@ export default {
         console.error(`[Worker] Rate limiter unavailable or failed (${scope}):`, errorMessage);
 
         // Fail closed for limiter failures to prevent bypassing rate limit
-        return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
           status: 500,
           headers: { 'content-type': 'application/json' },
-        }));
+        });
       }
       return null;
     };
@@ -245,7 +245,7 @@ export default {
 
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
-        return rateLimitResponse;
+        return withResponseHeaders(rateLimitResponse);
       }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // Normalize the external payload before forwarding the room configuration to the DO.
@@ -336,7 +336,7 @@ export default {
       }
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
-        return rateLimitResponse;
+        return withResponseHeaders(rateLimitResponse);
       }
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
@@ -387,7 +387,7 @@ export default {
       }
 
       const rateLimitResponse = await enforceRateLimit('websocket');
-      if (rateLimitResponse) return rateLimitResponse;
+      if (rateLimitResponse) return withResponseHeaders(rateLimitResponse);
 
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
