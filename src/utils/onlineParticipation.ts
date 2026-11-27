@@ -1,4 +1,5 @@
 import type { SlotUI } from '../components/onlineLobbyTypes';
+import { isSafeRoomId } from '../game/online/protocol';
 import { clearOnlineSession, readOnlineSession } from './onlineSession';
 
 const KEY = 'tankwars-online-participation-v1';
@@ -31,7 +32,7 @@ export function sameParticipation(a: OnlineParticipation, b: { roomId: string; s
   return a.room === b.roomId && a.slot === b.slot && a.token === b.token;
 }
 export function isParticipation(value: unknown): value is OnlineParticipation {
-  if (!record(value) || value.version !== 1 || !nonempty(value.room) || !validSlot(value.slot) ||
+  if (!record(value) || value.version !== 1 || !nonempty(value.room) || !isSafeRoomId(value.room) || !validSlot(value.slot) ||
     !nonempty(value.token) || typeof value.name !== 'string' || value.name.length > 16 ||
     typeof value.engaged !== 'boolean' || (value.engaged && !value.name.trim()) ||
     (value.mode !== 'host' && value.mode !== 'guest') || !Array.isArray(value.slots)) return false;
@@ -94,7 +95,7 @@ export function readOnlineEntry(enabled: boolean) {
   const rawSlot = params.get('slot');
   const token = params.get('token');
   const slot = rawSlot !== null && /^[0-3]$/.test(rawSlot) ? Number(rawSlot) : -1;
-  const valid = nonempty(room) && validSlot(slot) && nonempty(token) &&
+  const valid = nonempty(room) && isSafeRoomId(room) && validSlot(slot) && nonempty(token) &&
     ['room', 'slot', 'token'].every(key => params.getAll(key).length === 1);
   const saved = enabled ? readOnlineSession() : null;
   const lobby = enabled ? readParticipation() : null;

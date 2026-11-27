@@ -1,4 +1,4 @@
-import { insideTankHitbox } from "../combatConstants";
+import { CLUSTER_SUBMUNITION_COUNT, insideTankHitbox } from "../combatConstants";
 import { BALLISTICS_BASE_SPEED, advanceProjectile, projectileOutOfBounds } from "./projectileMotion";
 import { applyBulldozerHit } from "./bulldozerImpact";
 import { secureRandom, createSeededRNG } from '../../utils/random';
@@ -556,7 +556,7 @@ export class PhysicsEngine {
    * Parent is removed without its own explosion.
    */
   private splitCluster(parentIndex: number, p: Projectile): void {
-    const numSubs = 5; // enough to make cluster noticeably stronger with spread
+    const numSubs = CLUSTER_SUBMUNITION_COUNT;
     const power = p.initialPower ?? 50;
     const maxSpreadRad = (Math.PI / 7) * (power / 70); // wider spread for higher power shots
     const currentSpeed = Math.hypot(p.vx, p.vy);

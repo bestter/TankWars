@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { makePlayer, makeTank } from "../../__tests__/helpers";
+import { describe, expect, it, vi } from "vitest";
+import { makePlayer, makeRoundMap, makeTank } from "../../__tests__/helpers";
+import { GameEngine } from "../../engine/GameEngine";
+import { consumeWeaponForFire } from "../../shop/shopTransaction";
 import { earningsPlayers, validateEarnings } from "../earningsValidation";
 import { isStrictOnlineMessage, type ShotEarningsMessage } from "../protocol";
 
@@ -70,6 +72,7 @@ describe("v3 earnings authority", () => {
     roster[1].tank.health = 60;
     report.players[1].tank.health = health;
     report.players[1].tank.shield = shield;
+    if (health === 60 && shield === 20) report.awards = [];
     const before = structuredClone(roster);
     const result = validateEarnings(report, roster, "a", "MISSILE");
     expect(result.ok).toBe(accepted);
@@ -100,8 +103,17 @@ describe("v3 earnings authority", () => {
     ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["a"]; }],
     ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["b", "b"]; }],
     ["MALFORMED", (r: ShotEarningsMessage) => { r.awards.push(r.awards[0]); }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.awards = [{ playerId: "a", amount: 1_000_000 }]; }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.awards = [{ playerId: "b", amount: 5 }]; }],
+    ["MALFORMED", (r: ShotEarningsMessage) => { r.players[1].tank.position.x = 9999; }],
+    ["ILLEGAL_VICTIM", (r: ShotEarningsMessage) => { r.directHitVictimIds = ["b"]; }],
   ] as const)("refuses %s before modifying the roster", (reason, mutate) => {
     const { roster, report } = fixture();
+    report.players[1].tank.shield = 15;
+    if (reason === "ILLEGAL_VICTIM") {
+      report.players[1].tank.shield = 20;
+      report.awards = [];
+    }
     const before = structuredClone(roster);
     mutate(report);
     expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason });
@@ -115,7 +127,77 @@ describe("v3 earnings authority", () => {
     expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "RESURRECTION" });
     const next = fixture();
     next.report.players[1].inventory.BULLET = 0;
+    next.report.awards = [];
     expect(validateEarnings(next.report, next.roster, "a", "MISSILE").ok).toBe(true);
+  });
+
+  it("allows the rounded absorption of a depleted fractional shield on a direct hit", () => {
+    const { roster, report } = fixture();
+    roster[1].tank.shield = 0.2;
+    report.players[1].tank.shield = 0;
+    report.players[1].tank.health = roster[1].tank.health - 10;
+    report.awards[0].amount = 33;
+    report.directHitVictimIds = ["b"];
+    expect(validateEarnings(report, roster, "a", "MISSILE").ok).toBe(true);
+
+    report.awards[0].amount = 34;
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+    report.awards[0].amount = 33;
+    report.directHitVictimIds = [];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+  });
+
+  it("accepts the actual CLUSTER reward when individual impacts round up", () => {
+    const map = makeRoundMap(1, 240);
+    map.materials.fill("ROCK");
+    const rows = [120, 169.811, 500, 690].map((x, index) => {
+      const id = `player-${index}`;
+      return makePlayer({ id, name: id, tank: makeTank(id, x, 240), inventory: { CLUSTER: 1 } });
+    });
+    rows[0].tank.currentWeapon = "CLUSTER";
+    const engine = new GameEngine(map.width, map.height, { headless: true });
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    try {
+      engine.setLocalMatch(false);
+      engine.reconstructCombat(map, rows);
+      engine.setLocalPlayerId(rows[0].id);
+      const roster = earningsPlayers(engine.getTankManager().getPlayers());
+      const accepted = consumeWeaponForFire(roster[0], "CLUSTER");
+      if (!accepted.ok) throw new Error(accepted.reason);
+      roster[0] = accepted.player;
+      engine.getTurnManager().executeRemoteFire({ angle: 12, power: 24, weaponId: "CLUSTER" }, {
+        fromSlot: 0, identity: { shotId: 1, isFirstShotOfRound: true, physicsSeed: 1 }, mode: "LIVE_LOCAL",
+      });
+      const update = Reflect.get(engine, "update") as (dt: number) => void;
+      for (let step = 0; step < 2400 && !engine.getPendingShotResult(); step++) update.call(engine, 1 / 120);
+      const result = engine.getPendingShotResult();
+      expect(result?.awards).toMatchObject([{ playerId: roster[0].id, amount: 11 }]);
+      if (!result) throw new Error("The test shot did not settle");
+      const players = earningsPlayers(engine.getTankManager().getPlayers());
+      expect(Math.ceil((roster[1].tank.health - players[1].tank.health) * 1000)).toBe(2500);
+      const report: ShotEarningsMessage = {
+        type: "SHOT_EARNINGS", shotId: 1, authorityEpoch: 1, players,
+        awards: result.awards.map(({ playerId, amount }) => ({ playerId, amount })),
+        directHitVictimIds: result.directHitVictimIds, deadSlots: players.map(player => player.tank.isDead),
+        roundOutcome: result.roundOutcome,
+      };
+      const validation = validateEarnings(report, roster, roster[0].id, "CLUSTER");
+      expect(validation.ok, validation.ok ? undefined : validation.reason).toBe(true);
+      report.awards[0].amount = 12;
+      expect(validateEarnings(report, roster, roster[0].id, "CLUSTER")).toEqual({ ok: false, reason: "MALFORMED" });
+    } finally {
+      engine.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects negative or non-integer award amounts even when called directly", () => {
+    const { roster, report } = fixture();
+    report.awards = [{ playerId: "a", amount: -5 }];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+
+    report.awards = [{ playerId: "a", amount: 1.5 }];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
   });
 
   it("validates structural fields before domain decisions and fits four complete players under 8192 characters", () => {

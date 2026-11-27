@@ -66,7 +66,8 @@ export function validateArchive(value: unknown): ShotArchive {
   requireValue(value.rules === RULES_ID || value.rules === LEGACY_SHIELD_RULES_ID, "INCOMPATIBLE_PHYSICS_RULES");
   requireValue(typeof value.gameVersion === "string" && typeof value.build === "string" && typeof value.sessionId === "string" &&
     integer(value.firstSequence) && integer(value.lastSequence) && integer(value.evicted) && typeof value.complete === "boolean" &&
-    (value.error === null || typeof value.error === "string") && Array.isArray(value.records) && Array.isArray(value.terrains) && finiteTree(value), "INVALID_ARCHIVE_MANIFEST");
+    (value.error === null || typeof value.error === "string") && Array.isArray(value.records) && Array.isArray(value.terrains) &&
+    finiteTree(value), "INVALID_ARCHIVE_MANIFEST");
   const terrains = new Map<string, { width: number; height: number }>();
   for (const t of value.terrains) {
     requireValue(object(t) && typeof t.id === "string" && integer(t.width) && t.width > 0 && t.width <= 16384 &&

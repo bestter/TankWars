@@ -8,14 +8,50 @@ import {
   readProtocolVersion,
 } from "../protocol";
 import { MAX_ACTION_ID_LENGTH } from "../actionId";
+import { makePlayer } from "../../__tests__/helpers";
 
 describe("strict online protocol", () => {
+  it.each(["__proto__", "constructor", "prototype", "toString", "valueOf"])(
+    "refuse l’identifiant de joueur réservé %s dans SHOP_STATE",
+    (id) => {
+      const player = makePlayer({ id: "player-1" });
+      const message = {
+        type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, readySlots: [],
+        purchasesByPlayerId: {}, aiShopApplied: true,
+      };
+      expect(isStrictOnlineMessage({ ...message, players: [player] })).toBe(true);
+      expect(isStrictOnlineMessage({ ...message, players: [{ ...player, id }] })).toBe(false);
+    },
+  );
+
   describe("isInventory via FIRE_REJECTED", () => {
     const validateInventory = (inventory: unknown) => isStrictOnlineMessage({
       type: "FIRE_REJECTED",
       reason: "MALFORMED",
       inventory,
       currentWeapon: "MISSILE",
+    });
+
+    it.each(["__proto__", "constructor", "prototype", "toString", "valueOf"])(
+      "refuse un actionId entrant en collision avec Object.prototype (%s)",
+      (actionId) => {
+        expect(decodeFireMessage({
+          type: "FIRE",
+          actionId,
+          command: { angle: 45, power: 50, weaponId: "MISSILE" },
+        }).ok).toBe(false);
+      },
+    );
+
+    it("refuse les clés prototype-polluting dans les enregistrements JSON", () => {
+      const protoPayload = JSON.parse('{"type":"SHOP_STATE","shopEpoch":1,"roundNumber":1,"readySlots":[],"players":[],"purchasesByPlayerId":{"__proto__":{"MISSILE":1}},"aiShopApplied":true}');
+      expect(isStrictOnlineMessage(protoPayload)).toBe(false);
+      const constructorPayload = JSON.parse('{"type":"FIRE_REJECTED","reason":"MALFORMED","inventory":{"constructor":1},"currentWeapon":"MISSILE"}');
+      expect(isStrictOnlineMessage(constructorPayload)).toBe(false);
+      const toStringShopPayload = JSON.parse('{"type":"SHOP_STATE","shopEpoch":1,"roundNumber":1,"readySlots":[],"players":[],"purchasesByPlayerId":{"toString":{"MISSILE":1}},"aiShopApplied":true}');
+      expect(isStrictOnlineMessage(toStringShopPayload)).toBe(false);
+      const valueOfEarningsPayload = JSON.parse('{"type":"SHOT_EARNINGS_APPLIED","shotId":1,"economicRevision":1,"roundEarningsByPlayer":{"valueOf":10},"awards":[],"balances":[],"hasEarnings":false,"blockDurationMs":0,"roundOutcome":{"isRoundEnd":false,"isDraw":false,"roundWinnerId":null}}');
+      expect(isStrictOnlineMessage(valueOfEarningsPayload)).toBe(false);
     });
 
     it("accepte un inventaire vide et les quantités entières aux bornes", () => {

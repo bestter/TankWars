@@ -53,7 +53,7 @@ export type ServerGameStartMessage = GameStartMessage;
 export interface ServerRosterUpdate {
   type: 'ROSTER_UPDATE';
   roster: Array<{ slot: number; name: string; type: 'human' | 'ai' }>;
-  numPlayers: number;
+  numPlayers?: number;
   /** True when the match has already started (late reconnect / catch-up). */
   gameStarted?: boolean;
 }

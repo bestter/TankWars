@@ -25,6 +25,8 @@ import {
 import { reinforcedShieldCapacity } from '../game/round/shield';
 import {
   isFireRejectedReason as isProtocolFireRejectedReason,
+  isSafeRecordKey,
+  isSafeRoomId,
   isShopDenial,
   isShopVisitCounters,
   readShopPurchaseTarget,
@@ -188,7 +190,7 @@ export function readOnlineSession(): PersistedOnlineSession | null {
     const meta = parsed.meta;
     const canvas = parsed.canvas;
     if (
-      !isNonEmptyString(meta.roomId) ||
+      !isSafeRoomId(meta.roomId) ||
       !isNonEmptyString(meta.localPlayerId) ||
       !isSafeNonNegativeInteger(meta.slot) ||
       !isNonEmptyString(meta.token) ||
@@ -396,7 +398,7 @@ function isFiniteNonNegativeRecord(value: unknown): value is Record<string, numb
   if (!isRecord(value)) return false;
   return Object.entries(value).every(
     ([identifier, amount]) =>
-      identifier.trim().length > 0 && isFiniteNumber(amount) && amount >= 0,
+      isSafeRecordKey(identifier) && identifier.trim().length > 0 && isFiniteNumber(amount) && amount >= 0,
   );
 }
 
@@ -404,7 +406,7 @@ function isSafeNonNegativeRecord(value: unknown): value is Record<string, number
   if (!isRecord(value)) return false;
   return Object.entries(value).every(
     ([identifier, amount]) =>
-      identifier.trim().length > 0 && isSafeNonNegativeInteger(amount),
+      isSafeRecordKey(identifier) && identifier.trim().length > 0 && isSafeNonNegativeInteger(amount),
   );
 }
 

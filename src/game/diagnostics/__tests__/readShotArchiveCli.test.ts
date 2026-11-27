@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 function run(...args: string[]) {
@@ -12,9 +15,57 @@ describe("read-shot-archive CLI", () => {
     const result = run();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("[--output <file>]");
+    expect(result.stderr).toContain("[--max-input-mib <n>]");
   });
 
-  it.each(["--shot", "--shot-hash", "--weapon", "--angle", "--power", "--output"])(
+  it("lets the caller raise the input size limit for a large archive", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tankwars-archive-cli-"));
+    const archive = join(directory, "archive.json");
+    try {
+      writeFileSync(archive, JSON.stringify({ schemaVersion: 1, session: {}, blocks: [] }) + " ".repeat(1024 * 1024));
+      const rejected = run(archive, "--max-input-mib", "1");
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).toContain("ARCHIVE_TOO_LARGE");
+      const accepted = run(archive, "--max-input-mib", "2");
+      expect(accepted.status).toBe(2);
+      expect(JSON.parse(accepted.stdout).capabilities.singleShotReplay).toBe(false);
+    } finally {
+      rmSync(archive, { force: true });
+      rmdirSync(directory);
+    }
+  });
+
+  it("rejects a directory as archive input", () => {
+    const result = run("Scripts");
+    expect(result.status).toBe(1);
+    expect(result.stderr.trim()).toBe("Error: ARCHIVE_NOT_REGULAR_FILE");
+  });
+
+  it.each([
+    { row: '{"kind":"event"}', status: 2 },
+    { row: '{"kind":', status: 1 },
+  ])("handles empty lines and reports malformed legacy JSONL (status $status)", ({ row, status }) => {
+    const directory = mkdtempSync(join(tmpdir(), "tankwars-archive-cli-"));
+    const archive = join(directory, "journal.jsonl");
+    try {
+      writeFileSync(archive, '{"schemaVersion":1,"kind":"journal-status"}\r\n \t\r\n' + row + "\r\n");
+      const result = run(archive);
+      expect(result.status).toBe(status);
+      if (status === 1) expect(result.stderr.trim()).toBe("Error: INVALID_ARCHIVE_JSON");
+      else expect(JSON.parse(result.stdout)).toMatchObject({ capabilities: { singleShotReplay: false }, sourceSchema: 1 });
+    } finally {
+      rmSync(archive, { force: true });
+      rmdirSync(directory);
+    }
+  });
+
+  it.each(["0", "1.5", "Infinity", "999999"])("rejects an invalid input size limit (%s)", limit => {
+    const result = run("missing-archive.json", "--max-input-mib", limit);
+    expect(result.status).toBe(1);
+    expect(result.stderr.trim()).toBe("Error: INVALID_ARCHIVE_SIZE_LIMIT");
+  });
+
+  it.each(["--max-input-mib", "--shot", "--shot-hash", "--weapon", "--angle", "--power", "--output"])(
     "rejects an empty value for %s before reading the input file",
     flag => {
       const result = run("missing-archive.json", flag, "");
@@ -58,4 +109,18 @@ describe("read-shot-archive CLI", () => {
       expect(result.stderr.trim()).toBe("Error: INVALID_ALTERNATIVE_COMMAND");
     },
   );
+
+  it("rejects multi-line invalid JSON inputs without parsing subsequent lines", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tankwars-archive-cli-"));
+    const archive = join(directory, "invalid.json");
+    try {
+      writeFileSync(archive, '{"not":"journal-status"}\n{"second":"line"}\n');
+      const result = run(archive);
+      expect(result.status).toBe(1);
+      expect(result.stderr.trim()).toBe("Error: INVALID_ARCHIVE_JSON");
+    } finally {
+      rmSync(archive, { force: true });
+      rmdirSync(directory);
+    }
+  });
 });

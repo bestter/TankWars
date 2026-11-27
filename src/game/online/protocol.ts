@@ -337,31 +337,38 @@ function isFireCommand(value: unknown): value is FireCommand {
   );
 }
 
-// for...in avoids allocating entry arrays; inputs are plain JSON records
-// with no enumerable inherited properties (Object.prototype must be unpolluted).
+const FORBIDDEN_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const SAFE_ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function isSafeRecordKey(key: string): boolean {
+  return !FORBIDDEN_RECORD_KEYS.has(key) && !Object.hasOwn(Object.prototype, key);
+}
+
+export function isSafeRoomId(value: unknown): value is string {
+  return typeof value === "string" && SAFE_ROOM_ID_RE.test(value);
+}
+
 function isInventory(
   value: unknown,
 ): value is Partial<Record<WeaponId, number>> {
   if (!isRecord(value)) return false;
-  for (const weaponId in value) {
-    if (!isWeaponId(weaponId) || !isSafeNonNegativeInteger(value[weaponId])) {
+  for (const weaponId of Object.keys(value)) {
+    if (!isSafeRecordKey(weaponId) || !isWeaponId(weaponId) || !isSafeNonNegativeInteger(value[weaponId])) {
       return false;
     }
   }
   return true;
 }
 
-// for...in avoids allocating arrays at both levels; the same plain JSON,
-// unpolluted-prototype assumption as isInventory applies to both levels.
 export function isShopVisitCounters(value: unknown): value is ShopVisitCounters {
   if (!isRecord(value)) return false;
-  for (const playerId in value) {
-    if (!playerId.trim()) return false;
+  for (const playerId of Object.keys(value)) {
+    if (!isSafeRecordKey(playerId) || !playerId.trim()) return false;
     const playerCounters = value[playerId];
     if (!isRecord(playerCounters)) return false;
-    for (const item in playerCounters) {
+    for (const item of Object.keys(playerCounters)) {
       const count = playerCounters[item];
-      if (item === REINFORCED_SHIELD ? count !== 1 : !isWeaponId(item) || !isSafeNonNegativeInteger(count)) {
+      if (!isSafeRecordKey(item) || (item === REINFORCED_SHIELD ? count !== 1 : !isWeaponId(item) || !isSafeNonNegativeInteger(count))) {
         return false;
       }
     }
@@ -472,8 +479,8 @@ function isEconomicResult(value: Record<string, unknown>): boolean {
   if (!isSafeNonNegativeInteger(value.economicRevision) || !isRecord(value.roundEarningsByPlayer)) {
     return false;
   }
-  for (const key in value.roundEarningsByPlayer) {
-    if (!isSafeNonNegativeInteger(value.roundEarningsByPlayer[key])) {
+  for (const key of Object.keys(value.roundEarningsByPlayer)) {
+    if (!isSafeRecordKey(key) || !isSafeNonNegativeInteger(value.roundEarningsByPlayer[key])) {
       return false;
     }
   }
@@ -500,6 +507,7 @@ export function isPlayers(value: unknown, earnings = false): value is Player[] {
           !isRecord(entry) ||
           typeof entry.id !== "string" ||
           entry.id.trim().length === 0 ||
+          !isSafeRecordKey(entry.id) ||
           typeof entry.name !== "string" ||
           typeof entry.isHuman !== "boolean" ||
           !isSafeNonNegativeInteger(entry.money) ||

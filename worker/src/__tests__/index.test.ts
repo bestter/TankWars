@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import worker, { type Env } from '../index';
 
+const TEST_ROOM_ID = '11111111-1111-4111-8111-111111111111';
+
 describe('Worker Entrypoint', () => {
   const expectSecurityHeaders = (response: Response): void => {
     expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
@@ -50,8 +52,9 @@ describe('Worker Entrypoint', () => {
   });
 
   describe('CORS preflight', () => {
-    it('adds CORS and security headers', async () => {
+    it('adds CORS, Vary: Origin and security headers when local origins are enabled', async () => {
       const { env } = createMockEnv();
+      env.ALLOW_LOCAL_ORIGINS = 'true';
       const request = new Request('https://tankwars.pages.dev/api/rooms', {
         method: 'OPTIONS',
         headers: { Origin: 'http://localhost:5173' },
@@ -60,8 +63,24 @@ describe('Worker Entrypoint', () => {
 
       expect(response.status).toBe(204);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
+      expect(response.headers.get('Vary')).toContain('Origin');
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
       expectSecurityHeaders(response);
+    });
+
+    it('rejects localhost Origin in production when ALLOW_LOCAL_ORIGINS is unset', async () => {
+      const { env, mockNamespace } = createMockEnv();
+      const request = new Request('https://tankwars.pages.dev/api/rooms', {
+        method: 'POST',
+        headers: {
+          Origin: 'http://localhost:5173',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ numPlayers: 2 }),
+      });
+      const response = await worker.fetch(request, env);
+      expect(response.status).toBe(403);
+      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
   });
 
@@ -170,7 +189,7 @@ describe('Worker Entrypoint', () => {
   describe('/api/rooms/:roomId/join', () => {
     it('rejects a disallowed browser Origin before joining a room', async () => {
       const { env, mockNamespace } = createMockEnv();
-      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/join', {
+      const request = new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/join`, {
         method: 'POST',
         headers: { Origin: 'https://malicious-site.com' },
       });
@@ -186,35 +205,36 @@ describe('Worker Entrypoint', () => {
       expectSecurityHeaders(response);
     });
 
-    it('rejects roomId longer than 256 characters', async () => {
-      const { env, mockNamespace } = createMockEnv();
-      const longRoomId = 'a'.repeat(257);
-      const request = new Request(`https://tankwars.pages.dev/api/rooms/${longRoomId}/join`, {
-        method: 'POST',
-      });
-      const response = await worker.fetch(request, env);
+    it.each(['room1', 'a'.repeat(257), '11111111-1111-1111-8111-111111111111', 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'])(
+      'rejects non-UUIDv4 roomId (%s) without waking a GameRoom DO',
+      async (badRoomId) => {
+        const { env, mockNamespace } = createMockEnv();
+        const request = new Request(`https://tankwars.pages.dev/api/rooms/${badRoomId}/join`, {
+          method: 'POST',
+        });
+        const response = await worker.fetch(request, env);
 
-      expect(response.status).toBe(400);
-      const data = (await response.json()) as { error: string };
-      expect(data.error).toBe('Invalid room ID');
-      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
-    });
+        expect(response.status).toBe(400);
+        const data = (await response.json()) as { error: string };
+        expect(data.error).toBe('Invalid room ID');
+        expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+      },
+    );
 
-    it('accepts valid roomId of 256 chars or less', async () => {
+    it('accepts valid UUIDv4 roomId', async () => {
       const { env, mockNamespace } = createMockEnv();
-      const validRoomId = 'a'.repeat(256);
-      const request = new Request(`https://tankwars.pages.dev/api/rooms/${validRoomId}/join`, {
+      const request = new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/join`, {
         method: 'POST',
       });
       const response = await worker.fetch(request, env);
 
       expect(response.status).toBe(200);
-      expect(mockNamespace.idFromName).toHaveBeenCalledWith(validRoomId);
+      expect(mockNamespace.idFromName).toHaveBeenCalledWith(TEST_ROOM_ID);
     });
 
     it('rejects multi-segment path traversal on /join without waking a GameRoom DO', async () => {
       const { env, mockNamespace } = createMockEnv();
-      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/extra/join', {
+      const request = new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/extra/join`, {
         method: 'POST',
       });
       const response = await worker.fetch(request, env);
@@ -235,7 +255,7 @@ describe('Worker Entrypoint', () => {
         }),
       } as unknown as DurableObjectNamespace;
 
-      const request = new Request('https://tankwars.pages.dev/api/rooms/room1/join', {
+      const request = new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/join`, {
         method: 'POST',
       });
       const response = await worker.fetch(request, env);
@@ -257,7 +277,7 @@ describe('Worker Entrypoint', () => {
       ['GET', 'other', 426],
     ])('rejects a %s request with Upgrade=%s before resolving either object', async (method, header, status) => {
       const { env } = createMockEnv();
-      const request = new Request('http://localhost/api/rooms/room1/ws?slot=0&token=123', {
+      const request = new Request(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=123`, {
         method, headers: header ? { Upgrade: header } : {},
       });
       const response = await worker.fetch(request, env);
@@ -266,7 +286,7 @@ describe('Worker Entrypoint', () => {
       expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
     });
 
-    it.each(['/api/rooms', '/api/rooms/room1/join'])('rejects upgrades on POST %s with a JSON error', async path => {
+    it.each(['/api/rooms', `/api/rooms/${TEST_ROOM_ID}/join`])('rejects upgrades on POST %s with a JSON error', async path => {
       const { env } = createMockEnv();
       const request = new Request(`http://localhost${path}`, {
         method: 'POST', headers: { Upgrade: 'websocket' },
@@ -295,7 +315,7 @@ describe('Worker Entrypoint', () => {
       'rejects missing or noncanonical seat (%s) before admission',
       async query => {
         const { env } = createMockEnv();
-        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/room1/ws?token=123${query}`), env);
+        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?token=123${query}`), env);
         expect(response.status).toBe(400);
         expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
         expect(env.GAME_ROOM.idFromName).not.toHaveBeenCalled();
@@ -306,7 +326,7 @@ describe('Worker Entrypoint', () => {
       'rejects missing or header-unsafe token (%s) before admission',
       async query => {
         const { env } = createMockEnv();
-        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/room1/ws?slot=0${query}`), env);
+        const response = await worker.fetch(upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0${query}`), env);
         expect(response.status).toBe(400);
         expectSecurityHeaders(response);
         expect(env.RATE_LIMITER.idFromName).not.toHaveBeenCalled();
@@ -316,7 +336,7 @@ describe('Worker Entrypoint', () => {
 
     it('forwards Latin-1 non-ASCII token values to GameRoom for constant-time rejection', async () => {
       const { env, mockStub } = createMockEnv();
-      const response = await worker.fetch(upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=%C3%A9'), env);
+      const response = await worker.fetch(upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=%C3%A9`), env);
       expect(response.status).toBe(200);
       expect(mockStub.fetch).toHaveBeenCalledOnce();
       const forwarded: Request = mockStub.fetch.mock.calls[0][0];
@@ -325,7 +345,7 @@ describe('Worker Entrypoint', () => {
 
     it('accepts upgrade without Origin header (non-browser client)', async () => {
       const { env, mockStub } = createMockEnv();
-      const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=123');
+      const request = upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=123`);
       const response = await worker.fetch(request, env);
       expect(response.status).toBe(200);
       expect(mockStub.fetch).toHaveBeenCalled();
@@ -333,7 +353,7 @@ describe('Worker Entrypoint', () => {
 
     it('accepts upgrade with allowed Origin header', async () => {
       const { env, mockStub } = createMockEnv();
-      const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=123', {
+      const request = upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=123`, {
         Origin: 'https://tankwars.pages.dev',
       });
       const response = await worker.fetch(request, env);
@@ -343,7 +363,7 @@ describe('Worker Entrypoint', () => {
 
     it('accepts upgrade with valid subdomain Origin header', async () => {
       const { env, mockStub } = createMockEnv();
-      const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=123', {
+      const request = upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=123`, {
         Origin: 'https://pr-123.tankwars.pages.dev',
       });
       const response = await worker.fetch(request, env);
@@ -353,7 +373,7 @@ describe('Worker Entrypoint', () => {
 
     it('rejects upgrade with disallowed Origin header', async () => {
       const { env } = createMockEnv();
-      const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0&token=123', {
+      const request = upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0&token=123`, {
         Origin: 'https://malicious-site.com',
       });
       const response = await worker.fetch(request, env);
@@ -364,7 +384,7 @@ describe('Worker Entrypoint', () => {
 
     it('rejects upgrade with missing token', async () => {
       const { env } = createMockEnv();
-      const request = upgrade('http://localhost/api/rooms/room1/ws?slot=0', {
+      const request = upgrade(`http://localhost/api/rooms/${TEST_ROOM_ID}/ws?slot=0`, {
         Origin: 'https://tankwars.pages.dev',
       });
       const response = await worker.fetch(request, env);
@@ -372,21 +392,23 @@ describe('Worker Entrypoint', () => {
       expectSecurityHeaders(response);
     });
 
-    it('rejects WebSocket upgrade with roomId longer than 256 characters', async () => {
-      const { env, mockNamespace } = createMockEnv();
-      const longRoomId = 'b'.repeat(257);
-      const request = upgrade(`https://tankwars.pages.dev/api/rooms/${longRoomId}/ws?slot=0&token=secret-token`);
-      const response = await worker.fetch(request, env);
+    it.each(['non-uuid-room', 'b'.repeat(257), 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'])(
+      'rejects WebSocket upgrade with non-UUIDv4 roomId (%s) without waking a GameRoom DO',
+      async (badRoomId) => {
+        const { env, mockNamespace } = createMockEnv();
+        const request = upgrade(`https://tankwars.pages.dev/api/rooms/${badRoomId}/ws?slot=0&token=secret-token`);
+        const response = await worker.fetch(request, env);
 
-      expect(response.status).toBe(400);
-      const text = await response.text();
-      expect(text).toBe('Missing or invalid room/slot/token');
-      expect(mockNamespace.idFromName).not.toHaveBeenCalled();
-    });
+        expect(response.status).toBe(400);
+        const text = await response.text();
+        expect(text).toBe('Missing or invalid room/slot/token');
+        expect(mockNamespace.idFromName).not.toHaveBeenCalled();
+      },
+    );
 
     it('forwards WebSocket upgrades with valid parameters and normalizes the Upgrade value', async () => {
       const { env, mockNamespace, mockStub } = createMockEnv();
-      const validRoomId = 'test-room-123';
+      const validRoomId = TEST_ROOM_ID;
       const request = upgrade(`https://tankwars.pages.dev/api/rooms/${validRoomId}/ws?slot=1&token=token123`, { Upgrade: 'WebSocket' });
       const response = await worker.fetch(request, env);
 
@@ -399,12 +421,23 @@ describe('Worker Entrypoint', () => {
 
     it('rejects WebSocket upgrade with extra path segments without waking a GameRoom DO', async () => {
       const { env, mockNamespace } = createMockEnv();
-      const request = upgrade('https://tankwars.pages.dev/api/rooms/test-room-123/extra/ws?slot=1&token=token123');
+      const request = upgrade(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/extra/ws?slot=1&token=token123`);
       const response = await worker.fetch(request, env);
 
       expect(response.status).toBe(400);
       expect(await response.text()).toBe('Missing or invalid room/slot/token');
       expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
+  });
+
+  it('sets a single Vary: Origin header value on CORS responses', async () => {
+    const { env } = createMockEnv();
+    const response = await worker.fetch(new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/join`, {
+      method: 'POST',
+      headers: { Origin: 'https://tankwars.pages.dev' },
+    }), env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Vary')).toBe('Origin');
   });
 });

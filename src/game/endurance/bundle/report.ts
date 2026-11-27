@@ -3,7 +3,7 @@ import type { ArchiveRecord } from "../../diagnostics/types";
 import type { JournalEntry } from "../journal";
 import type { Player } from "../../../types/player";
 import { object } from "../../diagnostics/validate";
-import { encoder, identity, jsonBytes, one, sha256, type BundleDisk } from "./io";
+import { encoder, escapeHtml, identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
 import type { BundleManifest, Location } from "./format";
 
 interface Row {
@@ -14,7 +14,11 @@ interface Row {
   weapon?: string; durationMs?: number; detail: unknown; reasons: string[];
 }
 const pad = (n: number) => String(n).padStart(16, "0");
-const escape = (value: unknown): string => String(value ?? "inconnu / unknown").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const escape = (value: unknown): string => escapeHtml(value, "inconnu / unknown");
+const parentHref = (value: unknown): string => {
+  const safe = safeRelativeHref(value);
+  return safe === "#" ? "#" : `../${safe}`;
+};
 function page(title: string, body: string): Uint8Array {
   return encoder.encode(`<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(title)}</title><style>body{font:15px monospace;max-width:1100px;margin:2rem auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #888;padding:.5rem;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#1462a8}</style><h1>${escape(title)}</h1>${body}<footer>Signé / Signed : Codex — GPT-6</footer></html>`);
 }
@@ -169,18 +173,24 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
   };
   for await (const entry of disk.scan("views")) {
     signal?.throwIfAborted();
-    const info = entry.value as { id: string; label: string };
-    const [metadataValue, totals] = await Promise.all([disk.get("view-metadata", info.id),
-      info.label.startsWith("Joueur / Player ") ? disk.get("player-totals", info.label.slice("Joueur / Player ".length)) : Promise.resolve(null)]);
+    const info = entry.value;
+    // View IDs are SHA-256 hex digests and are reused in links and output paths.
+    if (!object(info) || typeof info.label !== "string" ||
+        typeof info.id !== "string" || info.id.length !== 64 || /[^0-9a-f]/.test(info.id)) {
+      throw new Error("INVALID_REPORT_VIEW");
+    }
+    const { id, label } = info;
+    const [metadataValue, totals] = await Promise.all([disk.get("view-metadata", id),
+      label.startsWith("Joueur / Player ") ? disk.get("player-totals", label.slice("Joueur / Player ".length)) : Promise.resolve(null)]);
     const metadata = metadataValue as { record: unknown; location: Location; capturedAtSequence: number | null } | undefined;
-    const link = `<li><a href="report/${info.id}-1.html">${escape(info.label)}</a></li>`;
+    const link = `<li><a href="report/${id}-1.html">${escape(label)}</a></li>`;
     if (menu.length && (menu.length >= 200 || menuBytes + link.length * 6 + 4096 > maxBytes)) await flushMenu(true);
     menu.push(link); menuBytes += encoder.encode(link).length;
-    menuRefs.push({ label: info.label, path: `index/views/${info.id}-1.json` });
+    menuRefs.push({ label, path: `index/views/${id}-1.json` });
     let rows: Row[] = [], bytes = 0, number = 1;
     const flush = async (next: boolean) => {
-      const htmlPath = `report/${info.id}-${number}.html`, indexPath = `index/views/${info.id}-${number}.json`;
-      const signature = await sha256(jsonBytes({ rows, metadata, totals })), cacheKey = `${info.id}/${number}`;
+      const htmlPath = `report/${id}-${number}.html`, indexPath = `index/views/${id}-${number}.json`;
+      const signature = await sha256(jsonBytes({ rows, metadata, totals })), cacheKey = `${id}/${number}`;
       const cached = await disk.get("closed-views", cacheKey) as { signature: string; html: string; index: string } | undefined;
       if (next && cached?.signature === signature) {
         // Relative links have the same depth in every generation. Copy immutable
@@ -190,15 +200,15 @@ export async function renderReport(disk: BundleDisk, manifest: BundleManifest, s
         await disk.put("closed-views", cacheKey, { signature, html: prefix + htmlPath, index: prefix + indexPath });
         number++; rows = []; bytes = 0; return;
       }
-      const content = rows.map(row => `<tr><td>${row.sequence}</td><td>${escape(row.kind)}</td><td>${escape(row.name)} (${escape(row.playerId)})<br>${escape(row.role)}</td><td>${escape(row.profile)} ${escape(row.weapon)}</td><td>${escape(row.durationMs)}</td><td><a href="../${row.location.path}">Source ${row.location.offset}+${row.location.length} octets</a><pre>${escape(JSON.stringify(row.detail))}</pre>${row.shotHash ? `<a href="shot-${row.shotHash}.html">${escape(row.shotKey)}</a>` : ""}</td></tr>`).join("");
-      await output.write(`report/${info.id}-${number}.html`, one(page(info.label,
-        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${metadata ? `<details open><summary>État enregistré / Recorded state · ${escape(metadata.capturedAtSequence)}</summary><a href="../${metadata.location.path}">Preuve / Evidence ${metadata.location.offset}+${metadata.location.length}</a><pre>${escape(JSON.stringify(metadata.record, null, 2))}</pre></details>` : ""}${totals ? `<pre>${escape(JSON.stringify(totals))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
-        (number > 1 ? `<a href="${info.id}-${number - 1}.html">Précédente / Previous</a> ` : "") + (next ? `<a href="${info.id}-${number + 1}.html">Suite / Next</a>` : ""))));
-      await output.write(`index/views/${info.id}-${number}.json`, one(jsonBytes({ label: info.label, page: number, next: next ? `index/views/${info.id}-${number + 1}.json` : null, metadata, rows })));
+      const content = rows.map(row => `<tr><td>${row.sequence}</td><td>${escape(row.kind)}</td><td>${escape(row.name)} (${escape(row.playerId)})<br>${escape(row.role)}</td><td>${escape(row.profile)} ${escape(row.weapon)}</td><td>${escape(row.durationMs)}</td><td><a href="${parentHref(row.location.path)}">Source ${row.location.offset}+${row.location.length} octets</a><pre>${escape(JSON.stringify(row.detail))}</pre>${row.shotHash ? `<a href="${safeRelativeHref(`shot-${row.shotHash}.html`)}">${escape(row.shotKey)}</a>` : ""}</td></tr>`).join("");
+      await output.write(htmlPath, one(page(label,
+        `<a href="../index.html">Index</a><p>Vue globale paginée / Paginated global view. Page ${number}.</p>${metadata ? `<details open><summary>État enregistré / Recorded state · ${escape(metadata.capturedAtSequence)}</summary><a href="${parentHref(metadata.location.path)}">Preuve / Evidence ${metadata.location.offset}+${metadata.location.length}</a><pre>${escape(JSON.stringify(metadata.record, null, 2))}</pre></details>` : ""}${totals ? `<pre>${escape(JSON.stringify(totals))}</pre>` : ""}<table><tr><th>Séquence</th><th>Événement</th><th>Joueur / rôle</th><th>Profil / arme</th><th>ms</th><th>Preuves</th></tr>${content}</table>` +
+        (number > 1 ? `<a href="${id}-${number - 1}.html">Précédente / Previous</a> ` : "") + (next ? `<a href="${id}-${number + 1}.html">Suite / Next</a>` : ""))));
+      await output.write(indexPath, one(jsonBytes({ label, page: number, next: next ? `index/views/${id}-${number + 1}.json` : null, metadata, rows })));
       if (next) await disk.put("closed-views", cacheKey, { signature, html: prefix + htmlPath, index: prefix + indexPath });
       number++; rows = []; bytes = 0;
     };
-    for await (const row of disk.scan(`view-${info.id}`)) {
+    for await (const row of disk.scan(`view-${id}`)) {
       const value = row.value as Row, size = jsonBytes(value).length * 6;
       if (rows.length && (rows.length >= 200 || bytes + size + 4096 > maxBytes)) await flush(true);
       // A long diagnostic is referenced, not copied wholesale into every HTML view.

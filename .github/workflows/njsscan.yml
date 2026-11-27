@@ -31,6 +31,8 @@ jobs:
     steps:
     - name: Checkout the code
       uses: actions/checkout@v5
+      with:
+        persist-credentials: false
     # Run directly on the runner to avoid Docker Hub availability failures.
     - name: Set up Python
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

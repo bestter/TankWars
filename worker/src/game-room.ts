@@ -92,6 +92,20 @@ import {
 import { calculateZeusStrikeReward } from '../../src/game/zeus/zeusRewards';
 
 const REPORT_WINDOW_MS = 20_000;
+const ROOM_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
+const LEGACY_ROOM_EXPIRY_KEY = 'legacyIdleExpiresAt';
+const TEXT_ENCODER = new TextEncoder();
+const WS_RATE_LIMIT_WINDOW_MS = 5_000;
+const WS_RATE_LIMIT_MAX_MESSAGES = 120;
+const WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE = 240;
+const MAX_PROCESSED_SHOP_ACTIONS = 512;
+const NON_PERSISTED_SHOP_REJECTIONS = new Set<ShopRejectedMessage['reason']>([
+  'MALFORMED',
+  'SHOP_CLOSED',
+  'STALE_SHOP_EPOCH',
+  'SHOP_NOT_AVAILABLE',
+  'NOT_YOUR_SLOT',
+]);
 
 interface ShotReportRecovery {
   deadlineAt: number;
@@ -112,10 +126,17 @@ interface PersistedEarningsResult extends ShotEarningsAppliedMessage {
   directHitVictimIds: string[];
 }
 
+interface CompactShopFinishAck {
+  type: 'SHOP_COMPLETED_ACK';
+  shopEpoch: number;
+  acknowledgedAction?: ShopActionAcknowledgement;
+}
+
 type PersistedShopActionResult =
   | ShopStateMessage
   | ShopRejectedMessage
-  | ShopFinishMessage;
+  | ShopFinishMessage
+  | CompactShopFinishAck;
 
 interface PersistedShopSession {
   shopEpoch: number;
@@ -169,6 +190,7 @@ interface RoomState {
   // When game has started
   started: boolean;
   startAt?: number;
+  lastActivityAt?: number;
   // Authoritative game state (MVP single round)
   players: Player[];
   map: RoundMap | null;
@@ -255,7 +277,7 @@ function migrateAcceptedFireActions(
     if (value.slot !== slot || value.result.slot !== slot || value.result.actionId !== actionId) {
       return;
     }
-    actions[slot] ??= {};
+    actions[slot] ??= Object.create(null);
     actions[slot][actionId] = { slot, result: value.result };
     acceptedCount++;
   };
@@ -292,6 +314,11 @@ export class GameRoom extends DurableObject {
   private cancelShotSettledTimeout: (() => void) | null = null;
   private shotOperation: Promise<void> = Promise.resolve();
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
+  private wsMessageTimestamps = new Map<number, number[]>();
+  private wsRateLimitWarnedUntil = new Map<number, number>();
+  private wsRateLimitDroppedCount = new Map<number, number>();
+  private wsPayloadWarnedUntil = new Map<number, number>();
+  private needsIdleRefreshOnReconnect = true;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
   /**
@@ -324,7 +351,7 @@ export class GameRoom extends DurableObject {
           if (entry.kind === "event") this.state.combatJournal.push(entry.value as CombatEvent);
           if (entry.kind === "earnings") this.state.earningsResults[entry.key] = entry.value as PersistedEarningsResult;
           if (entry.kind === "fire" && entry.slot !== undefined) {
-            this.state.processedFireActionsBySlot[entry.slot] ??= {};
+            this.state.processedFireActionsBySlot[entry.slot] ??= Object.create(null);
             this.state.processedFireActionsBySlot[entry.slot][entry.key] = entry.value as PersistedFireAction;
           }
           if (entry.kind === "shop") this.state.processedShopActions[entry.key] = entry.value as PersistedShopAction;
@@ -411,7 +438,7 @@ export class GameRoom extends DurableObject {
           processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
         const clonedFire: Record<number, Record<string, PersistedFireAction>> = {};
         for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
-          clonedFire[Number(slot)] = { ...actions };
+          clonedFire[Number(slot)] = Object.assign(Object.create(null), actions);
         }
         this.committedState = {
           ...structuredClone(mainSource),
@@ -421,6 +448,13 @@ export class GameRoom extends DurableObject {
           processedFireActionsBySlot: clonedFire,
           processedShopActions: { ...processedShopActions },
         };
+        if (this.isIncompatibleStartedRoom()) {
+          const expiresAt = await ctx.storage.get<number>(LEGACY_ROOM_EXPIRY_KEY);
+          if (expiresAt === undefined || await ctx.storage.getAlarm() === null) {
+            await this.armLegacyRoomExpiry(expiresAt ?? (this.state.lastActivityAt ?? Date.now()) + ROOM_IDLE_TTL_MS);
+          }
+          return;
+        }
         if (this.state.activeZeusStrike && this.buildGameStartMessage()) {
           this.scheduleZeusStrikeCompletion(this.state.activeZeusStrike);
         }
@@ -444,15 +478,26 @@ export class GameRoom extends DurableObject {
           }
           else this.maybeRunAIServerTurn();
         }
-        if (shouldPersistMigration) {
+        const idle = !this.state.activeShot && !this.state.activeZeusStrike;
+        const lastActivityAt = this.state.lastActivityAt;
+        if (shouldPersistMigration || (idle && lastActivityAt === undefined)) {
+          // Persist the first idle window with its alarm for pre-TTL rooms.
           await this.saveState();
+        } else if (idle && lastActivityAt !== undefined) {
+          const existingAlarm = await ctx.storage.getAlarm?.();
+          if (existingAlarm == null) {
+            await ctx.storage.setAlarm(Math.max(Date.now(), lastActivityAt + ROOM_IDLE_TTL_MS));
+          }
         }
       }
     });
   }
 
-  private async saveState(alarmAt?: number | null): Promise<void> {
+  private async saveState(alarmAt?: number): Promise<void> {
     if (!this.state) return;
+    this.state.lastActivityAt = Date.now();
+    const nextAlarmAt = this.state.activeZeusStrike?.resolveAt ??
+      this.idleExpiryAt(this.state.lastActivityAt) ?? alarmAt;
     const { combatJournal, earningsResults, shotHistory,
       processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
     const main = structuredClone(mainSource);
@@ -483,7 +528,7 @@ export class GameRoom extends DurableObject {
         if (entry.kind === "event") nextJournal.push(clonedValue as CombatEvent);
         else if (entry.kind === "earnings") nextEarnings[entry.key] = clonedValue as PersistedEarningsResult;
         else if (entry.kind === "fire" && entry.slot !== undefined) {
-          nextFire[entry.slot] ??= {};
+          nextFire[entry.slot] ??= Object.create(null);
           nextFire[entry.slot][entry.key] = clonedValue as PersistedFireAction;
         } else if (entry.kind === "shop") nextShop[entry.key] = clonedValue as PersistedShopAction;
       }
@@ -508,14 +553,16 @@ export class GameRoom extends DurableObject {
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
-        if (alarmAt === null) await txn.deleteAlarm();
-        else if (alarmAt !== undefined) await txn.setAlarm(alarmAt);
+        if (nextAlarmAt !== undefined) await txn.setAlarm(nextAlarmAt);
       });
       // Publish only committed serializations; replacing the map also removes obsolete keys.
       this.lastCombatStringified = stringified;
       this.lastCombatValues = committedValues;
       this.needsCombatStorageSync = false;
       this.syncedRoundNumber = main.roundNumber;
+      if (this.sockets.size > 0 && !this.state.activeShot && !this.state.activeZeusStrike) {
+        this.needsIdleRefreshOnReconnect = false;
+      }
       this.state.combatJournal = [...nextJournal];
       const nextShots = shotHistory.length === 0 && nextJournal.length === 0
         ? []
@@ -524,7 +571,7 @@ export class GameRoom extends DurableObject {
       this.state.earningsResults = { ...nextEarnings };
       const stateFire: Record<number, Record<string, PersistedFireAction>> = {};
       for (const [slot, actions] of Object.entries(nextFire)) {
-        stateFire[Number(slot)] = { ...actions };
+        stateFire[Number(slot)] = Object.assign(Object.create(null), actions);
       }
       this.state.processedFireActionsBySlot = stateFire;
       this.state.processedShopActions = { ...nextShop };
@@ -551,7 +598,7 @@ export class GameRoom extends DurableObject {
         processedFireActionsBySlot, processedShopActions, ...main } = this.committedState;
       const restoredFire: Record<number, Record<string, PersistedFireAction>> = {};
       for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
-        restoredFire[Number(slot)] = { ...actions };
+        restoredFire[Number(slot)] = Object.assign(Object.create(null), actions);
       }
       this.state = {
         ...structuredClone(main),
@@ -688,9 +735,18 @@ export class GameRoom extends DurableObject {
 
     const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
-    const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
-
-    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
+    const slotConfigsRaw: unknown[] | undefined = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+    if (!roomId || numPlayers === undefined || !isInitialPlayerCount(numPlayers) || slotConfigsRaw?.length !== numPlayers) {
+      return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
+    }
+    const slotConfigs = slotConfigsRaw.map((entry): RoomState['slotConfigs'][number] | null => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const { type, aiProfile } = entry as Record<string, unknown>;
+      if (type !== 'human' && type !== 'ai') return null;
+      if (aiProfile !== undefined && typeof aiProfile !== 'string') return null;
+      return type === 'ai' && aiProfile !== undefined ? { type, aiProfile } : { type };
+    });
+    if (!slotConfigs.every(config => config !== null)) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
     }
 
@@ -712,6 +768,7 @@ export class GameRoom extends DurableObject {
       tokens,
       joinedHumans: {},
       started: false,
+      lastActivityAt: Date.now(),
       players: [],
       map: null,
       initialRoundPlayers: [],
@@ -786,18 +843,18 @@ export class GameRoom extends DurableObject {
   // --- Main fetch (dispatches WS upgrade or internal create) ---
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const isWebSocketUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
 
     if (
       (url.pathname === '/internal/create' || url.pathname === '/create') &&
       request.method === 'POST' &&
-      request.headers.get('Upgrade') !== 'websocket'
+      !isWebSocketUpgrade
     ) {
       return this.fetchCreate(request);
     }
 
     // WebSocket upgrade path (the worker already added x- headers)
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader === 'websocket') {
+    if (isWebSocketUpgrade) {
       const roomId = request.headers.get('x-room-id') || url.searchParams.get('room') || '';
       const slot = Number(request.headers.get('x-slot') ?? url.searchParams.get('slot') ?? -1);
       const token = request.headers.get('x-token') || url.searchParams.get('token') || '';
@@ -819,10 +876,16 @@ export class GameRoom extends DurableObject {
 
       const receivedVersion = url.searchParams.get('protocolVersion');
       if (receivedVersion !== String(ONLINE_PROTOCOL_VERSION)) {
+        const parsedVersion =
+          receivedVersion !== null &&
+          /^\d+$/.test(receivedVersion) &&
+          Number.isSafeInteger(Number(receivedVersion))
+            ? Number(receivedVersion)
+            : null;
         const pair = new WebSocketPair();
         pair[1].accept();
         pair[1].send(JSON.stringify({ type: 'PROTOCOL_MISMATCH', requiredVersion: ONLINE_PROTOCOL_VERSION,
-          receivedVersion: receivedVersion === null ? null : Number(receivedVersion) }));
+          receivedVersion: parsedVersion }));
         pair[1].close(PROTOCOL_MISMATCH_CLOSE_CODE, 'Unsupported protocol');
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
@@ -849,7 +912,8 @@ export class GameRoom extends DurableObject {
         // Handle messages from this player
         server.accept();
         server.addEventListener('message', (evt) => {
-          this.handleClientMessage(slot, evt.data).catch((err) => {
+          if (this.sockets.get(slot) !== server) return;
+          this.handleClientMessage(slot, evt.data, server).catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error('[GameRoom] Error handling client message from slot=', slot, ':', errorMessage);
           });
@@ -908,18 +972,84 @@ export class GameRoom extends DurableObject {
     return new Response('GameRoom: unsupported', { status: 400 });
   }
 
+  private isSlotMessageRateLimited(slot: number): boolean {
+    const now = Date.now();
+    const timestamps = this.wsMessageTimestamps.get(slot);
+    if (timestamps) {
+      let start = 0;
+      while (start < timestamps.length && now - timestamps[start] >= WS_RATE_LIMIT_WINDOW_MS) {
+        start++;
+      }
+      if (start > 0) {
+        timestamps.splice(0, start);
+      }
+      if (timestamps.length >= WS_RATE_LIMIT_MAX_MESSAGES) {
+        return true;
+      }
+      timestamps.push(now);
+    } else {
+      this.wsMessageTimestamps.set(slot, [now]);
+    }
+    this.wsRateLimitDroppedCount.delete(slot);
+    return false;
+  }
+
+  private shouldWarnRateLimit(slot: number): boolean {
+    const now = Date.now();
+    const warnedUntil = this.wsRateLimitWarnedUntil.get(slot) ?? 0;
+    if (now < warnedUntil) return false;
+    this.wsRateLimitWarnedUntil.set(slot, now + WS_RATE_LIMIT_WINDOW_MS);
+    return true;
+  }
+
+  private shouldWarnPayload(slot: number): boolean {
+    const now = Date.now();
+    const warnedUntil = this.wsPayloadWarnedUntil.get(slot) ?? 0;
+    if (now < warnedUntil) return false;
+    this.wsPayloadWarnedUntil.set(slot, now + WS_RATE_LIMIT_WINDOW_MS);
+    return true;
+  }
+
   // --- Client message handler (only FIRE for now in MVP) ---
-  private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
+  private async handleClientMessage(slot: number, raw: unknown, ws?: WebSocket): Promise<void> {
+    if (ws && this.sockets.get(slot) !== ws) return;
+    if (this.isSlotMessageRateLimited(slot)) {
+      const drops = (this.wsRateLimitDroppedCount.get(slot) ?? 0) + 1;
+      this.wsRateLimitDroppedCount.set(slot, drops);
+      if (this.shouldWarnRateLimit(slot)) {
+        console.warn(`[GameRoom] Rate-limiting WebSocket messages from slot ${slot}`);
+      }
+      if (drops >= WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE) {
+        console.warn(`[GameRoom] Closing WebSocket for slot ${slot} after sustained rate-limit violations (${drops} dropped messages)`);
+        this.wsRateLimitDroppedCount.delete(slot);
+        const activeWs = ws ?? this.sockets.get(slot);
+        if (activeWs) {
+          await this.handleSocketDisconnect(slot, activeWs, 1008, 'rate limit exceeded');
+        }
+      }
+      return;
+    }
     // Enforce payload size limit to prevent memory exhaustion / DoS
-    if (typeof raw === 'string' && raw.length > 8192) {
-      console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (size: ${raw.length})`);
+    if (typeof raw === 'string') {
+      if (raw.length > 8192 || (raw.length > 2730 && TEXT_ENCODER.encode(raw).byteLength > 8192)) {
+        if (this.shouldWarnPayload(slot)) {
+          console.warn(`[GameRoom] Dropping oversized payload from slot ${slot} (length: ${raw.length})`);
+        }
+        return;
+      }
+    } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+      if (raw.byteLength > 8192 && this.shouldWarnPayload(slot)) {
+        console.warn(`[GameRoom] Dropping oversized binary payload from slot ${slot} (size: ${raw.byteLength})`);
+      }
       return;
     }
     let msg: Record<string, unknown>;
     try {
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        console.warn(`[GameRoom] Invalid message format from slot ${slot}`);
+        if (this.shouldWarnPayload(slot)) {
+          console.warn(`[GameRoom] Invalid message format from slot ${slot}`);
+        }
         return;
       }
       msg = parsed as Record<string, unknown>;
@@ -1116,7 +1246,12 @@ export class GameRoom extends DurableObject {
     });
   }
 
-  private async handleSocketDisconnect(slot: number, ws: WebSocket): Promise<void> {
+  private async handleSocketDisconnect(
+    slot: number,
+    ws: WebSocket,
+    closeCode = 1000,
+    closeReason = 'connection closed',
+  ): Promise<void> {
     if (this.sockets.get(slot) !== ws) {
       try {
         ws.close(1000, 'connection closed');
@@ -1127,25 +1262,35 @@ export class GameRoom extends DurableObject {
     }
     this.sockets.delete(slot);
     this.pendingClaimNames.delete(ws);
+    this.wsRateLimitDroppedCount.delete(slot);
+    if (this.sockets.size === 0) this.needsIdleRefreshOnReconnect = true;
     try {
-      ws.close(1000, 'connection closed');
+      ws.close(closeCode, closeReason);
     } catch {
       // ignore if already closed
     }
     await this.runShotOperation(async () => {
       if (!this.state || this.sockets.has(slot)) return;
       if (this.state.started) {
-        if (!this.buildGameStartMessage()) return;
-        if (this.state.earningsAuthoritySlot !== slot) return;
-        const active = this.state.activeShot;
-        const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
-        await this.electEarningsAuthority(next);
+        if (this.buildGameStartMessage() && this.state.earningsAuthoritySlot === slot) {
+          const active = this.state.activeShot;
+          const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
+          await this.electEarningsAuthority(next);
+          return;
+        }
+      } else if (this.state.slotConfigs[slot]?.type === 'human' && this.state.joinedHumans[slot]) {
+        delete this.state.joinedHumans[slot];
+        await this.saveState();
+        this.sendRosterUpdate();
         return;
       }
-      if (this.state.slotConfigs[slot]?.type !== 'human' || !this.state.joinedHumans[slot]) return;
-      delete this.state.joinedHumans[slot];
-      await this.saveState();
-      this.sendRosterUpdate();
+      if (this.sockets.size === 0) {
+        if (this.isIncompatibleStartedRoom()) {
+          await this.armLegacyRoomExpiry(Date.now() + ROOM_IDLE_TTL_MS);
+        } else if (this.idleExpiryAt(Date.now()) !== undefined) {
+          await this.saveState();
+        }
+      }
     });
   }
 
@@ -1180,9 +1325,15 @@ export class GameRoom extends DurableObject {
   private sendGameStartToSocket(ws: WebSocket): void {
     const msg = this.buildGameStartMessage();
     if (!msg) {
-      if (this.state?.started) ws.send(JSON.stringify({
-        type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber,
-      }));
+      if (this.state?.started) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'ROUND_PREPARATION_FAILED', reason: 'NEW_GAME_REQUIRED', roundNumber: this.state.roundNumber,
+          }));
+        } catch {
+          // ignore stale socket
+        }
+      }
       return;
     }
     try {
@@ -1230,7 +1381,12 @@ export class GameRoom extends DurableObject {
       const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
       elected = await this.electEarningsAuthority(next);
     }
-    if (elected === undefined && rosterChanged) await this.saveState();
+    if (
+      elected === undefined &&
+      (rosterChanged || (this.needsIdleRefreshOnReconnect && !this.state.activeShot && !this.state.activeZeusStrike))
+    ) {
+      await this.saveState();
+    }
     if (!wasStarted) {
       this.sendRosterUpdate();
       await this.maybeAutoStart();
@@ -1442,7 +1598,12 @@ export class GameRoom extends DurableObject {
     }
 
     const { actionId, command } = decoded.message;
-    const previous = this.state.processedFireActionsBySlot[slot]?.[actionId];
+    const slotActions = Object.hasOwn(this.state.processedFireActionsBySlot, slot)
+      ? this.state.processedFireActionsBySlot[slot]
+      : undefined;
+    const previous = slotActions && Object.hasOwn(slotActions, actionId)
+      ? slotActions[actionId]
+      : undefined;
     if (previous) {
       this.sendToSlot(slot, previous.result);
       return;
@@ -1569,7 +1730,7 @@ export class GameRoom extends DurableObject {
     };
     this.appendCombatEvent(shotEvent);
     this.state.shotHistory.push(shotEvent);
-    this.state.processedFireActionsBySlot[fromSlot] ??= {};
+    this.state.processedFireActionsBySlot[fromSlot] ??= Object.create(null);
     this.state.processedFireActionsBySlot[fromSlot][actionId] = {
       slot: fromSlot,
       result: shotEvent,
@@ -1626,8 +1787,86 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private isIncompatibleStartedRoom(): boolean {
+    return !!this.state?.started && !this.buildGameStartMessage();
+  }
+
+  private idleExpiryAt(lastActivityAt: number): number | undefined {
+    if (this.state && !this.state.activeShot && !this.state.activeZeusStrike) {
+      return lastActivityAt + ROOM_IDLE_TTL_MS;
+    }
+  }
+
+  private async armLegacyRoomExpiry(expiresAt: number): Promise<void> {
+    // Store the deadline alongside the alarm without rewriting the old combat state.
+    await this.ctx.storage.transaction(async txn => {
+      await txn.put(LEGACY_ROOM_EXPIRY_KEY, expiresAt);
+      await txn.setAlarm(Math.max(Date.now(), expiresAt));
+    });
+  }
+
+  private async deleteExpiredRoom(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+    this.state = null;
+    this.committedState = null;
+    this.resetShotCoordination();
+    this.needsIdleRefreshOnReconnect = true;
+    this.needsCombatStorageSync = true;
+    this.syncedRoundNumber = 0;
+    this.lastCombatStringified.clear();
+    this.lastCombatValues.clear();
+    this.wsMessageTimestamps.clear();
+    this.wsRateLimitWarnedUntil.clear();
+    this.wsRateLimitDroppedCount.clear();
+    this.wsPayloadWarnedUntil.clear();
+    this.aiProfiles.clear();
+  }
+
   async alarm(): Promise<void> {
-    await this.runShotOperation(() => this.recoverShotReport());
+    await this.runShotOperation(async () => {
+      const now = Date.now();
+      if (this.isIncompatibleStartedRoom()) {
+        const savedExpiry = await this.ctx.storage.get<number>(LEGACY_ROOM_EXPIRY_KEY);
+        const expiresAt = savedExpiry ?? (this.state?.lastActivityAt ?? now) + ROOM_IDLE_TTL_MS;
+        if (expiresAt <= now) {
+          if (this.sockets.size > 0) await this.armLegacyRoomExpiry(now + ROOM_IDLE_TTL_MS);
+          else await this.deleteExpiredRoom();
+        } else if (savedExpiry === undefined) {
+          await this.armLegacyRoomExpiry(expiresAt);
+        } else {
+          await this.ctx.storage.setAlarm(expiresAt);
+        }
+        return;
+      }
+      const strike = this.state?.activeZeusStrike;
+      if (strike && this.buildGameStartMessage()) {
+        if (Date.now() < strike.resolveAt) await this.ctx.storage.setAlarm(strike.resolveAt);
+        else await this.resolveZeusStrike(strike.strikeId);
+        return;
+      }
+      if (this.state?.activeShot) {
+        await this.recoverShotReport();
+        return;
+      }
+      const lastActivityAt = this.state?.lastActivityAt;
+      const expiresAt = this.idleExpiryAt(lastActivityAt ?? now);
+      if (expiresAt === undefined) return;
+      if (this.sockets.size > 0) {
+        if (expiresAt <= now || lastActivityAt === undefined) {
+          await this.saveState();
+        } else {
+          await this.ctx.storage.setAlarm(expiresAt);
+        }
+        return;
+      }
+      if (lastActivityAt === undefined) {
+        await this.saveState();
+      } else if (expiresAt <= now) {
+        await this.deleteExpiredRoom();
+      } else {
+        await this.ctx.storage.setAlarm(expiresAt);
+      }
+    });
   }
 
   private async recoverShotReport(): Promise<void> {
@@ -1674,7 +1913,7 @@ export class GameRoom extends DurableObject {
     this.resetShotCoordination();
     this.state.roundEnded = true;
     this.resetZeusRoundState();
-    await this.saveState(null);
+    await this.saveState();
     const roundEnd: RoundEndMessage = {
       type: 'ROUND_END',
       players: this.state.players,
@@ -1712,7 +1951,7 @@ export class GameRoom extends DurableObject {
     this.state.currentPlayerIndex = next;
     console.log(`[GameRoom] advanceTurnAndNotify: currentPlayerIndex changed from ${prev} to ${next}`);
 
-    await this.saveState(null);
+    await this.saveState();
 
     // Turn coordination only — clients simulate shots locally until headless authoritative sim is wired.
     const update = {
@@ -1752,7 +1991,7 @@ export class GameRoom extends DurableObject {
       reject("WRONG_SHOT");
       return;
     }
-    const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId);
+    const validated = validateEarnings(message, this.state.players, active.ownerId, active.command.weaponId, active.isFirstShotOfRound);
     if (!validated.ok) { reject(validated.reason); return; }
     const totals = { ...this.state.roundEarningsByPlayer };
     for (const award of message.awards) {
@@ -1871,7 +2110,7 @@ export class GameRoom extends DurableObject {
       rotationSlots: [...this.state.zeusRotationSlots],
     };
     this.appendCombatEvent(message);
-    await this.saveState(null);
+    await this.saveState();
     this.broadcast(message);
     this.broadcast(this.buildZeusStateMessage());
     this.broadcast({
@@ -1928,88 +2167,86 @@ export class GameRoom extends DurableObject {
   }
 
   private completeZeusStrike(strikeId: number): Promise<void> {
-    return this.runShotOperation(async () => {
-      if (!this.buildGameStartMessage()) return;
-      if (!this.state) return;
-      if (this.state.lastAppliedZeusStrike?.strikeId === strikeId) {
-        this.broadcast(this.state.lastAppliedZeusStrike);
-        return;
-      }
-      const strike = this.state.activeZeusStrike;
-      if (!strike || strike.strikeId !== strikeId) return;
-      const target = this.state.players.find((player) => player.id === strike.targetId);
-      const zeus = this.state.players.find((player) => player.id === strike.zeusId);
-      if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
-        this.state.activeZeusStrike = null;
-        await this.saveState();
-        return;
-      }
+    return this.runShotOperation(() => this.resolveZeusStrike(strikeId));
+  }
 
-      const survivors = this.state.players.filter((player) => player.id !== target.id && !player.tank.isDead && player.tank.health > 0);
-      const reward = calculateZeusStrikeReward(zeus.id, this.state.numPlayers, survivors.map((player) => player.id));
-      const balances = this.state.players.map((player) => {
-        const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
-        const money = player.money + amount;
-        if (!Number.isSafeInteger(money)) throw new RangeError("Zeus balance overflow.");
-        return { playerId: player.id, money };
-      });
-      const total = (this.state.roundEarningsByPlayer[reward.award.playerId] ?? 0) + reward.award.amount;
-      if (!Number.isSafeInteger(total)) throw new RangeError("Zeus round earnings overflow.");
-      target.tank.health = 0; target.tank.shield = 0; target.tank.isDead = true;
-      for (const [index, player] of this.state.players.entries()) player.money = balances[index].money;
-      this.state.roundEarningsByPlayer[reward.award.playerId] = total;
-      const nextPlayerIndex = reward.roundOutcome.isRoundEnd
-        ? null
-        : nextLivingPlayerIndex(
-            this.state.currentPlayerIndex,
-            this.state.numPlayers,
-            (index) => !!this.state?.players[index]?.tank.isDead,
-          );
-      const result: ZeusStrikeAppliedMessage = {
-        type: 'ZEUS_STRIKE_APPLIED',
-        roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
-        economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...this.state.roundEarningsByPlayer },
-        strikeId,
-        zeusId: strike.zeusId,
-        targetId: strike.targetId,
-        award: reward.award,
-        balances,
-        deadSlots: this.state.players.map((player) => player.tank.isDead),
-        roundOutcome: reward.roundOutcome,
-        nextPlayerIndex,
-      };
+  private async resolveZeusStrike(strikeId: number): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
+    if (!this.state) return;
+    const strike = this.state.activeZeusStrike;
+    if (!strike || strike.strikeId !== strikeId) return;
+    const target = this.state.players.find((player) => player.id === strike.targetId);
+    const zeus = this.state.players.find((player) => player.id === strike.zeusId);
+    if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
       this.state.activeZeusStrike = null;
-      this.appendCombatEvent(result);
-      this.state.lastAppliedZeusStrike = result;
-      if (reward.roundOutcome.isRoundEnd) {
-        this.state.roundEnded = true;
-        this.resetZeusRoundState();
-      } else if (nextPlayerIndex !== null) {
-        this.state.currentPlayerIndex = nextPlayerIndex;
-      }
       await this.saveState();
-      this.broadcast(result);
-      this.broadcast(this.buildZeusStateMessage());
+      return;
+    }
 
-      if (reward.roundOutcome.isRoundEnd) {
-        const roundEnd: RoundEndMessage = {
-          type: 'ROUND_END',
-          players: this.state.players,
-          roundWinnerId: reward.roundOutcome.roundWinnerId,
-          isDraw: reward.roundOutcome.isDraw,
-          roundNumber: this.state.roundNumber,
-        };
-        this.broadcast(roundEnd);
-        return;
-      }
-      this.broadcast({
-        type: 'STATE_UPDATE',
-        roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
-        currentPlayerIndex: this.state.currentPlayerIndex,
-        roundEnded: false,
-      });
-      this.maybeRunAIServerTurn();
+    const survivors = this.state.players.filter((player) => player.id !== target.id && !player.tank.isDead && player.tank.health > 0);
+    const reward = calculateZeusStrikeReward(zeus.id, this.state.numPlayers, survivors.map((player) => player.id));
+    const balances = this.state.players.map((player) => {
+      const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
+      const money = player.money + amount;
+      if (!Number.isSafeInteger(money)) throw new RangeError("Zeus balance overflow.");
+      return { playerId: player.id, money };
     });
+    const total = (this.state.roundEarningsByPlayer[reward.award.playerId] ?? 0) + reward.award.amount;
+    if (!Number.isSafeInteger(total)) throw new RangeError("Zeus round earnings overflow.");
+    target.tank.health = 0; target.tank.shield = 0; target.tank.isDead = true;
+    for (const [index, player] of this.state.players.entries()) player.money = balances[index].money;
+    this.state.roundEarningsByPlayer[reward.award.playerId] = total;
+    const nextPlayerIndex = reward.roundOutcome.isRoundEnd
+      ? null
+      : nextLivingPlayerIndex(
+          this.state.currentPlayerIndex,
+          this.state.numPlayers,
+          (index) => !!this.state?.players[index]?.tank.isDead,
+        );
+    const result: ZeusStrikeAppliedMessage = {
+      type: 'ZEUS_STRIKE_APPLIED',
+      roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
+      economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...this.state.roundEarningsByPlayer },
+      strikeId,
+      zeusId: strike.zeusId,
+      targetId: strike.targetId,
+      award: reward.award,
+      balances,
+      deadSlots: this.state.players.map((player) => player.tank.isDead),
+      roundOutcome: reward.roundOutcome,
+      nextPlayerIndex,
+    };
+    this.state.activeZeusStrike = null;
+    this.appendCombatEvent(result);
+    this.state.lastAppliedZeusStrike = result;
+    if (reward.roundOutcome.isRoundEnd) {
+      this.state.roundEnded = true;
+      this.resetZeusRoundState();
+    } else if (nextPlayerIndex !== null) {
+      this.state.currentPlayerIndex = nextPlayerIndex;
+    }
+    await this.saveState();
+    this.broadcast(result);
+    this.broadcast(this.buildZeusStateMessage());
+
+    if (reward.roundOutcome.isRoundEnd) {
+      const roundEnd: RoundEndMessage = {
+        type: 'ROUND_END',
+        players: this.state.players,
+        roundWinnerId: reward.roundOutcome.roundWinnerId,
+        isDraw: reward.roundOutcome.isDraw,
+        roundNumber: this.state.roundNumber,
+      };
+      this.broadcast(roundEnd);
+      return;
+    }
+    this.broadcast({
+      type: 'STATE_UPDATE',
+      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
+      currentPlayerIndex: this.state.currentPlayerIndex,
+      roundEnded: false,
+    });
+    this.maybeRunAIServerTurn();
   }
 
   private resetZeusRoundState(): void {
@@ -2113,9 +2350,18 @@ export class GameRoom extends DurableObject {
     kind: 'BUY_SELL' | 'READY',
   ): Promise<void> {
     if (!this.state) return;
-    if (rejection.actionId && rejection.reason !== 'MALFORMED') {
+    if (
+      this.state.shopSession !== null &&
+      rejection.actionId &&
+      !NON_PERSISTED_SHOP_REJECTIONS.has(rejection.reason)
+    ) {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
-      if (!this.state.processedShopActions[actionKey]) {
+      const { total, slotNonReady } = this.countShopActions(this.state.processedShopActions, slot);
+      if (
+        !Object.hasOwn(this.state.processedShopActions, actionKey) &&
+        total < this.shopActionBudget(this.state.shopSession) &&
+        slotNonReady < this.slotShopActionBudget()
+      ) {
         this.state.processedShopActions[actionKey] = {
           slot,
           result: rejection,
@@ -2187,6 +2433,56 @@ export class GameRoom extends DurableObject {
     this.broadcast(this.buildShopStateMessage());
   }
 
+  private shopActionBudget(session: { readySlots: readonly number[] }): number {
+    // Leave an entry for each human who still has to confirm READY.
+    const readySlots = new Set(session.readySlots);
+    const remainingReady = this.getHumanSlots().filter(slot => !readySlots.has(slot)).length;
+    return MAX_PROCESSED_SHOP_ACTIONS - remainingReady;
+  }
+
+  private slotShopActionBudget(): number {
+    const humanCount = Math.max(1, this.getHumanSlots().length);
+    // Reserve 1 READY entry per human and split the remaining budget evenly per human slot.
+    return Math.floor((MAX_PROCESSED_SHOP_ACTIONS - humanCount) / humanCount);
+  }
+
+  private countShopActions(actions: RoomState['processedShopActions'], slot: number) {
+    const entries = Object.entries(actions);
+    let slotNonReady = 0;
+    for (const [key, entry] of entries) {
+      if (entry.slot === slot && (entry.result.type === 'SHOP_REJECTED' || !key.startsWith('READY:'))) {
+        slotNonReady++;
+      }
+    }
+    return { total: entries.length, slotNonReady };
+  }
+
+  private resolvePersistedShopResult(
+    slot: number,
+    actionId: string,
+    result: PersistedShopActionResult,
+  ): ShopStateMessage | ShopFinishMessage | ShopRejectedMessage {
+    if (result.type === 'SHOP_STATE' && this.state?.shopSession) {
+      return this.buildShopStateMessage({ slot, actionId });
+    }
+    if (result.type === 'SHOP_COMPLETED_ACK') {
+      const completed = this.state?.lastCompletedShop;
+      if (completed && completed.shopEpoch === result.shopEpoch) {
+        return {
+          ...completed,
+          ...(result.acknowledgedAction ? { acknowledgedAction: result.acknowledgedAction } : {}),
+        };
+      }
+      return {
+        type: 'SHOP_REJECTED',
+        shopEpoch: this.state?.shopSession?.shopEpoch ?? null,
+        actionId,
+        reason: 'SHOP_CLOSED',
+      };
+    }
+    return result;
+  }
+
   private async handleShopBuySell(
     slot: number,
     message: ShopBuySellMessage,
@@ -2194,7 +2490,9 @@ export class GameRoom extends DurableObject {
     if (!this.state) return;
     const target = message.equipmentId ? { equipmentId: message.equipmentId } : { weaponId: message.weaponId };
     const actionKey = makeShopActionKey('BUY_SELL', slot, message.actionId);
-    const previous = this.state.processedShopActions[actionKey];
+    const previous = Object.hasOwn(this.state.processedShopActions, actionKey)
+      ? this.state.processedShopActions[actionKey]
+      : undefined;
     if (previous) {
       if (previous.slot === slot) {
         if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
@@ -2205,11 +2503,7 @@ export class GameRoom extends DurableObject {
           }, 'BUY_SELL');
           return;
         }
-        const result =
-          previous.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
-              : previous.result;
-        this.sendToSlot(slot, result);
+        this.sendToSlot(slot, this.resolvePersistedShopResult(slot, message.actionId, previous.result));
       }
       else {
         this.sendToSlot(slot, {
@@ -2246,6 +2540,14 @@ export class GameRoom extends DurableObject {
         delta: message.delta,
         reason: guard.ok ? 'SHOP_CLOSED' : guard.reason,
       }, 'BUY_SELL');
+      return;
+    }
+    const { total, slotNonReady } = this.countShopActions(this.state.processedShopActions, slot);
+    if (total >= this.shopActionBudget(session) || slotNonReady >= this.slotShopActionBudget()) {
+      this.sendToSlot(slot, {
+        type: 'SHOP_REJECTED', shopEpoch: session.shopEpoch,
+        actionId: message.actionId, ...target, delta: message.delta, reason: 'PURCHASE_LIMIT',
+      } satisfies ShopRejectedMessage);
       return;
     }
     const player = this.state.players[slot];
@@ -2298,7 +2600,9 @@ export class GameRoom extends DurableObject {
   ): Promise<void> {
     if (!this.state) return;
     const actionKey = makeShopActionKey('READY', slot, message.actionId);
-    const previous = this.state.processedShopActions[actionKey];
+    const previous = Object.hasOwn(this.state.processedShopActions, actionKey)
+      ? this.state.processedShopActions[actionKey]
+      : undefined;
     if (previous) {
       if (previous.slot === slot) {
         if (previous.result.type !== 'SHOP_REJECTED' && previous.result.shopEpoch !== message.shopEpoch) {
@@ -2318,11 +2622,7 @@ export class GameRoom extends DurableObject {
           await this.completeShopPhase();
         }
         const current = this.state.processedShopActions[actionKey];
-        const result =
-          current.result.type === 'SHOP_STATE' && this.state.shopSession
-              ? this.buildShopStateMessage({ slot, actionId: message.actionId })
-              : current.result;
-        this.sendToSlot(slot, result);
+        this.sendToSlot(slot, this.resolvePersistedShopResult(slot, message.actionId, current.result));
       }
       return;
     }
@@ -2394,14 +2694,20 @@ export class GameRoom extends DurableObject {
       acknowledgedAction: session.closingAction,
     };
 
-    // Chaque action acceptée conserve son accusé et la même carte terminale. Les refus restent des refus.
+    // Chaque action acceptée conserve un accusé compact sans dupliquer la carte. Les refus restent des refus.
     this.state.lastCompletedShop = finish;
     const upgradedShopActions: Record<string, PersistedShopAction> = {};
     for (const [actionKey, action] of Object.entries(this.state.processedShopActions)) {
       if (action.result.type === 'SHOP_STATE' && action.result.shopEpoch === shopEpoch) {
         upgradedShopActions[actionKey] = {
           slot: action.slot,
-          result: { ...finish, acknowledgedAction: action.result.acknowledgedAction },
+          result: {
+            type: 'SHOP_COMPLETED_ACK',
+            shopEpoch,
+            ...(action.result.acknowledgedAction
+              ? { acknowledgedAction: action.result.acknowledgedAction }
+              : {}),
+          },
         };
       } else {
         upgradedShopActions[actionKey] = action;

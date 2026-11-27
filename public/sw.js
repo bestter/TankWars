@@ -1,10 +1,9 @@
-const CACHE_NAME = "tankwars-v4";
+const CACHE_NAME = "tankwars-v8";
+const APP_PATH = "/index.html";
 const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
 const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
-  "/",
-  "/index.html",
   "/favicon.svg",
   "/favicon-32.png",
   "/apple-touch-icon.png",
@@ -20,16 +19,51 @@ async function findCachedManifest(request) {
   return canonical?.ok ? canonical : undefined;
 }
 
+function isStaticFilePath(pathname) {
+  const normalized = pathname.replace(/\/+$/, "");
+  const lastSegment = normalized.split("/").pop() || "";
+  return lastSegment.includes(".");
+}
+
+function hasInvitationToken(urlLike) {
+  if (!urlLike) return false;
+  try {
+    const parsed =
+      urlLike instanceof URL ? urlLike : new URL(urlLike, self.location.origin);
+    for (const key of parsed.searchParams.keys()) {
+      if (key.toLowerCase() === "token") return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function isHtmlResponse(response) {
+  return /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? "");
+}
+
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => {
+      .then(async (cache) => {
+        // Cloudflare Pages redirige /index.html. Une navigation hors ligne
+        // exige une réponse non redirigée, même sous la clé /index.html.
+        const app = new Request(new URL("/", self.location.origin), {
+          cache: "reload",
+          redirect: "error",
+        });
+        const page = await fetch(app);
+        if (!page.ok || !isHtmlResponse(page)) {
+          throw new Error("[sw] App document precache failed");
+        }
         const manifest = new Request(
           new URL(MANIFEST_PATH, self.location.origin),
           MANIFEST_FETCH_OPTIONS
         );
-        return cache.addAll([...ASSETS, manifest]);
+        await cache.addAll([...ASSETS, manifest]);
+        await cache.put(APP_PATH, page);
       })
       .then(() => self.skipWaiting())
   );
@@ -64,8 +98,21 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
-  if (requestUrl.origin !== self.location.origin) {
+  // Ignorer les requêtes cross-origin et les origines opaques pour éviter les violations de CSP
+  if (
+    requestUrl.origin === "null" ||
+    self.location.origin === "null" ||
+    requestUrl.origin !== self.location.origin
+  ) {
+    return;
+  }
+
+  // Ne jamais intercepter ni mettre en cache les appels API ou les handshakes WebSocket
+  if (
+    requestUrl.pathname === "/api" ||
+    requestUrl.pathname.startsWith("/api/") ||
+    e.request.headers?.get?.("upgrade")?.toLowerCase() === "websocket"
+  ) {
     return;
   }
 
@@ -73,14 +120,23 @@ self.addEventListener("fetch", (e) => {
     requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
   const isNavigate = e.request.mode === "navigate";
+  const isCanonicalAppDocument =
+    requestUrl.pathname === "/" || requestUrl.pathname === APP_PATH;
+  const isAppNavigation =
+    isNavigate &&
+    !isManifestRequest &&
+    (isCanonicalAppDocument || !isStaticFilePath(requestUrl.pathname));
 
-  // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
+  // Stratégie Network-First pour les navigations applicatives (repli vers index.html) et le manifeste PWA
   // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
-  if (e.request.mode === "navigate" || isManifestRequest) {
+  if (isAppNavigation || isManifestRequest) {
     const fetchRequest =
       isManifestRequest && !isNavigate
         ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
         : fetch(e.request);
+    // La clé et l’URL mémorisée dans la réponse sont deux valeurs distinctes.
+    const cacheKey = isManifestRequest ? MANIFEST_PATH : APP_PATH;
+    const requestHasToken = hasInvitationToken(requestUrl);
 
     e.respondWith(
       fetchRequest
@@ -93,11 +149,17 @@ self.addEventListener("fetch", (e) => {
               return response;
             }
           }
-          if (response.ok) {
+          const canCacheResponse =
+            response.ok &&
+            !requestHasToken &&
+            !hasInvitationToken(response.url) &&
+            !response.redirected &&
+            (isManifestRequest || (isCanonicalAppDocument && isHtmlResponse(response)));
+          if (canCacheResponse) {
             const copy = response.clone();
             const cacheWrite = caches
               .open(CACHE_NAME)
-              .then((cache) => cache.put(e.request, copy))
+              .then((cache) => cache.put(cacheKey, copy))
               .catch((err) => {
                 if (typeof console !== "undefined") {
                   console.warn("[sw] Cache update failed", err);
@@ -113,7 +175,7 @@ self.addEventListener("fetch", (e) => {
           const options = { cacheName: CACHE_NAME };
           const fallback = isManifestRequest
             ? await findCachedManifest(e.request)
-            : (await caches.match(e.request, options)) ?? (await caches.match("/index.html", options));
+            : await caches.match(APP_PATH, options);
           if (fallback) return fallback;
           throw err;
         })

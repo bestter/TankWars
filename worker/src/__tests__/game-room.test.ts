@@ -67,6 +67,11 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
   };
   const storage = {
     ...storageOps,
+    deleteAll: vi.fn(async () => {
+      activeData.clear();
+      mockStorage.alarmAt = undefined;
+    }),
+    getAlarm: vi.fn(async () => mockStorage.alarmAt ?? null),
     setAlarm: vi.fn(async (time: number | Date) => { mockStorage.alarmAt = Number(time); }),
     transaction: vi.fn(async (callback: (txn: MockTransaction) => Promise<void>) => {
       const staged = structuredClone(storageData);
@@ -283,9 +288,24 @@ describe('Zeus v3 durable settlement', () => {
       await send(slot, { type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId } });
       return room.getRoster()!.activeShot!;
     };
-    const report = (shotId: number, amount = 0) => ({ type: 'SHOT_EARNINGS', shotId, authorityEpoch: room.getRoster()!.authorityEpoch,
-      players: reportPlayers(room), awards: amount ? [{ playerId: 'player-1', amount }] : [], deadSlots: room.getRoster()!.players.map((p) => p.tank.isDead), directHitVictimIds: [],
-      roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null } });
+    const report = (shotId: number, amount = 0) => {
+      const state = room.getRoster()!;
+      const players = reportPlayers(room);
+      const shooterId = state.activeShot?.ownerId ?? players[0].id;
+      if (amount > 0) {
+        const victim = players.find((p) => p.id !== shooterId && !p.tank.isDead);
+        if (victim) {
+          const damage = Math.max(1, Math.min(victim.tank.health - 1, Math.ceil(amount / 3)));
+          victim.tank.health -= damage;
+        }
+      }
+      return {
+        type: 'SHOT_EARNINGS', shotId, authorityEpoch: state.authorityEpoch,
+        players, awards: amount ? [{ playerId: shooterId, amount }] : [],
+        deadSlots: players.map((p) => p.tank.isDead), directHitVictimIds: [],
+        roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+      };
+    };
     const restart = async (reconnect = true) => {
       const now = Date.now();
       vi.clearAllTimers();
@@ -334,7 +354,7 @@ describe('Zeus v3 durable settlement', () => {
     expect(room.getRoster()!.players[0].money).toBe(before);
 
     await send(1, report(shot.shotId, 30));
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     await send(1, report(shot.shotId, 90));
     await send(0, oldReport);
     await vi.advanceTimersByTimeAsync(20_000);
@@ -439,6 +459,44 @@ describe('Zeus v3 durable settlement', () => {
     expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
   });
 
+  it.each(['shot', 'Zeus strike'])('expires the empty room after resolving an abandoned %s', async (action) => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot();
+    if (action === 'Zeus strike') room.getRoster()!.zeusState.shotsWithoutEarnings = 9;
+    const shot = await fire();
+    if (action === 'Zeus strike') {
+      await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+      await send(0, report(shot.shotId));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(setup.mockStorage.alarmAt).toBe(room.getRoster()!.activeZeusStrike!.resolveAt);
+    }
+    const actionDeadline = setup.mockStorage.alarmAt!;
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    await disconnect.call(room, 0, sockets[0]);
+    await disconnect.call(room, 1, sockets[1]);
+    expect(setup.mockStorage.alarmAt).toBe(actionDeadline);
+
+    const restored = await restart(false);
+    vi.clearAllTimers();
+    vi.setSystemTime(actionDeadline);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ activeShot: null, activeZeusStrike: null, roundEnded: true });
+    const expiry = actionDeadline + 24 * 60 * 60 * 1000;
+    expect(setup.mockStorage.alarmAt).toBe(expiry);
+
+    vi.setSystemTime(expiry - 1);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).not.toBeNull();
+    expect(setup.mockStorage.alarmAt).toBe(expiry);
+
+    vi.setSystemTime(expiry);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toBeNull();
+    expect(setup.mockStorage.storageData.size).toBe(0);
+  });
+
   it('keeps reconnect and IDENTIFY writes behind a failed shot transaction', async () => {
     const { room, setup, send, fire, sockets } = await boot();
     const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;
@@ -471,7 +529,7 @@ describe('Zeus v3 durable settlement', () => {
     });
     expect(room.getRoster()!.shotHistory).toEqual([]);
     expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: null, events: [] });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('resolves the watchdog waitUntil when human settlement cancels its timer', async () => {
@@ -523,7 +581,7 @@ describe('Zeus v3 durable settlement', () => {
       ['SHOT_EARNINGS_APPLIED', 'STATE_UPDATE', 'ROUND_END'].includes(type),
     )).toEqual(['SHOT_EARNINGS_APPLIED', roundEnds ? 'ROUND_END' : 'STATE_UPDATE']);
     expect(room.getRoster()).toMatchObject({ activeShot: null, lastResolvedShotId: shot.shotId, roundEnded: roundEnds });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('preserves the final deadline on restart and replays a single draw with existing earnings intact', async () => {
@@ -531,7 +589,7 @@ describe('Zeus v3 durable settlement', () => {
     const first = await fire();
     await send(0, report(first.shotId, 25));
     await send(0, { type: 'SHOT_SETTLED', shotId: first.shotId, slot: 0, deadSlots: [false, false] });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     const launchedAt = Date.now();
     const grenades = room.getRoster()!.players[1].inventory.GRENADE!;
     const pending = await fire('GRENADE');
@@ -673,7 +731,7 @@ describe('Zeus v3 durable settlement', () => {
       lastResolvedShotId: shot.shotId,
       roundEarningsByPlayer: { 'player-1': 25 },
     });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === (roundEnds ? 'ROUND_END' : 'STATE_UPDATE'))).toBe(true);
   });
 
@@ -695,7 +753,7 @@ describe('Zeus v3 durable settlement', () => {
       currentPlayerIndex: 1,
       lastResolvedShotId: shot.shotId,
     });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('serializes shop purchases, readiness, IDENTIFY and REQUEST_GAME_START through runShotOperation', async () => {
@@ -968,7 +1026,8 @@ describe('Zeus v3 durable settlement', () => {
     await handle.call(restored, 0, JSON.stringify({ type: 'SHOT_EARNINGS', shotId: first.shotId }));
     expect(sockets[1].getLastMessage()).toEqual(result);
     expect(restored.getRoster()).toEqual(restoredBefore);
-    expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(30);
+    expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(10);
+    expect(restored.getRoster()!.roundEarningsByPlayer['player-2']).toBe(20);
     for (const slot of [0, 1]) await handle.call(restored, slot, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: `ready-${slot}` }));
     expect(restored.getRoster()!.earningsResults).toEqual({});
     expect(restored.getRoster()!.roundEarningsByPlayer['player-1']).toBe(0);
@@ -985,7 +1044,7 @@ describe('Zeus v3 durable settlement', () => {
     state.zeusState.shotsWithoutEarnings = 9;
     const shot = await fire();
     await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
-    const bad = report(shot.shotId, 10);
+    const bad = report(shot.shotId, 0);
     bad.players[0].tank.position.x += 10;
     bad.players[1].tank[field] += 0.000000001;
     const before = structuredClone(state);
@@ -1143,10 +1202,13 @@ describe('Zeus v3 durable settlement', () => {
     const shot = await fire();
     if (applyEarnings) {
       await send(0, report(shot.shotId, 25));
+      vi.setSystemTime(Date.now() + advanceMs);
+    } else {
+      await vi.advanceTimersByTimeAsync(advanceMs);
     }
-    await vi.advanceTimersByTimeAsync(advanceMs);
 
     const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+    expect(persisted.activeShot).not.toBeNull();
     persisted.combatSchemaVersion = 4;
     setup.mockStorage.storageData.set('state', persisted);
 
@@ -1165,7 +1227,7 @@ describe('Zeus v3 durable settlement', () => {
     await restored.alarm();
 
     expect(storage.transaction).not.toHaveBeenCalled();
-    expect(storage.setAlarm).not.toHaveBeenCalled();
+    expect(storage.setAlarm).toHaveBeenCalledWith(beforeAlarm);
     expect(restored.getRoster()).toEqual(beforeState);
     expect(setup.mockStorage.storageData).toEqual(beforeStorage);
     expect(setup.mockStorage.alarmAt).toBe(beforeAlarm);
@@ -3039,6 +3101,38 @@ describe('GameRoom Durable Object', () => {
       expect(state.processedShopActions).toHaveProperty(`READY:0:${actionId}`);
     });
 
+    it('replays the 33rd rejection after restart even when stock becomes available', async () => {
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+      const send = (target: GameRoom, actionId: string, delta: 1 | -1) => handle.call(target, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId, weaponId: 'GRENADE', delta,
+      }));
+      const state = room.getRoster()!;
+      state.players[0].inventory.GRENADE = 0;
+      state.players[0].money = 1000;
+      for (let attempt = 1; attempt <= 33; attempt++) {
+        await send(room, `sale-${attempt}`, -1);
+      }
+      const rejection = { type: 'SHOP_REJECTED', actionId: 'sale-33', reason: 'NO_STOCK' };
+      expect(ws0.getLastMessage()).toMatchObject(rejection);
+      await send(room, 'buy-stock', 1);
+      expect(state.players[0].inventory.GRENADE).toBe(1);
+      const { money } = state.players[0];
+      const { economicRevision } = state;
+
+      const restored = new GameRoom(mockCtx as DurableObjectState, {});
+      Object.defineProperty(restored, 'ctx', { value: mockCtx });
+      await (mockCtx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+      const restoredSocket = new MockWebSocket();
+      (Reflect.get(restored, 'sockets') as Map<number, MockWebSocket>).set(0, restoredSocket);
+      await send(restored, 'sale-33', -1);
+      expect(restoredSocket.getLastMessage()).toMatchObject(rejection);
+      expect(restored.getRoster()!.players[0]).toMatchObject({ money, inventory: { GRENADE: 1 } });
+      expect(restored.getRoster()!.economicRevision).toBe(economicRevision);
+      await send(restored, 'new-sale', -1);
+      expect(restoredSocket.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 0, actionId: 'new-sale' } });
+      expect(restored.getRoster()!.players[0].inventory.GRENADE).toBe(0);
+    });
+
     it('applies parallel purchases and retries each action exactly once', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
@@ -4015,13 +4109,16 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const damagedPlayers = reportPlayers(room, [false, false]);
+      damagedPlayers[1].tank.health = 95;
       const base = {
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
+        type: 'SHOT_EARNINGS', players: damagedPlayers, shotId: shot?.shotId, awards: [{ playerId: 'player-1', amount: 10 }],
         deadSlots: [false, false], directHitVictimIds: [], roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       };
       await handle.call(room, 1, JSON.stringify({ ...base, authorityEpoch: 1 }));
       await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 0 }));
       await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 1, awards: [{ playerId: 'player-1', amount: 1.5 }] }));
+      await handle.call(room, 0, JSON.stringify({ ...base, authorityEpoch: 1, awards: [{ playerId: 'player-1', amount: 999_999 }] }));
       const players = (Reflect.get(room, 'state') as { players: Array<{ money: number }> }).players;
       expect(players[0].money).toBe(250);
     });
@@ -4032,8 +4129,10 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const damagedPlayers = reportPlayers(room, [false, false]);
+      damagedPlayers[1].tank.health = 95;
       const report = {
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: damagedPlayers, shotId: shot?.shotId, authorityEpoch: 1,
         awards: [{ playerId: 'player-1', amount: 10 }], deadSlots: [false, false],
         directHitVictimIds: [],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
@@ -4073,8 +4172,10 @@ describe('GameRoom Durable Object', () => {
         type: 'FIRE', actionId: crypto.randomUUID(), command: { angle: 45, power: 50, weaponId: 'MISSILE' },
       }));
       const shot = ws0.getAllMessages<{ type: string; shotId: number }>().find((message) => message.type === 'SHOT');
+      const directHitPlayers = reportPlayers(room, [false, false]);
+      directHitPlayers[1].tank.health = 95;
       await handle.call(room, 0, JSON.stringify({
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: shot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: directHitPlayers, shotId: shot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false], directHitVictimIds: ['player-2'],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
@@ -4094,8 +4195,10 @@ describe('GameRoom Durable Object', () => {
       const bulldozerShot = ws0.getAllMessages<{ type: string; shotId: number }>()
         .filter((message) => message.type === 'SHOT')
         .pop();
+      const bulldozerPlayers = reportPlayers(room, [false, false]);
+      bulldozerPlayers[0].tank.health = 95;
       await handle.call(room, 0, JSON.stringify({
-        type: 'SHOT_EARNINGS', players: reportPlayers(room, [false, false]), shotId: bulldozerShot?.shotId, authorityEpoch: 1,
+        type: 'SHOT_EARNINGS', players: bulldozerPlayers, shotId: bulldozerShot?.shotId, authorityEpoch: 1,
         awards: [], deadSlots: [false, false], directHitVictimIds: ['player-1'],
         roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
       }));
@@ -4673,6 +4776,803 @@ describe('GameRoom Durable Object', () => {
       expect(finalState.players[0]).toMatchObject({ money: 0, tank: { shield: 160, maxShield: 40 } });
       expect(finalState.players[0]).not.toHaveProperty('reinforcedShieldPending');
       expect(finalState.players[1].inventory.DRILLER).toBe(1);
+    });
+
+    it('does not persist SHOP_CLOSED rejections, drops oversized ArrayBuffer payloads, and cleans up idle rooms after 24h', async () => {
+      vi.useFakeTimers();
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'security-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+        await handle.call(room, 0, new ArrayBuffer(9000));
+
+        const state = Reflect.get(room, 'state') as {
+          processedShopActions: Record<string, unknown>;
+        };
+        // Spam SHOP_BUY_SELL while shop is closed
+        for (let i = 0; i < 5; i++) {
+          await handle.call(room, 0, JSON.stringify({
+            type: 'SHOP_BUY_SELL',
+            shopEpoch: 1,
+            actionId: `closed-${i}`,
+            weaponId: 'GRENADE',
+            delta: 1,
+          }));
+        }
+        expect(Object.keys(state.processedShopActions)).toEqual([]);
+
+        const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+        await disconnect.call(room, 0, ws0 as unknown as WebSocket);
+        await disconnect.call(room, 1, ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBeDefined();
+
+        vi.setSystemTime(baseNow + 24 * 60 * 60 * 1000 + 1);
+        await room.alarm();
+        expect(Reflect.get(room, 'state')).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('extends the 24h backup alarm on reconnect, protects occupied rooms, and expires restarted rooms without close or after POST /join', async () => {
+      vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'reconnect-alarm-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+
+        sockets.set(0, ws0 as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        await claim.call(room, 1, 'Bob', ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(baseNow + idleTtlMs);
+
+        // Cas 1 : déconnexion complète puis reconnexion avec élection d'autorité (electEarningsAuthority)
+        await disconnect.call(room, 0, ws0 as unknown as WebSocket);
+        await disconnect.call(room, 1, ws1 as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(baseNow + idleTtlMs);
+
+        const reconnect1At = baseNow + 10_000;
+        vi.setSystemTime(reconnect1At);
+        const ws0b = new MockWebSocket();
+        sockets.set(0, ws0b as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0b as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(reconnect1At + idleTtlMs);
+        expect(room.getRoster()?.lastActivityAt).toBe(reconnect1At);
+
+        // Cas 2 : après démarrage à froid avec autorité déjà sur le slot 0,
+        // reconnexion du slot 0 sans changement d'autorité ni de nom (needsIdleRefreshOnReconnect === true)
+        const coldStarted = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(coldStarted, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        const reconnect2At = reconnect1At + 5_000;
+        vi.setSystemTime(reconnect2At);
+        const ws0c = new MockWebSocket();
+        const coldSockets = Reflect.get(coldStarted, 'sockets') as Map<number, WebSocket>;
+        coldSockets.set(0, ws0c as unknown as WebSocket);
+        const coldClaim = Reflect.get(coldStarted, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        await coldClaim.call(coldStarted, 0, 'Alice', ws0c as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(reconnect2At + idleTtlMs);
+        expect(coldStarted.getRoster()?.lastActivityAt).toBe(reconnect2At);
+
+        // Cas 3 : la salle reste occupée lorsque l'alarme se déclenche -> préservée et reportée de 24 h
+        const occupiedAlarmAt = reconnect2At + idleTtlMs;
+        vi.setSystemTime(occupiedAlarmAt);
+        setup.mockStorage.alarmAt = undefined;
+        await coldStarted.alarm();
+        expect(coldStarted.getRoster()).not.toBeNull();
+        expect(coldStarted.getRoster()?.lastActivityAt).toBe(occupiedAlarmAt);
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        // Cas 4 : arrêt brutal du DO sans événement close ni requête ultérieure -> expire à l'échéance reportée
+        const restartedWithoutClose = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(restartedWithoutClose, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        vi.setSystemTime(occupiedAlarmAt + idleTtlMs - 1);
+        setup.mockStorage.alarmAt = undefined;
+        await restartedWithoutClose.alarm();
+        expect(restartedWithoutClose.getRoster()).not.toBeNull();
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        // Même après un POST /join réussi sur le DO redémarré sans socket actif, l'alarme reste armée et purge la salle
+        const joinResp = await restartedWithoutClose.fetch(
+          new Request('https://internal/api/rooms/reconnect-alarm-room/join', { method: 'POST' }),
+        );
+        expect(joinResp.status).toBe(200);
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        vi.setSystemTime(occupiedAlarmAt + idleTtlMs);
+        setup.mockStorage.alarmAt = undefined;
+        await restartedWithoutClose.alarm();
+        expect(restartedWithoutClose.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([false, true])('starts one idle window for an old compatible room without lastActivityAt (started=%s)', async (started) => {
+      vi.useFakeTimers();
+      try {
+        const createdAt = 1_700_000_000_000;
+        const idleTtl = 24 * 60 * 60 * 1000;
+        vi.setSystemTime(createdAt);
+        const setup = createMockCtx();
+        const restore = async () => {
+          const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+          await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+          return restored;
+        };
+        const fresh = await restore();
+        await fresh.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({ roomId: 'old-compatible-room', numPlayers: 2, slotConfigs: [{ type: 'human' }, { type: 'human' }] }),
+        }));
+        if (started) {
+          const claim = Reflect.get(fresh, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+          const sockets = Reflect.get(fresh, 'sockets') as Map<number, MockWebSocket>;
+          sockets.set(0, new MockWebSocket());
+          await claim.call(fresh, 0, 'Alice');
+          sockets.set(1, new MockWebSocket());
+          await claim.call(fresh, 1, 'Bob');
+          expect(fresh.getRoster()).toMatchObject({ started: true, combatSchemaVersion: 6 });
+        }
+        const persisted = setup.mockStorage.storageData.get('state') as { lastActivityAt?: number };
+        delete persisted.lastActivityAt;
+        setup.mockStorage.alarmAt = undefined;
+
+        const firstWake = createdAt + 60_000;
+        vi.setSystemTime(firstWake);
+        const first = await restore();
+        const join = await first.fetch(new Request('https://internal/api/rooms/old-compatible-room/join', { method: 'POST' }));
+        expect(join.status).toBe(200);
+        expect(setup.mockStorage.alarmAt).toBe(firstWake + idleTtl);
+        expect(setup.mockStorage.storageData.get('state')).toMatchObject({ started, lastActivityAt: firstWake });
+
+        vi.setSystemTime(firstWake + idleTtl / 2);
+        const second = await restore();
+        expect(setup.mockStorage.alarmAt).toBe(firstWake + idleTtl);
+        vi.setSystemTime(firstWake + idleTtl);
+        setup.mockStorage.alarmAt = undefined;
+        await second.alarm();
+        expect(second.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('self-heals missing idle alarms on cold start before POST /join and transitions from shot or Zeus deadlines in occupied rooms', async () => {
+      vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'deadline-handoff-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+
+        sockets.set(0, ws0 as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        await claim.call(room, 1, 'Bob', ws1 as unknown as WebSocket);
+
+        // 1. Tir occupé : échéance de récupération (20 s) -> bascule vers l'échéance d'inactivité (24 h)
+        const shot1At = baseNow + 1_000;
+        vi.setSystemTime(shot1At);
+        await handle.call(room, 0, JSON.stringify({
+          type: 'FIRE',
+          actionId: 'occupied-shot-1',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        }));
+        const shot1 = room.getRoster()!.activeShot!;
+        expect(setup.mockStorage.alarmAt).toBe(shot1At + 20_000);
+
+        const settle1At = shot1At + 500;
+        vi.setSystemTime(settle1At);
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_SETTLED',
+          shotId: shot1.shotId,
+          slot: 0,
+          deadSlots: [false, false],
+        }));
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_EARNINGS',
+          shotId: shot1.shotId,
+          authorityEpoch: room.getRoster()!.authorityEpoch,
+          players: reportPlayers(room),
+          awards: [],
+          deadSlots: [false, false],
+          directHitVictimIds: [],
+          roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+        }));
+        expect(room.getRoster()!.activeShot).toBeNull();
+        expect(setup.mockStorage.alarmAt).toBe(settle1At + idleTtlMs);
+
+        // 2. Frappe Zeus occupée : échéance resolveAt (700 ms) -> bascule vers l'échéance d'inactivité (24 h)
+        room.getRoster()!.zeusState.shotsWithoutEarnings = 9;
+        const shot2At = settle1At + 1_000;
+        vi.setSystemTime(shot2At);
+        await handle.call(room, 1, JSON.stringify({
+          type: 'FIRE',
+          actionId: 'occupied-shot-2',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        }));
+        const shot2 = room.getRoster()!.activeShot!;
+        await handle.call(room, 1, JSON.stringify({
+          type: 'SHOT_SETTLED',
+          shotId: shot2.shotId,
+          slot: 1,
+          deadSlots: [false, false],
+        }));
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_EARNINGS',
+          shotId: shot2.shotId,
+          authorityEpoch: room.getRoster()!.authorityEpoch,
+          players: reportPlayers(room),
+          awards: [],
+          deadSlots: [false, false],
+          directHitVictimIds: [],
+          roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+        }));
+        await vi.advanceTimersByTimeAsync(0);
+        const strike = room.getRoster()!.activeZeusStrike!;
+        expect(setup.mockStorage.alarmAt).toBe(strike.resolveAt);
+
+        vi.setSystemTime(strike.resolveAt);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(room.getRoster()!.activeZeusStrike).toBeNull();
+        const afterZeusExpiry = Date.now() + idleTtlMs;
+        expect(setup.mockStorage.alarmAt).toBe(afterZeusExpiry);
+
+        // 3. Auto-réparation d'une salle persistée dont l'alarme manquait avant redémarrage + POST /join
+        setup.mockStorage.alarmAt = undefined;
+        const healedRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(healedRoom, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        expect(setup.mockStorage.alarmAt).toBe(afterZeusExpiry);
+
+        const joinResp = await healedRoom.fetch(
+          new Request('https://internal/api/rooms/deadline-handoff-room/join', { method: 'POST' }),
+        );
+        expect(joinResp.status).toBe(200);
+
+        vi.setSystemTime(afterZeusExpiry);
+        setup.mockStorage.alarmAt = undefined;
+        await healedRoom.alarm();
+        expect(healedRoom.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('logs WebSocket rate-limit warnings at most once per window per slot', async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'rate-warn-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+        for (let i = 0; i < 150; i++) {
+          await handle.call(room, 0, '{}');
+        }
+        const rateWarnings = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && msg.includes('Rate-limiting WebSocket messages'),
+        );
+        expect(rateWarnings).toHaveLength(1);
+
+        vi.setSystemTime(baseNow + 5_001);
+        for (let i = 0; i < 125; i++) {
+          await handle.call(room, 0, '{}');
+        }
+        const rateWarningsAfterWindow = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && msg.includes('Rate-limiting WebSocket messages'),
+        );
+        expect(rateWarningsAfterWindow).toHaveLength(2);
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('closes a WebSocket with 1008, detaches it immediately, shifts authority, ignores stale messages, and bounds UTF-8/warn spam', async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'rate-close-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+        expect(room.getRoster()!.earningsAuthoritySlot).toBe(0);
+
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown, ws?: WebSocket) => Promise<void>;
+        // Multi-byte UTF-8 > 8192 bytes even though length === 3000 <= 8192; warnings are rate-limited.
+        for (let i = 0; i < 5; i++) {
+          await handle.call(room, 0, JSON.stringify({ type: 'IDENTIFY', name: '€'.repeat(3000) }), ws0 as unknown as WebSocket);
+          await handle.call(room, 0, '123', ws0 as unknown as WebSocket);
+        }
+        const payloadWarnings = warnSpy.mock.calls.filter(([msg]) =>
+          typeof msg === 'string' && (msg.includes('oversized payload') || msg.includes('Invalid message format')),
+        );
+        expect(payloadWarnings).toHaveLength(1);
+        expect(room.getRoster()!.joinedHumans[0]?.name).toBe('Alice');
+
+        // Remaining messages in the 5s window + 240 dropped messages trigger immediate 1008 detachment.
+        for (let i = 0; i < 110 + 240; i++) {
+          await handle.call(room, 0, '{}', ws0 as unknown as WebSocket);
+        }
+        expect(ws0.closeCode).toBe(1008);
+        expect(sockets.has(0)).toBe(false);
+        expect(room.getRoster()!.earningsAuthoritySlot).toBe(1);
+
+        // Even after the rate-limit window expires, messages from the detached ws0 instance are ignored.
+        vi.setSystemTime(baseNow + 10_000);
+        await handle.call(room, 0, JSON.stringify({ type: 'IDENTIFY', name: 'Zombie' }), ws0 as unknown as WebSocket);
+        expect(room.getRoster()!.joinedHumans[0]?.name).toBe('Alice');
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('isolates shop action budgets per human slot so one player cannot block another', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'shop-isolation-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const state = room.getRoster()!;
+      state.roundEnded = true;
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
+
+      state.players[0].inventory.GRENADE = 10;
+      state.players[1].inventory.GRENADE = 10;
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'seed-0', weaponId: 'GRENADE', delta: -1,
+      }));
+      const seedResult = state.processedShopActions['BUY_SELL:0:seed-0'].result;
+      if (seedResult.type !== 'SHOP_STATE') throw new Error('Missing seed sale');
+      // Slot 0 consumes its full per-slot budget (255 = floor((512 - 2) / 2)).
+      for (let i = 0; i < 254; i++) {
+        const actionId = `spam-${i}`;
+        state.processedShopActions[`BUY_SELL:0:${actionId}`] = {
+          slot: 0, result: { ...seedResult, acknowledgedAction: { slot: 0, actionId } },
+        };
+      }
+
+      await handle.call(room, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'slot0-blocked', weaponId: 'GRENADE', delta: -1,
+      }));
+      expect(ws0.getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', actionId: 'slot0-blocked', reason: 'PURCHASE_LIMIT' });
+
+      // Slot 1 still transacts and both slots can confirm READY.
+      await handle.call(room, 1, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId: 'slot1-ok', weaponId: 'GRENADE', delta: -1,
+      }));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 1, actionId: 'slot1-ok' } });
+
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' }));
+      await handle.call(room, 1, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' }));
+      expect(ws1.getAllMessages<{ type: string }>().some(message => message.type === 'SHOP_FINISH')).toBe(true);
+    });
+
+    it('retains accepted shop actions across saturation, restart and READY using compact completion markers', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'shop-cap-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const state = room.getRoster()!;
+      state.roundEnded = true;
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' }));
+
+      state.players[1].inventory.GRENADE = 10;
+      const sell = (actionId: string) => JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId, weaponId: 'GRENADE', delta: -1,
+      });
+      await handle.call(room, 1, sell('first-sale'));
+      const firstSale = state.processedShopActions['BUY_SELL:1:first-sale'].result;
+      if (firstSale.type !== 'SHOP_STATE') throw new Error('Missing first accepted sale');
+      for (let i = 0; i < 255; i++) {
+        const actionId = `slot0-prior-${i}`;
+        state.processedShopActions[`BUY_SELL:0:${actionId}`] = {
+          slot: 0, result: { ...firstSale, acknowledgedAction: { slot: 0, actionId } },
+        };
+      }
+      for (let i = 0; i < 253; i++) {
+        const actionId = `prior-sale-${i}`;
+        state.processedShopActions[`BUY_SELL:1:${actionId}`] = {
+          slot: 1, result: { ...firstSale, acknowledgedAction: { slot: 1, actionId } },
+        };
+      }
+      await handle.call(room, 1, sell('last-sale'));
+      expect(Object.keys(state.processedShopActions)).toHaveLength(511);
+      const inventory = structuredClone(state.players[1].inventory);
+      const { money } = state.players[1];
+      const { economicRevision } = state;
+
+      const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+      await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+      const restoredSockets = Reflect.get(restored, 'sockets') as Map<number, WebSocket>;
+      restoredSockets.set(0, ws0 as unknown as WebSocket);
+      restoredSockets.set(1, ws1 as unknown as WebSocket);
+
+      await handle.call(restored, 1, sell('over-capacity'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_REJECTED', actionId: 'over-capacity', reason: 'PURCHASE_LIMIT' });
+      await handle.call(restored, 1, sell('first-sale'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 1, actionId: 'first-sale' } });
+      expect(restored.getRoster()!.players[1]).toMatchObject({ inventory, money });
+      expect(restored.getRoster()!.economicRevision).toBe(economicRevision);
+
+      await handle.call(restored, 1, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-1' }));
+      expect(ws1.getAllMessages<{ type: string }>().find(message => message.type === 'SHOP_FINISH'))
+        .toMatchObject({ acknowledgedAction: { slot: 1, actionId: 'ready-1' } });
+      const completedActions = restored.getRoster()!.processedShopActions;
+      expect(Object.keys(completedActions)).toHaveLength(512);
+      const compactEntry = completedActions['BUY_SELL:1:first-sale'].result;
+      expect(compactEntry).toEqual({
+        type: 'SHOP_COMPLETED_ACK',
+        shopEpoch: 1,
+        acknowledgedAction: { slot: 1, actionId: 'first-sale' },
+      });
+      expect('map' in compactEntry).toBe(false);
+
+      await handle.call(restored, 1, sell('first-sale'));
+      expect(ws1.getLastMessage()).toMatchObject({ type: 'SHOP_FINISH', acknowledgedAction: { slot: 1, actionId: 'first-sale' } });
+      expect(restored.getRoster()!.players[1]).toMatchObject({ inventory, money });
+    });
+
+    it.each(['idle', 'shot', 'Zeus strike'])('expires an incompatible room with legacy %s state without rewriting combat', async (legacyState) => {
+      vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
+      try {
+        const now = 1_700_000_000_000;
+        vi.setSystemTime(now);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'legacy-alarm-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+
+        const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+        persisted.combatSchemaVersion = 5;
+        delete persisted.lastActivityAt;
+        if (legacyState === 'shot') persisted.activeShot = { shotId: 1, slot: 0 };
+        if (legacyState === 'Zeus strike') persisted.activeZeusStrike = { strikeId: 1, resolveAt: now + 100 };
+        setup.mockStorage.storageData.set('state', persisted);
+        setup.mockStorage.alarmAt = undefined;
+
+        const restore = async () => {
+          const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+          await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+          return restored;
+        };
+        const reloaded = await restore();
+        const originalExpiry = now + idleTtlMs;
+        expect(setup.mockStorage.alarmAt).toBe(originalExpiry);
+        expect(setup.mockStorage.storageData.get('state')).toEqual(persisted);
+
+        let expiresAt = originalExpiry;
+        if (legacyState !== 'idle') {
+          const wsLegacy = new MockWebSocket();
+          (Reflect.get(reloaded, 'sockets') as Map<number, WebSocket>).set(1, wsLegacy as unknown as WebSocket);
+          const claimLegacy = Reflect.get(reloaded, 'claimHumanSlot') as (slot: number, name: string, ws: MockWebSocket) => Promise<void>;
+          await claimLegacy.call(reloaded, 1, 'Bob', wsLegacy);
+          expect(wsLegacy.getLastMessage()).toMatchObject({ reason: 'NEW_GAME_REQUIRED' });
+          vi.setSystemTime(originalExpiry);
+          setup.mockStorage.alarmAt = undefined;
+          await reloaded.alarm();
+          expiresAt += idleTtlMs;
+          expect(setup.mockStorage.alarmAt).toBe(expiresAt);
+        }
+
+        vi.setSystemTime(expiresAt - 1);
+        setup.mockStorage.alarmAt = undefined;
+        const restored = await restore();
+        expect(setup.mockStorage.alarmAt).toBe(expiresAt);
+        expect(setup.mockStorage.storageData.get('state')).toEqual(persisted);
+        vi.setSystemTime(expiresAt);
+        setup.mockStorage.alarmAt = undefined;
+        const cancelShotTimeout = vi.fn();
+        if (legacyState === 'shot') {
+          expect(Reflect.get(restored, 'shotInFlight')).toBe(true);
+          expect(Reflect.get(restored, 'awaitingShotFromSlot')).toBe(0);
+          Reflect.set(restored, 'cancelShotSettledTimeout', cancelShotTimeout);
+        }
+        await restored.alarm();
+        expect(restored.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+        expect(Reflect.get(restored, 'shotInFlight')).toBe(false);
+        expect(Reflect.get(restored, 'awaitingShotFromSlot')).toBeNull();
+        expect(Reflect.get(restored, 'cancelShotSettledTimeout')).toBeNull();
+        expect(Reflect.get(restored, 'needsIdleRefreshOnReconnect')).toBe(true);
+        expect(Reflect.get(restored, 'needsCombatStorageSync')).toBe(true);
+        if (legacyState === 'shot') expect(cancelShotTimeout).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('preserves null prototype on processedFireActionsBySlot after a failed saveState rollback', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'rollback-proto-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'fire-1',
+        command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+
+      const context = setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } };
+      context.storage.transaction.mockRejectedValueOnce(new Error('storage failure'));
+      const saveState = Reflect.get(room, 'saveState') as () => Promise<void>;
+      await expect(saveState.call(room)).rejects.toThrow('storage failure');
+
+      const state = Reflect.get(room, 'state') as {
+        processedFireActionsBySlot: Record<number, Record<string, unknown>>;
+      };
+      expect(Object.getPrototypeOf(state.processedFireActionsBySlot[0])).toBeNull();
+    });
+
+    it('validates slotConfigs in fetchCreate, treats Upgrade case-insensitively, and sends null for non-numeric protocolVersion', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+
+      const badLength = await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'bad-slots-length',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }],
+        }),
+      }));
+      expect(badLength.status).toBe(400);
+
+      const badType = await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'bad-slots-type',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'evil' }],
+        }),
+      }));
+      expect(badType.status).toBe(400);
+
+      const postUpgrade = await room.fetch(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        headers: { Upgrade: 'WebSocket' },
+        body: JSON.stringify({
+          roomId: 'ws-upgrade-post',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+        }),
+      }));
+      expect(postUpgrade.status).toBe(404);
+      expect(room.getRoster()).toBeNull();
+
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'ws-alpha-version-room',
+          numPlayers: 2,
+          slotConfigs: [
+            { type: 'human', aiProfile: 'unused', extra: true },
+            { type: 'ai', aiProfile: 'v1-random', extra: true },
+          ],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+      expect(setup.mockStorage.storageData.get('state')).toMatchObject({
+        slotConfigs: [{ type: 'human' }, { type: 'ai', aiProfile: 'v1-random' }],
+      });
+      expect(room.getRoster()?.slotConfigs).toStrictEqual([
+        { type: 'human' }, { type: 'ai', aiProfile: 'v1-random' },
+      ]);
+      const token = (Reflect.get(room, 'state') as { tokens: string[] }).tokens[0];
+
+      class AlphaSocket extends MockWebSocket {
+        public accept = vi.fn();
+      }
+      let capturedServer!: AlphaSocket;
+      class AlphaWebSocketPair {
+        public 0: AlphaSocket;
+        public 1: AlphaSocket;
+        constructor() {
+          this[0] = new AlphaSocket();
+          this[1] = new AlphaSocket();
+          capturedServer = this[1];
+        }
+      }
+      const OriginalResponse = globalThis.Response;
+      const WrappedResponse = function (body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+        if (init?.status === 101) {
+          return { status: 101, webSocket: init.webSocket } as unknown as Response;
+        }
+        return new OriginalResponse(body, init);
+      } as unknown as typeof Response;
+      vi.stubGlobal('WebSocketPair', AlphaWebSocketPair);
+      vi.stubGlobal('Response', WrappedResponse);
+      try {
+        const res = await room.fetch(new Request(
+          `http://localhost/ws?room=ws-alpha-version-room&slot=0&protocolVersion=abc&token=${encodeURIComponent(token)}`,
+          { headers: { Upgrade: 'WebSocket' } },
+        ));
+        expect(res.status).toBe(101);
+        expect(capturedServer.getAllMessages()).toEqual([
+          { type: 'PROTOCOL_MISMATCH', requiredVersion: 6, receivedVersion: null },
+        ]);
+        expect(capturedServer.closeCode).toBe(4402);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 });

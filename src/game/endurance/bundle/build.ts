@@ -7,7 +7,7 @@ import type { SessionRecord } from "../types";
 import { formatJournalTextPage } from "../journalJsonl";
 import type { EnduranceStorage } from "../storage";
 import { Catalogue, exportOptions, PartWriter, publishDerived, type BundleManifest, type ExportOptions, type Location } from "./format";
-import { identity, jsonBytes, one, sha256, type BundleDisk } from "./io";
+import { escapeHtml, identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
 import { indexCollection, indexEntry, renderReport } from "./report";
 
 export interface BundleSource {
@@ -163,7 +163,9 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     manifest.reportError = `rapport incomplet / report incomplete: ${String(error)}`;
     console.warn("[Endurance] Derived report failed", error);
     try {
-      const link = previous?.index ? `<a href="${previous.index.replace("index/root.json", "index.html")}">Dernier rapport / Last report (${previous.indexBoundary})</a>` : "";
+      const rawPath = previous?.index?.replace("index/root.json", "index.html") ?? "";
+      const safeHref = safeRelativeHref(rawPath);
+      const link = safeHref !== "#" && previous ? `<a href="${safeHref}">Dernier rapport / Last report (${escapeHtml(previous.indexBoundary)})</a>` : "";
       await disk.write("index.html", one(new TextEncoder().encode(`<!doctype html><meta charset="utf-8"><title>Rapport incomplet / Incomplete report</title><h1>Rapport incomplet / Incomplete report</h1><p>Données confirmées / Confirmed data: ${manifest.journal.persisted}</p>${link}<p>Régénération / Regeneration: node Scripts/endurance/build-report.mjs manifest.json --output new-folder</p><p>Signé / Signed : Codex — GPT-6</p>`)));
     } catch (warning) { console.warn("[Endurance] Incomplete report notice could not be written", warning); }
   }

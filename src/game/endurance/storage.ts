@@ -7,13 +7,20 @@ import type { ArchiveFilter } from "../diagnostics/export";
 import { byteSize, recordTerrainId } from "../diagnostics/archive";
 import type { ArchiveRecord, ArchiveWrite, TerrainRecord, ShotListPage } from "../diagnostics/types";
 
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function metricGroups(value: unknown): boolean {
   if (!object(value) || !object(value.total)) return false;
-  const valid = (m: unknown) => object(m) && Object.keys(metrics()).every(k => typeof m[k] === "number" && Number.isFinite(m[k]) && m[k] >= 0);
-  return valid(value.total) && [value.players, value.profiles, value.weapons].every(group => object(group) && Object.values(group).every(valid));
+  const valid = (m: unknown) =>
+    object(m) &&
+    !Object.keys(m).some(k => FORBIDDEN_KEYS.has(k)) &&
+    Object.keys(metrics()).every(k => Object.hasOwn(m, k) && typeof m[k] === "number" && Number.isFinite(m[k]) && m[k] >= 0);
+  return valid(value.total) && [value.players, value.profiles, value.weapons].every(
+    group => object(group) && !Object.keys(group).some(k => FORBIDDEN_KEYS.has(k)) && Object.values(group).every(valid),
+  );
 }
 function stored<T>(value: unknown, store: Store): T {
   if (!object(value) || typeof value.id !== "string") throw new Error("INVALID_STORED_RECORD");
