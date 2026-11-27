@@ -71,6 +71,7 @@ function createMockCtx(): { ctx: unknown; mockStorage: MockStorageState } {
       activeData.clear();
       mockStorage.alarmAt = undefined;
     }),
+    getAlarm: vi.fn(async () => mockStorage.alarmAt ?? null),
     setAlarm: vi.fn(async (time: number | Date) => { mockStorage.alarmAt = Number(time); }),
     transaction: vi.fn(async (callback: (txn: MockTransaction) => Promise<void>) => {
       const staged = structuredClone(storageData);
@@ -353,7 +354,7 @@ describe('Zeus v3 durable settlement', () => {
     expect(room.getRoster()!.players[0].money).toBe(before);
 
     await send(1, report(shot.shotId, 30));
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     await send(1, report(shot.shotId, 90));
     await send(0, oldReport);
     await vi.advanceTimersByTimeAsync(20_000);
@@ -528,7 +529,7 @@ describe('Zeus v3 durable settlement', () => {
     });
     expect(room.getRoster()!.shotHistory).toEqual([]);
     expect(catchUpSnapshot(sockets[1])).toMatchObject({ activeShotId: null, events: [] });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('resolves the watchdog waitUntil when human settlement cancels its timer', async () => {
@@ -580,7 +581,7 @@ describe('Zeus v3 durable settlement', () => {
       ['SHOT_EARNINGS_APPLIED', 'STATE_UPDATE', 'ROUND_END'].includes(type),
     )).toEqual(['SHOT_EARNINGS_APPLIED', roundEnds ? 'ROUND_END' : 'STATE_UPDATE']);
     expect(room.getRoster()).toMatchObject({ activeShot: null, lastResolvedShotId: shot.shotId, roundEnded: roundEnds });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('preserves the final deadline on restart and replays a single draw with existing earnings intact', async () => {
@@ -588,7 +589,7 @@ describe('Zeus v3 durable settlement', () => {
     const first = await fire();
     await send(0, report(first.shotId, 25));
     await send(0, { type: 'SHOT_SETTLED', shotId: first.shotId, slot: 0, deadSlots: [false, false] });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     const launchedAt = Date.now();
     const grenades = room.getRoster()!.players[1].inventory.GRENADE!;
     const pending = await fire('GRENADE');
@@ -730,7 +731,7 @@ describe('Zeus v3 durable settlement', () => {
       lastResolvedShotId: shot.shotId,
       roundEarningsByPlayer: { 'player-1': 25 },
     });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
     expect(sockets[1].getAllMessages<{ type: string }>().some((m) => m.type === (roundEnds ? 'ROUND_END' : 'STATE_UPDATE'))).toBe(true);
   });
 
@@ -752,7 +753,7 @@ describe('Zeus v3 durable settlement', () => {
       currentPlayerIndex: 1,
       lastResolvedShotId: shot.shotId,
     });
-    expect(setup.mockStorage.alarmAt).toBeUndefined();
+    expect(setup.mockStorage.alarmAt).toBe(Date.now() + 24 * 60 * 60 * 1000);
   });
 
   it('serializes shop purchases, readiness, IDENTIFY and REQUEST_GAME_START through runShotOperation', async () => {
@@ -1201,10 +1202,13 @@ describe('Zeus v3 durable settlement', () => {
     const shot = await fire();
     if (applyEarnings) {
       await send(0, report(shot.shotId, 25));
+      vi.setSystemTime(Date.now() + advanceMs);
+    } else {
+      await vi.advanceTimersByTimeAsync(advanceMs);
     }
-    await vi.advanceTimersByTimeAsync(advanceMs);
 
     const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+    expect(persisted.activeShot).not.toBeNull();
     persisted.combatSchemaVersion = 4;
     setup.mockStorage.storageData.set('state', persisted);
 
@@ -4801,8 +4805,9 @@ describe('GameRoom Durable Object', () => {
       }
     });
 
-    it('clears the 24h idle alarm and refreshes lastActivityAt on reconnect (with or without authority change)', async () => {
+    it('extends the 24h backup alarm on reconnect, protects occupied rooms, and expires restarted rooms without close or after POST /join', async () => {
       vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
       try {
         const baseNow = 1_700_000_000_000;
         vi.setSystemTime(baseNow);
@@ -4829,39 +4834,189 @@ describe('GameRoom Durable Object', () => {
         await claim.call(room, 0, 'Alice', ws0 as unknown as WebSocket);
         sockets.set(1, ws1 as unknown as WebSocket);
         await claim.call(room, 1, 'Bob', ws1 as unknown as WebSocket);
-        expect(setup.mockStorage.alarmAt).toBeUndefined();
+        expect(setup.mockStorage.alarmAt).toBe(baseNow + idleTtlMs);
 
         // Cas 1 : déconnexion complète puis reconnexion avec élection d'autorité (electEarningsAuthority)
         await disconnect.call(room, 0, ws0 as unknown as WebSocket);
         await disconnect.call(room, 1, ws1 as unknown as WebSocket);
-        expect(setup.mockStorage.alarmAt).toBe(baseNow + 24 * 60 * 60 * 1000);
+        expect(setup.mockStorage.alarmAt).toBe(baseNow + idleTtlMs);
 
         const reconnect1At = baseNow + 10_000;
         vi.setSystemTime(reconnect1At);
         const ws0b = new MockWebSocket();
         sockets.set(0, ws0b as unknown as WebSocket);
         await claim.call(room, 0, 'Alice', ws0b as unknown as WebSocket);
-        expect(setup.mockStorage.alarmAt).toBeUndefined();
+        expect(setup.mockStorage.alarmAt).toBe(reconnect1At + idleTtlMs);
         expect(room.getRoster()?.lastActivityAt).toBe(reconnect1At);
 
-        // Cas 2 : après restauration à froid avec autorité déjà sur le slot 0 et alarme armée,
-        // reconnexion du slot 0 avec le même nom (elected === undefined && rosterChanged === false)
-        const restored = new GameRoom(setup.ctx as DurableObjectState, {});
-        Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+        // Cas 2 : après démarrage à froid avec autorité déjà sur le slot 0,
+        // reconnexion du slot 0 sans changement d'autorité ni de nom (needsIdleRefreshOnReconnect === true)
+        const coldStarted = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(coldStarted, 'ctx', { value: setup.ctx });
         await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
-        setup.mockStorage.alarmAt = undefined;
-        await restored.alarm();
-        expect(setup.mockStorage.alarmAt).toBe(reconnect1At + 24 * 60 * 60 * 1000);
-
         const reconnect2At = reconnect1At + 5_000;
         vi.setSystemTime(reconnect2At);
         const ws0c = new MockWebSocket();
-        const restoredSockets = Reflect.get(restored, 'sockets') as Map<number, WebSocket>;
-        restoredSockets.set(0, ws0c as unknown as WebSocket);
-        const restoredClaim = Reflect.get(restored, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
-        await restoredClaim.call(restored, 0, 'Alice', ws0c as unknown as WebSocket);
-        expect(setup.mockStorage.alarmAt).toBeUndefined();
-        expect(restored.getRoster()?.lastActivityAt).toBe(reconnect2At);
+        const coldSockets = Reflect.get(coldStarted, 'sockets') as Map<number, WebSocket>;
+        coldSockets.set(0, ws0c as unknown as WebSocket);
+        const coldClaim = Reflect.get(coldStarted, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        await coldClaim.call(coldStarted, 0, 'Alice', ws0c as unknown as WebSocket);
+        expect(setup.mockStorage.alarmAt).toBe(reconnect2At + idleTtlMs);
+        expect(coldStarted.getRoster()?.lastActivityAt).toBe(reconnect2At);
+
+        // Cas 3 : la salle reste occupée lorsque l'alarme se déclenche -> préservée et reportée de 24 h
+        const occupiedAlarmAt = reconnect2At + idleTtlMs;
+        vi.setSystemTime(occupiedAlarmAt);
+        setup.mockStorage.alarmAt = undefined;
+        await coldStarted.alarm();
+        expect(coldStarted.getRoster()).not.toBeNull();
+        expect(coldStarted.getRoster()?.lastActivityAt).toBe(occupiedAlarmAt);
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        // Cas 4 : arrêt brutal du DO sans événement close ni requête ultérieure -> expire à l'échéance reportée
+        const restartedWithoutClose = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(restartedWithoutClose, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        vi.setSystemTime(occupiedAlarmAt + idleTtlMs - 1);
+        setup.mockStorage.alarmAt = undefined;
+        await restartedWithoutClose.alarm();
+        expect(restartedWithoutClose.getRoster()).not.toBeNull();
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        // Même après un POST /join réussi sur le DO redémarré sans socket actif, l'alarme reste armée et purge la salle
+        const joinResp = await restartedWithoutClose.fetch(
+          new Request('https://internal/api/rooms/reconnect-alarm-room/join', { method: 'POST' }),
+        );
+        expect(joinResp.status).toBe(200);
+        expect(setup.mockStorage.alarmAt).toBe(occupiedAlarmAt + idleTtlMs);
+
+        vi.setSystemTime(occupiedAlarmAt + idleTtlMs);
+        setup.mockStorage.alarmAt = undefined;
+        await restartedWithoutClose.alarm();
+        expect(restartedWithoutClose.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('self-heals missing idle alarms on cold start before POST /join and transitions from shot or Zeus deadlines in occupied rooms', async () => {
+      vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
+      try {
+        const baseNow = 1_700_000_000_000;
+        vi.setSystemTime(baseNow);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'deadline-handoff-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string, ws?: WebSocket) => Promise<void>;
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+
+        sockets.set(0, ws0 as unknown as WebSocket);
+        await claim.call(room, 0, 'Alice', ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        await claim.call(room, 1, 'Bob', ws1 as unknown as WebSocket);
+
+        // 1. Tir occupé : échéance de récupération (20 s) -> bascule vers l'échéance d'inactivité (24 h)
+        const shot1At = baseNow + 1_000;
+        vi.setSystemTime(shot1At);
+        await handle.call(room, 0, JSON.stringify({
+          type: 'FIRE',
+          actionId: 'occupied-shot-1',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        }));
+        const shot1 = room.getRoster()!.activeShot!;
+        expect(setup.mockStorage.alarmAt).toBe(shot1At + 20_000);
+
+        const settle1At = shot1At + 500;
+        vi.setSystemTime(settle1At);
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_SETTLED',
+          shotId: shot1.shotId,
+          slot: 0,
+          deadSlots: [false, false],
+        }));
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_EARNINGS',
+          shotId: shot1.shotId,
+          authorityEpoch: room.getRoster()!.authorityEpoch,
+          players: reportPlayers(room),
+          awards: [],
+          deadSlots: [false, false],
+          directHitVictimIds: [],
+          roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+        }));
+        expect(room.getRoster()!.activeShot).toBeNull();
+        expect(setup.mockStorage.alarmAt).toBe(settle1At + idleTtlMs);
+
+        // 2. Frappe Zeus occupée : échéance resolveAt (700 ms) -> bascule vers l'échéance d'inactivité (24 h)
+        room.getRoster()!.zeusState.shotsWithoutEarnings = 9;
+        const shot2At = settle1At + 1_000;
+        vi.setSystemTime(shot2At);
+        await handle.call(room, 1, JSON.stringify({
+          type: 'FIRE',
+          actionId: 'occupied-shot-2',
+          command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+        }));
+        const shot2 = room.getRoster()!.activeShot!;
+        await handle.call(room, 1, JSON.stringify({
+          type: 'SHOT_SETTLED',
+          shotId: shot2.shotId,
+          slot: 1,
+          deadSlots: [false, false],
+        }));
+        await handle.call(room, 0, JSON.stringify({
+          type: 'SHOT_EARNINGS',
+          shotId: shot2.shotId,
+          authorityEpoch: room.getRoster()!.authorityEpoch,
+          players: reportPlayers(room),
+          awards: [],
+          deadSlots: [false, false],
+          directHitVictimIds: [],
+          roundOutcome: { isRoundEnd: false, isDraw: false, roundWinnerId: null },
+        }));
+        await vi.advanceTimersByTimeAsync(0);
+        const strike = room.getRoster()!.activeZeusStrike!;
+        expect(setup.mockStorage.alarmAt).toBe(strike.resolveAt);
+
+        vi.setSystemTime(strike.resolveAt);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(room.getRoster()!.activeZeusStrike).toBeNull();
+        const afterZeusExpiry = Date.now() + idleTtlMs;
+        expect(setup.mockStorage.alarmAt).toBe(afterZeusExpiry);
+
+        // 3. Auto-réparation d'une salle persistée dont l'alarme manquait avant redémarrage + POST /join
+        setup.mockStorage.alarmAt = undefined;
+        const healedRoom = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(healedRoom, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+        expect(setup.mockStorage.alarmAt).toBe(afterZeusExpiry);
+
+        const joinResp = await healedRoom.fetch(
+          new Request('https://internal/api/rooms/deadline-handoff-room/join', { method: 'POST' }),
+        );
+        expect(joinResp.status).toBe(200);
+
+        vi.setSystemTime(afterZeusExpiry);
+        setup.mockStorage.alarmAt = undefined;
+        await healedRoom.alarm();
+        expect(healedRoom.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
       } finally {
         vi.useRealTimers();
       }

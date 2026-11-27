@@ -307,7 +307,7 @@ export class GameRoom extends DurableObject {
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
   private wsMessageTimestamps = new Map<number, number[]>();
   private wsRateLimitWarnedUntil = new Map<number, number>();
-  private needsIdleAlarmClear = true;
+  private needsIdleRefreshOnReconnect = true;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
   /**
@@ -463,11 +463,18 @@ export class GameRoom extends DurableObject {
         if (shouldPersistMigration) {
           await this.saveState();
         }
+        if (!this.state.activeShot && !this.state.activeZeusStrike) {
+          const existingAlarm = await ctx.storage.getAlarm?.();
+          if (existingAlarm == null) {
+            const lastActivityAt = this.state.lastActivityAt ?? Date.now();
+            await ctx.storage.setAlarm(Math.max(Date.now(), lastActivityAt + ROOM_IDLE_TTL_MS));
+          }
+        }
       }
     });
   }
 
-  private async saveState(alarmAt?: number | null): Promise<void> {
+  private async saveState(alarmAt?: number): Promise<void> {
     if (!this.state) return;
     this.state.lastActivityAt = Date.now();
     const nextAlarmAt = this.state.activeZeusStrike?.resolveAt ??
@@ -527,18 +534,15 @@ export class GameRoom extends DurableObject {
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
-        if (nextAlarmAt === null) await txn.deleteAlarm();
-        else if (nextAlarmAt !== undefined) await txn.setAlarm(nextAlarmAt);
+        if (nextAlarmAt !== undefined) await txn.setAlarm(nextAlarmAt);
       });
       // Publish only committed serializations; replacing the map also removes obsolete keys.
       this.lastCombatStringified = stringified;
       this.lastCombatValues = committedValues;
       this.needsCombatStorageSync = false;
       this.syncedRoundNumber = main.roundNumber;
-      if (nextAlarmAt === null) {
-        this.needsIdleAlarmClear = false;
-      } else if (this.state.activeZeusStrike === null && this.idleExpiryAt(this.state.lastActivityAt) !== undefined) {
-        this.needsIdleAlarmClear = true;
+      if (this.sockets.size > 0 && !this.state.activeShot && !this.state.activeZeusStrike) {
+        this.needsIdleRefreshOnReconnect = false;
       }
       this.state.combatJournal = [...nextJournal];
       const nextShots = shotHistory.length === 0 && nextJournal.length === 0
@@ -1185,7 +1189,7 @@ export class GameRoom extends DurableObject {
     }
     this.sockets.delete(slot);
     this.pendingClaimNames.delete(ws);
-    if (this.sockets.size === 0) this.needsIdleAlarmClear = true;
+    if (this.sockets.size === 0) this.needsIdleRefreshOnReconnect = true;
     try {
       ws.close(1000, 'connection closed');
     } catch {
@@ -1206,7 +1210,7 @@ export class GameRoom extends DurableObject {
         this.sendRosterUpdate();
         return;
       }
-      if (this.idleExpiryAt(Date.now()) !== undefined) await this.saveState();
+      if (this.sockets.size === 0 && this.idleExpiryAt(Date.now()) !== undefined) await this.saveState();
     });
   }
 
@@ -1299,9 +1303,9 @@ export class GameRoom extends DurableObject {
     }
     if (
       elected === undefined &&
-      (rosterChanged || (wasStarted && this.needsIdleAlarmClear && !this.state.activeShot && !this.state.activeZeusStrike))
+      (rosterChanged || (this.needsIdleRefreshOnReconnect && !this.state.activeShot && !this.state.activeZeusStrike))
     ) {
-      await this.saveState(this.state.activeShot ? undefined : null);
+      await this.saveState();
     }
     if (!wasStarted) {
       this.sendRosterUpdate();
@@ -1382,7 +1386,7 @@ export class GameRoom extends DurableObject {
     this.state.authorityEpoch++;
     this.resetShotCoordination();
 
-    await this.saveState(null);
+    await this.saveState();
 
     // Tell everyone the game is starting + give them the full initial snapshot
     const gameStart = this.buildGameStartMessage();
@@ -1458,7 +1462,7 @@ export class GameRoom extends DurableObject {
     }
     this.state.earningsAuthoritySlot = next;
     this.state.authorityEpoch++;
-    await this.saveState(relay?.deadlineAt ?? (active ? undefined : null));
+    await this.saveState(relay?.deadlineAt);
     if (next !== null && active) {
       const socket = this.sockets.get(next);
       // Send the journal before announcing the new epoch so the client can verify its replay.
@@ -1704,7 +1708,7 @@ export class GameRoom extends DurableObject {
   }
 
   private idleExpiryAt(lastActivityAt: number): number | undefined {
-    if (this.state && !this.state.activeShot && !this.state.activeZeusStrike && this.sockets.size === 0) {
+    if (this.state && !this.state.activeShot && !this.state.activeZeusStrike) {
       return lastActivityAt + ROOM_IDLE_TTL_MS;
     }
   }
@@ -1725,7 +1729,21 @@ export class GameRoom extends DurableObject {
       const lastActivityAt = this.state?.lastActivityAt;
       const expiresAt = this.idleExpiryAt(lastActivityAt ?? now);
       if (expiresAt === undefined) return;
-      if (expiresAt <= now) {
+      if (this.sockets.size > 0) {
+        if (expiresAt <= now || lastActivityAt === undefined) {
+          if (this.state?.started && !this.buildGameStartMessage()) {
+            await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
+          } else {
+            await this.saveState();
+          }
+        } else {
+          await this.ctx.storage.setAlarm(expiresAt);
+        }
+        return;
+      }
+      if (lastActivityAt === undefined) {
+        await this.saveState();
+      } else if (expiresAt <= now) {
         await this.ctx.storage.deleteAll();
         this.state = null;
         this.committedState = null;
@@ -1734,8 +1752,6 @@ export class GameRoom extends DurableObject {
         this.wsMessageTimestamps.clear();
         this.wsRateLimitWarnedUntil.clear();
         this.aiProfiles.clear();
-      } else if (lastActivityAt === undefined) {
-        await this.saveState();
       } else {
         await this.ctx.storage.setAlarm(expiresAt);
       }
@@ -1786,7 +1802,7 @@ export class GameRoom extends DurableObject {
     this.resetShotCoordination();
     this.state.roundEnded = true;
     this.resetZeusRoundState();
-    await this.saveState(null);
+    await this.saveState();
     const roundEnd: RoundEndMessage = {
       type: 'ROUND_END',
       players: this.state.players,
@@ -1824,7 +1840,7 @@ export class GameRoom extends DurableObject {
     this.state.currentPlayerIndex = next;
     console.log(`[GameRoom] advanceTurnAndNotify: currentPlayerIndex changed from ${prev} to ${next}`);
 
-    await this.saveState(null);
+    await this.saveState();
 
     // Turn coordination only — clients simulate shots locally until headless authoritative sim is wired.
     const update = {
@@ -1983,7 +1999,7 @@ export class GameRoom extends DurableObject {
       rotationSlots: [...this.state.zeusRotationSlots],
     };
     this.appendCombatEvent(message);
-    await this.saveState(null);
+    await this.saveState();
     this.broadcast(message);
     this.broadcast(this.buildZeusStateMessage());
     this.broadcast({
@@ -2052,7 +2068,7 @@ export class GameRoom extends DurableObject {
     const zeus = this.state.players.find((player) => player.id === strike.zeusId);
     if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
       this.state.activeZeusStrike = null;
-      await this.saveState(null);
+      await this.saveState();
       return;
     }
 
@@ -2098,7 +2114,7 @@ export class GameRoom extends DurableObject {
     } else if (nextPlayerIndex !== null) {
       this.state.currentPlayerIndex = nextPlayerIndex;
     }
-    await this.saveState(null);
+    await this.saveState();
     this.broadcast(result);
     this.broadcast(this.buildZeusStateMessage());
 

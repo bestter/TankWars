@@ -21,6 +21,26 @@ async function findCachedManifest(request) {
   return canonical?.ok ? canonical : undefined;
 }
 
+function isStaticFilePath(pathname) {
+  const normalized = pathname.replace(/\/+$/, "");
+  const lastSegment = normalized.split("/").pop() || "";
+  return lastSegment.includes(".");
+}
+
+function hasInvitationToken(urlLike) {
+  if (!urlLike) return false;
+  try {
+    const parsed =
+      urlLike instanceof URL ? urlLike : new URL(urlLike, self.location.origin);
+    for (const key of parsed.searchParams.keys()) {
+      if (key.toLowerCase() === "token") return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
@@ -72,6 +92,7 @@ self.addEventListener("fetch", (e) => {
 
   // Ne jamais intercepter ni mettre en cache les appels API ou les handshakes WebSocket
   if (
+    requestUrl.pathname === "/api" ||
     requestUrl.pathname.startsWith("/api/") ||
     e.request.headers?.get?.("upgrade")?.toLowerCase() === "websocket"
   ) {
@@ -82,10 +103,14 @@ self.addEventListener("fetch", (e) => {
     requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
   const isNavigate = e.request.mode === "navigate";
-  const isAppNavigation = isNavigate &&
-    (requestUrl.pathname === "/" || requestUrl.pathname === APP_PATH);
+  const isCanonicalAppDocument =
+    requestUrl.pathname === "/" || requestUrl.pathname === APP_PATH;
+  const isAppNavigation =
+    isNavigate &&
+    !isManifestRequest &&
+    (isCanonicalAppDocument || !isStaticFilePath(requestUrl.pathname));
 
-  // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
+  // Stratégie Network-First pour les navigations applicatives (repli vers index.html) et le manifeste PWA
   // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
   if (isAppNavigation || isManifestRequest) {
     const fetchRequest =
@@ -94,7 +119,7 @@ self.addEventListener("fetch", (e) => {
         : fetch(e.request);
     // La clé et l’URL mémorisée dans la réponse sont deux valeurs distinctes.
     const cacheKey = isManifestRequest ? MANIFEST_PATH : APP_PATH;
-    const hasInvitationToken = requestUrl.searchParams.has("token");
+    const requestHasToken = hasInvitationToken(requestUrl);
 
     e.respondWith(
       fetchRequest
@@ -107,8 +132,17 @@ self.addEventListener("fetch", (e) => {
               return response;
             }
           }
-          if (response.ok && !hasInvitationToken && !response.redirected && (isManifestRequest ||
-            /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? ""))) {
+          const canCacheResponse =
+            response.ok &&
+            !requestHasToken &&
+            !hasInvitationToken(response.url) &&
+            !response.redirected &&
+            (isManifestRequest ||
+              (isCanonicalAppDocument &&
+                /^text\/html(?:\s*;|\s*$)/i.test(
+                  response.headers.get("content-type") ?? ""
+                )));
+          if (canCacheResponse) {
             const copy = response.clone();
             const cacheWrite = caches
               .open(CACHE_NAME)

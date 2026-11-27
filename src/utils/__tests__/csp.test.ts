@@ -156,7 +156,7 @@ describe('Service worker cache strategy', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it('caches only app documents under /index.html without query tokens and skips /api/ routes', async () => {
+  it('caches only canonical app documents without query tokens, falls back offline for app routes, and skips static files and /api/ routes', async () => {
     const origin = 'https://tankwars.example';
     const stored = new Map<string, Response>();
     const open = vi.fn(async () => ({
@@ -166,7 +166,7 @@ describe('Service worker cache strategy', () => {
     }));
     const match = vi.fn(async (key: string | Request) => {
       const k = typeof key === 'string' ? key : key.url;
-      return stored.get(k);
+      return stored.get(k)?.clone();
     });
     const listeners = new Map<string, (event: {
       request: { url: string; method: string; mode: string; destination: string; headers?: { get: (name: string) => string | null } };
@@ -180,12 +180,20 @@ describe('Service worker cache strategy', () => {
       if (url.pathname === '/robots.txt' || url.searchParams.has('plain')) {
         return new Response('User-agent: *', { headers: { 'Content-Type': 'text/plain' } });
       }
-      const html = url.pathname === '/other.html' ? '<html>other</html>' : '<html>app</html>';
+      let html = '<html>app</html>';
+      if (url.pathname === '/other.html') html = '<html>other</html>';
+      else if (url.pathname === '/guide' || url.pathname === '/guide/') html = '<html>guide</html>';
+      const responseUrl = url.searchParams.has('leakTokenInRes')
+        ? `${origin}/?token=leaked-in-response`
+        : url.href;
       const response = new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
-      Object.defineProperty(response, 'url', { value: url.href });
-      const clone = response.clone.bind(response);
-      response.clone = () => Object.defineProperty(clone(), 'url', { value: url.href });
-      return response;
+      const attachUrl = (target: Response): Response => {
+        Object.defineProperty(target, 'url', { value: responseUrl });
+        const origClone = target.clone.bind(target);
+        target.clone = () => attachUrl(origClone());
+        return target;
+      };
+      return attachUrl(response);
     });
 
     vm.runInNewContext(fs.readFileSync(path.resolve(process.cwd(), 'public/sw.js'), 'utf-8'), {
@@ -217,27 +225,46 @@ describe('Service worker cache strategy', () => {
 
     const navigate = (url: string) => dispatch({ url: `${origin}${url}`, method: 'GET', mode: 'navigate', destination: 'document' });
     expect((await navigate('/'))?.status).toBe(200);
+    expect(await (await navigate('/guide'))?.text()).toBe('<html>guide</html>');
+    expect(await (await navigate('/guide/'))?.text()).toBe('<html>guide</html>');
+
     const invitation = '/?room=r1&slot=1&token=secret-token';
+    const guideInvitation = '/guide?room=r1&slot=1&token=secret-guide-token';
+    const upperToken = '/?TOKEN=upper-secret';
+    const leakedInResponse = '/?leakTokenInRes=1';
     expect((await navigate(invitation))?.url).toBe(`${origin}${invitation}`);
+    expect((await navigate(guideInvitation))?.url).toBe(`${origin}${guideInvitation}`);
+    expect((await navigate(upperToken))?.url).toBe(`${origin}${upperToken}`);
+    expect((await navigate(leakedInResponse))?.url).toBe(`${origin}/?token=leaked-in-response`);
+
     expect([...stored.keys()]).toEqual(['/index.html']);
     expect(stored.get('/index.html')?.url).toBe(`${origin}/`);
+    for (const [key, cachedRes] of stored.entries()) {
+      expect(key.toLowerCase()).not.toContain('token');
+      expect(cachedRes.url.toLowerCase()).not.toContain('token');
+    }
+
     expect(await (await navigate('/robots.txt'))?.text()).toBe('User-agent: *');
     expect(await (await navigate('/other.html'))?.text()).toBe('<html>other</html>');
     expect(await (await navigate('/index.html?plain'))?.text()).toBe('User-agent: *');
+    expect([...stored.keys()]).toEqual(['/index.html']);
 
     networkShouldFail = true;
-    const offlineNavRes = await dispatch({
-      url: `${origin}/?room=r1&slot=1&token=other-token`,
-      method: 'GET',
-      mode: 'navigate',
-      destination: 'document',
-    });
+    const offlineGuideRes = await navigate('/guide');
+    expect(await offlineGuideRes?.text()).toBe('<html>app</html>');
+    expect(offlineGuideRes?.url).toBe(`${origin}/`);
+
+    const offlineNavRes = await navigate('/guide?room=r1&slot=1&token=other-token');
     expect(await offlineNavRes?.text()).toBe('<html>app</html>');
+    expect(offlineNavRes?.url).toBe(`${origin}/`);
     expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v7' });
+
     await expect(navigate('/robots.txt')).rejects.toThrow('Offline');
+    await expect(navigate('/other.html')).rejects.toThrow('Offline');
 
     fetchMock.mockClear();
     expect(await dispatch({ url: `${origin}/api/health`, method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
+    expect(await dispatch({ url: `${origin}/api`, method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
     expect(await dispatch({ url: `${origin}/api/rooms/r1/ws`, method: 'GET', mode: 'cors', destination: '', upgrade: 'websocket' })).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
