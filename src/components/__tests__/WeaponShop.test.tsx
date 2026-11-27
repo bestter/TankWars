@@ -528,4 +528,104 @@ describe('WeaponShop', () => {
     const nameEl = screen.getByText('Blue Knight');
     expect(nameEl.style.color).toBe('rgb(127, 127, 255)');
   });
+
+  it('visually hides NO_STOCK on purchasable and non-purchasable zero-stock rows while preserving aria-describedby, and removes it once stock >= 1', () => {
+    const player = makePlayer({
+      id: 'p-1',
+      name: 'Alpha',
+      money: 500,
+      inventory: {},
+    });
+
+    const { rerender } = render(
+      <WeaponShop
+        player={player}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    const buyBulldozer = screen.getByRole('button', { name: 'shop_buy_weapon_label weapons.BULLDOZER' });
+    const sellBulldozer = screen.getByRole('button', { name: 'shop_sell_weapon_label weapons.BULLDOZER' });
+    expect(buyBulldozer.hasAttribute('disabled')).toBe(false);
+    expect(buyBulldozer.getAttribute('aria-describedby')).toBeNull();
+    expect(document.getElementById('shop-buy-reason-BULLDOZER')).toBeNull();
+
+    expect(sellBulldozer.hasAttribute('disabled')).toBe(true);
+    expect(sellBulldozer.getAttribute('aria-describedby')).toBe('shop-sell-reason-BULLDOZER');
+    const sellBulldozerReason = document.getElementById('shop-sell-reason-BULLDOZER');
+    expect(sellBulldozerReason).not.toBeNull();
+    expect(sellBulldozerReason?.textContent).toBe('shop_reason_no_stock');
+    expect(sellBulldozerReason?.classList.contains('visually-hidden')).toBe(true);
+    expect(sellBulldozerReason?.style.color).toBe('');
+
+    const buyThermoReason = document.getElementById('shop-buy-reason-THERMONUCLEAR');
+    expect(buyThermoReason?.textContent).toBe('shop_reason_insufficient_funds');
+    expect(buyThermoReason?.classList.contains('visually-hidden')).toBe(false);
+    expect(buyThermoReason?.style.color).not.toBe('');
+
+    const sellThermoReason = document.getElementById('shop-sell-reason-THERMONUCLEAR');
+    expect(sellThermoReason?.textContent).toBe('shop_reason_no_stock');
+    expect(sellThermoReason?.classList.contains('visually-hidden')).toBe(true);
+
+    rerender(
+      <WeaponShop
+        player={makePlayer({ ...player, inventory: { BULLDOZER: 1 } })}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+      />
+    );
+
+    expect(document.getElementById('shop-sell-reason-BULLDOZER')).toBeNull();
+    const sellBulldozerAfter = screen.getByRole('button', { name: 'shop_sell_weapon_label weapons.BULLDOZER' });
+    expect(sellBulldozerAfter.hasAttribute('disabled')).toBe(false);
+    expect(sellBulldozerAfter.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('keeps other purchase blocks, non-NO_STOCK sell errors, and the global NO_STOCK alert visible', () => {
+    const { rerender } = render(
+      <WeaponShop
+        player={makePlayer({
+          money: 10_000,
+          inventory: { NUKE: 2, THERMONUCLEAR: 0, GRENADE: 1 },
+        })}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+        purchaseCounters={{ THERMONUCLEAR: 1, GRENADE: 12 }}
+      />
+    );
+
+    expect(document.getElementById('shop-buy-reason-NUKE')?.classList.contains('visually-hidden')).toBe(false);
+    expect(document.getElementById('shop-buy-reason-THERMONUCLEAR')?.classList.contains('visually-hidden')).toBe(false);
+    expect(document.getElementById('shop-buy-reason-GRENADE')?.classList.contains('visually-hidden')).toBe(false);
+
+    rerender(
+      <WeaponShop
+        player={makePlayer({
+          money: -1,
+          inventory: { NUKE: 2 },
+        })}
+        shopIndex={0}
+        totalShoppers={1}
+        onBuySell={() => {}}
+        onReady={() => {}}
+        denial="NO_STOCK"
+      />
+    );
+
+    const sellNukeReason = document.getElementById('shop-sell-reason-NUKE');
+    expect(sellNukeReason?.textContent).toBe('shop_reason_malformed');
+    expect(sellNukeReason?.classList.contains('visually-hidden')).toBe(false);
+    expect(sellNukeReason?.style.color).not.toBe('');
+
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('shop_reason_no_stock');
+    expect(alert.classList.contains('visually-hidden')).toBe(false);
+  });
 });
