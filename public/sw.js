@@ -1,10 +1,9 @@
-const CACHE_NAME = "tankwars-v7";
+const CACHE_NAME = "tankwars-v8";
 const APP_PATH = "/index.html";
 const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
 const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
-  APP_PATH,
   "/favicon.svg",
   "/favicon-32.png",
   "/apple-touch-icon.png",
@@ -40,16 +39,31 @@ function hasInvitationToken(urlLike) {
   }
 }
 
+function isHtmlResponse(response) {
+  return /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? "");
+}
+
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => {
+      .then(async (cache) => {
+        // Cloudflare Pages redirige /index.html. Une navigation hors ligne
+        // exige une réponse non redirigée, même sous la clé /index.html.
+        const app = new Request(new URL("/", self.location.origin), {
+          cache: "reload",
+          redirect: "error",
+        });
+        const page = await fetch(app);
+        if (!page.ok || !isHtmlResponse(page)) {
+          throw new Error("[sw] App document precache failed");
+        }
         const manifest = new Request(
           new URL(MANIFEST_PATH, self.location.origin),
           MANIFEST_FETCH_OPTIONS
         );
-        return cache.addAll([...ASSETS, manifest]);
+        await cache.addAll([...ASSETS, manifest]);
+        await cache.put(APP_PATH, page);
       })
       .then(() => self.skipWaiting())
   );
@@ -140,11 +154,7 @@ self.addEventListener("fetch", (e) => {
             !requestHasToken &&
             !hasInvitationToken(response.url) &&
             !response.redirected &&
-            (isManifestRequest ||
-              (isCanonicalAppDocument &&
-                /^text\/html(?:\s*;|\s*$)/i.test(
-                  response.headers.get("content-type") ?? ""
-                )));
+            (isManifestRequest || (isCanonicalAppDocument && isHtmlResponse(response)));
           if (canCacheResponse) {
             const copy = response.clone();
             const cacheWrite = caches

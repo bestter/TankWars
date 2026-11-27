@@ -88,7 +88,7 @@ describe('Service worker cache strategy', () => {
   it('uses network-first for navigations and manifest.json while ignoring cross-origin fetches', () => {
     const swPath = path.resolve(process.cwd(), 'public/sw.js');
     const content = fs.readFileSync(swPath, 'utf-8');
-    expect(content).toContain('const CACHE_NAME = "tankwars-v7"');
+    expect(content).toContain('const CACHE_NAME = "tankwars-v8"');
     expect(content).toContain('e.request.mode === "navigate"');
     expect(content).toContain('const MANIFEST_PATH = "/manifest.json"');
     expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
@@ -151,7 +151,7 @@ describe('Service worker cache strategy', () => {
     const responses = { exact, canonical, network: networkResponse };
     expect(await pending).toBe(responses[expectedSource]);
     expect(match.mock.calls.map(([input, options]) => {
-      expect(options).toEqual({ cacheName: 'tankwars-v7' });
+      expect(options).toEqual({ cacheName: 'tankwars-v8' });
       const url = new URL(typeof input === 'string' ? input : input.url, origin);
       return `${url.pathname}${url.search}`;
     })).toEqual(lookups);
@@ -259,7 +259,7 @@ describe('Service worker cache strategy', () => {
     const offlineNavRes = await navigate('/guide?room=r1&slot=1&token=other-token');
     expect(await offlineNavRes?.text()).toBe('<html>app</html>');
     expect(offlineNavRes?.url).toBe(`${origin}/`);
-    expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v7' });
+    expect(match).toHaveBeenCalledWith('/index.html', { cacheName: 'tankwars-v8' });
 
     await expect(navigate('/robots.txt')).rejects.toThrow('Offline');
     await expect(navigate('/other.html')).rejects.toThrow('Offline');
@@ -272,10 +272,12 @@ describe('Service worker cache strategy', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('refreshes a manifest with a fresh HTTP cache entry during installation and online, and keeps it offline', async () => {
+  it('precaches the app before its first offline navigation and refreshes a stale HTTP manifest', async () => {
     interface MockResponse {
       ok: boolean;
       body: string;
+      headers: Headers;
+      redirected: boolean;
       clone: () => MockResponse;
     }
 
@@ -285,6 +287,7 @@ describe('Service worker cache strategy', () => {
       mode?: string;
       destination?: string;
       cache?: RequestCache;
+      redirect?: RequestRedirect;
     }
 
     type SwEventHandler = (event: {
@@ -293,11 +296,13 @@ describe('Service worker cache strategy', () => {
       respondWith?: (promise: Promise<MockResponse | undefined>) => void;
     }) => void;
 
-    const makeResponse = (body: string, ok = true): MockResponse => ({
-      ok,
+    const makeResponse = (body: string, redirected = false, contentType = ''): MockResponse => ({
+      ok: true,
       body,
+      headers: new Headers({ 'content-type': contentType }),
+      redirected,
       clone() {
-        return makeResponse(body, ok);
+        return makeResponse(body, redirected, contentType);
       },
     });
 
@@ -338,6 +343,13 @@ describe('Service worker cache strategy', () => {
       if (key === '/manifest.json') {
         httpCachedManifest = networkManifestBody;
         return makeResponse(httpCachedManifest);
+      }
+      if (key === '/' || key === '/index.html') {
+        const redirected = key === '/index.html';
+        if (redirected && (typeof input !== 'string' && input.redirect === 'error')) {
+          throw new TypeError('Unexpected redirect');
+        }
+        return makeResponse('<html>TankWars</html>', redirected, 'text/html; charset=UTF-8');
       }
       return makeResponse(`asset:${key}`);
     };
@@ -427,9 +439,12 @@ describe('Service worker cache strategy', () => {
     expect(skipWaitingCalled).toBe(true);
     expect(clientsClaimCalled).toBe(true);
     expect(cacheStorage.has('tankwars-v3')).toBe(false);
-    expect(cacheStorage.get('tankwars-v7')?.get('/manifest.json')?.body)
+    expect(cacheStorage.get('tankwars-v8')?.get('/manifest.json')?.body)
       .toBe('{"orientation":"any"}');
     expect(networkCalls).toContain('/manifest.json');
+    expect(networkCalls).toContain('/');
+    expect(networkCalls).not.toContain('/index.html');
+    expect(cacheStorage.get('tankwars-v8')?.has('/')).toBe(false);
 
     const respondWithFetch = async (request: MockRequest): Promise<MockResponse | undefined> => {
       let pending: Promise<MockResponse | undefined> | undefined;
@@ -447,6 +462,13 @@ describe('Service worker cache strategy', () => {
       await Promise.all(waitUntilPromises);
       return response;
     };
+
+    networkAvailable = false;
+    for (const route of ['/', '/guide']) {
+      const response = await respondWithFetch({ url: `${origin}${route}`, mode: 'navigate', destination: 'document' });
+      expect(response).toMatchObject({ body: '<html>TankWars</html>', redirected: false });
+    }
+    networkAvailable = true;
 
     networkCalls.length = 0;
     const crossOriginPrefixed = await respondWithFetch({
