@@ -171,6 +171,26 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(window.location.pathname + window.location.search + window.location.hash).toBe('/?lang=fr#anchor');
   });
 
+  it('clears the contact navigation error when leaving the menu and returning later', () => {
+    vi.spyOn(window.history, 'pushState').mockImplementationOnce(() => {
+      throw new DOMException('History is unavailable', 'SecurityError');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
+    expect(screen.getByText('contact_navigation_error')).toBeDefined();
+    expect(window.location.pathname).toBe('/');
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
+    expect(screen.queryByText('contact_navigation_error')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mock Return To Menu' }));
+    expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
+    expect(screen.queryByText('contact_navigation_error')).toBeNull();
+  });
+
   it.each(['hotseat', 'no API base'])('hides contact and normalizes the URL in %s builds', (mode) => {
     deploymentMode.hotseatOnly = mode === 'hotseat';
     vi.stubEnv('DEV', false);

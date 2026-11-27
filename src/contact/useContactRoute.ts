@@ -33,6 +33,10 @@ export function useContactRoute(isMenu: boolean, hotseatOnly: boolean) {
   const requested = useSyncExternalStore(subscribeToContactPath, isContactPath);
   const [navigationFailed, setNavigationFailed] = useState(false);
 
+  if (!allowed && navigationFailed) {
+    setNavigationFailed(false);
+  }
+
   useEffect(() => {
     if (!allowed && requested) writeContactPath('/', 'replaceState');
   }, [allowed, requested]);
