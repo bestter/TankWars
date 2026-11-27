@@ -1,0 +1,12 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "files": [
+      "Temp/**",
+      "src/Temp/**",
+      ".wrangler/**",
+      "worker/.wrangler/**",
+      "artifacts/**"
+    ]
+  }
+}
