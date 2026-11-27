@@ -3101,6 +3101,38 @@ describe('GameRoom Durable Object', () => {
       expect(state.processedShopActions).toHaveProperty(`READY:0:${actionId}`);
     });
 
+    it('replays the 33rd rejection after restart even when stock becomes available', async () => {
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: string) => Promise<void>;
+      const send = (target: GameRoom, actionId: string, delta: 1 | -1) => handle.call(target, 0, JSON.stringify({
+        type: 'SHOP_BUY_SELL', shopEpoch: 1, actionId, weaponId: 'GRENADE', delta,
+      }));
+      const state = room.getRoster()!;
+      state.players[0].inventory.GRENADE = 0;
+      state.players[0].money = 1000;
+      for (let attempt = 1; attempt <= 33; attempt++) {
+        await send(room, `sale-${attempt}`, -1);
+      }
+      const rejection = { type: 'SHOP_REJECTED', actionId: 'sale-33', reason: 'NO_STOCK' };
+      expect(ws0.getLastMessage()).toMatchObject(rejection);
+      await send(room, 'buy-stock', 1);
+      expect(state.players[0].inventory.GRENADE).toBe(1);
+      const { money } = state.players[0];
+      const { economicRevision } = state;
+
+      const restored = new GameRoom(mockCtx as DurableObjectState, {});
+      Object.defineProperty(restored, 'ctx', { value: mockCtx });
+      await (mockCtx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+      const restoredSocket = new MockWebSocket();
+      (Reflect.get(restored, 'sockets') as Map<number, MockWebSocket>).set(0, restoredSocket);
+      await send(restored, 'sale-33', -1);
+      expect(restoredSocket.getLastMessage()).toMatchObject(rejection);
+      expect(restored.getRoster()!.players[0]).toMatchObject({ money, inventory: { GRENADE: 1 } });
+      expect(restored.getRoster()!.economicRevision).toBe(economicRevision);
+      await send(restored, 'new-sale', -1);
+      expect(restoredSocket.getLastMessage()).toMatchObject({ type: 'SHOP_STATE', acknowledgedAction: { slot: 0, actionId: 'new-sale' } });
+      expect(restored.getRoster()!.players[0].inventory.GRENADE).toBe(0);
+    });
+
     it('applies parallel purchases and retries each action exactly once', async () => {
       const handleClientMessage = Reflect.get(room, 'handleClientMessage') as (
         slot: number,
@@ -4896,6 +4928,58 @@ describe('GameRoom Durable Object', () => {
         setup.mockStorage.alarmAt = undefined;
         await restartedWithoutClose.alarm();
         expect(restartedWithoutClose.getRoster()).toBeNull();
+        expect(setup.mockStorage.storageData.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([false, true])('starts one idle window for an old compatible room without lastActivityAt (started=%s)', async (started) => {
+      vi.useFakeTimers();
+      try {
+        const createdAt = 1_700_000_000_000;
+        const idleTtl = 24 * 60 * 60 * 1000;
+        vi.setSystemTime(createdAt);
+        const setup = createMockCtx();
+        const restore = async () => {
+          const restored = new GameRoom(setup.ctx as DurableObjectState, {});
+          Object.defineProperty(restored, 'ctx', { value: setup.ctx });
+          await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+          return restored;
+        };
+        const fresh = await restore();
+        await fresh.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({ roomId: 'old-compatible-room', numPlayers: 2, slotConfigs: [{ type: 'human' }, { type: 'human' }] }),
+        }));
+        if (started) {
+          const claim = Reflect.get(fresh, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+          const sockets = Reflect.get(fresh, 'sockets') as Map<number, MockWebSocket>;
+          sockets.set(0, new MockWebSocket());
+          await claim.call(fresh, 0, 'Alice');
+          sockets.set(1, new MockWebSocket());
+          await claim.call(fresh, 1, 'Bob');
+          expect(fresh.getRoster()).toMatchObject({ started: true, combatSchemaVersion: 6 });
+        }
+        const persisted = setup.mockStorage.storageData.get('state') as { lastActivityAt?: number };
+        delete persisted.lastActivityAt;
+        setup.mockStorage.alarmAt = undefined;
+
+        const firstWake = createdAt + 60_000;
+        vi.setSystemTime(firstWake);
+        const first = await restore();
+        const join = await first.fetch(new Request('https://internal/api/rooms/old-compatible-room/join', { method: 'POST' }));
+        expect(join.status).toBe(200);
+        expect(setup.mockStorage.alarmAt).toBe(firstWake + idleTtl);
+        expect(setup.mockStorage.storageData.get('state')).toMatchObject({ started, lastActivityAt: firstWake });
+
+        vi.setSystemTime(firstWake + idleTtl / 2);
+        const second = await restore();
+        expect(setup.mockStorage.alarmAt).toBe(firstWake + idleTtl);
+        vi.setSystemTime(firstWake + idleTtl);
+        setup.mockStorage.alarmAt = undefined;
+        await second.alarm();
+        expect(second.getRoster()).toBeNull();
         expect(setup.mockStorage.storageData.size).toBe(0);
       } finally {
         vi.useRealTimers();

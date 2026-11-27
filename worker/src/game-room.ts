@@ -98,7 +98,6 @@ const TEXT_ENCODER = new TextEncoder();
 const WS_RATE_LIMIT_WINDOW_MS = 5_000;
 const WS_RATE_LIMIT_MAX_MESSAGES = 120;
 const WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE = 240;
-const MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT = 32;
 const MAX_PROCESSED_SHOP_ACTIONS = 512;
 const NON_PERSISTED_SHOP_REJECTIONS = new Set<ShopRejectedMessage['reason']>([
   'MALFORMED',
@@ -479,13 +478,14 @@ export class GameRoom extends DurableObject {
           }
           else this.maybeRunAIServerTurn();
         }
-        if (shouldPersistMigration) {
+        const idle = !this.state.activeShot && !this.state.activeZeusStrike;
+        const lastActivityAt = this.state.lastActivityAt;
+        if (shouldPersistMigration || (idle && lastActivityAt === undefined)) {
+          // Persist the first idle window with its alarm for pre-TTL rooms.
           await this.saveState();
-        }
-        if (!this.state.activeShot && !this.state.activeZeusStrike) {
+        } else if (idle && lastActivityAt !== undefined) {
           const existingAlarm = await ctx.storage.getAlarm?.();
           if (existingAlarm == null) {
-            const lastActivityAt = this.state.lastActivityAt ?? Date.now();
             await ctx.storage.setAlarm(Math.max(Date.now(), lastActivityAt + ROOM_IDLE_TTL_MS));
           }
         }
@@ -2356,12 +2356,11 @@ export class GameRoom extends DurableObject {
       !NON_PERSISTED_SHOP_REJECTIONS.has(rejection.reason)
     ) {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
-      const { total, slotNonReady, slotRejections } = this.countShopActions(this.state.processedShopActions, slot);
+      const { total, slotNonReady } = this.countShopActions(this.state.processedShopActions, slot);
       if (
         !Object.hasOwn(this.state.processedShopActions, actionKey) &&
         total < this.shopActionBudget(this.state.shopSession) &&
-        slotNonReady < this.slotShopActionBudget() &&
-        slotRejections < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
+        slotNonReady < this.slotShopActionBudget()
       ) {
         this.state.processedShopActions[actionKey] = {
           slot,
@@ -2450,14 +2449,12 @@ export class GameRoom extends DurableObject {
   private countShopActions(actions: RoomState['processedShopActions'], slot: number) {
     const entries = Object.entries(actions);
     let slotNonReady = 0;
-    let slotRejections = 0;
     for (const [key, entry] of entries) {
-      if (entry.slot !== slot) continue;
-      const rejected = entry.result.type === 'SHOP_REJECTED';
-      if (rejected) slotRejections++;
-      if (rejected || !key.startsWith('READY:')) slotNonReady++;
+      if (entry.slot === slot && (entry.result.type === 'SHOP_REJECTED' || !key.startsWith('READY:'))) {
+        slotNonReady++;
+      }
     }
-    return { total: entries.length, slotNonReady, slotRejections };
+    return { total: entries.length, slotNonReady };
   }
 
   private resolvePersistedShopResult(
