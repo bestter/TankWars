@@ -7,6 +7,13 @@ export const WEBSOCKET_RATE_LIMIT_WINDOW_MS = 10_000;
 export const WEBSOCKET_RATE_LIMIT_MAX_REQUESTS = 48;
 export const ROOM_RATE_LIMIT_PATH = '/internal/rate-limit';
 export const WEBSOCKET_RATE_LIMIT_PATH = '/internal/rate-limit/websocket';
+export const CONTACT_RATE_LIMIT_PATH = '/internal/rate-limit/contact';
+
+const RATE_LIMIT_POLICIES = new Map([
+  [ROOM_RATE_LIMIT_PATH, { windowMs: RATE_LIMIT_WINDOW_MS, maxRequests: RATE_LIMIT_MAX_REQUESTS }],
+  [WEBSOCKET_RATE_LIMIT_PATH, { windowMs: WEBSOCKET_RATE_LIMIT_WINDOW_MS, maxRequests: WEBSOCKET_RATE_LIMIT_MAX_REQUESTS }],
+  [CONTACT_RATE_LIMIT_PATH, { windowMs: 15 * 60_000, maxRequests: 3 }],
+]);
 
 const STORAGE_KEY = 'rate_limit_state';
 
@@ -19,16 +26,15 @@ interface RateLimitState {
 export class RateLimiter extends DurableObject {
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
-    const websocket = path === WEBSOCKET_RATE_LIMIT_PATH;
-    if (!websocket && path !== ROOM_RATE_LIMIT_PATH) {
+    const policy = RATE_LIMIT_POLICIES.get(path);
+    if (!policy) {
       return new Response('Not found', { status: 404 });
     }
     if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405, headers: { Allow: 'POST' } });
     }
 
-    const windowMs = websocket ? WEBSOCKET_RATE_LIMIT_WINDOW_MS : RATE_LIMIT_WINDOW_MS;
-    const maxRequests = websocket ? WEBSOCKET_RATE_LIMIT_MAX_REQUESTS : RATE_LIMIT_MAX_REQUESTS;
+    const { windowMs, maxRequests } = policy;
     // Keep the decision and persistence atomic, including concurrent requests.
     const retryAfter = await this.ctx.storage.transaction(async (txn) => {
       const now = Date.now();

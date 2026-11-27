@@ -48,10 +48,115 @@ function createEnv() {
   const connectWebSocket = (ip: string) => worker.fetch(new Request('https://api.example/api/rooms/11111111-1111-4111-8111-111111111111/ws?slot=0&token=token123', {
     headers: { Upgrade: 'websocket', 'cf-connecting-ip': ip },
   }), env);
-  return { env, createRoom, connectWebSocket, limiterFetch, roomFetch, limiters };
+  const send = vi.fn(async (_message: EmailMessage | EmailMessageBuilder) => ({ messageId: 'simulated' }));
+  env.CONTACT_EMAIL = { send };
+  env.CONTACT_FROM_EMAIL = 'sender@example.com';
+  env.CONTACT_TO_EMAIL = 'team@example.com';
+  return { env, createRoom, connectWebSocket, limiterFetch, roomFetch, limiters, send };
 }
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+function contactRequest(
+  { origin = 'https://tankwars-game.com', base = 'https://api.example', body, upgrade = false }:
+    { origin?: string | null; base?: string; body?: string; upgrade?: boolean } = {},
+) {
+  const headers = new Headers({ 'Content-Type': 'application/json', 'cf-connecting-ip': '192.0.2.15' });
+  if (origin !== null) headers.set('Origin', origin);
+  if (upgrade) headers.set('Upgrade', 'websocket');
+  return new Request(`${base}/api/contact`, {
+    method: 'POST',
+    headers,
+    body: body ?? JSON.stringify({ email: 'guest@example.com', message: 'A valid message.' }),
+  });
+}
+
+describe('Contact delivery', () => {
+  it.each([
+    ['https://tankwars-game.com', 'https://api.example'],
+    ['https://tankwars.pages.dev', 'https://api.example'],
+    ['https://pr-123.tankwars.pages.dev', 'https://api.example'],
+    ['http://localhost:5173', 'http://localhost:8787'],
+    ['http://127.0.0.1:5173', 'http://127.0.0.1:8787'],
+  ])('accepts the expected origin %s and sends only plain text', async (origin, base) => {
+    const { env, send, limiterFetch } = createEnv();
+    const response = await worker.fetch(contactRequest({ origin, base, body: JSON.stringify({
+      name: ' Cafe\u0301\r\nUser\u0000\u202E ',
+      email: ' guest+feedback@example.com ',
+      message: "Line\r\n\treturn '<code>';\u200B\u0000\u202E",
+    }) }), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+    expect(limiterFetch).toHaveBeenCalledWith('contact_rate_limit_192.0.2.15', 'https://internal/internal/rate-limit/contact', { method: 'POST' });
+    expect(send).toHaveBeenCalledExactlyOnceWith({
+      from: 'sender@example.com',
+      to: 'team@example.com',
+      replyTo: 'guest+feedback@example.com',
+      subject: 'TankWars contact form',
+      text: "--- BEGIN UNTRUSTED USER CONTENT ---\n> Name: Café User\n> Email: guest+feedback@example.com\n> \n> Line\n> \treturn '<code>';\n--- END UNTRUSTED USER CONTENT ---",
+    });
+  });
+
+  it.each([
+    [{ origin: null }, 403],
+    [{ origin: 'http://localhost:5173' }, 403],
+    [{ origin: 'https://example.com' }, 403],
+    [{ upgrade: true }, 400],
+    [{ body: '{' }, 400],
+    [{ body: '[]' }, 400],
+    [{ body: '{"extra":18}' }, 400],
+    [{ body: JSON.stringify({ email: 'guest@example.com\r\n', message: 'A valid message.' }) }, 400],
+    [{ body: JSON.stringify({ email: 'guest..user@example.com', message: 'A valid message.' }) }, 400],
+    [{ body: JSON.stringify({ email: 'guest@example.com', message: '\u0000\u202E' }) }, 400],
+    [{ body: JSON.stringify({ email: 'guest@example.com', message: 'x'.repeat(4001) }) }, 400],
+    [{ body: JSON.stringify({ extra: 'filled' }) }, 200],
+    [{ body: JSON.stringify({ extra: 'é'.repeat(8192) }) }, 413],
+  ])('rejects or silently discards unsuitable input (case %#)', async (input, status) => {
+    const { env, limiterFetch, send } = createEnv();
+    const response = await worker.fetch(contactRequest(input), env);
+    expect(response.status).toBe(status);
+    expect(limiterFetch).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('uses an independent three-message window and exposes its retry time to the client', async () => {
+    const time = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const { env, createRoom, connectWebSocket, send } = createEnv();
+    const submit = () => worker.fetch(contactRequest(), env);
+    for (let i = 0; i < 3; i += 1) expect((await submit()).status).toBe(200);
+    const limited = await submit();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('Retry-After')).toBe('900');
+    expect(limited.headers.get('Access-Control-Expose-Headers')).toBe('Retry-After');
+    expect((await createRoom('192.0.2.15')).status).toBe(200);
+    expect((await connectWebSocket('192.0.2.15')).status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(3);
+    time.mockReturnValue(1_900_000);
+    expect((await submit()).status).toBe(200);
+  });
+
+  it('fails closed when the limiter fails', async () => {
+    const { env, limiterFetch, send } = createEnv();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    limiterFetch.mockRejectedValue(new Error('unavailable'));
+    expect((await worker.fetch(contactRequest(), env)).status).toBe(500);
+    expect(log).toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing binding', 'missing address', 'provider failure'])('returns a generic error for %s', async (problem) => {
+    const { env, send } = createEnv();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    if (problem === 'missing binding') delete env.CONTACT_EMAIL;
+    if (problem === 'missing address') delete env.CONTACT_TO_EMAIL;
+    if (problem === 'provider failure') send.mockRejectedValue(new Error('details with team@example.com'));
+    const response = await worker.fetch(contactRequest(), env);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'Contact service unavailable' });
+    expect(log).toHaveBeenCalledOnce();
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/example\.com|guest/);
+  });
+});
 
 describe('Room creation rate limiting', () => {
   it.each([

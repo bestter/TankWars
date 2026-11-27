@@ -1,7 +1,7 @@
 import { makeRoundMap } from "../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
 import { makePlayer, makeTank } from '../game/__tests__/helpers';
@@ -39,7 +39,7 @@ vi.mock('react-i18next', () => ({
 
 // Mock SEO
 vi.mock('../components/SEO', () => ({
-  SEO: () => <div data-testid="seo-mock" />,
+  SEO: ({ titleKey }: { titleKey: string }) => <div data-testid="seo-mock" data-title={titleKey} />,
 }));
 
 // Mock GameCanvas to test mounting/unmounting and props passed by App
@@ -90,6 +90,61 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
     expect(screen.queryByRole('button', { name: 'endurance_title' })).toBeNull();
+  });
+
+  it('synchronizes contact with browser back and forward and keeps the Canvas unmounted', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
+    expect(window.location.pathname).toBe('/contact');
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'contact_title' }));
+    expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
+    expect(screen.getByTestId('seo-mock').dataset.title).toBe('contact_seo_title');
+
+    window.history.back();
+    await waitFor(() => expect(screen.getByText('main_title')).toBeDefined());
+    expect(window.location.pathname).toBe('/');
+    window.history.forward();
+    await screen.findByRole('heading', { name: 'contact_title' });
+    fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
+    expect(window.location.pathname).toBe('/');
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+  });
+
+  it.each(['/contact', '/contact/'])('accepts the direct URL %s', (path) => {
+    window.history.replaceState({}, '', path);
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'contact_title' })).toBeDefined();
+  });
+
+  it.each(['hotseat', 'no API base'])('hides contact and normalizes the URL in %s builds', (mode) => {
+    deploymentMode.hotseatOnly = mode === 'hotseat';
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_API_BASE', mode === 'hotseat' ? 'https://api.example.com' : '');
+    window.history.replaceState({ keep: true }, '', '/contact/?lang=fr#anchor');
+    render(<App />);
+    expect(screen.queryByRole('button', { name: 'contact_title' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
+    expect(location.pathname + location.search + location.hash).toBe('/?lang=fr#anchor');
+    expect(history.state).toEqual({ keep: true });
+  });
+
+  it('gives an online invitation priority over the contact path', () => {
+    window.history.replaceState({}, '', '/contact/?room=ROOM77&slot=1&token=TOK77');
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'join_room_btn' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
+    expect(readParticipation()?.token).toBe('TOK77');
+    expect(location.pathname + location.search).toBe('/');
+  });
+
+  it('does not open contact through browser history during a battle', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    window.history.pushState({}, '', '/contact');
+    fireEvent.popState(window);
+    expect(screen.getByTestId('game-canvas-mock')).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
+    expect(location.pathname).toBe('/');
   });
   it('mounts one atomic live region inside main landmark before any warning occurs', () => {
     render(<App />);

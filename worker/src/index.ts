@@ -18,10 +18,11 @@ import {
   MINIMUM_CLIENT_PROTOCOL_VERSION,
   ONLINE_PROTOCOL_VERSION,
 } from '../../src/game/online/protocol';
-import { ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
+import { CONTACT_RATE_LIMIT_PATH, ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
+import { handleContact, type ContactEmailEnv } from './contact';
 
 // Env bindings injected by wrangler (see wrangler.toml)
-export interface Env {
+export interface Env extends ContactEmailEnv {
   GAME_ROOM: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace;
   ALLOW_LOCAL_ORIGINS?: string;
@@ -30,6 +31,7 @@ export interface Env {
 const RATE_LIMIT_BUCKETS = {
   rooms: { prefix: 'rate_limit_', path: ROOM_RATE_LIMIT_PATH },
   websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
+  contact: { prefix: 'contact_rate_limit_', path: CONTACT_RATE_LIMIT_PATH },
 } as const;
 const TEXT_ENCODER = new TextEncoder();
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -111,6 +113,7 @@ export default {
       url.hostname === '127.0.0.1' ||
       env.ALLOW_LOCAL_ORIGINS === 'true';
     const isAllowedOrigin = origin && (
+      origin === 'https://tankwars-game.com' ||
       origin === 'https://tankwars.pages.dev' ||
       /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
       (allowLocalOrigins && (
@@ -125,6 +128,10 @@ export default {
     const withResponseHeaders = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
+      if (pathname === '/api/contact') {
+        headers.set('Access-Control-Expose-Headers', 'Retry-After');
+        headers.set('Cache-Control', 'no-store');
+      }
       const existingVary = headers.get('Vary');
       if (!existingVary || !existingVary.split(',').some((v) => v.trim().toLowerCase() === 'origin')) {
         headers.append('Vary', 'Origin');
@@ -182,6 +189,11 @@ export default {
       return null;
     };
 
+    if (pathname === '/api/contact' && !isAllowedOrigin &&
+      (request.method === 'POST' || request.method === 'OPTIONS')) {
+      return withResponseHeaders(Response.json({ error: 'Forbidden: Invalid Origin' }, { status: 403 }));
+    }
+
     // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
     if (request.method === 'OPTIONS') {
       return withResponseHeaders(new Response(null, {
@@ -210,6 +222,14 @@ export default {
     const rejectRestUpgrade = () => withResponseHeaders(Response.json({
       error: 'Use the WebSocket endpoint for an upgrade',
     }, { status: 400 }));
+
+    if (pathname === '/api/contact') {
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
+      if (request.method !== 'POST') {
+        return withResponseHeaders(new Response('Method not allowed', { status: 405, headers: { Allow: 'POST, OPTIONS' } }));
+      }
+      return withResponseHeaders(await handleContact(request, env, () => enforceRateLimit('contact')));
+    }
 
     // POST /api/rooms  -> create a new room, return roomId + per-slot join URLs/tokens
     if (pathname === '/api/rooms' && request.method === 'POST') {

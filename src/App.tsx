@@ -20,6 +20,8 @@ import {
   type OnlineMeta,
 } from "./appReducer";
 import { isHotseatOnlyBuild } from "./utils/deploymentMode";
+import { ContactScreen } from "./contact/ContactScreen";
+import { useContactRoute } from "./contact/useContactRoute";
 // Vite replaces MODE at build time: outside endurance, the false branch removes
 // this dynamic import and its dedicated modules. Keep the import inside the gate.
 const EnduranceScreen = import.meta.env.MODE === "endurance"
@@ -28,6 +30,9 @@ const EnduranceScreen = import.meta.env.MODE === "endurance"
 
 interface AppScreenProps {
   readonly onEndurance?: () => void;
+  readonly onContact?: () => void;
+  readonly showContact: boolean;
+  readonly onCloseContact: () => void;
   readonly showMenu: boolean;
   readonly showOnlineLobby: boolean;
   readonly isOnlineJoin: boolean;
@@ -65,6 +70,9 @@ function AppScreen({
   onReturnToMenu,
   onPersistenceWarning,
   onEndurance,
+  onContact,
+  showContact,
+  onCloseContact,
 }: AppScreenProps) {
   if (!showMenu) {
     return (
@@ -102,9 +110,12 @@ function AppScreen({
     );
   }
 
+  if (showContact) return <ContactScreen onBack={onCloseContact} />;
+
   return (
     <MainMenu
       onEndurance={onEndurance}
+      onContact={onContact}
       onStartGame={onStartLocalGame}
       {...(onlineMultiplayerEnabled
         ? { onPlayOnline: onHideOnlineLobby }
@@ -134,6 +145,18 @@ function resolveActiveScreen(
   if (!showMenu) return "combat";
   if (showOnlineLobby) return "online-lobby";
   return "menu";
+}
+
+function useScreenScroll(activeScreen: ReturnType<typeof resolveActiveScreen> | 'contact', mainRef: React.RefObject<HTMLElement | null>) {
+  const previousScreen = useRef(activeScreen);
+  useLayoutEffect(() => {
+    if (previousScreen.current === activeScreen) return;
+    if (previousScreen.current === 'contact' && activeScreen === 'menu') {
+      mainRef.current?.focus({ preventScroll: true });
+    }
+    previousScreen.current = activeScreen;
+    window.scrollTo(0, 0);
+  }, [activeScreen, mainRef]);
 }
 
 function collectReturnToMenuMessages(): OnlineEntryMessage[] {
@@ -229,19 +252,14 @@ function App() {
   const quitConfirmationOpen =
     onlineQuitConfirmRequestId !== null && Boolean(onlineMeta);
 
-  const activeScreen = resolveActiveScreen(
+  const gameScreen = resolveActiveScreen(
     showEndurance,
     Boolean(EnduranceScreen),
     showMenu,
     showOnlineLobby,
   );
-  const previousScreenRef = useRef(activeScreen);
-
-  useLayoutEffect(() => {
-    if (previousScreenRef.current === activeScreen) return;
-    previousScreenRef.current = activeScreen;
-    window.scrollTo(0, 0);
-  }, [activeScreen]);
+  const { showContact, openContact, closeContact } = useContactRoute(gameScreen === 'menu', hotseatOnly);
+  useScreenScroll(showContact ? 'contact' : gameScreen, mainRef);
 
   const handleOnlineMenuToggle = (): void => {
     if (showOnlineLobby) {
@@ -254,7 +272,7 @@ function App() {
 
   return (
     <div className={`app-shell${showMenu ? " app-shell--menu" : ""}`}>
-      <SEO titleKey="seo_title" descriptionKey="seo_description" />
+      {!showContact && <SEO titleKey="seo_title" descriptionKey="seo_description" />}
       <header className="app-header">
         <a
           href="#main-content"
@@ -280,6 +298,9 @@ function App() {
         ) : (
           <AppScreen
             onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
+            onContact={openContact}
+            showContact={showContact}
+            onCloseContact={closeContact}
             showMenu={showMenu}
             showOnlineLobby={showOnlineLobby}
             isOnlineJoin={isOnlineJoin}

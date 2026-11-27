@@ -158,6 +158,18 @@ Do not substitute the bare local `react-doctor` binary or pin the scanner versio
 
 ### Deployment
 
+#### Formulaire de contact / Contact form
+
+Le formulaire `/contact` est accessible depuis le menu dans les builds reliés au Worker. En développement, `npm run dev` valide et nettoie les champs, puis simule l’envoi et écrit la prévisualisation dans la console du navigateur. Pour tester aussi le Worker local, définir `VITE_CONTACT_USE_LOCAL_WORKER=true` dans `.env.local` et relancer Vite. Démarrer `npm run worker:dev` avec deux adresses fictives, par exemple `sender@example.com` et `recipient@example.com`, comme `CONTACT_FROM_EMAIL` et `CONTACT_TO_EMAIL` dans `worker/.dev.vars`. Wrangler journalise le courriel simulé avec le binding local.
+
+The `/contact` form is available from the menu in builds connected to the Worker. In development, `npm run dev` validates and sanitizes entries, simulates a send and logs the preview to the browser console. To include the local Worker, set `VITE_CONTACT_USE_LOCAL_WORKER=true` in `.env.local` and restart Vite. Start `npm run worker:dev` with fictional addresses such as `sender@example.com` and `recipient@example.com` as `CONTACT_FROM_EMAIL` and `CONTACT_TO_EMAIL` in `worker/.dev.vars`. Wrangler logs the simulated message through the local binding.
+
+Avant la première publication, activer Email Sending pour le domaine expéditeur dans Cloudflare DNS et suivre les étapes DNS affichées (MX `cf-bounce`, SPF, DKIM et DMARC). Vérifier l’adresse de l’équipe dans Email Routing → Destination Addresses. Depuis `worker/`, définir `CONTACT_FROM_EMAIL` et `CONTACT_TO_EMAIL` avec `npx wrangler secret put <nom>`. Publier le Worker avant le client. Le plan Workers Free autorise l’envoi gratuit à cette destination vérifiée. L’équipe reçoit le message en texte brut avec l’adresse de l’usager dans `Reply-To`; l’usager voit la confirmation à l’écran.
+
+Before the first deployment, enable Email Sending for the sender domain in Cloudflare DNS and follow the displayed DNS steps (MX for `cf-bounce`, SPF, DKIM and DMARC). Verify the team address under Email Routing → Destination Addresses. From `worker/`, set `CONTACT_FROM_EMAIL` and `CONTACT_TO_EMAIL` with `npx wrangler secret put <name>`. Publish the Worker before the client. Workers Free supports sending to this verified destination at no cost. The team receives plain text with the user's address in `Reply-To`. The user gets an on-screen confirmation.
+
+[Cloudflare Email Sending setup](https://developers.cloudflare.com/email-service/get-started/send-emails/) · [Wrangler local email simulation](https://developers.cloudflare.com/email-service/observability/local-development/sending/)
+
 Production uses a controlled Worker-first publication. First, [disable automatic production deployments in Cloudflare Pages](https://developers.cloudflare.com/pages/configuration/git-integration/#disable-automatic-deployments); otherwise a Git push can publish the client before its compatible Worker.
 
 On a machine with the private deployment script configured, run `.\deploy-cloudflare.ps1` from PowerShell. The script:
@@ -238,6 +250,8 @@ npx vitest run src/game/engine/audio/__tests__/combatAudioGraph.test.ts -u
 ```
 
 ## Current Status
+
+**v0.17.0 — Formulaire de contact / Contact form (#461).** L’écran bilingue `/contact` permet de joindre l’équipe depuis le menu. Il simule l’envoi en développement et passe par Cloudflare Email Service en production. / The bilingual `/contact` screen lets players reach the team from the menu. Development simulates delivery and production uses Cloudflare Email Service.
 
 **v0.16.11 — Durcissement de la PWA, du multijoueur et des diagnostics / PWA, multiplayer, and diagnostics hardening (#460).** Le service worker précache la page HTML pour le repli hors ligne et exclut les réponses aux invitations du cache. Les en-têtes de sécurité sont renforcés. Le Worker borne les gains de combat et le trafic WebSocket, conserve les réponses de boutique lors d’un rejeu et expire les salles vides après 24 h. Les outils de diagnostic et les rapports d’endurance renforcent la validation des entrées. / The service worker precaches the HTML page for offline navigation and keeps invitation responses out of the cache. Security headers are stricter. The Worker bounds combat rewards and WebSocket traffic, preserves shop results on retry, and expires empty rooms after 24 hours. Diagnostic tools and endurance reports strengthen input validation.
 
