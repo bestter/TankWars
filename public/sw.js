@@ -4,7 +4,6 @@ const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
 const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
-  "/",
   APP_PATH,
   "/favicon.svg",
   "/favicon-32.png",
@@ -85,8 +84,12 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Ignorer les requêtes cross-origin pour éviter les violations de CSP au sein du Service Worker
-  if (requestUrl.origin !== self.location.origin) {
+  // Ignorer les requêtes cross-origin et les origines opaques pour éviter les violations de CSP
+  if (
+    requestUrl.origin === "null" ||
+    self.location.origin === "null" ||
+    requestUrl.origin !== self.location.origin
+  ) {
     return;
   }
 

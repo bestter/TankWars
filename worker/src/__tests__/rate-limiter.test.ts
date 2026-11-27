@@ -120,6 +120,9 @@ describe('Room creation rate limiting', () => {
     expect((await createRoom('::1')).status).toBe(200);
     expect(limiters.has('rate_limit_192.0.2.1')).toBe(true);
     expect(limiters.has('rate_limit_0000:0000:0000:0000::/64')).toBe(true);
+    expect((await createRoom('2001:db8:1.2.3.4::1')).status).toBe(200);
+    expect(limiters.has('rate_limit_2001:db8:1.2.3.4::1')).toBe(true);
+    expect(limiters.has('rate_limit_2001:0db8:0102:0304::/64')).toBe(false);
   });
 
   it('uses a shared unknown bucket when cf-connecting-ip is absent', async () => {

@@ -429,4 +429,15 @@ describe('Worker Entrypoint', () => {
       expect(mockNamespace.idFromName).not.toHaveBeenCalled();
     });
   });
+
+  it('sets a single Vary: Origin header value on CORS responses', async () => {
+    const { env } = createMockEnv();
+    const response = await worker.fetch(new Request(`https://tankwars.pages.dev/api/rooms/${TEST_ROOM_ID}/join`, {
+      method: 'POST',
+      headers: { Origin: 'https://tankwars.pages.dev' },
+    }), env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Vary')).toBe('Origin');
+  });
 });

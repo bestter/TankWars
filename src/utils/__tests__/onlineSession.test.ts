@@ -486,4 +486,30 @@ describe('onlineSession', () => {
     expect(read).not.toBeNull();
     expect(read?.canvas.fireRejection).toBe('ZEUS_TURN');
   });
+
+  it('rejects unsafe roomIds and ignores prototype-polluting keys in economic records', () => {
+    const rawSession = makeSession();
+    rawSession.meta.roomId = '../admin';
+    persistOnlineSession(rawSession);
+    expect(readOnlineSession()).toBeNull();
+
+    const validSession = makeSession();
+    persistOnlineSession(validSession);
+    const parsed = JSON.parse(store.get('tankwars-online-session-v2')!) as {
+      canvas: Record<string, unknown>;
+    };
+    parsed.canvas.roundEarningsByPlayer = JSON.parse('{"__proto__":10,"player-1":5}');
+    parsed.canvas.roundResult = {
+      damageDealt: JSON.parse('{"toString":10}'),
+      earningsByPlayer: { 'player-1': 5 },
+      terrainDestroyed: 0,
+      survivors: ['player-1'],
+    };
+    store.set('tankwars-online-session-v2', JSON.stringify(parsed));
+
+    const restored = readOnlineSession();
+    expect(restored).not.toBeNull();
+    expect(restored?.canvas.roundEarningsByPlayer).toEqual({});
+    expect(restored?.canvas.roundResult).toBeNull();
+  });
 });

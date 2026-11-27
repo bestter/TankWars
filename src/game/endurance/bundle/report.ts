@@ -3,7 +3,7 @@ import type { ArchiveRecord } from "../../diagnostics/types";
 import type { JournalEntry } from "../journal";
 import type { Player } from "../../../types/player";
 import { object } from "../../diagnostics/validate";
-import { encoder, identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
+import { encoder, escapeHtml, identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
 import type { BundleManifest, Location } from "./format";
 
 interface Row {
@@ -14,7 +14,7 @@ interface Row {
   weapon?: string; durationMs?: number; detail: unknown; reasons: string[];
 }
 const pad = (n: number) => String(n).padStart(16, "0");
-const escape = (value: unknown): string => String(value ?? "inconnu / unknown").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const escape = (value: unknown): string => escapeHtml(value, "inconnu / unknown");
 const parentHref = (value: unknown): string => {
   const safe = safeRelativeHref(value);
   return safe === "#" ? "#" : `../${safe}`;

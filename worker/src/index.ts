@@ -40,14 +40,14 @@ function normalizeClientIp(rawIp: string): string {
   const [headPart, tailPart, extra] = addr.split('::');
   if (extra !== undefined) return rawIp;
 
-  const parseSide = (part: string): string[] | null => {
+  const parseSide = (part: string, allowIpv4: boolean): string[] | null => {
     if (!part) return [];
     const tokens = part.split(':');
     const out: string[] = [];
     for (let i = 0; i < tokens.length; i++) {
       const tok = tokens[i];
       if (tok.includes('.')) {
-        if (i !== tokens.length - 1) return null;
+        if (!allowIpv4 || i !== tokens.length - 1) return null;
         const octets = tok.split('.');
         if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o) || Number(o) > 255)) return null;
         const n = octets.map((o) => Number(o));
@@ -61,11 +61,11 @@ function normalizeClientIp(rawIp: string): string {
     return out;
   };
 
-  const head = parseSide(headPart);
+  const head = parseSide(headPart, tailPart === undefined);
   if (!head) return rawIp;
   let full: string[];
   if (tailPart !== undefined) {
-    const tail = parseSide(tailPart);
+    const tail = parseSide(tailPart, true);
     if (!tail || head.length + tail.length >= 8) return rawIp;
     const missing = 8 - head.length - tail.length;
     full = [...head, ...Array.from({ length: missing }, () => '0000'), ...tail];
@@ -125,7 +125,10 @@ export default {
     const withResponseHeaders = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
-      headers.append('Vary', 'Origin');
+      const existingVary = headers.get('Vary');
+      if (!existingVary || !existingVary.split(',').some((v) => v.trim().toLowerCase() === 'origin')) {
+        headers.append('Vary', 'Origin');
+      }
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('X-Frame-Options', 'DENY');
       headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');

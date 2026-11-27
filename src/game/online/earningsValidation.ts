@@ -122,7 +122,15 @@ export function validateEarnings(
   const awards = new Set<string>();
   for (const award of report.awards) {
     const target = known.get(award.playerId);
-    if (!target || awards.has(award.playerId) || !Number.isSafeInteger(target.money + award.amount)) return fail("MALFORMED");
+    if (
+      !target ||
+      awards.has(award.playerId) ||
+      !Number.isSafeInteger(award.amount) ||
+      award.amount < 0 ||
+      !Number.isSafeInteger(target.money + award.amount)
+    ) {
+      return fail("MALFORMED");
+    }
     const cap = new ExactAccumulator();
     if (roundOutcome.roundWinnerId === award.playerId) {
       cap.add(BigInt(50 * xMilli), BigInt(DAMAGE_PRECISION));

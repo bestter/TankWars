@@ -95,6 +95,7 @@ const REPORT_WINDOW_MS = 20_000;
 const ROOM_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
 const WS_RATE_LIMIT_WINDOW_MS = 5_000;
 const WS_RATE_LIMIT_MAX_MESSAGES = 120;
+const WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE = 240;
 const MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT = 32;
 const MAX_PROCESSED_SHOP_ACTIONS = 512;
 const NON_PERSISTED_SHOP_REJECTIONS = new Set<ShopRejectedMessage['reason']>([
@@ -307,6 +308,7 @@ export class GameRoom extends DurableObject {
   private pendingClaimNames = new WeakMap<WebSocket, string | undefined>();
   private wsMessageTimestamps = new Map<number, number[]>();
   private wsRateLimitWarnedUntil = new Map<number, number>();
+  private wsRateLimitDroppedCount = new Map<number, number>();
   private needsIdleRefreshOnReconnect = true;
   /** Slot whose human shot the server is waiting on (null = not awaiting settlement). */
   private awaitingShotFromSlot: number | null = null;
@@ -427,7 +429,7 @@ export class GameRoom extends DurableObject {
           processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
         const clonedFire: Record<number, Record<string, PersistedFireAction>> = {};
         for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
-          clonedFire[Number(slot)] = { ...actions };
+          clonedFire[Number(slot)] = Object.assign(Object.create(null), actions);
         }
         this.committedState = {
           ...structuredClone(mainSource),
@@ -579,7 +581,7 @@ export class GameRoom extends DurableObject {
         processedFireActionsBySlot, processedShopActions, ...main } = this.committedState;
       const restoredFire: Record<number, Record<string, PersistedFireAction>> = {};
       for (const [slot, actions] of Object.entries(processedFireActionsBySlot)) {
-        restoredFire[Number(slot)] = { ...actions };
+        restoredFire[Number(slot)] = Object.assign(Object.create(null), actions);
       }
       this.state = {
         ...structuredClone(main),
@@ -716,11 +718,25 @@ export class GameRoom extends DurableObject {
 
     const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
-    const slotConfigs = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+    const slotConfigsRaw = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+    const validSlotConfigs =
+      slotConfigsRaw !== undefined &&
+      numPlayers !== undefined &&
+      isInitialPlayerCount(numPlayers) &&
+      slotConfigsRaw.length === numPlayers &&
+      slotConfigsRaw.every((entry: unknown) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+        const item = entry as Record<string, unknown>;
+        return (
+          (item.type === 'human' || item.type === 'ai') &&
+          (item.aiProfile === undefined || typeof item.aiProfile === 'string')
+        );
+      });
 
-    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !slotConfigs) {
+    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !validSlotConfigs) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
     }
+    const slotConfigs = slotConfigsRaw as Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
 
     if (this.state) {
       return new Response(JSON.stringify({ error: 'Room already exists' }), { status: 409 });
@@ -815,18 +831,18 @@ export class GameRoom extends DurableObject {
   // --- Main fetch (dispatches WS upgrade or internal create) ---
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const isWebSocketUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
 
     if (
       (url.pathname === '/internal/create' || url.pathname === '/create') &&
       request.method === 'POST' &&
-      request.headers.get('Upgrade') !== 'websocket'
+      !isWebSocketUpgrade
     ) {
       return this.fetchCreate(request);
     }
 
     // WebSocket upgrade path (the worker already added x- headers)
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader === 'websocket') {
+    if (isWebSocketUpgrade) {
       const roomId = request.headers.get('x-room-id') || url.searchParams.get('room') || '';
       const slot = Number(request.headers.get('x-slot') ?? url.searchParams.get('slot') ?? -1);
       const token = request.headers.get('x-token') || url.searchParams.get('token') || '';
@@ -848,10 +864,16 @@ export class GameRoom extends DurableObject {
 
       const receivedVersion = url.searchParams.get('protocolVersion');
       if (receivedVersion !== String(ONLINE_PROTOCOL_VERSION)) {
+        const parsedVersion =
+          receivedVersion !== null &&
+          /^\d+$/.test(receivedVersion) &&
+          Number.isSafeInteger(Number(receivedVersion))
+            ? Number(receivedVersion)
+            : null;
         const pair = new WebSocketPair();
         pair[1].accept();
         pair[1].send(JSON.stringify({ type: 'PROTOCOL_MISMATCH', requiredVersion: ONLINE_PROTOCOL_VERSION,
-          receivedVersion: receivedVersion === null ? null : Number(receivedVersion) }));
+          receivedVersion: parsedVersion }));
         pair[1].close(PROTOCOL_MISMATCH_CLOSE_CODE, 'Unsupported protocol');
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
@@ -939,13 +961,23 @@ export class GameRoom extends DurableObject {
 
   private isSlotMessageRateLimited(slot: number): boolean {
     const now = Date.now();
-    const timestamps = this.wsMessageTimestamps.get(slot)?.filter((ts) => now - ts < WS_RATE_LIMIT_WINDOW_MS) ?? [];
-    if (timestamps.length >= WS_RATE_LIMIT_MAX_MESSAGES) {
-      this.wsMessageTimestamps.set(slot, timestamps);
-      return true;
+    const timestamps = this.wsMessageTimestamps.get(slot);
+    if (timestamps) {
+      let start = 0;
+      while (start < timestamps.length && now - timestamps[start] >= WS_RATE_LIMIT_WINDOW_MS) {
+        start++;
+      }
+      if (start > 0) {
+        timestamps.splice(0, start);
+      }
+      if (timestamps.length >= WS_RATE_LIMIT_MAX_MESSAGES) {
+        return true;
+      }
+      timestamps.push(now);
+    } else {
+      this.wsMessageTimestamps.set(slot, [now]);
     }
-    timestamps.push(now);
-    this.wsMessageTimestamps.set(slot, timestamps);
+    this.wsRateLimitDroppedCount.delete(slot);
     return false;
   }
 
@@ -960,8 +992,19 @@ export class GameRoom extends DurableObject {
   // --- Client message handler (only FIRE for now in MVP) ---
   private async handleClientMessage(slot: number, raw: unknown): Promise<void> {
     if (this.isSlotMessageRateLimited(slot)) {
+      const drops = (this.wsRateLimitDroppedCount.get(slot) ?? 0) + 1;
+      this.wsRateLimitDroppedCount.set(slot, drops);
       if (this.shouldWarnRateLimit(slot)) {
         console.warn(`[GameRoom] Rate-limiting WebSocket messages from slot ${slot}`);
+      }
+      if (drops >= WS_RATE_LIMIT_MAX_DROPS_BEFORE_CLOSE) {
+        console.warn(`[GameRoom] Closing WebSocket for slot ${slot} after sustained rate-limit violations (${drops} dropped messages)`);
+        this.wsRateLimitDroppedCount.delete(slot);
+        try {
+          this.sockets.get(slot)?.close(1008, 'rate limit exceeded');
+        } catch {
+          // ignore stale socket
+        }
       }
       return;
     }
@@ -1189,6 +1232,7 @@ export class GameRoom extends DurableObject {
     }
     this.sockets.delete(slot);
     this.pendingClaimNames.delete(ws);
+    this.wsRateLimitDroppedCount.delete(slot);
     if (this.sockets.size === 0) this.needsIdleRefreshOnReconnect = true;
     try {
       ws.close(1000, 'connection closed');
@@ -1210,7 +1254,13 @@ export class GameRoom extends DurableObject {
         this.sendRosterUpdate();
         return;
       }
-      if (this.sockets.size === 0 && this.idleExpiryAt(Date.now()) !== undefined) await this.saveState();
+      if (this.sockets.size === 0 && this.idleExpiryAt(Date.now()) !== undefined) {
+        if (this.isIncompatibleStartedRoom()) {
+          await this.ctx.storage.setAlarm(Date.now() + ROOM_IDLE_TTL_MS);
+        } else {
+          await this.saveState();
+        }
+      }
     });
   }
 
@@ -1707,6 +1757,10 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private isIncompatibleStartedRoom(): boolean {
+    return !!this.state?.started && !this.buildGameStartMessage();
+  }
+
   private idleExpiryAt(lastActivityAt: number): number | undefined {
     if (this.state && !this.state.activeShot && !this.state.activeZeusStrike) {
       return lastActivityAt + ROOM_IDLE_TTL_MS;
@@ -1731,7 +1785,7 @@ export class GameRoom extends DurableObject {
       if (expiresAt === undefined) return;
       if (this.sockets.size > 0) {
         if (expiresAt <= now || lastActivityAt === undefined) {
-          if (this.state?.started && !this.buildGameStartMessage()) {
+          if (this.isIncompatibleStartedRoom()) {
             await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
           } else {
             await this.saveState();
@@ -1742,7 +1796,11 @@ export class GameRoom extends DurableObject {
         return;
       }
       if (lastActivityAt === undefined) {
-        await this.saveState();
+        if (this.isIncompatibleStartedRoom()) {
+          await this.ctx.storage.setAlarm(now + ROOM_IDLE_TTL_MS);
+        } else {
+          await this.saveState();
+        }
       } else if (expiresAt <= now) {
         await this.ctx.storage.deleteAll();
         this.state = null;
@@ -1751,6 +1809,7 @@ export class GameRoom extends DurableObject {
         this.lastCombatValues.clear();
         this.wsMessageTimestamps.clear();
         this.wsRateLimitWarnedUntil.clear();
+        this.wsRateLimitDroppedCount.clear();
         this.aiProfiles.clear();
       } else {
         await this.ctx.storage.setAlarm(expiresAt);
@@ -2325,6 +2384,19 @@ export class GameRoom extends DurableObject {
     this.broadcast(this.buildShopStateMessage());
   }
 
+  private pruneProcessedShopActionsIfNeeded(): void {
+    if (!this.state) return;
+    const keys = Object.keys(this.state.processedShopActions);
+    let count = keys.length;
+    if (count < MAX_PROCESSED_SHOP_ACTIONS) return;
+    for (const key of keys) {
+      if (!key.startsWith('BUY_SELL:')) continue;
+      delete this.state.processedShopActions[key];
+      count--;
+      if (count < MAX_PROCESSED_SHOP_ACTIONS) return;
+    }
+  }
+
   private async handleShopBuySell(
     slot: number,
     message: ShopBuySellMessage,
@@ -2424,6 +2496,7 @@ export class GameRoom extends DurableObject {
     session.purchasesByPlayerId = result.counters;
     const acknowledgedAction = { slot, actionId: message.actionId };
     const stateMessage = this.buildShopStateMessage(acknowledgedAction);
+    this.pruneProcessedShopActionsIfNeeded();
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,
@@ -2501,6 +2574,7 @@ export class GameRoom extends DurableObject {
     const acknowledgedAction = { slot, actionId: message.actionId };
     if (this.allHumansReady(session)) session.closingAction ??= acknowledgedAction;
     const stateMessage = this.buildShopStateMessage(acknowledgedAction);
+    this.pruneProcessedShopActionsIfNeeded();
     this.state.processedShopActions[actionKey] = {
       slot,
       result: stateMessage,

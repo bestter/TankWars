@@ -338,9 +338,14 @@ function isFireCommand(value: unknown): value is FireCommand {
 }
 
 const FORBIDDEN_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const SAFE_ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-function isSafeRecordKey(key: string): boolean {
+export function isSafeRecordKey(key: string): boolean {
   return !FORBIDDEN_RECORD_KEYS.has(key) && !Object.hasOwn(Object.prototype, key);
+}
+
+export function isSafeRoomId(value: unknown): value is string {
+  return typeof value === "string" && SAFE_ROOM_ID_RE.test(value);
 }
 
 function isInventory(

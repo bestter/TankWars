@@ -7,7 +7,7 @@ import type { SessionRecord } from "../types";
 import { formatJournalTextPage } from "../journalJsonl";
 import type { EnduranceStorage } from "../storage";
 import { Catalogue, exportOptions, PartWriter, publishDerived, type BundleManifest, type ExportOptions, type Location } from "./format";
-import { identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
+import { escapeHtml, identity, jsonBytes, one, safeRelativeHref, sha256, type BundleDisk } from "./io";
 import { indexCollection, indexEntry, renderReport } from "./report";
 
 export interface BundleSource {
@@ -163,7 +163,6 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     manifest.reportError = `rapport incomplet / report incomplete: ${String(error)}`;
     console.warn("[Endurance] Derived report failed", error);
     try {
-      const escapeHtml = (value: unknown): string => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
       const rawPath = previous?.index?.replace("index/root.json", "index.html") ?? "";
       const safeHref = safeRelativeHref(rawPath);
       const link = previous?.index ? `<a href="${safeHref}">Dernier rapport / Last report (${escapeHtml(previous.indexBoundary)})</a>` : "";

@@ -191,6 +191,15 @@ describe("v3 earnings authority", () => {
     }
   });
 
+  it("rejects negative or non-integer award amounts even when called directly", () => {
+    const { roster, report } = fixture();
+    report.awards = [{ playerId: "a", amount: -5 }];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+
+    report.awards = [{ playerId: "a", amount: 1.5 }];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+  });
+
   it("validates structural fields before domain decisions and fits four complete players under 8192 characters", () => {
     const { report, roster } = fixture();
     report.players[1].tank.position.y = 900;

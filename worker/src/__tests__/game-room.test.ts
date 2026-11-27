@@ -5063,5 +5063,278 @@ describe('GameRoom Durable Object', () => {
         vi.useRealTimers();
       }
     });
+
+    it('closes a WebSocket with 1008 after sustained rate-limit violations', async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        vi.setSystemTime(1_700_000_000_000);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'rate-close-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        (Reflect.get(room, 'sockets') as Map<number, WebSocket>).set(0, ws0 as unknown as WebSocket);
+        const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+        for (let i = 0; i < 120 + 240; i++) {
+          await handle.call(room, 0, '{}');
+        }
+        expect(ws0.closeCode).toBe(1008);
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('bounds accepted BUY_SELL entries in processedShopActions via FIFO eviction while preserving READY', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'shop-cap-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const state = Reflect.get(room, 'state') as {
+        roundEnded: boolean;
+        players: Player[];
+        processedShopActions: Record<string, { slot: number; result: ShopRejectedMessage }>;
+      };
+      state.roundEnded = true;
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_ENTER', roundNumber: 1 }));
+      await handle.call(room, 0, JSON.stringify({ type: 'SHOP_READY', shopEpoch: 1, actionId: 'ready-0' }));
+
+      // Seed 511 prior BUY_SELL entries so total reaches 512 (MAX_PROCESSED_SHOP_ACTIONS)
+      for (let i = 0; i < 511; i++) {
+        state.processedShopActions[`BUY_SELL:1:pre-${i}`] = {
+          slot: 1,
+          result: { type: 'SHOP_REJECTED', shopEpoch: 1, actionId: `pre-${i}`, reason: 'NO_STOCK' },
+        };
+      }
+
+      state.players[1].inventory.GRENADE = 10;
+      for (let i = 0; i < 5; i++) {
+        await handle.call(room, 1, JSON.stringify({
+          type: 'SHOP_BUY_SELL',
+          shopEpoch: 1,
+          actionId: `sell-${i}`,
+          weaponId: 'GRENADE',
+          delta: -1,
+        }));
+      }
+
+      const keys = Object.keys(state.processedShopActions);
+      expect(keys.length).toBe(512);
+      expect(Object.hasOwn(state.processedShopActions, 'READY:0:ready-0')).toBe(true);
+      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-0')).toBe(false);
+      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-4')).toBe(false);
+      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:pre-5')).toBe(true);
+      expect(Object.hasOwn(state.processedShopActions, 'BUY_SELL:1:sell-4')).toBe(true);
+    });
+
+    it('never calls saveState on an incompatible started room during disconnect or alarm without lastActivityAt', async () => {
+      vi.useFakeTimers();
+      const idleTtlMs = 24 * 60 * 60 * 1000;
+      try {
+        const now = 1_700_000_000_000;
+        vi.setSystemTime(now);
+        const setup = createMockCtx();
+        const room = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(room, 'ctx', { value: setup.ctx });
+        await room.fetchCreate(new Request('http://localhost/internal/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            roomId: 'legacy-alarm-room',
+            numPlayers: 2,
+            slotConfigs: [{ type: 'human' }, { type: 'human' }],
+            origin: 'http://localhost:5173',
+          }),
+        }));
+
+        const ws0 = new MockWebSocket();
+        const ws1 = new MockWebSocket();
+        const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+        sockets.set(0, ws0 as unknown as WebSocket);
+        sockets.set(1, ws1 as unknown as WebSocket);
+        const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+        await claim.call(room, 0, 'Alice');
+        await claim.call(room, 1, 'Bob');
+
+        const persisted = structuredClone(setup.mockStorage.storageData.get('state')) as Record<string, unknown>;
+        persisted.combatSchemaVersion = 5;
+        delete persisted.lastActivityAt;
+        setup.mockStorage.storageData.set('state', persisted);
+
+        const reloaded = new GameRoom(setup.ctx as DurableObjectState, {});
+        Object.defineProperty(reloaded, 'ctx', { value: setup.ctx });
+        await (setup.ctx as { blockConcurrencyWhile: ReturnType<typeof vi.fn> }).blockConcurrencyWhile.mock.results.at(-1)!.value;
+
+        const context = setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } };
+        context.storage.transaction.mockClear();
+
+        await reloaded.alarm();
+        expect(context.storage.transaction).not.toHaveBeenCalled();
+        expect(setup.mockStorage.alarmAt).toBe(now + idleTtlMs);
+
+        const wsLegacy = new MockWebSocket();
+        (Reflect.get(reloaded, 'sockets') as Map<number, WebSocket>).set(1, wsLegacy as unknown as WebSocket);
+        const disconnect = Reflect.get(reloaded, 'handleSocketDisconnect') as (slot: number, ws: WebSocket) => Promise<void>;
+        await disconnect.call(reloaded, 1, wsLegacy as unknown as WebSocket);
+        expect(context.storage.transaction).not.toHaveBeenCalled();
+        expect(setup.mockStorage.alarmAt).toBe(now + idleTtlMs);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('preserves null prototype on processedFireActionsBySlot after a failed saveState rollback', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'rollback-proto-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+
+      const ws0 = new MockWebSocket();
+      const ws1 = new MockWebSocket();
+      const sockets = Reflect.get(room, 'sockets') as Map<number, WebSocket>;
+      sockets.set(0, ws0 as unknown as WebSocket);
+      sockets.set(1, ws1 as unknown as WebSocket);
+      const claim = Reflect.get(room, 'claimHumanSlot') as (slot: number, name: string) => Promise<void>;
+      await claim.call(room, 0, 'Alice');
+      await claim.call(room, 1, 'Bob');
+
+      const handle = Reflect.get(room, 'handleClientMessage') as (slot: number, raw: unknown) => Promise<void>;
+      await handle.call(room, 0, JSON.stringify({
+        type: 'FIRE',
+        actionId: 'fire-1',
+        command: { angle: 45, power: 50, weaponId: 'MISSILE' },
+      }));
+
+      const context = setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } };
+      context.storage.transaction.mockRejectedValueOnce(new Error('storage failure'));
+      const saveState = Reflect.get(room, 'saveState') as () => Promise<void>;
+      await expect(saveState.call(room)).rejects.toThrow('storage failure');
+
+      const state = Reflect.get(room, 'state') as {
+        processedFireActionsBySlot: Record<number, Record<string, unknown>>;
+      };
+      expect(Object.getPrototypeOf(state.processedFireActionsBySlot[0])).toBeNull();
+    });
+
+    it('validates slotConfigs in fetchCreate, treats Upgrade case-insensitively, and sends null for non-numeric protocolVersion', async () => {
+      const setup = createMockCtx();
+      const room = new GameRoom(setup.ctx as DurableObjectState, {});
+      Object.defineProperty(room, 'ctx', { value: setup.ctx });
+
+      const badLength = await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'bad-slots-length',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }],
+        }),
+      }));
+      expect(badLength.status).toBe(400);
+
+      const badType = await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'bad-slots-type',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'evil' }],
+        }),
+      }));
+      expect(badType.status).toBe(400);
+
+      const postUpgrade = await room.fetch(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        headers: { Upgrade: 'WebSocket' },
+        body: JSON.stringify({
+          roomId: 'ws-upgrade-post',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+        }),
+      }));
+      expect(postUpgrade.status).toBe(404);
+      expect(room.getRoster()).toBeNull();
+
+      await room.fetchCreate(new Request('http://localhost/internal/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId: 'ws-alpha-version-room',
+          numPlayers: 2,
+          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          origin: 'http://localhost:5173',
+        }),
+      }));
+      const token = (Reflect.get(room, 'state') as { tokens: string[] }).tokens[0];
+
+      class AlphaSocket extends MockWebSocket {
+        public accept = vi.fn();
+      }
+      let capturedServer!: AlphaSocket;
+      class AlphaWebSocketPair {
+        public 0: AlphaSocket;
+        public 1: AlphaSocket;
+        constructor() {
+          this[0] = new AlphaSocket();
+          this[1] = new AlphaSocket();
+          capturedServer = this[1];
+        }
+      }
+      const OriginalResponse = globalThis.Response;
+      const WrappedResponse = function (body?: BodyInit | null, init?: ResponseInit & { webSocket?: unknown }) {
+        if (init?.status === 101) {
+          return { status: 101, webSocket: init.webSocket } as unknown as Response;
+        }
+        return new OriginalResponse(body, init);
+      } as unknown as typeof Response;
+      vi.stubGlobal('WebSocketPair', AlphaWebSocketPair);
+      vi.stubGlobal('Response', WrappedResponse);
+      try {
+        const res = await room.fetch(new Request(
+          `http://localhost/ws?room=ws-alpha-version-room&slot=0&protocolVersion=abc&token=${encodeURIComponent(token)}`,
+          { headers: { Upgrade: 'WebSocket' } },
+        ));
+        expect(res.status).toBe(101);
+        expect(capturedServer.getAllMessages()).toEqual([
+          { type: 'PROTOCOL_MISMATCH', requiredVersion: 6, receivedVersion: null },
+        ]);
+        expect(capturedServer.closeCode).toBe(4402);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

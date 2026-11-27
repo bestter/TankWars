@@ -94,6 +94,8 @@ describe('Service worker cache strategy', () => {
     expect(content).toContain('requestUrl.pathname === MANIFEST_PATH');
     expect(content).toContain('e.request.destination === "manifest"');
     expect(content).toContain('requestUrl.origin !== self.location.origin');
+    expect(content).toContain('requestUrl.origin === "null"');
+    expect(content).not.toContain('  "/",');
     expect(content).not.toContain('e.request.url.startsWith(self.location.origin)');
     expect(content).toContain('throw err');
   });
@@ -266,6 +268,7 @@ describe('Service worker cache strategy', () => {
     expect(await dispatch({ url: `${origin}/api/health`, method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
     expect(await dispatch({ url: `${origin}/api`, method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
     expect(await dispatch({ url: `${origin}/api/rooms/r1/ws`, method: 'GET', mode: 'cors', destination: '', upgrade: 'websocket' })).toBeUndefined();
+    expect(await dispatch({ url: 'data:text/html,hi', method: 'GET', mode: 'navigate', destination: 'document' })).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
