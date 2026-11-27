@@ -1,4 +1,5 @@
 import { tokenMatches } from './tokenComparison';
+import { isAllowedSiteOrigin, PAGES_ORIGIN } from './siteOrigin';
 import { fragmentCombat, type ActiveCombatShot, type CombatEvent } from "../../src/game/online/combatCatchUp";
 import { validateEarnings } from "../../src/game/online/earningsValidation";
 import { prepareRound, isRoundMap, ROUND_WIDTH, ROUND_HEIGHT, type RoundMap } from '../../src/game/round/prepareRound';
@@ -804,19 +805,8 @@ export class GameRoom extends DurableObject {
       if (cfg.type === 'ai' && cfg.aiProfile) this.aiProfiles.set(idx, cfg.aiProfile);
     });
 
-    // Use origin provided by client (for local dev it will be http://localhost:5173),
-    // otherwise fall back to production. Validated to prevent XSS via malformed origin injection.
-    let origin = 'https://tankwars.pages.dev';
-    if (typeof body.origin === 'string') {
-      const isAllowedOrigin =
-        body.origin === 'https://tankwars.pages.dev' ||
-        /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(body.origin) ||
-        /^http:\/\/localhost:(5173|4173|8787)$/.test(body.origin) ||
-        /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(body.origin);
-      if (isAllowedOrigin) {
-        origin = body.origin;
-      }
-    }
+    // Revalidate the origin forwarded by the Worker, including its allowed local origins.
+    const origin = isAllowedSiteOrigin(body.origin, true) ? body.origin : PAGES_ORIGIN;
     const slots = slotConfigs.map((cfg, idx) => ({
       slot: idx,
       type: cfg.type,

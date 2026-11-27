@@ -20,6 +20,7 @@ import {
 } from '../../src/game/online/protocol';
 import { CONTACT_RATE_LIMIT_PATH, ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
 import { handleContact, type ContactEmailEnv } from './contact';
+import { isAllowedSiteOrigin, PAGES_ORIGIN } from './siteOrigin';
 
 // Env bindings injected by wrangler (see wrangler.toml)
 export interface Env extends ContactEmailEnv {
@@ -112,16 +113,8 @@ export default {
       url.hostname === 'localhost' ||
       url.hostname === '127.0.0.1' ||
       env.ALLOW_LOCAL_ORIGINS === 'true';
-    const isAllowedOrigin = origin && (
-      origin === 'https://tankwars-game.com' ||
-      origin === 'https://tankwars.pages.dev' ||
-      /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
-      (allowLocalOrigins && (
-        /^http:\/\/localhost:(5173|4173|8787)$/.test(origin) ||
-        /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(origin)
-      ))
-    );
-    const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
+    const isAllowedOrigin = isAllowedSiteOrigin(origin, allowLocalOrigins);
+    const allowedOrigin = isAllowedOrigin ? origin : PAGES_ORIGIN;
 
     // Add CORS and security headers to HTTP responses. WebSocket upgrade responses
     // are returned untouched below so their Cloudflare-specific `webSocket` is preserved.

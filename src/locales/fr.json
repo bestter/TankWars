@@ -19,6 +19,7 @@
   "contact_send_another": "Envoyer un autre message",
   "contact_service_error": "Le service de contact est indisponible. Réessayez dans un moment.",
   "contact_network_error": "Impossible de joindre le service. Vérifiez votre connexion et réessayez.",
+  "contact_timeout": "Le délai d’attente est dépassé. Nous n’avons pas pu confirmer la livraison de votre message.",
   "contact_invalid_request": "Le service a refusé le formulaire. Vérifiez les champs et réessayez.",
   "contact_fix_fields": "Corrigez les champs indiqués avant d’envoyer le message.",
   "contact_navigation_error": "Le navigateur n’a pas pu changer de page. Réessayez.",

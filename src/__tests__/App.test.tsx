@@ -1,7 +1,7 @@
 import { makeRoundMap } from "../game/__tests__/helpers";
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react';
 import App from '../App';
 import type { GameCanvasProps } from '../components/GameCanvas';
 import { makePlayer, makeTank } from '../game/__tests__/helpers';
@@ -92,19 +92,34 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.queryByRole('button', { name: 'endurance_title' })).toBeNull();
   });
 
-  it('synchronizes contact with browser back and forward and keeps the Canvas unmounted', async () => {
+  it('keeps the menu setup through contact navigation and keeps the Canvas unmounted', async () => {
     const suffix = '?lang=fr#anchor';
     window.history.replaceState({ keep: true }, '', `/${suffix}`);
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '4' }));
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'Capitaine' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'menu_free_weapons' }));
+    const colors = within(screen.getByRole('group', { name: 'color_picker_player_group_label_1' }));
+    const [customColor] = colors.getAllByRole('button', { name: 'color_select_label', pressed: false });
+    fireEvent.click(customColor);
+    const expectMenuSetup = () => {
+      expect(screen.getByRole('button', { name: '4', pressed: true })).toBeDefined();
+      expect(screen.getByDisplayValue('Capitaine')).toBeDefined();
+      expect(screen.getByRole('checkbox', { name: 'menu_free_weapons', checked: true })).toBeDefined();
+      expect(colors.getByRole('button', { name: 'color_select_label', pressed: true })).toBe(customColor);
+    };
+
     fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
     expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/contact${suffix}`);
     expect(window.history.state).toEqual({ keep: true });
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'contact_title' }));
+    expect(screen.queryByRole('button', { name: 'start_battle_button' })).toBeNull();
     expect(screen.queryByTestId('game-canvas-mock')).toBeNull();
     expect(screen.getByTestId('seo-mock').dataset.title).toBe('contact_seo_title');
 
     window.history.back();
-    await waitFor(() => expect(screen.getByText('main_title')).toBeDefined());
+    await screen.findByRole('button', { name: 'start_battle_button' });
+    expectMenuSetup();
     expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/${suffix}`);
     window.history.forward();
     await screen.findByRole('heading', { name: 'contact_title' });
@@ -112,6 +127,7 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(window.location.pathname + window.location.search + window.location.hash).toBe(`/${suffix}`);
     expect(window.history.state).toEqual({ keep: true });
     expect(document.activeElement).toBe(screen.getByRole('main'));
+    expectMenuSetup();
   });
 
   it.each(['/contact', '/contact/'])('accepts the direct URL %s', (path) => {

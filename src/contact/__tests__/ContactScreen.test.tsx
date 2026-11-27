@@ -29,6 +29,7 @@ function renderContact() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -82,12 +83,54 @@ describe('ContactScreen', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: '', email: 'guest@example.com', message, extra: '' }),
+      signal: expect.any(AbortSignal),
     });
     expect(submit.matches(':disabled')).toBe(true);
     await act(async () => resolveResponse(Response.json({ ok: true })));
     expect(screen.getByRole('heading', { name: 'contact_sent_title' })).toBeDefined();
     expect(screen.getByText(description)).toBeDefined();
     expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(description);
+  });
+
+  it.each(['headers', 'receipt'] as const)('keeps the draft and allows retry when waiting for %s times out', async phase => {
+    vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
+    vi.useFakeTimers();
+    if (phase === 'headers') {
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation(delay => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), delay);
+        return controller.signal;
+      });
+    } else {
+      vi.stubGlobal('AbortSignal', { timeout: undefined });
+    }
+
+    const { fetchMock, fill, submit, email, text } = renderContact();
+    const waitForAbort = <T,>(signal: AbortSignal | null | undefined) => new Promise<T>((_, reject) => {
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    const response = new Response();
+    const readReceipt = vi.spyOn(response, 'json');
+    fetchMock.mockImplementationOnce((_url, options) => {
+      if (phase === 'headers') return waitForAbort<Response>(options?.signal);
+      readReceipt.mockImplementation(() => waitForAbort(options?.signal));
+      return Promise.resolve(response);
+    });
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true }));
+
+    fill();
+    await act(async () => fireEvent.click(submit));
+    expect(submit.matches(':disabled')).toBe(true);
+    if (phase === 'receipt') expect(readReceipt).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(screen.getByRole('alert').textContent).toBe('contact_timeout');
+    expect(email.value).toBe('guest@example.com');
+    expect(text.value).toBe(message);
+    expect(submit.matches(':disabled')).toBe(false);
+
+    await act(async () => fireEvent.click(submit));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('heading', { name: 'contact_sent_title' })).toBeDefined();
   });
 
   it.each([

@@ -19,19 +19,27 @@ const FIELD_ERRORS = {
   message: 'contact_message_error',
 } as const;
 
+const CONTACT_TIMEOUT_MS = 15_000;
+
 type Feedback =
-  | { key: 'contact_fix_fields' | 'contact_service_error' | 'contact_network_error' | 'contact_invalid_request' | 'contact_rate_limited' }
+  | { key: 'contact_fix_fields' | 'contact_service_error' | 'contact_network_error' | 'contact_timeout' | 'contact_invalid_request' | 'contact_rate_limited' }
   | { key: 'contact_retry_after'; seconds: number };
 
 async function sendContact(payload: ContactMessage & { extra: string }): Promise<Feedback | null> {
+  const fallback = typeof AbortSignal.timeout === 'function' ? null : new AbortController();
+  const signal = fallback?.signal ?? AbortSignal.timeout(CONTACT_TIMEOUT_MS);
+  const timeout = fallback ? setTimeout(() => fallback.abort(), CONTACT_TIMEOUT_MS) : undefined;
+  let receivedResponse = false;
   try {
     const response = await fetch(`${getOnlineApiBase()}/api/contact`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal,
     });
+    receivedResponse = true;
     if (response.ok) {
-      const receipt: unknown = await response.json().catch(() => null);
+      const receipt: unknown = await response.json();
       return receipt && typeof receipt === 'object' && 'ok' in receipt && receipt.ok === true
         ? null
         : { key: 'contact_service_error' };
@@ -46,7 +54,10 @@ async function sendContact(payload: ContactMessage & { extra: string }): Promise
       ? 'contact_invalid_request'
       : 'contact_service_error' };
   } catch {
-    return { key: 'contact_network_error' };
+    if (signal.aborted) return { key: 'contact_timeout' };
+    return { key: receivedResponse ? 'contact_service_error' : 'contact_network_error' };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -120,11 +131,14 @@ export function ContactScreen({ onBack }: { onBack: () => void }) {
 
     pending.current = true;
     setSubmitting(true);
-    const rejected = await sendContact(payload);
-    pending.current = false;
-    setSubmitting(false);
-    setFeedback(rejected);
-    setSent(rejected === null);
+    try {
+      const rejected = await sendContact(payload);
+      setFeedback(rejected);
+      setSent(rejected === null);
+    } finally {
+      pending.current = false;
+      setSubmitting(false);
+    }
   }
 
   return (

@@ -1,11 +1,11 @@
 import { captureOnlineEntry, cleanParticipationUrl, clearParticipation, readOnlineEntry, type OnlineParticipation, type OnlineEntryMessage } from './utils/onlineParticipation';
 import { onlineEntryMessagesReducer } from './utils/onlineEntryMessages';
 import { OnlinePersistenceAlerts } from './components/OnlinePersistenceAlerts';
-import { lazy, Suspense, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { Activity, lazy, Suspense, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
-import { MainMenu } from "./components/MainMenu";
+import { MainMenu, type MainMenuProps } from "./components/MainMenu";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { Player } from "./types/player";
@@ -51,6 +51,21 @@ interface AppScreenProps {
   readonly onHideOnlineLobby: () => void;
   readonly onReturnToMenu: () => void;
   readonly onPersistenceWarning: (message: OnlineEntryMessage) => void;
+}
+
+function LocalMenuScreen({
+  showContact,
+  onCloseContact,
+  ...menuProps
+}: MainMenuProps & Pick<AppScreenProps, 'showContact' | 'onCloseContact'>) {
+  return (
+    <>
+      <Activity mode={showContact ? "hidden" : "visible"}>
+        <MainMenu {...menuProps} />
+      </Activity>
+      {showContact && <ContactScreen onBack={onCloseContact} />}
+    </>
+  );
 }
 
 function AppScreen({
@@ -110,16 +125,14 @@ function AppScreen({
     );
   }
 
-  if (showContact) return <ContactScreen onBack={onCloseContact} />;
-
   return (
-    <MainMenu
+    <LocalMenuScreen
+      showContact={showContact}
+      onCloseContact={onCloseContact}
       onEndurance={onEndurance}
       onContact={onContact}
       onStartGame={onStartLocalGame}
-      {...(onlineMultiplayerEnabled
-        ? { onPlayOnline: onHideOnlineLobby }
-        : {})}
+      onPlayOnline={onlineMultiplayerEnabled ? onHideOnlineLobby : undefined}
     />
   );
 }

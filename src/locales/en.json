@@ -19,6 +19,7 @@
   "contact_send_another": "Send another message",
   "contact_service_error": "The contact service is unavailable. Try again in a moment.",
   "contact_network_error": "Could not reach the service. Check your connection and try again.",
+  "contact_timeout": "The request timed out. We couldn’t confirm that your message was delivered.",
   "contact_invalid_request": "The service rejected the form. Check your entries and try again.",
   "contact_fix_fields": "Correct the marked fields before sending the message.",
   "contact_navigation_error": "The browser could not change pages. Try again.",
