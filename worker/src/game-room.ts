@@ -735,25 +735,20 @@ export class GameRoom extends DurableObject {
 
     const roomId = typeof body.roomId === 'string' ? body.roomId : undefined;
     const numPlayers = typeof body.numPlayers === 'number' ? body.numPlayers : undefined;
-    const slotConfigsRaw = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
-    const validSlotConfigs =
-      slotConfigsRaw !== undefined &&
-      numPlayers !== undefined &&
-      isInitialPlayerCount(numPlayers) &&
-      slotConfigsRaw.length === numPlayers &&
-      slotConfigsRaw.every((entry: unknown) => {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-        const item = entry as Record<string, unknown>;
-        return (
-          (item.type === 'human' || item.type === 'ai') &&
-          (item.aiProfile === undefined || typeof item.aiProfile === 'string')
-        );
-      });
-
-    if (!roomId || !numPlayers || !isInitialPlayerCount(numPlayers) || !validSlotConfigs) {
+    const slotConfigsRaw: unknown[] | undefined = Array.isArray(body.slotConfigs) ? body.slotConfigs : undefined;
+    if (!roomId || numPlayers === undefined || !isInitialPlayerCount(numPlayers) || slotConfigsRaw?.length !== numPlayers) {
       return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
     }
-    const slotConfigs = slotConfigsRaw as Array<{ type: 'human' | 'ai'; aiProfile?: string }>;
+    const slotConfigs = slotConfigsRaw.map((entry): RoomState['slotConfigs'][number] | null => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const { type, aiProfile } = entry as Record<string, unknown>;
+      if (type !== 'human' && type !== 'ai') return null;
+      if (aiProfile !== undefined && typeof aiProfile !== 'string') return null;
+      return type === 'ai' && aiProfile !== undefined ? { type, aiProfile } : { type };
+    });
+    if (!slotConfigs.every(config => config !== null)) {
+      return new Response(JSON.stringify({ error: 'Invalid create payload' }), { status: 400 });
+    }
 
     if (this.state) {
       return new Response(JSON.stringify({ error: 'Room already exists' }), { status: 409 });
@@ -1814,6 +1809,10 @@ export class GameRoom extends DurableObject {
     await this.ctx.storage.deleteAll();
     this.state = null;
     this.committedState = null;
+    this.resetShotCoordination();
+    this.needsIdleRefreshOnReconnect = true;
+    this.needsCombatStorageSync = true;
+    this.syncedRoundNumber = 0;
     this.lastCombatStringified.clear();
     this.lastCombatValues.clear();
     this.wsMessageTimestamps.clear();
@@ -2357,15 +2356,12 @@ export class GameRoom extends DurableObject {
       !NON_PERSISTED_SHOP_REJECTIONS.has(rejection.reason)
     ) {
       const actionKey = makeShopActionKey(kind, slot, rejection.actionId);
-      const entries = Object.values(this.state.processedShopActions);
-      const slotRejectionsCount = entries.filter(
-        (entry) => entry.slot === slot && entry.result.type === 'SHOP_REJECTED',
-      ).length;
+      const { total, slotNonReady, slotRejections } = this.countShopActions(this.state.processedShopActions, slot);
       if (
         !Object.hasOwn(this.state.processedShopActions, actionKey) &&
-        entries.length < this.shopActionBudget(this.state.shopSession) &&
-        this.countSlotNonReadyShopActions(slot) < this.slotShopActionBudget() &&
-        slotRejectionsCount < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
+        total < this.shopActionBudget(this.state.shopSession) &&
+        slotNonReady < this.slotShopActionBudget() &&
+        slotRejections < MAX_PERSISTED_SHOP_REJECTIONS_PER_SLOT
       ) {
         this.state.processedShopActions[actionKey] = {
           slot,
@@ -2451,15 +2447,17 @@ export class GameRoom extends DurableObject {
     return Math.floor((MAX_PROCESSED_SHOP_ACTIONS - humanCount) / humanCount);
   }
 
-  private countSlotNonReadyShopActions(slot: number): number {
-    if (!this.state) return 0;
-    let count = 0;
-    for (const [key, entry] of Object.entries(this.state.processedShopActions)) {
+  private countShopActions(actions: RoomState['processedShopActions'], slot: number) {
+    const entries = Object.entries(actions);
+    let slotNonReady = 0;
+    let slotRejections = 0;
+    for (const [key, entry] of entries) {
       if (entry.slot !== slot) continue;
-      if (key.startsWith('READY:') && entry.result.type !== 'SHOP_REJECTED') continue;
-      count++;
+      const rejected = entry.result.type === 'SHOP_REJECTED';
+      if (rejected) slotRejections++;
+      if (rejected || !key.startsWith('READY:')) slotNonReady++;
     }
-    return count;
+    return { total: entries.length, slotNonReady, slotRejections };
   }
 
   private resolvePersistedShopResult(
@@ -2547,10 +2545,8 @@ export class GameRoom extends DurableObject {
       }, 'BUY_SELL');
       return;
     }
-    if (
-      Object.keys(this.state.processedShopActions).length >= this.shopActionBudget(session) ||
-      this.countSlotNonReadyShopActions(slot) >= this.slotShopActionBudget()
-    ) {
+    const { total, slotNonReady } = this.countShopActions(this.state.processedShopActions, slot);
+    if (total >= this.shopActionBudget(session) || slotNonReady >= this.slotShopActionBudget()) {
       this.sendToSlot(slot, {
         type: 'SHOP_REJECTED', shopEpoch: session.shopEpoch,
         actionId: message.actionId, ...target, delta: message.delta, reason: 'PURCHASE_LIMIT',

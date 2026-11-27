@@ -300,6 +300,8 @@ describe("progressive endurance bundle", () => {
     const second = await buildBundle(input, disk);
     expect(second.reportComplete).toBe(false);
     expect(second.index).toBe(first.index);
+    const notice = new TextDecoder().decode(await readBytes(disk, "index.html"));
+    expect(notice).toContain(`href="${first.index?.replace("index/root.json", "index.html")}"`);
   });
   it.each([
     " javascript:alert(1)",
@@ -308,7 +310,7 @@ describe("progressive endurance bundle", () => {
     "//evil.example/report.html",
     "derived\\..\\evil.html",
     "/abs/path.html",
-  ])("neutralizes unsafe href path (%s) in incomplete report notices and derived reports", async (badPath) => {
+  ])("omits the previous report link when its path is unsafe (%s)", async (badPath) => {
     expect(safeRelativeHref(badPath)).toBe("#");
 
     class FailReportDisk extends MemoryDisk {
@@ -328,8 +330,17 @@ describe("progressive endurance bundle", () => {
     input.journal = async after => [entry(1), entry(2)].filter(e => e.sequence > after);
     await buildBundle(input, disk);
     const noticeHtml = new TextDecoder().decode(await readBytes(disk, "index.html"));
-    expect(noticeHtml).toContain('href="#"');
-    expect(noticeHtml).not.toContain("javascript:");
+    expect(noticeHtml).not.toContain("<a ");
+    expect(noticeHtml).toContain("Confirmed data: 2");
+  });
+  it("marks the derived report incomplete when the stored view ID is invalid", async () => {
+    const disk = new MemoryDisk();
+    const viewId = await identity("Test view");
+    await disk.put("views", viewId, { id: "invalid-view-id", label: "Test view" });
+    const manifest = await buildBundle(source([entry(1)]), disk);
+    expect(manifest.reportComplete).toBe(false);
+    expect(manifest.reportError).toContain("INVALID_REPORT_VIEW");
+    await expect(validateBundle(disk)).resolves.toMatchObject({ journal: { persisted: 1 } });
   });
   it("sanitizes unsafe location paths and shotHash values when rendering report pages", async () => {
     const disk = new MemoryDisk();

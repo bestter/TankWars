@@ -507,6 +507,7 @@ export function isPlayers(value: unknown, earnings = false): value is Player[] {
           !isRecord(entry) ||
           typeof entry.id !== "string" ||
           entry.id.trim().length === 0 ||
+          !isSafeRecordKey(entry.id) ||
           typeof entry.name !== "string" ||
           typeof entry.isHuman !== "boolean" ||
           !isSafeNonNegativeInteger(entry.money) ||

@@ -35,6 +35,30 @@ describe("read-shot-archive CLI", () => {
     }
   });
 
+  it("rejects a directory as archive input", () => {
+    const result = run("Scripts");
+    expect(result.status).toBe(1);
+    expect(result.stderr.trim()).toBe("Error: ARCHIVE_NOT_REGULAR_FILE");
+  });
+
+  it.each([
+    { row: '{"kind":"event"}', status: 2 },
+    { row: '{"kind":', status: 1 },
+  ])("handles empty lines and reports malformed legacy JSONL (status $status)", ({ row, status }) => {
+    const directory = mkdtempSync(join(tmpdir(), "tankwars-archive-cli-"));
+    const archive = join(directory, "journal.jsonl");
+    try {
+      writeFileSync(archive, '{"schemaVersion":1,"kind":"journal-status"}\r\n \t\r\n' + row + "\r\n");
+      const result = run(archive);
+      expect(result.status).toBe(status);
+      if (status === 1) expect(result.stderr.trim()).toBe("Error: INVALID_ARCHIVE_JSON");
+      else expect(JSON.parse(result.stdout)).toMatchObject({ capabilities: { singleShotReplay: false }, sourceSchema: 1 });
+    } finally {
+      rmSync(archive, { force: true });
+      rmdirSync(directory);
+    }
+  });
+
   it.each(["0", "1.5", "Infinity", "999999"])("rejects an invalid input size limit (%s)", limit => {
     const result = run("missing-archive.json", "--max-input-mib", limit);
     expect(result.status).toBe(1);

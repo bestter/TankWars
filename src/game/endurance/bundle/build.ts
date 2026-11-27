@@ -165,7 +165,7 @@ export async function buildBundle(source: BundleSource, disk: BundleDisk, input:
     try {
       const rawPath = previous?.index?.replace("index/root.json", "index.html") ?? "";
       const safeHref = safeRelativeHref(rawPath);
-      const link = previous?.index ? `<a href="${safeHref}">Dernier rapport / Last report (${escapeHtml(previous.indexBoundary)})</a>` : "";
+      const link = safeHref !== "#" && previous ? `<a href="${safeHref}">Dernier rapport / Last report (${escapeHtml(previous.indexBoundary)})</a>` : "";
       await disk.write("index.html", one(new TextEncoder().encode(`<!doctype html><meta charset="utf-8"><title>Rapport incomplet / Incomplete report</title><h1>Rapport incomplet / Incomplete report</h1><p>Données confirmées / Confirmed data: ${manifest.journal.persisted}</p>${link}<p>Régénération / Regeneration: node Scripts/endurance/build-report.mjs manifest.json --output new-folder</p><p>Signé / Signed : Codex — GPT-6</p>`)));
     } catch (warning) { console.warn("[Endurance] Incomplete report notice could not be written", warning); }
   }

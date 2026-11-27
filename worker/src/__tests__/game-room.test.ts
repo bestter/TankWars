@@ -5336,9 +5336,21 @@ describe('GameRoom Durable Object', () => {
         expect(setup.mockStorage.storageData.get('state')).toEqual(persisted);
         vi.setSystemTime(expiresAt);
         setup.mockStorage.alarmAt = undefined;
+        const cancelShotTimeout = vi.fn();
+        if (legacyState === 'shot') {
+          expect(Reflect.get(restored, 'shotInFlight')).toBe(true);
+          expect(Reflect.get(restored, 'awaitingShotFromSlot')).toBe(0);
+          Reflect.set(restored, 'cancelShotSettledTimeout', cancelShotTimeout);
+        }
         await restored.alarm();
         expect(restored.getRoster()).toBeNull();
         expect(setup.mockStorage.storageData.size).toBe(0);
+        expect(Reflect.get(restored, 'shotInFlight')).toBe(false);
+        expect(Reflect.get(restored, 'awaitingShotFromSlot')).toBeNull();
+        expect(Reflect.get(restored, 'cancelShotSettledTimeout')).toBeNull();
+        expect(Reflect.get(restored, 'needsIdleRefreshOnReconnect')).toBe(true);
+        expect(Reflect.get(restored, 'needsCombatStorageSync')).toBe(true);
+        if (legacyState === 'shot') expect(cancelShotTimeout).toHaveBeenCalledOnce();
       } finally {
         vi.useRealTimers();
       }
@@ -5427,10 +5439,19 @@ describe('GameRoom Durable Object', () => {
         body: JSON.stringify({
           roomId: 'ws-alpha-version-room',
           numPlayers: 2,
-          slotConfigs: [{ type: 'human' }, { type: 'human' }],
+          slotConfigs: [
+            { type: 'human', aiProfile: 'unused', extra: true },
+            { type: 'ai', aiProfile: 'v1-random', extra: true },
+          ],
           origin: 'http://localhost:5173',
         }),
       }));
+      expect(setup.mockStorage.storageData.get('state')).toMatchObject({
+        slotConfigs: [{ type: 'human' }, { type: 'ai', aiProfile: 'v1-random' }],
+      });
+      expect(room.getRoster()?.slotConfigs).toStrictEqual([
+        { type: 'human' }, { type: 'ai', aiProfile: 'v1-random' },
+      ]);
       const token = (Reflect.get(room, 'state') as { tokens: string[] }).tokens[0];
 
       class AlphaSocket extends MockWebSocket {

@@ -8,8 +8,22 @@ import {
   readProtocolVersion,
 } from "../protocol";
 import { MAX_ACTION_ID_LENGTH } from "../actionId";
+import { makePlayer } from "../../__tests__/helpers";
 
 describe("strict online protocol", () => {
+  it.each(["__proto__", "constructor", "prototype", "toString", "valueOf"])(
+    "refuse l’identifiant de joueur réservé %s dans SHOP_STATE",
+    (id) => {
+      const player = makePlayer({ id: "player-1" });
+      const message = {
+        type: "SHOP_STATE", shopEpoch: 1, roundNumber: 1, readySlots: [],
+        purchasesByPlayerId: {}, aiShopApplied: true,
+      };
+      expect(isStrictOnlineMessage({ ...message, players: [player] })).toBe(true);
+      expect(isStrictOnlineMessage({ ...message, players: [{ ...player, id }] })).toBe(false);
+    },
+  );
+
   describe("isInventory via FIRE_REJECTED", () => {
     const validateInventory = (inventory: unknown) => isStrictOnlineMessage({
       type: "FIRE_REJECTED",

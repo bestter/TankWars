@@ -1,9 +1,36 @@
-import { readFile, stat, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { constants as fsFlags } from "node:fs";
+import { open, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
-import { constants as bufferLimits } from "node:buffer";
+import { Buffer, constants as bufferLimits } from "node:buffer";
+import { StringDecoder } from "node:string_decoder";
 
 const MIB = 1024 * 1024;
+const ARCHIVE_TOO_LARGE = "ARCHIVE_TOO_LARGE: raise --max-input-mib for a larger JSON input";
+
+async function readArchiveText(path, maxBytes) {
+  // O_NONBLOCK lets us reject FIFOs without waiting for a writer on POSIX.
+  const handle = await open(path, fsFlags.O_RDONLY | (fsFlags.O_NONBLOCK ?? 0));
+  try {
+    const file = await handle.stat();
+    if (!file.isFile()) throw new Error("ARCHIVE_NOT_REGULAR_FILE");
+    if (file.size > maxBytes) throw new Error(ARCHIVE_TOO_LARGE);
+
+    const chunk = Buffer.alloc(64 * 1024);
+    const decoder = new StringDecoder("utf8");
+    let text = "", total = 0;
+    while (true) {
+      // Read at most one extra byte to detect growth past the limit after stat.
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null);
+      if (bytesRead === 0) return text + decoder.end();
+      total += bytesRead;
+      if (total > maxBytes) throw new Error(ARCHIVE_TOO_LARGE);
+      text += decoder.write(chunk.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+}
 
 async function startServer() {
   const { createServer } = await import("vite");
@@ -47,20 +74,26 @@ if (!path) {
       throw new Error("INVALID_ARCHIVE_SIZE_LIMIT");
     }
     const maxInputBytes = Math.min(maxInputMiB * MIB, bufferLimits.MAX_STRING_LENGTH);
-    if ((await stat(path)).size > maxInputBytes) throw new Error("ARCHIVE_TOO_LARGE: raise --max-input-mib for a larger JSON input");
-    const text = await readFile(path, "utf8");
+    const text = await readArchiveText(path, maxInputBytes);
     let value;
     try { value = JSON.parse(text); }
     catch {
       const trimmed = text.trim();
       const nl = trimmed.indexOf("\n");
       const firstLine = (nl === -1 ? trimmed : trimmed.slice(0, nl)).trim();
-      let header;
-      try { header = firstLine ? JSON.parse(firstLine) : null; }
-      catch { throw new Error("INVALID_ARCHIVE_JSON"); }
-      if (!header || header.kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
-      const rows = trimmed.split(/\r?\n/).map(line => JSON.parse(line));
-      value = { schemaVersion: header.schemaVersion, format: "legacy-journal", events: rows.length - 1 };
+      try {
+        const header = JSON.parse(firstLine);
+        if (nl === -1 || header?.kind !== "journal-status") throw new Error("INVALID_ARCHIVE_JSON");
+        let events = 0;
+        for (const line of trimmed.slice(nl + 1).split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          JSON.parse(line);
+          events++;
+        }
+        value = { schemaVersion: header.schemaVersion, format: "legacy-journal", events };
+      } catch {
+        throw new Error("INVALID_ARCHIVE_JSON");
+      }
     }
     const isBundle = typeof value === "object" && value !== null && !Array.isArray(value) && value.format === "tankwars-endurance-bundle";
     let archive;
