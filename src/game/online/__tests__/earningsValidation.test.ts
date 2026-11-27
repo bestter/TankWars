@@ -129,6 +129,22 @@ describe("v3 earnings authority", () => {
     expect(validateEarnings(next.report, next.roster, "a", "MISSILE").ok).toBe(true);
   });
 
+  it("allows the rounded absorption of a depleted fractional shield on a direct hit", () => {
+    const { roster, report } = fixture();
+    roster[1].tank.shield = 0.2;
+    report.players[1].tank.shield = 0;
+    report.players[1].tank.health = roster[1].tank.health - 10;
+    report.awards[0].amount = 33;
+    report.directHitVictimIds = ["b"];
+    expect(validateEarnings(report, roster, "a", "MISSILE").ok).toBe(true);
+
+    report.awards[0].amount = 34;
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+    report.awards[0].amount = 33;
+    report.directHitVictimIds = [];
+    expect(validateEarnings(report, roster, "a", "MISSILE")).toEqual({ ok: false, reason: "MALFORMED" });
+  });
+
   it("validates structural fields before domain decisions and fits four complete players under 8192 characters", () => {
     const { report, roster } = fixture();
     report.players[1].tank.position.y = 900;

@@ -468,6 +468,8 @@ export class GameRoom extends DurableObject {
   private async saveState(alarmAt?: number | null): Promise<void> {
     if (!this.state) return;
     this.state.lastActivityAt = Date.now();
+    const nextAlarmAt = this.state.activeZeusStrike?.resolveAt ??
+      this.idleExpiryAt(this.state.lastActivityAt) ?? alarmAt;
     const { combatJournal, earningsResults, shotHistory,
       processedFireActionsBySlot, processedShopActions, ...mainSource } = this.state;
     const main = structuredClone(mainSource);
@@ -523,8 +525,8 @@ export class GameRoom extends DurableObject {
         const deleteBatches = Array.from({ length: Math.ceil(obsolete.length / 128) }, (_, i) => obsolete.slice(i * 128, (i + 1) * 128));
         const putBatches = Array.from({ length: Math.ceil(changed.length / 128) }, (_, i) => Object.fromEntries(changed.slice(i * 128, (i + 1) * 128)));
         await Promise.all([...deleteBatches.map((keys) => txn.delete(keys)), ...putBatches.map((values) => txn.put(values))]);
-        if (alarmAt === null) await txn.deleteAlarm();
-        else if (alarmAt !== undefined) await txn.setAlarm(alarmAt);
+        if (nextAlarmAt === null) await txn.deleteAlarm();
+        else if (nextAlarmAt !== undefined) await txn.setAlarm(nextAlarmAt);
       });
       // Publish only committed serializations; replacing the map also removes obsolete keys.
       this.lastCombatStringified = stringified;
@@ -786,7 +788,7 @@ export class GameRoom extends DurableObject {
         : null,
     }));
 
-    await this.saveState(Date.now() + ROOM_IDLE_TTL_MS);
+    await this.saveState();
 
     return new Response(
       JSON.stringify({
@@ -1178,17 +1180,15 @@ export class GameRoom extends DurableObject {
           const active = this.state.activeShot;
           const next = active && !active.earningsApplied ? this.nextReportingAuthority() : undefined;
           await this.electEarningsAuthority(next);
+          return;
         }
       } else if (this.state.slotConfigs[slot]?.type === 'human' && this.state.joinedHumans[slot]) {
         delete this.state.joinedHumans[slot];
         await this.saveState();
         this.sendRosterUpdate();
+        return;
       }
-      if (this.sockets.size === 0 && !this.state.activeShot && !this.state.activeZeusStrike) {
-        const activityAt = this.state.lastActivityAt ?? Date.now();
-        this.state.lastActivityAt = activityAt;
-        await this.ctx.storage.setAlarm(activityAt + ROOM_IDLE_TTL_MS);
-      }
+      if (this.idleExpiryAt(Date.now()) !== undefined) await this.saveState();
     });
   }
 
@@ -1682,22 +1682,38 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  private idleExpiryAt(lastActivityAt: number): number | undefined {
+    if (this.state && !this.state.activeShot && !this.state.activeZeusStrike && this.sockets.size === 0) {
+      return lastActivityAt + ROOM_IDLE_TTL_MS;
+    }
+  }
+
   async alarm(): Promise<void> {
     await this.runShotOperation(async () => {
-      await this.recoverShotReport();
-      if (
-        this.state &&
-        !this.state.activeShot &&
-        !this.state.activeZeusStrike &&
-        this.sockets.size === 0 &&
-        typeof this.state.lastActivityAt === 'number' &&
-        this.state.lastActivityAt + ROOM_IDLE_TTL_MS <= Date.now()
-      ) {
+      const strike = this.state?.activeZeusStrike;
+      if (strike && this.buildGameStartMessage()) {
+        if (Date.now() < strike.resolveAt) await this.ctx.storage.setAlarm(strike.resolveAt);
+        else await this.resolveZeusStrike(strike.strikeId);
+        return;
+      }
+      if (this.state?.activeShot) {
+        await this.recoverShotReport();
+        return;
+      }
+      const now = Date.now();
+      const lastActivityAt = this.state?.lastActivityAt;
+      const expiresAt = this.idleExpiryAt(lastActivityAt ?? now);
+      if (expiresAt === undefined) return;
+      if (expiresAt <= now) {
         await this.ctx.storage.deleteAll();
         this.state = null;
         this.committedState = null;
         this.lastCombatStringified.clear();
         this.lastCombatValues.clear();
+      } else if (lastActivityAt === undefined) {
+        await this.saveState();
+      } else {
+        await this.ctx.storage.setAlarm(expiresAt);
       }
     });
   }
@@ -2000,88 +2016,86 @@ export class GameRoom extends DurableObject {
   }
 
   private completeZeusStrike(strikeId: number): Promise<void> {
-    return this.runShotOperation(async () => {
-      if (!this.buildGameStartMessage()) return;
-      if (!this.state) return;
-      if (this.state.lastAppliedZeusStrike?.strikeId === strikeId) {
-        this.broadcast(this.state.lastAppliedZeusStrike);
-        return;
-      }
-      const strike = this.state.activeZeusStrike;
-      if (!strike || strike.strikeId !== strikeId) return;
-      const target = this.state.players.find((player) => player.id === strike.targetId);
-      const zeus = this.state.players.find((player) => player.id === strike.zeusId);
-      if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
-        this.state.activeZeusStrike = null;
-        await this.saveState();
-        return;
-      }
+    return this.runShotOperation(() => this.resolveZeusStrike(strikeId));
+  }
 
-      const survivors = this.state.players.filter((player) => player.id !== target.id && !player.tank.isDead && player.tank.health > 0);
-      const reward = calculateZeusStrikeReward(zeus.id, this.state.numPlayers, survivors.map((player) => player.id));
-      const balances = this.state.players.map((player) => {
-        const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
-        const money = player.money + amount;
-        if (!Number.isSafeInteger(money)) throw new RangeError("Zeus balance overflow.");
-        return { playerId: player.id, money };
-      });
-      const total = (this.state.roundEarningsByPlayer[reward.award.playerId] ?? 0) + reward.award.amount;
-      if (!Number.isSafeInteger(total)) throw new RangeError("Zeus round earnings overflow.");
-      target.tank.health = 0; target.tank.shield = 0; target.tank.isDead = true;
-      for (const [index, player] of this.state.players.entries()) player.money = balances[index].money;
-      this.state.roundEarningsByPlayer[reward.award.playerId] = total;
-      const nextPlayerIndex = reward.roundOutcome.isRoundEnd
-        ? null
-        : nextLivingPlayerIndex(
-            this.state.currentPlayerIndex,
-            this.state.numPlayers,
-            (index) => !!this.state?.players[index]?.tank.isDead,
-          );
-      const result: ZeusStrikeAppliedMessage = {
-        type: 'ZEUS_STRIKE_APPLIED',
-        roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
-        economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...this.state.roundEarningsByPlayer },
-        strikeId,
-        zeusId: strike.zeusId,
-        targetId: strike.targetId,
-        award: reward.award,
-        balances,
-        deadSlots: this.state.players.map((player) => player.tank.isDead),
-        roundOutcome: reward.roundOutcome,
-        nextPlayerIndex,
-      };
+  private async resolveZeusStrike(strikeId: number): Promise<void> {
+    if (!this.buildGameStartMessage()) return;
+    if (!this.state) return;
+    const strike = this.state.activeZeusStrike;
+    if (!strike || strike.strikeId !== strikeId) return;
+    const target = this.state.players.find((player) => player.id === strike.targetId);
+    const zeus = this.state.players.find((player) => player.id === strike.zeusId);
+    if (!target || !zeus || target.tank.isDead || zeus.tank.isDead) {
       this.state.activeZeusStrike = null;
-      this.appendCombatEvent(result);
-      this.state.lastAppliedZeusStrike = result;
-      if (reward.roundOutcome.isRoundEnd) {
-        this.state.roundEnded = true;
-        this.resetZeusRoundState();
-      } else if (nextPlayerIndex !== null) {
-        this.state.currentPlayerIndex = nextPlayerIndex;
-      }
-      await this.saveState();
-      this.broadcast(result);
-      this.broadcast(this.buildZeusStateMessage());
+      await this.saveState(null);
+      return;
+    }
 
-      if (reward.roundOutcome.isRoundEnd) {
-        const roundEnd: RoundEndMessage = {
-          type: 'ROUND_END',
-          players: this.state.players,
-          roundWinnerId: reward.roundOutcome.roundWinnerId,
-          isDraw: reward.roundOutcome.isDraw,
-          roundNumber: this.state.roundNumber,
-        };
-        this.broadcast(roundEnd);
-        return;
-      }
-      this.broadcast({
-        type: 'STATE_UPDATE',
-        roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
-        currentPlayerIndex: this.state.currentPlayerIndex,
-        roundEnded: false,
-      });
-      this.maybeRunAIServerTurn();
+    const survivors = this.state.players.filter((player) => player.id !== target.id && !player.tank.isDead && player.tank.health > 0);
+    const reward = calculateZeusStrikeReward(zeus.id, this.state.numPlayers, survivors.map((player) => player.id));
+    const balances = this.state.players.map((player) => {
+      const amount = player.id === reward.award.playerId ? reward.award.amount : 0;
+      const money = player.money + amount;
+      if (!Number.isSafeInteger(money)) throw new RangeError("Zeus balance overflow.");
+      return { playerId: player.id, money };
     });
+    const total = (this.state.roundEarningsByPlayer[reward.award.playerId] ?? 0) + reward.award.amount;
+    if (!Number.isSafeInteger(total)) throw new RangeError("Zeus round earnings overflow.");
+    target.tank.health = 0; target.tank.shield = 0; target.tank.isDead = true;
+    for (const [index, player] of this.state.players.entries()) player.money = balances[index].money;
+    this.state.roundEarningsByPlayer[reward.award.playerId] = total;
+    const nextPlayerIndex = reward.roundOutcome.isRoundEnd
+      ? null
+      : nextLivingPlayerIndex(
+          this.state.currentPlayerIndex,
+          this.state.numPlayers,
+          (index) => !!this.state?.players[index]?.tank.isDead,
+        );
+    const result: ZeusStrikeAppliedMessage = {
+      type: 'ZEUS_STRIKE_APPLIED',
+      roundNumber: this.state.roundNumber, eventSequence: 0, afterShotId: this.state.lastResolvedShotId,
+      economicRevision: ++this.state.economicRevision, roundEarningsByPlayer: { ...this.state.roundEarningsByPlayer },
+      strikeId,
+      zeusId: strike.zeusId,
+      targetId: strike.targetId,
+      award: reward.award,
+      balances,
+      deadSlots: this.state.players.map((player) => player.tank.isDead),
+      roundOutcome: reward.roundOutcome,
+      nextPlayerIndex,
+    };
+    this.state.activeZeusStrike = null;
+    this.appendCombatEvent(result);
+    this.state.lastAppliedZeusStrike = result;
+    if (reward.roundOutcome.isRoundEnd) {
+      this.state.roundEnded = true;
+      this.resetZeusRoundState();
+    } else if (nextPlayerIndex !== null) {
+      this.state.currentPlayerIndex = nextPlayerIndex;
+    }
+    await this.saveState(null);
+    this.broadcast(result);
+    this.broadcast(this.buildZeusStateMessage());
+
+    if (reward.roundOutcome.isRoundEnd) {
+      const roundEnd: RoundEndMessage = {
+        type: 'ROUND_END',
+        players: this.state.players,
+        roundWinnerId: reward.roundOutcome.roundWinnerId,
+        isDraw: reward.roundOutcome.isDraw,
+        roundNumber: this.state.roundNumber,
+      };
+      this.broadcast(roundEnd);
+      return;
+    }
+    this.broadcast({
+      type: 'STATE_UPDATE',
+      roundNumber: this.state.roundNumber, eventSequence: this.state.nextEventSequence - 1, economicRevision: this.state.economicRevision,
+      currentPlayerIndex: this.state.currentPlayerIndex,
+      roundEnded: false,
+    });
+    this.maybeRunAIServerTurn();
   }
 
   private resetZeusRoundState(): void {

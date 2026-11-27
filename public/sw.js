@@ -1,10 +1,11 @@
-const CACHE_NAME = "tankwars-v5";
+const CACHE_NAME = "tankwars-v6";
+const APP_PATH = "/index.html";
 const MANIFEST_PATH = "/manifest.json";
 // Un manifeste encore frais dans le cache HTTP peut appartenir à l'ancienne version.
 const MANIFEST_FETCH_OPTIONS = { cache: "reload" };
 const ASSETS = [
   "/",
-  "/index.html",
+  APP_PATH,
   "/favicon.svg",
   "/favicon-32.png",
   "/apple-touch-icon.png",
@@ -81,16 +82,18 @@ self.addEventListener("fetch", (e) => {
     requestUrl.pathname === MANIFEST_PATH ||
     e.request.destination === "manifest";
   const isNavigate = e.request.mode === "navigate";
+  const isAppNavigation = isNavigate &&
+    (requestUrl.pathname === "/" || requestUrl.pathname === APP_PATH);
 
   // Stratégie Network-First pour les requêtes de navigation (index.html) et le manifeste PWA
   // afin de toujours charger la version la plus récente tout en préservant le mode hors ligne
-  if (e.request.mode === "navigate" || isManifestRequest) {
+  if (isAppNavigation || isManifestRequest) {
     const fetchRequest =
       isManifestRequest && !isNavigate
         ? fetch(e.request, MANIFEST_FETCH_OPTIONS)
         : fetch(e.request);
     // Clé canonique sans query string pour ne jamais persister de jeton (?token=...) dans CacheStorage
-    const cacheKey = isManifestRequest ? MANIFEST_PATH : "/index.html";
+    const cacheKey = isManifestRequest ? MANIFEST_PATH : APP_PATH;
 
     e.respondWith(
       fetchRequest
@@ -103,7 +106,9 @@ self.addEventListener("fetch", (e) => {
               return response;
             }
           }
-          if (response.ok) {
+          if (response.ok && (isManifestRequest || (
+            !response.redirected && /^text\/html(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? "")
+          ))) {
             const copy = response.clone();
             const cacheWrite = caches
               .open(CACHE_NAME)
@@ -123,7 +128,7 @@ self.addEventListener("fetch", (e) => {
           const options = { cacheName: CACHE_NAME };
           const fallback = isManifestRequest
             ? await findCachedManifest(e.request)
-            : await caches.match("/index.html", options);
+            : await caches.match(APP_PATH, options);
           if (fallback) return fallback;
           throw err;
         })

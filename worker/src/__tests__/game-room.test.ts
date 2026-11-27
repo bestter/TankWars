@@ -458,6 +458,44 @@ describe('Zeus v3 durable settlement', () => {
     expect(setup.mockStorage.alarmAt).toBe(launchedAt + 20_000);
   });
 
+  it.each(['shot', 'Zeus strike'])('expires the empty room after resolving an abandoned %s', async (action) => {
+    const { room, setup, sockets, send, fire, report, restart } = await boot();
+    if (action === 'Zeus strike') room.getRoster()!.zeusState.shotsWithoutEarnings = 9;
+    const shot = await fire();
+    if (action === 'Zeus strike') {
+      await send(0, { type: 'SHOT_SETTLED', shotId: shot.shotId, slot: 0, deadSlots: [false, false] });
+      await send(0, report(shot.shotId));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(setup.mockStorage.alarmAt).toBe(room.getRoster()!.activeZeusStrike!.resolveAt);
+    }
+    const actionDeadline = setup.mockStorage.alarmAt!;
+    const disconnect = Reflect.get(room, 'handleSocketDisconnect') as (slot: number, ws: MockWebSocket) => Promise<void>;
+    await disconnect.call(room, 0, sockets[0]);
+    await disconnect.call(room, 1, sockets[1]);
+    expect(setup.mockStorage.alarmAt).toBe(actionDeadline);
+
+    const restored = await restart(false);
+    vi.clearAllTimers();
+    vi.setSystemTime(actionDeadline);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toMatchObject({ activeShot: null, activeZeusStrike: null, roundEnded: true });
+    const expiry = actionDeadline + 24 * 60 * 60 * 1000;
+    expect(setup.mockStorage.alarmAt).toBe(expiry);
+
+    vi.setSystemTime(expiry - 1);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).not.toBeNull();
+    expect(setup.mockStorage.alarmAt).toBe(expiry);
+
+    vi.setSystemTime(expiry);
+    setup.mockStorage.alarmAt = undefined;
+    await restored.alarm();
+    expect(restored.getRoster()).toBeNull();
+    expect(setup.mockStorage.storageData.size).toBe(0);
+  });
+
   it('keeps reconnect and IDENTIFY writes behind a failed shot transaction', async () => {
     const { room, setup, send, fire, sockets } = await boot();
     const storage = (setup.ctx as { storage: { transaction: ReturnType<typeof vi.fn> } }).storage;

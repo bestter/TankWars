@@ -43,6 +43,7 @@ export function validateEarnings(
   const players: Player[] = [];
   const beforeById = new Map<string, Player>();
   const afterById = new Map<string, Player>();
+  const directVictims = new Set(weaponId === "BULLDOZER" ? [] : report.directHitVictimIds);
   let opponentDamageMilli = 0;
   let newlyDeadOpponents = 0;
   const aliveBeforeIds: string[] = [];
@@ -79,9 +80,17 @@ export function validateEarnings(
         const healthDelta = Math.max(0, before.health - normalized.tank.health);
         const shieldDelta = Math.max(0, before.shield - normalized.tank.shield);
         if (healthDelta > 0 || shieldDelta > 0) {
+          // The final direct impact can absorb one damage point even with a
+          // fractional shield left. Earlier absorption pays at most half per
+          // shield point spent (splash reward or the direct absorption ratio).
+          let shieldDamageCap = shieldDelta;
+          if (shieldDelta > 0 && normalized.tank.shield === 0 && directVictims.has(original.id)) {
+            const directAbsorptionCap = weaponId === "CLUSTER" ? shieldDelta / 2 + 1 : Math.ceil(shieldDelta / 2);
+            shieldDamageCap = Math.max(shieldDelta, directAbsorptionCap);
+          }
           opponentDamageMilli +=
             Math.ceil(healthDelta * DAMAGE_PRECISION) +
-            Math.ceil(shieldDelta * DAMAGE_PRECISION);
+            Math.ceil(shieldDamageCap * DAMAGE_PRECISION);
         }
         if (normalized.tank.isDead) {
           newlyDeadOpponents++;

@@ -344,6 +344,31 @@ describe("durable, content-addressed captures", () => {
     expect(replayShot(exported, key).physicalDivergence).toBeNull(); reopened.close();
     expect(byteSize(exported)).toBeGreaterThan(1000);
   });
+  it("exports all confirmed snapshots when an endurance archive has more than 256 terrains", async () => {
+    const source = realShot().archive.records.find(record => record.input.kind === "pre-shot")?.input;
+    if (source?.kind !== "pre-shot") throw new Error("Missing pre-shot fixture");
+    const sessionId = "many-terrains";
+    const storage = new IndexedEnduranceStorage();
+    const journal = new EnduranceJournal(sessionId, (entries, status) => storage.appendJournal(entries, status), error => { throw error; });
+    const recorder = new ShotRecorder(sessionId, write => journal.append({
+      at: "test", atMs: 0, blockId: null, blockIndex: 1, seed: 1, round: 1, turn: 1, phase: "COMBAT",
+      decisionId: null, context: null, contextError: null, event: { kind: "archive", write },
+    }));
+    try {
+      for (let height = 0; height < 257; height++) {
+        recorder.record({ kind: "current", snapshot: {
+          ...source.snapshot, width: 1, height: 300, heights: [height], materials: ["DIRT"],
+        } });
+      }
+      await journal.finish();
+      const exported = await exportStoredArchive(storage, sessionId);
+      expect(exported).toMatchObject({ complete: true, firstSequence: 1, lastSequence: 258 });
+      expect(exported.records).toHaveLength(258);
+      expect(validateArchive(exported).terrains).toHaveLength(257);
+    } finally {
+      storage.close();
+    }
+  });
   it("evicts whole turns with their dependencies at a small DEV limit", () => {
     const recorder = new ShotRecorder("bounded", undefined, 2);
     for (let turn = 1; turn <= 5; turn++) recorder.record({ kind: "combat", event: { kind: "turn", turn, playerId: "a" } });
