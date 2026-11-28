@@ -39,18 +39,22 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
       - name: Build Application
-        run: npm run build
-        # Assure-toi que ta base URL est configurée (ex: /TankWars/) dans ton vite.config.ts
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          VITE_HOTSEAT_ONLY: 'true'
+          VITE_API_BASE: ''
+        run: npm run build -- --mode github-pages --base "$PAGES_BASE_PATH/"
 
       - name: Test
         run: npm run test
 
       - name: React Doctor
         run: npm run doctor -- --verbose --scope full --blocking error
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v6
 
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v5

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type SubmitEvent } from 'react';
+import { Activity, useId, useLayoutEffect, useRef, useState, type SubmitEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SEO } from '../components/SEO';
 import { getOnlineApiBase } from '../utils/onlineApi';
@@ -94,7 +94,20 @@ function ContactFeedbackAlert({ feedback }: { feedback: Feedback | null }) {
   return <div className="contact-error" role="alert">{text}</div>;
 }
 
-export function ContactScreen({ onBack }: { onBack: () => void }) {
+export function ContactScreen({
+  onBack,
+  available = true,
+  visible = true,
+}: { onBack: () => void; available?: boolean; visible?: boolean }) {
+  if (!available) return null;
+  return (
+    <Activity mode={visible ? 'visible' : 'hidden'}>
+      <ContactView onBack={onBack} visible={visible} />
+    </Activity>
+  );
+}
+
+function ContactView({ onBack, visible }: { onBack: () => void; visible: boolean }) {
   const { t } = useTranslation();
   const id = useId();
   const formRef = useRef<HTMLFormElement>(null);
@@ -175,10 +188,10 @@ export function ContactScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="retro-menu-container">
-      <SEO
+      {visible && <SEO
         titleKey={sent ? 'contact_sent_seo_title' : 'contact_seo_title'}
         descriptionKey={sent ? sentDescription : 'contact_description'}
-      />
+      />}
       <div className="retro-menu-frame contact-frame">
         <div className="retro-menu-inner">
           <h1 className="retro-section" ref={headingRef} tabIndex={-1}>

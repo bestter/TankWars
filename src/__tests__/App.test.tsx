@@ -80,6 +80,7 @@ describe('App component (State and Lifecycle integration)', () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('renders MainMenu, SEO, and LanguageSwitcher on initial load', () => {
@@ -134,6 +135,68 @@ describe('App component (State and Lifecycle integration)', () => {
     window.history.replaceState({}, '', path);
     render(<App />);
     expect(screen.getByRole('heading', { name: 'contact_title' })).toBeDefined();
+  });
+
+  it('keeps one pending contact request across the return button and a local battle', async () => {
+    vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
+    let resolveResponse!: (response: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise(resolve => { resolveResponse = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    const openContact = () => fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
+    openContact();
+    fireEvent.change(screen.getByLabelText('contact_email'), { target: { value: 'guest@example.com' } });
+    const draft = 'My original contact draft.';
+    fireEvent.change(screen.getByLabelText('contact_message'), { target: { value: draft } });
+    fireEvent.click(screen.getByRole('button', { name: 'contact_send' }));
+    fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
+    expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
+    expect(screen.getByTestId('seo-mock').dataset.title).toBe('seo_title');
+
+    fireEvent.click(screen.getByRole('button', { name: 'start_battle_button' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mock Return To Menu' }));
+    openContact();
+
+    const pending = screen.getByRole('button', { name: 'contact_sending' });
+    expect(pending.matches(':disabled')).toBe(true);
+    expect(screen.getByLabelText<HTMLTextAreaElement>('contact_message').value).toBe(draft);
+    fireEvent.submit(pending.closest('form')!);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole('button', { name: 'contact_back' }));
+    await act(async () => resolveResponse(Response.json({ ok: true })));
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    expect(screen.getByTestId('seo-mock').dataset.title).toBe('seo_title');
+    openContact();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'contact_sent_title' }));
+    expect(screen.getByTestId('seo-mock').dataset.title).toBe('contact_sent_seo_title');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('restores the draft and a failed contact result after browser back and forward', async () => {
+    vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
+    let resolveResponse!: (response: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise(resolve => { resolveResponse = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'contact_title' }));
+    fireEvent.change(screen.getByLabelText('contact_email'), { target: { value: 'guest@example.com' } });
+    const draft = 'Draft to keep after an error.';
+    fireEvent.change(screen.getByLabelText('contact_message'), { target: { value: draft } });
+    fireEvent.click(screen.getByRole('button', { name: 'contact_send' }));
+
+    window.history.back();
+    await screen.findByRole('button', { name: 'start_battle_button' });
+    await act(async () => resolveResponse(Response.json({}, { status: 503 })));
+    window.history.forward();
+    await screen.findByRole('heading', { name: 'contact_title' });
+    expect(screen.getByText('contact_service_error')).toBeDefined();
+    expect(screen.getByLabelText<HTMLTextAreaElement>('contact_message').value).toBe(draft);
+    expect(screen.getByLabelText<HTMLInputElement>('contact_email').value).toBe('guest@example.com');
+    expect(screen.getByRole('button', { name: 'contact_send' }).matches(':disabled')).toBe(false);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('keeps the menu after a previously open contact path is blocked and contact becomes available again', () => {
@@ -200,6 +263,19 @@ describe('App component (State and Lifecycle integration)', () => {
     expect(screen.queryByRole('button', { name: 'contact_title' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'contact_title' })).toBeNull();
     expect(location.pathname + location.search + location.hash).toBe('/?lang=fr#anchor');
+    expect(history.state).toEqual({ keep: true });
+  });
+
+  it.each(['', '/'])('keeps the GitHub Pages base on direct contact fallback (%s)', (trailingSlash) => {
+    vi.stubEnv('BASE_URL', '/TankWars/');
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_API_BASE', '');
+    window.history.replaceState({ keep: true }, '', `/TankWars/contact${trailingSlash}?lang=fr#anchor`);
+    render(<App />);
+
+    expect(screen.getByRole('button', { name: 'start_battle_button' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'contact_title' })).toBeNull();
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe('/TankWars/?lang=fr#anchor');
     expect(history.state).toEqual({ keep: true });
   });
 

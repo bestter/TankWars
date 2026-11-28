@@ -5,7 +5,7 @@ import { Activity, lazy, Suspense, useEffect, useLayoutEffect, useReducer, useRe
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { GameCanvas } from "./components/GameCanvas";
-import { MainMenu, type MainMenuProps } from "./components/MainMenu";
+import { MainMenu } from "./components/MainMenu";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import type { Player } from "./types/player";
@@ -32,7 +32,6 @@ interface AppScreenProps {
   readonly onEndurance?: () => void;
   readonly onContact?: () => void;
   readonly showContact: boolean;
-  readonly onCloseContact: () => void;
   readonly showMenu: boolean;
   readonly showOnlineLobby: boolean;
   readonly isOnlineJoin: boolean;
@@ -51,21 +50,6 @@ interface AppScreenProps {
   readonly onHideOnlineLobby: () => void;
   readonly onReturnToMenu: () => void;
   readonly onPersistenceWarning: (message: OnlineEntryMessage) => void;
-}
-
-function LocalMenuScreen({
-  showContact,
-  onCloseContact,
-  ...menuProps
-}: MainMenuProps & Pick<AppScreenProps, 'showContact' | 'onCloseContact'>) {
-  return (
-    <>
-      <Activity mode={showContact ? "hidden" : "visible"}>
-        <MainMenu {...menuProps} />
-      </Activity>
-      {showContact && <ContactScreen onBack={onCloseContact} />}
-    </>
-  );
 }
 
 function AppScreen({
@@ -87,7 +71,6 @@ function AppScreen({
   onEndurance,
   onContact,
   showContact,
-  onCloseContact,
 }: AppScreenProps) {
   if (!showMenu) {
     return (
@@ -126,14 +109,14 @@ function AppScreen({
   }
 
   return (
-    <LocalMenuScreen
-      showContact={showContact}
-      onCloseContact={onCloseContact}
-      onEndurance={onEndurance}
-      onContact={onContact}
-      onStartGame={onStartLocalGame}
-      onPlayOnline={onlineMultiplayerEnabled ? onHideOnlineLobby : undefined}
-    />
+    <Activity mode={showContact ? "hidden" : "visible"}>
+      <MainMenu
+        onEndurance={onEndurance}
+        onContact={onContact}
+        onStartGame={onStartLocalGame}
+        onPlayOnline={onlineMultiplayerEnabled ? onHideOnlineLobby : undefined}
+      />
+    </Activity>
   );
 }
 
@@ -271,7 +254,7 @@ function App() {
     showMenu,
     showOnlineLobby,
   );
-  const { showContact, openContact, closeContact, navigationFailed } = useContactRoute(gameScreen === 'menu', hotseatOnly);
+  const { contactAvailable, showContact, openContact, closeContact, navigationFailed } = useContactRoute(gameScreen === 'menu', hotseatOnly);
   useScreenScroll(showContact ? 'contact' : gameScreen, mainRef);
 
   const handleOnlineMenuToggle = (): void => {
@@ -316,7 +299,6 @@ function App() {
             onEndurance={EnduranceScreen ? () => setShowEndurance(true) : undefined}
             onContact={openContact}
             showContact={showContact}
-            onCloseContact={closeContact}
             showMenu={showMenu}
             showOnlineLobby={showOnlineLobby}
             isOnlineJoin={isOnlineJoin}
@@ -334,6 +316,7 @@ function App() {
             onPersistenceWarning={handlePersistenceWarning}
           />
         )}
+        <ContactScreen onBack={closeContact} available={contactAvailable} visible={showContact} />
         {quitConfirmationOpen && (
           <OnlineQuitConfirmDialog
             key={onlineQuitConfirmRequestId}

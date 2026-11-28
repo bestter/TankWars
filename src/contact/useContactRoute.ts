@@ -3,8 +3,13 @@ import { getOnlineApiBase } from '../utils/onlineApi';
 
 const CONTACT_PATH_CHANGED = 'tankwars-contact-path-changed';
 
+function contactPath() {
+  return `${import.meta.env.BASE_URL}contact`;
+}
+
 function isContactPath() {
-  return window.location.pathname === '/contact' || window.location.pathname === '/contact/';
+  const path = contactPath();
+  return window.location.pathname === path || window.location.pathname === `${path}/`;
 }
 
 function subscribeToContactPath(onChange: () => void) {
@@ -16,7 +21,7 @@ function subscribeToContactPath(onChange: () => void) {
   };
 }
 
-function writeContactPath(path: '/' | '/contact', mode: 'pushState' | 'replaceState') {
+function writeContactPath(path: string, mode: 'pushState' | 'replaceState') {
   const { search, hash } = window.location;
   try {
     window.history[mode](window.history.state, '', `${path}${search}${hash}`);
@@ -29,7 +34,8 @@ function writeContactPath(path: '/' | '/contact', mode: 'pushState' | 'replaceSt
 }
 
 export function useContactRoute(isMenu: boolean, hotseatOnly: boolean) {
-  const allowed = isMenu && !hotseatOnly && Boolean(getOnlineApiBase());
+  const contactAvailable = !hotseatOnly && Boolean(getOnlineApiBase());
+  const allowed = isMenu && contactAvailable;
   const requested = useSyncExternalStore(subscribeToContactPath, isContactPath);
   const [navigationFailed, setNavigationFailed] = useState(false);
 
@@ -38,7 +44,7 @@ export function useContactRoute(isMenu: boolean, hotseatOnly: boolean) {
   }
 
   useEffect(() => {
-    if (!allowed && requested) writeContactPath('/', 'replaceState');
+    if (!allowed && requested) writeContactPath(import.meta.env.BASE_URL, 'replaceState');
   }, [allowed, requested]);
 
   useEffect(() => {
@@ -52,10 +58,11 @@ export function useContactRoute(isMenu: boolean, hotseatOnly: boolean) {
       setNavigationFailed(false);
       return;
     }
-    setNavigationFailed(!writeContactPath(open ? '/contact' : '/', 'pushState'));
+    setNavigationFailed(!writeContactPath(open ? contactPath() : import.meta.env.BASE_URL, 'pushState'));
   };
 
   return {
+    contactAvailable,
     showContact: allowed && requested,
     navigationFailed,
     openContact: allowed ? () => navigate(true) : undefined,
