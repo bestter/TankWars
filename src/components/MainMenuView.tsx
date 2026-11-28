@@ -9,6 +9,7 @@ import type { PlayerController } from "./playerControllerUi";
 
 interface MainMenuViewProps {
   onEndurance?: () => void;
+  onContact?: () => void;
   numPlayers: 2 | 3 | 4;
   playerConfigs: readonly PlayerConfig[];
   colorPool: readonly Color[];
@@ -51,6 +52,7 @@ export function MainMenuView({
   onStart,
   onPlayOnline,
   onEndurance,
+  onContact,
 }: MainMenuViewProps) {
   const { t } = useTranslation();
   const numPlayersLabelId = useId();
@@ -145,6 +147,13 @@ export function MainMenuView({
               </div>
             )}
             {onEndurance && <div style={{ marginTop: 10 }}><button type="button" className="retro-online-btn" onClick={onEndurance}>{t("endurance_title")}</button></div>}
+            {onContact && (
+              <div style={{ marginTop: 10 }}>
+                <button className="retro-online-btn" type="button" onClick={onContact}>
+                  {t("contact_title")}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="retro-legal">

@@ -10,6 +10,9 @@ name = "tankwars-api"
 main = "src/index.ts"
 compatibility_date = "2026-06-16"
 
+[[send_email]]
+name = "CONTACT_EMAIL"
+
 # Important: We use the modern "cloudflare:workers" import for DurableObject.
 # This is required for the class to be recognized at runtime (avoids "DurableObject is not defined").
 

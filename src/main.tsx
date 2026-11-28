@@ -19,8 +19,8 @@ if (import.meta.env.PROD) {
   console.timeEnd = noop;
 }
 
-// Register Service Worker in production
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
+// The service worker precaches root-level URLs.
+if ("serviceWorker" in navigator && import.meta.env.PROD && import.meta.env.BASE_URL === "/") {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")

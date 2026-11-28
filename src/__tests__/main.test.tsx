@@ -85,6 +85,7 @@ describe('main.tsx', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     (import.meta.env as Record<string, unknown>).PROD = originalEnvProd;
     Object.assign(console, originalConsoleMethods);
     if (originalServiceWorkerDescriptor) {
@@ -105,6 +106,14 @@ describe('main.tsx', () => {
 
     expect(navigator.serviceWorker.register).toHaveBeenCalledTimes(1);
     expect(navigator.serviceWorker.register).toHaveBeenCalledWith('/sw.js');
+  });
+
+  it('keeps the root-scoped service worker out of GitHub Pages project builds', async () => {
+    vi.stubEnv('BASE_URL', '/TankWars/');
+    await import('../main');
+
+    expect(loadListener).toBeUndefined();
+    expect(navigator.serviceWorker.register).not.toHaveBeenCalled();
   });
 
   it('handles service worker registration failure', async () => {

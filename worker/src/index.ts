@@ -18,10 +18,12 @@ import {
   MINIMUM_CLIENT_PROTOCOL_VERSION,
   ONLINE_PROTOCOL_VERSION,
 } from '../../src/game/online/protocol';
-import { ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
+import { CONTACT_RATE_LIMIT_PATH, ROOM_RATE_LIMIT_PATH, WEBSOCKET_RATE_LIMIT_PATH } from './rate-limiter';
+import { handleContact, type ContactEmailEnv } from './contact';
+import { isAllowedSiteOrigin, PAGES_ORIGIN } from './siteOrigin';
 
 // Env bindings injected by wrangler (see wrangler.toml)
-export interface Env {
+export interface Env extends ContactEmailEnv {
   GAME_ROOM: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace;
   ALLOW_LOCAL_ORIGINS?: string;
@@ -30,6 +32,7 @@ export interface Env {
 const RATE_LIMIT_BUCKETS = {
   rooms: { prefix: 'rate_limit_', path: ROOM_RATE_LIMIT_PATH },
   websocket: { prefix: 'ws_rate_limit_', path: WEBSOCKET_RATE_LIMIT_PATH },
+  contact: { prefix: 'contact_rate_limit_', path: CONTACT_RATE_LIMIT_PATH },
 } as const;
 const TEXT_ENCODER = new TextEncoder();
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -110,21 +113,18 @@ export default {
       url.hostname === 'localhost' ||
       url.hostname === '127.0.0.1' ||
       env.ALLOW_LOCAL_ORIGINS === 'true';
-    const isAllowedOrigin = origin && (
-      origin === 'https://tankwars.pages.dev' ||
-      /^https:\/\/[a-zA-Z0-9-]+\.tankwars\.pages\.dev$/.test(origin) ||
-      (allowLocalOrigins && (
-        /^http:\/\/localhost:(5173|4173|8787)$/.test(origin) ||
-        /^http:\/\/127\.0\.0\.1:(5173|4173|8787)$/.test(origin)
-      ))
-    );
-    const allowedOrigin = isAllowedOrigin ? origin : 'https://tankwars.pages.dev';
+    const isAllowedOrigin = isAllowedSiteOrigin(origin, allowLocalOrigins);
+    const allowedOrigin = isAllowedOrigin ? origin : PAGES_ORIGIN;
 
     // Add CORS and security headers to HTTP responses. WebSocket upgrade responses
     // are returned untouched below so their Cloudflare-specific `webSocket` is preserved.
     const withResponseHeaders = (res: Response): Response => {
       const headers = new Headers(res.headers);
       headers.set('Access-Control-Allow-Origin', allowedOrigin);
+      if (pathname === '/api/contact') {
+        headers.set('Access-Control-Expose-Headers', 'Retry-After');
+        headers.set('Cache-Control', 'no-store');
+      }
       const existingVary = headers.get('Vary');
       if (!existingVary || !existingVary.split(',').some((v) => v.trim().toLowerCase() === 'origin')) {
         headers.append('Vary', 'Origin');
@@ -148,10 +148,10 @@ export default {
 
       // Bound the complete identifier in UTF-8 bytes, including our namespace prefix.
       if (TEXT_ENCODER.encode(limiterName).byteLength > 256) {
-        return withResponseHeaders(new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
+        return new Response(JSON.stringify({ error: 'Invalid IP identifier' }), {
           status: 400,
           headers: { 'content-type': 'application/json' },
-        }));
+        });
       }
 
       try {
@@ -161,10 +161,10 @@ export default {
         });
         const retryAfter = response.headers.get('Retry-After');
         if (response.status === 429 && retryAfter !== null && /^[1-9]\d*$/.test(retryAfter)) {
-          return withResponseHeaders(new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+          return new Response(JSON.stringify({ error: 'Too Many Requests' }), {
             status: 429,
             headers: { 'content-type': 'application/json', 'Retry-After': retryAfter },
-          }));
+          });
         }
         if (response.status !== 204) {
           throw new Error(`Unexpected rate limiter response: ${response.status}`);
@@ -174,13 +174,18 @@ export default {
         console.error(`[Worker] Rate limiter unavailable or failed (${scope}):`, errorMessage);
 
         // Fail closed for limiter failures to prevent bypassing rate limit
-        return withResponseHeaders(new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
           status: 500,
           headers: { 'content-type': 'application/json' },
-        }));
+        });
       }
       return null;
     };
+
+    if (pathname === '/api/contact' && !isAllowedOrigin &&
+      (request.method === 'POST' || request.method === 'OPTIONS')) {
+      return withResponseHeaders(Response.json({ error: 'Forbidden: Invalid Origin' }, { status: 403 }));
+    }
 
     // CORS preflight handling (required for cross-origin POST from Vite dev server on :5173 to worker on :8787)
     if (request.method === 'OPTIONS') {
@@ -211,6 +216,14 @@ export default {
       error: 'Use the WebSocket endpoint for an upgrade',
     }, { status: 400 }));
 
+    if (pathname === '/api/contact') {
+      if (isWebSocketUpgrade) return rejectRestUpgrade();
+      if (request.method !== 'POST') {
+        return withResponseHeaders(new Response('Method not allowed', { status: 405, headers: { Allow: 'POST, OPTIONS' } }));
+      }
+      return withResponseHeaders(await handleContact(request, env, () => enforceRateLimit('contact')));
+    }
+
     // POST /api/rooms  -> create a new room, return roomId + per-slot join URLs/tokens
     if (pathname === '/api/rooms' && request.method === 'POST') {
       // Strict origin validation to prevent CSRF
@@ -225,7 +238,7 @@ export default {
 
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
-        return rateLimitResponse;
+        return withResponseHeaders(rateLimitResponse);
       }
       // The client sends { numPlayers: 2|3|4, slots: Array<{type: 'human'|'ai', aiProfile?: string}> }
       // Normalize the external payload before forwarding the room configuration to the DO.
@@ -316,7 +329,7 @@ export default {
       }
       const rateLimitResponse = await enforceRateLimit();
       if (rateLimitResponse) {
-        return rateLimitResponse;
+        return withResponseHeaders(rateLimitResponse);
       }
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);
@@ -367,7 +380,7 @@ export default {
       }
 
       const rateLimitResponse = await enforceRateLimit('websocket');
-      if (rateLimitResponse) return rateLimitResponse;
+      if (rateLimitResponse) return withResponseHeaders(rateLimitResponse);
 
       const id = env.GAME_ROOM.idFromName(roomId);
       const stub = env.GAME_ROOM.get(id);

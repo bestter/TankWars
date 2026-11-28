@@ -35,6 +35,7 @@ import { TANK_COLOR_POOL } from "./accessibleColor";
 
 export interface MainMenuProps {
   onEndurance?: () => void;
+  onContact?: () => void;
   /** Appelé avec les joueurs initialisés (positions placeholder, spawn fait par TankManager/Engine) */
   onStartGame: (players: Player[], options?: { freeWeapons?: boolean }) => void;
   /** Ouvre le lobby multijoueur en ligne (création / URLs) — parallèle au hotseat local */
@@ -51,7 +52,7 @@ export interface PlayerConfig {
   aiProfile?: AiProfile;
 }
 
-export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuProps) {
+export function MainMenu({ onStartGame, onPlayOnline, onEndurance, onContact }: MainMenuProps) {
   const { t } = useTranslation();
 
   const getDefaultHumanName = (index: number): string => {
@@ -258,6 +259,7 @@ export function MainMenu({ onStartGame, onPlayOnline, onEndurance }: MainMenuPro
       onStart={handleStartClick}
       onPlayOnline={onPlayOnline}
       onEndurance={onEndurance}
+      onContact={onContact}
     />
   );
 }

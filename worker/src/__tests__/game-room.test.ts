@@ -1837,7 +1837,13 @@ describe('GameRoom Durable Object', () => {
   });
 
   describe('fetchCreate', () => {
-    it('creates a new room with tokens and returns room invitation URLs', async () => {
+    it.each([
+      ['https://tankwars-game.com', 'https://tankwars-game.com'],
+      ['https://tankwars.pages.dev', 'https://tankwars.pages.dev'],
+      ['https://preview.tankwars.pages.dev', 'https://preview.tankwars.pages.dev'],
+      ['http://localhost:5173', 'http://localhost:5173'],
+      ['https://other.example', 'https://tankwars.pages.dev'],
+    ])('creates room invitation URLs for origin %s', async (origin, expectedOrigin) => {
       const payload = {
         roomId: 'room-123',
         numPlayers: 2,
@@ -1845,7 +1851,7 @@ describe('GameRoom Durable Object', () => {
           { type: 'human' },
           { type: 'human' },
         ],
-        origin: 'http://localhost:5173',
+        origin,
       };
 
       const req = new Request('http://localhost/api/room', {
@@ -1866,6 +1872,7 @@ describe('GameRoom Durable Object', () => {
       expect(json.roomId).toBe('room-123');
       expect(json.numPlayers).toBe(2);
       expect(json.slots.length).toBe(2);
+      expect(json.slots.map(slot => new URL(slot.url).origin)).toEqual([expectedOrigin, expectedOrigin]);
       expect(json.slots[0].url).toContain('room=room-123&slot=0&token=');
       expect(json.slots[1].url).toContain('room=room-123&slot=1&token=');
     });

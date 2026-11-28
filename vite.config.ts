@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execFileSync } from 'node:child_process'
 
@@ -12,9 +12,24 @@ function buildId(): string {
   }
 }
 
+function githubPagesContactEntry(): Plugin {
+  return {
+    name: 'tankwars-github-pages-contact-entry',
+    apply: 'build',
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        const index = bundle['index.html']
+        if (index?.type !== 'asset') this.error('Missing index.html for the GitHub Pages contact entry')
+        this.emitFile({ type: 'asset', fileName: 'contact/index.html', source: index.source })
+      },
+    },
+  }
+}
+
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   define: { 'import.meta.env.VITE_BUILD_ID': JSON.stringify(buildId()) },
-  plugins: [react()],
+  plugins: [react(), mode === 'github-pages' && githubPagesContactEntry()],
   base: '/',
-})
+}))
