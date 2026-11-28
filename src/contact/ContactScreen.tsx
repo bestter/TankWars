@@ -40,9 +40,11 @@ async function sendContact(payload: ContactMessage & { extra: string }): Promise
     receivedResponse = true;
     if (response.ok) {
       const receipt: unknown = await response.json();
-      return receipt && typeof receipt === 'object' && 'ok' in receipt && receipt.ok === true
-        ? null
-        : { key: 'contact_service_error' };
+      if (receipt && typeof receipt === 'object' && 'ok' in receipt && receipt.ok === true) {
+        return null;
+      }
+      console.error('[TankWars] Contact submission returned an unexpected receipt');
+      return { key: 'contact_service_error' };
     }
     if (response.status === 429) {
       const seconds = Number(response.headers.get('Retry-After'));
@@ -50,15 +52,46 @@ async function sendContact(payload: ContactMessage & { extra: string }): Promise
         ? { key: 'contact_retry_after', seconds }
         : { key: 'contact_rate_limited' };
     }
+    console.error('[TankWars] Contact submission failed with status', response.status);
     return { key: response.status === 400 || response.status === 413
       ? 'contact_invalid_request'
       : 'contact_service_error' };
   } catch {
-    if (signal.aborted) return { key: 'contact_timeout' };
+    if (signal.aborted) {
+      console.error('[TankWars] Contact submission timed out');
+      return { key: 'contact_timeout' };
+    }
+    console.error('[TankWars] Contact submission failed', receivedResponse ? 'invalid response body' : 'network error');
     return { key: receivedResponse ? 'contact_service_error' : 'contact_network_error' };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+type SentDescriptionKey =
+  | 'contact_simulated_description'
+  | 'contact_local_worker_description'
+  | 'contact_sent_description';
+
+function resolveSentDescription(simulated: boolean): SentDescriptionKey {
+  if (simulated) return 'contact_simulated_description';
+  return import.meta.env.DEV ? 'contact_local_worker_description' : 'contact_sent_description';
+}
+
+function resolveVisibleFeedback(feedback: Feedback | null, errors: ContactErrors): Feedback | null {
+  if (feedback?.key !== 'contact_fix_fields') return feedback;
+  return Object.values(errors).some(Boolean) ? feedback : null;
+}
+
+function ContactFeedbackAlert({ feedback }: { feedback: Feedback | null }) {
+  const { t } = useTranslation();
+  let text: string | null = null;
+  if (feedback?.key === 'contact_retry_after') {
+    text = t(feedback.key, { count: feedback.seconds });
+  } else if (feedback) {
+    text = t(feedback.key);
+  }
+  return <div className="contact-error" role="alert">{text}</div>;
 }
 
 export function ContactScreen({ onBack }: { onBack: () => void }) {
@@ -73,9 +106,8 @@ export function ContactScreen({ onBack }: { onBack: () => void }) {
   const [errors, setErrors] = useState<ContactErrors>({});
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const simulated = import.meta.env.DEV && import.meta.env.VITE_CONTACT_USE_LOCAL_WORKER !== 'true';
-  const sentDescription = simulated
-    ? 'contact_simulated_description'
-    : import.meta.env.DEV ? 'contact_local_worker_description' : 'contact_sent_description';
+  const sentDescription = resolveSentDescription(simulated);
+  const visibleFeedback = resolveVisibleFeedback(feedback, errors);
 
   useLayoutEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -165,24 +197,20 @@ export function ContactScreen({ onBack }: { onBack: () => void }) {
               <form className="contact-form" ref={formRef} noValidate onSubmit={submit}>
                 <fieldset disabled={submitting}>
                   <label htmlFor={`${id}-name`}>{t('contact_name')}</label>
-                  <input {...fieldProps('name')} autoComplete="name" maxLength={CONTACT_NAME_MAX} />
+                  <input {...fieldProps('name')} type="text" autoComplete="name" maxLength={CONTACT_NAME_MAX} />
                   {fieldError('name')}
                   <label htmlFor={`${id}-email`}>{t('contact_email')}</label>
-                  <input {...fieldProps('email')} type="email" autoComplete="email" maxLength={CONTACT_EMAIL_MAX} required />
+                  <input {...fieldProps('email')} type="email" autoComplete="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={CONTACT_EMAIL_MAX} required />
                   {fieldError('email')}
                   <label htmlFor={`${id}-message`}>{t('contact_message')}</label>
                   <textarea {...fieldProps('message')} rows={6} minLength={CONTACT_MESSAGE_MIN} maxLength={CONTACT_MESSAGE_MAX} required />
                   {fieldError('message')}
-                  <input hidden tabIndex={-1} autoComplete="off" name="extra" />
+                  <input hidden aria-hidden="true" tabIndex={-1} type="text" autoComplete="off" name="extra" />
                   <button className="retro-online-btn" type="submit">
                     {t(submitting ? 'contact_sending' : 'contact_send')}
                   </button>
                 </fieldset>
-                <div className="contact-error" role="alert">
-                  {feedback?.key === 'contact_retry_after'
-                    ? t(feedback.key, { count: feedback.seconds })
-                    : feedback && t(feedback.key)}
-                </div>
+                <ContactFeedbackAlert feedback={visibleFeedback} />
                 <div className="visually-hidden" role="status">
                   {submitting ? t('contact_sending') : null}
                 </div>

@@ -48,6 +48,10 @@ export function useContactRoute(isMenu: boolean, hotseatOnly: boolean) {
   }, []);
 
   const navigate = (open: boolean) => {
+    if (isContactPath() === open) {
+      setNavigationFailed(false);
+      return;
+    }
     setNavigationFailed(!writeContactPath(open ? '/contact' : '/', 'pushState'));
   };
 

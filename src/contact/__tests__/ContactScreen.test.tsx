@@ -36,8 +36,17 @@ afterEach(() => {
 });
 
 describe('ContactScreen', () => {
-  it('links submit errors to their fields and focuses the first invalid input', () => {
+  it('links submit errors to their fields, exposes form hints, clears fix-fields alert when corrected, and focuses the first invalid input', () => {
     const { fetchMock, submit, email, text } = renderContact();
+    const nameInput = screen.getByLabelText<HTMLInputElement>('contact_name');
+    const honeypot = document.querySelector<HTMLInputElement>('input[name="extra"]');
+    expect(nameInput.getAttribute('type')).toBe('text');
+    expect(email.getAttribute('autocapitalize')).toBe('none');
+    expect(email.getAttribute('autocorrect')).toBe('off');
+    expect(email.getAttribute('spellcheck')).toBe('false');
+    expect(honeypot?.getAttribute('type')).toBe('text');
+    expect(honeypot?.getAttribute('aria-hidden')).toBe('true');
+
     expect(email.getAttribute('aria-invalid')).toBe('false');
     fireEvent.change(email, { target: { value: 'invalid@-example.com' } });
     fireEvent.change(text, { target: { value: 'short' } });
@@ -45,9 +54,18 @@ describe('ContactScreen', () => {
     expect(email.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById(email.getAttribute('aria-describedby') ?? '')?.textContent).toBe('contact_email_error');
     expect(document.getElementById(text.getAttribute('aria-describedby') ?? '')?.textContent).toBe('contact_message_error');
+    expect(screen.getByRole('alert').textContent).toBe('contact_fix_fields');
     expect(document.activeElement).toBe(email);
     expect(text.value).toBe('short');
     expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(email, { target: { value: 'guest@example.com' } });
+    expect(email.getAttribute('aria-invalid')).toBe('false');
+    expect(screen.getByRole('alert').textContent).toBe('contact_fix_fields');
+
+    fireEvent.change(text, { target: { value: message } });
+    expect(text.getAttribute('aria-invalid')).toBe('false');
+    expect(screen.getByRole('alert').textContent).toBe('');
   });
 
   it('simulates by default with a cleaned preview, updates metadata and allows a new message', async () => {
@@ -113,6 +131,7 @@ describe('ContactScreen', () => {
   it.each(['headers', 'receipt'] as const)('keeps the draft and allows retry when waiting for %s times out', async phase => {
     vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
     vi.useFakeTimers();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     if (phase === 'headers') {
       vi.spyOn(AbortSignal, 'timeout').mockImplementation(delay => {
         const controller = new AbortController();
@@ -142,6 +161,8 @@ describe('ContactScreen', () => {
     if (phase === 'receipt') expect(readReceipt).toHaveBeenCalledOnce();
     await act(async () => vi.advanceTimersByTimeAsync(15_000));
     expect(screen.getByRole('alert').textContent).toBe('contact_timeout');
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/guest@example\.com|Étape/);
     expect(email.value).toBe('guest@example.com');
     expect(text.value).toBe(message);
     expect(submit.matches(':disabled')).toBe(false);
@@ -152,19 +173,28 @@ describe('ContactScreen', () => {
   });
 
   it.each([
-    [429, 'contact_retry_after 60'],
-    [400, 'contact_invalid_request'],
-    [500, 'contact_service_error'],
-    [503, 'contact_service_error'],
-    [0, 'contact_network_error'],
-  ])('keeps the form filled after a failed request (%s)', async (status, error) => {
+    [429, 'contact_retry_after 60', false],
+    [400, 'contact_invalid_request', true],
+    [500, 'contact_service_error', true],
+    [503, 'contact_service_error', true],
+    [200, 'contact_service_error', true],
+    [0, 'contact_network_error', true],
+  ])('keeps the form filled after a failed request (%s)', async (status, error, shouldLogError) => {
     vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { fetchMock, fill, submit, email, text } = renderContact();
-    if (status) fetchMock.mockResolvedValue(new Response(null, { status, headers: { 'Retry-After': '60' } }));
+    if (status === 200) fetchMock.mockResolvedValue(Response.json({ ok: false }));
+    else if (status) fetchMock.mockResolvedValue(new Response(null, { status, headers: { 'Retry-After': '60' } }));
     else fetchMock.mockRejectedValue(new TypeError('Offline'));
     fill();
     fireEvent.click(submit);
     await screen.findByText(error);
+    if (shouldLogError) {
+      expect(errorLog).toHaveBeenCalledOnce();
+      expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/guest@example\.com|Étape/);
+    } else {
+      expect(errorLog).not.toHaveBeenCalled();
+    }
     expect(email.value).toBe('guest@example.com');
     expect(text.value).toBe(message);
     expect(submit.matches(':disabled')).toBe(false);
