@@ -92,6 +92,24 @@ describe('ContactScreen', () => {
     expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(description);
   });
 
+  it('posts Unicode text with intact joiners and normalized line breaks', async () => {
+    vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
+    const { fetchMock, email, text, submit } = renderContact();
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    const name = 'می\u200Cخواهم';
+    const emoji = '👩🏽\u200D💻';
+
+    fireEvent.change(screen.getByLabelText('contact_name'), { target: { value: name } });
+    fireEvent.change(email, { target: { value: 'guest@example.com' } });
+    fireEvent.change(text, { target: { value: emoji + '\u2028// commentaire\u2029const value = 1;' } });
+    fireEvent.click(submit);
+
+    await screen.findByRole('heading', { name: 'contact_sent_title' });
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ name, email: 'guest@example.com', message: emoji + '\n// commentaire\nconst value = 1;', extra: '' }),
+    );
+  });
+
   it.each(['headers', 'receipt'] as const)('keeps the draft and allows retry when waiting for %s times out', async phase => {
     vi.stubEnv('VITE_CONTACT_USE_LOCAL_WORKER', 'true');
     vi.useFakeTimers();

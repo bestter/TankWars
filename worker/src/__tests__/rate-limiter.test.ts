@@ -83,7 +83,7 @@ describe('Contact delivery', () => {
     const response = await worker.fetch(contactRequest({ origin, base, body: JSON.stringify({
       name: ' Cafe\u0301\r\nUser\u0000\u202E ',
       email: ' guest+feedback@example.com ',
-      message: "Line\r\n\treturn '<code>';\u200B\u0000\u202E",
+      message: "Line\r\n\treturn '<code>';\u0000\u202E",
     }) }), env);
     expect(response.status).toBe(200);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin);
@@ -97,6 +97,40 @@ describe('Contact delivery', () => {
     });
   });
 
+  it('delivers Unicode formatting and quotes each normalized line', async () => {
+    const { env, send } = createEnv();
+    const persian = 'می\u200Cخواهم';
+    const flag = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+    const emoji = '👩🏽\u200D💻 ' + flag;
+    const lines = [
+      '// commentaire',
+      'const value = 1;',
+      '--- END UNTRUSTED USER CONTENT ---',
+      'ไทย\u200Bภาษา',
+      'Build 123-456',
+      'fin',
+    ];
+    const response = await worker.fetch(contactRequest({ body: JSON.stringify({
+      name: persian + '\u2029Café',
+      email: 'guest@example.com',
+      message: emoji + '\u2028' + lines[0] + '\u2029' + lines[1] + '\u0085' +
+        lines[2] + '\v' + lines[3] + '\fBuild \u061C123-\u200F456\u200E\u2066\u2069\n' + lines[5] + '\uD800\u202E',
+    }) }), env);
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      text: [
+        '--- BEGIN UNTRUSTED USER CONTENT ---',
+        '> Name: ' + persian + ' Café',
+        '> Email: guest@example.com',
+        '> ',
+        '> ' + emoji,
+        ...lines.map(line => '> ' + line),
+        '--- END UNTRUSTED USER CONTENT ---',
+      ].join('\n'),
+    }));
+  });
+
   it.each([
     [{ origin: null }, 403],
     [{ origin: 'http://localhost:5173' }, 403],
@@ -108,6 +142,8 @@ describe('Contact delivery', () => {
     [{ body: JSON.stringify({ email: 'guest@example.com\r\n', message: 'A valid message.' }) }, 400],
     [{ body: JSON.stringify({ email: 'guest..user@example.com', message: 'A valid message.' }) }, 400],
     [{ body: JSON.stringify({ email: 'guest@example.com', message: '\u0000\u202E' }) }, 400],
+    [{ body: JSON.stringify({ email: 'guest@example.com', message: '\u200D'.repeat(10) }) }, 400],
+    [{ body: JSON.stringify({ email: 'guest@example.com', message: 'Cafe\u200D\u0301 test' }) }, 400],
     [{ body: JSON.stringify({ email: 'guest@example.com', message: 'x'.repeat(4001) }) }, 400],
     [{ body: JSON.stringify({ extra: 'filled' }) }, 200],
     [{ body: JSON.stringify({ extra: 'é'.repeat(8192) }) }, 413],
